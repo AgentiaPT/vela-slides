@@ -7497,7 +7497,11 @@ function GalleryView({ lanes, currentConceptId, slideIndex, dispatch, onClose, b
                     {(() => { const oc = (s.slide.comments || []).filter((c) => c.status === "open").length; return oc > 0 ? <span style={{ width: 8, height: 8, borderRadius: 4, background: T.amber, flexShrink: 0 }} title={`${oc} comment${oc > 1 ? "s" : ""}`} /> : null; })()}
                     {s.slide?.studyNotes?.text ? <span title="Has offline study notes" data-study-marker style={{ fontSize: 11, lineHeight: 1, flexShrink: 0, filter: `drop-shadow(0 0 2px ${T.accent}80)` }}>🎓</span> : null}
                     <span style={{ fontSize: 13, color: isCurrent ? T.text : T.textMuted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1, fontFamily: FONT.body }}>{getSlideTitle(s.slide, s.slideIdx)}</span>
-                    {!s.isTitleCard && <button onClick={(e) => { e.stopPropagation(); dispatch({ type: "REMOVE_SLIDE", id: s.itemId, index: s.slideIdx }); }} title="Delete slide" style={{ background: "none", border: "none", cursor: "pointer", padding: "2px 4px", fontSize: 13, color: T.textDim, borderRadius: 3, opacity: 0.4, transition: "opacity 0.15s, color 0.15s" }} onMouseEnter={(e) => { e.currentTarget.style.opacity = "1"; e.currentTarget.style.color = "#ef4444"; }} onMouseLeave={(e) => { e.currentTarget.style.opacity = "0.4"; e.currentTarget.style.color = T.textDim; }}>✕</button>}
+                    {/* CR4: hide/unhide sits right next to delete — same size, same
+                        hover behavior, toggles the slide's existing `hidden` flag
+                        (the same reducer action the editor TOC list row uses). */}
+                    {!s.isTitleCard && <button data-testid="gallery-hide-slide" onClick={(e) => { e.stopPropagation(); dispatch({ type: "TOGGLE_SLIDE_HIDDEN", id: s.itemId, index: s.slideIdx }); }} title={s.slide.hidden ? "Unhide slide — show it in presentation" : "Hide slide — keep it in the list, exclude it from presentation"} style={{ background: "none", border: "none", cursor: "pointer", padding: "2px 4px", fontSize: 13, color: s.slide.hidden ? T.accent : T.textDim, borderRadius: 3, opacity: s.slide.hidden ? 0.9 : 0.4, transition: "opacity 0.15s, color 0.15s" }} onMouseEnter={(e) => { e.currentTarget.style.opacity = "1"; }} onMouseLeave={(e) => { e.currentTarget.style.opacity = s.slide.hidden ? "0.9" : "0.4"; }}>{s.slide.hidden ? "🙈" : "👁"}</button>}
+                    {!s.isTitleCard && <button data-testid="gallery-delete-slide" onClick={(e) => { e.stopPropagation(); dispatch({ type: "REMOVE_SLIDE", id: s.itemId, index: s.slideIdx }); }} title="Delete slide" style={{ background: "none", border: "none", cursor: "pointer", padding: "2px 4px", fontSize: 13, color: T.textDim, borderRadius: 3, opacity: 0.4, transition: "opacity 0.15s, color 0.15s" }} onMouseEnter={(e) => { e.currentTarget.style.opacity = "1"; e.currentTarget.style.color = "#ef4444"; }} onMouseLeave={(e) => { e.currentTarget.style.opacity = "0.4"; e.currentTarget.style.color = T.textDim; }}>✕</button>}
                   </div>
                 </div>
               </div>
@@ -8306,11 +8310,15 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       toggleBatchEdit: () => improving ? stopAll() : setShowImproveInput((v) => !v),
       toggleTiming: () => estimating ? stopEstimate() : setShowTimingScope((v) => !v),
       setPreviewRatio,
-      present: () => { stopAll(); dispatch({ type: "SET_FULLSCREEN", value: true }); },
+      present: () => { setGallery(false); stopAll(); dispatch({ type: "SET_FULLSCREEN", value: true }); },
+      // CR13: gallery state + toggle, exposed so the header view-switcher can
+      // show/drive the gallery from outside SlidePanel (editor mode only — the
+      // header itself unmounts while fullscreen/presenting).
+      showGallery, toggleGallery: () => setGallery((v) => !v),
       getLayoutStats: () => computeSlideLayoutStats(slideRef.current),
     };
     onRibbonUpdate?.();
-  }, [slides.length, moduleTime, previewRatio, showBranding, showTimingScope, estimating, showImproveInput, improving]);
+  }, [slides.length, moduleTime, previewRatio, showBranding, showTimingScope, estimating, showImproveInput, improving, showGallery]);
 
   // Build flat ordered list of modules across all lanes
   const flatModules = useCallback(() => {
@@ -9033,13 +9041,23 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
         </div>}
         <div className="slide-nav-btn" onClick={() => dispatch({ type: "SET_FULLSCREEN", value: false })} style={{ position: "absolute", top: isMobile ? 8 : 16, right: isMobile ? 8 : 16, padding: isMobile ? 12 : 8 }}><Minimize2 size={isMobile ? 22 : 18} color="#fff" /></div>
         {!isMobile && <div data-testid="student-toggle" className="slide-nav-btn" onClick={() => dispatch({ type: "SET_VERA_MODE", mode: isStudent ? "editor" : "student" })} title={isStudent ? "Exit student mode" : "Student mode — Vera teaches"} style={{ position: "absolute", top: 16, right: 52, padding: 8, background: isStudent ? T.accent + "30" : "transparent", borderRadius: 6 }}><span style={{ fontSize: 16 }}>🎓</span></div>}
-        {!isMobile && <div data-testid="gallery-toggle" className="slide-nav-btn" onClick={() => setGallery((v) => !v)} title="Gallery view (G)" style={{ position: "absolute", top: 16, right: 88, padding: 8, background: showGallery ? T.accent + "30" : "transparent", borderRadius: 6 }}><span style={{ fontSize: 16 }}>🗂</span></div>}
+        {/* CR10: this icon rendered near-invisible — no backdrop of its own, so
+            contrast depended entirely on whatever live slide content sat behind
+            it (varies slide to slide), plus a plain emoji glyph with no explicit
+            color. A fixed dark chip + explicit white color makes it readable
+            against any slide, in any theme, every time. */}
+        {!isMobile && <div data-testid="gallery-toggle" className="slide-nav-btn" onClick={() => setGallery((v) => !v)} title="Gallery view (G)" style={{ position: "absolute", top: 16, right: 88, padding: 8, background: showGallery ? T.accent + "30" : "rgba(15,17,23,0.55)", borderRadius: 6 }}><span style={{ fontSize: 16, color: "#fff" }}>🗂</span></div>}
         {!isMobile && <div data-testid="presenter-toggle" className="slide-nav-btn" onClick={() => setPresenterView((v) => !v)} title={showPresenterView ? "Exit presenter view (S)" : "Presenter view — notes, next slide, timer (S)"} style={{ position: "absolute", top: 16, right: 124, padding: 8, background: showPresenterView ? T.accent + "30" : "transparent", borderRadius: 6 }}><span style={{ fontSize: 16 }}>🖥️</span></div>}
         {/* Present Edit toggle (Shift+E): restore inline click-to-edit while
             presenting. Uses the Lucide pencil (SVG), NOT the ✏ emoji, so the
             CR-03 "no edit chrome" test still passes when edit mode is off.
             Hidden in student mode, where editing is disabled by design. */}
-        {!isMobile && !isStudent && <div data-testid="present-edit-toggle" className="slide-nav-btn" onClick={() => setPresentEdit((v) => !v)} title={presentEdit ? "Editing on — click text/icons to edit (Shift+E)" : "Edit mode — click text/icons to edit while presenting (Shift+E)"} style={{ position: "absolute", top: 16, right: 160, padding: 8, background: presentEdit ? T.accent + "30" : "transparent", borderRadius: 6 }}>{getIcon("edit", { size: 18, color: "#fff" })}</div>}
+        {/* CR11: root cause of the "sometimes shows, often does not" report — this
+            icon has no backdrop of its own, so it sits directly on the live slide
+            (mode="fill", no letterbox), and contrast against a light/busy top-right
+            area of the CURRENT slide is not guaranteed. A fixed dark chip removes
+            that dependency, so the icon reads the same on every slide. */}
+        {!isMobile && !isStudent && <div data-testid="present-edit-toggle" className="slide-nav-btn" onClick={() => setPresentEdit((v) => !v)} title={presentEdit ? "Editing on — click text/icons to edit (Shift+E)" : "Edit mode — click text/icons to edit while presenting (Shift+E)"} style={{ position: "absolute", top: 16, right: 160, padding: 8, background: presentEdit ? T.accent + "30" : "rgba(15,17,23,0.55)", borderRadius: 6 }}>{getIcon("edit", { size: 18, color: "#fff" })}</div>}
         {/* Browser fullscreen toggle removed — Vela fullscreen (F key / minimize button) is sufficient */}
         {!isMobile && !VELA_LOCAL_MODE && <>
           <div className="slide-nav-btn" onClick={() => setShowCinemaTip((v) => !v)} title="Cinema mode — fullscreen in browser" style={{ position: "absolute", top: 16, right: 196, padding: 8 }}><VelaIcon size={18} /></div>
@@ -15580,6 +15598,90 @@ function VelaUITestRunner() {
     </div>
   );
 }
+
+// ── Sprint "lantern" W6: gallery hide action, top-right icon contrast, and
+// the Editor/Gallery view switcher (CR4 / CR10 / CR11 / CR13) ──────────────
+uiSuite("W6 Views", [
+  { name: "CR4: gallery row shows hide next to delete", fn: async () => {
+    document.activeElement?.blur(); await _wait(100);
+    if (!_$("header")) { _key("f"); await _waitFor(() => _$("header"), 3000); }
+    if (_$text("GALLERY")) { _key("g"); await _waitFor(() => !_$text("GALLERY"), 1500).catch(() => {}); }
+    const gbtn = await _waitFor(() => _$("[data-testid='editor-gallery-toggle']"), 2000);
+    _click(gbtn);
+    await _waitFor(() => _$text("GALLERY"), 2000);
+    const root = await _waitFor(() => _$("[data-teacher-panel]"), 2000);
+    const card = await _waitFor(() => _$$("[data-testid='gallery-slide']", root)[0], 2000);
+    const hideBtn = _$("[data-testid='gallery-hide-slide']", card);
+    const delBtn = _$("[data-testid='gallery-delete-slide']", card);
+    if (!hideBtn) throw new Error("gallery-hide-slide button missing next to delete");
+    if (!delBtn) throw new Error("gallery-delete-slide button missing");
+    if (!/^(Hide|Unhide) slide/.test(hideBtn.title)) throw new Error(`unexpected hide-slide tooltip: ${hideBtn.title}`);
+    _key("Escape"); await _waitFor(() => !_$text("GALLERY"), 2000).catch(() => {});
+  }},
+  { name: "CR4: hide toggles the slide's hidden state and tooltip", fn: async () => {
+    document.activeElement?.blur(); await _wait(100);
+    const gbtn = await _waitFor(() => _$("[data-testid='editor-gallery-toggle']"), 2000);
+    _click(gbtn);
+    await _waitFor(() => _$text("GALLERY"), 2000);
+    const root = await _waitFor(() => _$("[data-teacher-panel]"), 2000);
+    const card = await _waitFor(() => _$$("[data-testid='gallery-slide']", root)[0], 2000);
+    const hideBtn = _$("[data-testid='gallery-hide-slide']", card);
+    if (!hideBtn) throw new Error("gallery-hide-slide button missing");
+    const wasHidden = /^Unhide/.test(hideBtn.title);
+    _click(hideBtn);
+    await _waitFor(() => {
+      const b = _$("[data-testid='gallery-hide-slide']", card);
+      return b && (wasHidden ? /^Hide slide/.test(b.title) : /^Unhide slide/.test(b.title));
+    }, 1500);
+    // Restore the original state so the suite is idempotent for a re-run.
+    _click(_$("[data-testid='gallery-hide-slide']", card));
+    await _wait(150);
+    _key("Escape"); await _waitFor(() => !_$text("GALLERY"), 2000).catch(() => {});
+  }},
+  { name: "CR13: Editor/Gallery view switcher visible next to Present", fn: async () => {
+    if (!_$("header")) { _key("f"); await _waitFor(() => _$("header"), 3000); }
+    const sw = await _waitFor(() => _$("[data-testid='view-switcher']"), 2000);
+    const editorSeg = _$("[data-testid='view-switch-editor']", sw);
+    const gallerySeg = _$("[data-testid='view-switch-gallery']", sw);
+    if (!editorSeg || !gallerySeg) throw new Error("view switcher segments missing");
+    if (editorSeg.getAttribute("aria-pressed") !== "true") throw new Error("Editor segment should start active");
+    if (gallerySeg.getAttribute("aria-pressed") !== "false") throw new Error("Gallery segment should start inactive");
+  }},
+  { name: "CR13: Gallery segment opens gallery and reflects active state", fn: async () => {
+    const gallerySeg = await _waitFor(() => _$("[data-testid='view-switch-gallery']"), 2000);
+    _click(gallerySeg);
+    await _waitFor(() => _$text("GALLERY"), 2000);
+    await _waitFor(() => _$("[data-testid='view-switch-gallery']")?.getAttribute("aria-pressed") === "true", 1500);
+    const editorSeg = _$("[data-testid='view-switch-editor']");
+    if (editorSeg.getAttribute("aria-pressed") !== "false") throw new Error("Editor segment should be inactive while gallery is open");
+    _click(editorSeg);
+    await _waitFor(() => !_$text("GALLERY"), 2000);
+    await _waitFor(() => _$("[data-testid='view-switch-editor']")?.getAttribute("aria-pressed") === "true", 1500);
+  }},
+  { name: "CR10/CR11: fullscreen top-right icons carry a guaranteed-contrast backdrop", fn: async () => {
+    document.activeElement?.blur(); await _wait(100);
+    if (_$text("GALLERY")) { _key("g"); await _waitFor(() => !_$text("GALLERY"), 1500).catch(() => {}); }
+    if (!_$("header")) { _key("f"); await _waitFor(() => _$("header"), 3000); }
+    _key("f");
+    await _waitFor(() => !_$("header"), 3000);
+    const gallery = await _waitFor(() => _$("[data-testid='gallery-toggle']"), 2000);
+    const edit = await _waitFor(() => _$("[data-testid='present-edit-toggle']"), 2000);
+    // Root cause was no guaranteed backdrop: contrast depended on whatever live
+    // slide content sat behind the icon. A real chip must have visible alpha.
+    const hasBackdrop = (el) => {
+      const bg = getComputedStyle(el).backgroundColor;
+      const m = bg.match(/rgba?\(([^)]+)\)/);
+      if (!m) return false;
+      const parts = m[1].split(",").map((s) => parseFloat(s.trim()));
+      const alpha = parts.length > 3 ? parts[3] : 1;
+      return alpha > 0.3;
+    };
+    if (!hasBackdrop(gallery)) throw new Error("gallery-toggle has no guaranteed-contrast backdrop (CR10 regression)");
+    if (!hasBackdrop(edit)) throw new Error("present-edit-toggle has no guaranteed-contrast backdrop (CR11 regression)");
+    _key("f");
+    await _waitFor(() => _$("header"), 3000);
+  }},
+]);
 // © 2025-present Rui Quintino. Vela Slides — licensed under ELv2. See LICENSE.
 // ━━━ Vela Product Tour ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // A short, safe tour of the live app. Its Vera turn uses a local deterministic
@@ -24174,13 +24276,32 @@ export default function App() {
               </>}
             </div>;
           })()}
-          {/* Batch / Brand / Present */}
+          {/* Batch / Brand / View switcher / Present */}
           {(() => {
             const sa = slideActionsRef.current;
             const has = !!selectedConcept;
+            // CR13: Editor/Gallery view switcher, placed directly beside Present —
+            // the discoverable spot the user asked for, replacing "hidden below the
+            // slide" as the primary way to reach gallery view. The old per-slide
+            // "Overview" button (part-slidepanel.jsx SLIDE TOOLBAR) still works too,
+            // so nothing is orphaned — this just adds the prominent entry point.
+            // Present itself keeps its own button/behavior unchanged; visually the
+            // three sit together as one switcher: Editor | Gallery | ▶ Present.
+            const inGallery = !!sa?.showGallery;
+            const segStyle = (active) => ({ padding: "4px 10px", fontSize: 13, fontFamily: FONT.mono, fontWeight: active ? 700 : 500, color: active ? "#fff" : T.textDim, background: active ? T.accent : "transparent", border: "none", cursor: has ? "pointer" : "default", opacity: has ? 1 : 0.4 });
             return <>
               <button data-testid="batch-edit-toggle" onClick={() => sa?.toggleBatchEdit?.()} disabled={!aiOk || !has || !sa?.slidesCount} title={aiOk ? "Batch edit across slides" : VELA_AI_UNAVAILABLE_MSG} style={S.btn({ padding: "4px 10px", fontSize: 14, color: !aiOk ? T.textDim + "60" : sa?.showBatchEdit ? T.accent : (sa?.improving ? T.red : T.textDim), background: sa?.showBatchEdit || sa?.improving ? T.accent + "20" : "transparent", borderRadius: 4, opacity: aiOk && has && sa?.slidesCount ? 1 : 0.4, display: "flex", alignItems: "center", gap: 4, cursor: aiOk ? "pointer" : "not-allowed" })}>{sa?.improving ? "⏹" : "🔄"} Batch</button>
               <button data-testid="brand-toggle" onClick={() => sa?.toggleBranding?.()} disabled={!has} title="Branding & guidelines" style={S.btn({ padding: "4px 10px", fontSize: 14, color: sa?.showBranding ? T.accent : (sa?.hasBranding ? T.accent : T.textDim), background: sa?.showBranding ? T.accent + "20" : "transparent", borderRadius: 4, opacity: has ? 1 : 0.4, display: "flex", alignItems: "center", gap: 4 })}>{"🎨"} Brand</button>
+              {/* flexShrink: 0 — this pill uses overflow:hidden for its rounded
+                  corners, which (per the flexbox auto-min-size rule) would
+                  otherwise make IT the header's shrink target under space
+                  pressure and silently clip "Gallery" mid-word. The deck-title
+                  span above already owns that role (its own ellipsis), so this
+                  control must hold its natural width instead. */}
+              <div data-testid="view-switcher" role="group" aria-label="Switch view — editor or gallery" style={{ display: "flex", alignItems: "stretch", flexShrink: 0, border: `1px solid ${T.border}`, borderRadius: 6, overflow: "hidden" }}>
+                <button data-testid="view-switch-editor" onClick={() => { if (inGallery) sa?.toggleGallery?.(); }} disabled={!has} title="Editor view" aria-pressed={!inGallery} style={segStyle(!inGallery)}>Editor</button>
+                <button data-testid="view-switch-gallery" onClick={() => { if (!inGallery) sa?.toggleGallery?.(); }} disabled={!has} title="Gallery view — all slides (G)" aria-pressed={inGallery} style={segStyle(inGallery)}>Gallery</button>
+              </div>
               <button onClick={() => sa?.present?.()} disabled={!has} style={{ display: "flex", alignItems: "center", gap: 5, padding: "5px 14px", background: has ? T.green : T.border, color: has ? "#fff" : T.textDim, border: "none", borderRadius: 6, cursor: has ? "pointer" : "default", opacity: has ? 1 : 0.5, fontFamily: FONT.mono, fontSize: 14, fontWeight: 700 }}>{"▶"} Present</button>
             </>;
           })()}

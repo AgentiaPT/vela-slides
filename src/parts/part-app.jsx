@@ -963,13 +963,32 @@ export default function App() {
               </>}
             </div>;
           })()}
-          {/* Batch / Brand / Present */}
+          {/* Batch / Brand / View switcher / Present */}
           {(() => {
             const sa = slideActionsRef.current;
             const has = !!selectedConcept;
+            // CR13: Editor/Gallery view switcher, placed directly beside Present —
+            // the discoverable spot the user asked for, replacing "hidden below the
+            // slide" as the primary way to reach gallery view. The old per-slide
+            // "Overview" button (part-slidepanel.jsx SLIDE TOOLBAR) still works too,
+            // so nothing is orphaned — this just adds the prominent entry point.
+            // Present itself keeps its own button/behavior unchanged; visually the
+            // three sit together as one switcher: Editor | Gallery | ▶ Present.
+            const inGallery = !!sa?.showGallery;
+            const segStyle = (active) => ({ padding: "4px 10px", fontSize: 13, fontFamily: FONT.mono, fontWeight: active ? 700 : 500, color: active ? "#fff" : T.textDim, background: active ? T.accent : "transparent", border: "none", cursor: has ? "pointer" : "default", opacity: has ? 1 : 0.4 });
             return <>
               <button data-testid="batch-edit-toggle" onClick={() => sa?.toggleBatchEdit?.()} disabled={!aiOk || !has || !sa?.slidesCount} title={aiOk ? "Batch edit across slides" : VELA_AI_UNAVAILABLE_MSG} style={S.btn({ padding: "4px 10px", fontSize: 14, color: !aiOk ? T.textDim + "60" : sa?.showBatchEdit ? T.accent : (sa?.improving ? T.red : T.textDim), background: sa?.showBatchEdit || sa?.improving ? T.accent + "20" : "transparent", borderRadius: 4, opacity: aiOk && has && sa?.slidesCount ? 1 : 0.4, display: "flex", alignItems: "center", gap: 4, cursor: aiOk ? "pointer" : "not-allowed" })}>{sa?.improving ? "⏹" : "🔄"} Batch</button>
               <button data-testid="brand-toggle" onClick={() => sa?.toggleBranding?.()} disabled={!has} title="Branding & guidelines" style={S.btn({ padding: "4px 10px", fontSize: 14, color: sa?.showBranding ? T.accent : (sa?.hasBranding ? T.accent : T.textDim), background: sa?.showBranding ? T.accent + "20" : "transparent", borderRadius: 4, opacity: has ? 1 : 0.4, display: "flex", alignItems: "center", gap: 4 })}>{"🎨"} Brand</button>
+              {/* flexShrink: 0 — this pill uses overflow:hidden for its rounded
+                  corners, which (per the flexbox auto-min-size rule) would
+                  otherwise make IT the header's shrink target under space
+                  pressure and silently clip "Gallery" mid-word. The deck-title
+                  span above already owns that role (its own ellipsis), so this
+                  control must hold its natural width instead. */}
+              <div data-testid="view-switcher" role="group" aria-label="Switch view — editor or gallery" style={{ display: "flex", alignItems: "stretch", flexShrink: 0, border: `1px solid ${T.border}`, borderRadius: 6, overflow: "hidden" }}>
+                <button data-testid="view-switch-editor" onClick={() => { if (inGallery) sa?.toggleGallery?.(); }} disabled={!has} title="Editor view" aria-pressed={!inGallery} style={segStyle(!inGallery)}>Editor</button>
+                <button data-testid="view-switch-gallery" onClick={() => { if (!inGallery) sa?.toggleGallery?.(); }} disabled={!has} title="Gallery view — all slides (G)" aria-pressed={inGallery} style={segStyle(inGallery)}>Gallery</button>
+              </div>
               <button onClick={() => sa?.present?.()} disabled={!has} style={{ display: "flex", alignItems: "center", gap: 5, padding: "5px 14px", background: has ? T.green : T.border, color: has ? "#fff" : T.textDim, border: "none", borderRadius: 6, cursor: has ? "pointer" : "default", opacity: has ? 1 : 0.5, fontFamily: FONT.mono, fontSize: 14, fontWeight: 700 }}>{"▶"} Present</button>
             </>;
           })()}
