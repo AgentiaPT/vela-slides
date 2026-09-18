@@ -1,6 +1,6 @@
 ---
 name: hyper-sprint
-version: 2.2
+version: 2.5
 created: 2026-07-03
 description: >-
   Run a full "implement + test + verify a batch of change requests to zero bugs"
@@ -12,6 +12,9 @@ description: >-
   bugs + a proof artifact (a Markdown sprint report by default; recorded demo optional)".
   Repo-agnostic; reads a root `.hyper-sprint/config.md` for
   repo facts; front-loads app/browser readiness so verification never stalls.
+  Supports an opt-in SILENT mode (`--silent`, "silent sprint", "run this dark",
+  "only give me the final report") — zero progress updates, zero questions, one
+  final message carrying only the committed report link.
 ---
 
 # Hyper Sprint
@@ -64,6 +67,51 @@ the premium context and biases the final gate). Three separate roles:
   small-context verifier per change-request/cluster, plus one or two broad cross-cutting
   hunters (*verify-each + hunt-across* — see *Stop rule*).
 
+## Silent mode (optional, opt-in per invocation) — `references/silent-mode.md`
+
+**Trigger.** The caller turns it on explicitly: `--silent`, "silent mode", "silent sprint",
+"run this dark", or "only give me the final report". It is **off by default**. Nothing in
+`.hyper-sprint/config.md` turns it on; only the invocation does.
+
+**The contract.** Assume the user never reads this thread. The orchestrator sends **exactly
+one** user-visible message, at the very end:
+
+```
+[Sprint "<codename>" report](https://github.com/<owner>/<repo>/tree/<branch>/.hyper-sprint/completed/<YYYY-MM-DD>-<codename>)
+<N>/<M> CRs done · blind gate <clean|N rounds> · <K> parked
+```
+
+Between the invocation and that message the orchestrator emits **zero** assistant prose: no
+plan echo, no phase announcements, no per-merge steering update, no screenshots, no
+"working on cluster 3", no mid-sprint cost note, no questions. Tool calls and sub-agents run
+as normal — only user-facing output is suppressed.
+
+**Never ask, never stall.** Silent mode has **no escape hatch**. Every decision the normal
+flow would put to the user — an ambiguous CR, a UX choice, a readiness `blocked`, an
+undeclared package, a CR that is impossible as written — is resolved by the orchestrator
+alone, with the **most conservative, smallest-diff reading**, and written to the report's
+**Assumptions & unilateral decisions** section. Anything that cannot be resolved that way is
+**parked**, not asked about: record it under **Parked / blocked** with the reason and what it
+would need, then continue with every other CR. A silent sprint never waits for a human.
+
+**The report is mandatory in every terminal state.** Because there is only one message and it
+carries only a link, the report must exist even when the sprint fails. Zero CRs shipped,
+environment dead, all clusters parked — still write, commit and push
+`.hyper-sprint/completed/<sprint>/README.md`, with the failure as its content. A silent
+sprint that ends with no artifact has lost all its information.
+
+**Silence does not lower the gate.** The blind stop rule (§Stop rule) is unchanged and
+non-negotiable: engine-enforced `deadline`, blind validators, any in-scope finding → fix →
+new round. Silent mode removes *reporting*, never *verification*. If the gate never comes
+back clean, the report says so plainly and the final line reads `blind gate NOT clean` — do
+not quietly relax the bar to produce a tidy link.
+
+**Silent mode tightens hub hygiene (this is why it is cheap).** On top of principles 3, 6
+and 9: **zero** inline confirmation re-drives (the normal "at most one for the whole sprint"
+budget drops to none), zero images in the hub without exception, no `SendUserFile`, no
+progress pings or wake-ups. Keep hub tool-results to verdicts. Run the mid-sprint cost
+checkpoint as usual — just never report it; it steers *your* routing, not the user.
+
 ## Operating principles (the economy rules)
 
 1. **Readiness before features (hard gate) — inline it when the env is pre-provisioned,
@@ -81,7 +129,8 @@ the premium context and biases the final gate). Three separate roles:
    just that it boots once — latent harness bugs surface at minute 5, not hour 2, if you
    only check the happy path. The blocked-CDN SPA-boot recipe is one example (`references/
    agent-profiles.md`). Orchestrator **hard-gates on `blocked`**; if the app can't run here,
-   agree the fallback (unit-only + manual checklist) with the user.
+   agree the fallback (unit-only + manual checklist) with the user — **in silent mode, do
+   not ask**: take the unit-only fallback yourself and record it as a unilateral decision.
 2. **Recon in parallel, once — deposit detail to files, return only a pointer.** A
    sub-agent's return value is pinned in the orchestrator's context and cache-read *every
    later turn*, so a recon agent must **write its full line-anchored map (`file:line` + what
@@ -235,7 +284,10 @@ the premium context and biases the final gate). Three separate roles:
    throws away real progress for no reason, but doing it in the main loop is the exact move
    that blew one sprint's hub cost to **$59.74 over 375 turns of 94% cache-read tokens**
    (heuristic ≤50 for a normal sprint, see the cost-economy banner at the top of this file).
-13. **Report for steering, not just logging.** On a fixed cadence (not per-action) give a
+13. **Report for steering, not just logging — SUSPENDED ENTIRELY IN SILENT MODE.** In
+   silent mode skip this whole principle: no cadence updates, no attachments, no
+   mid-sprint anything. Everything below applies to a normal (non-silent) sprint only.
+   On a fixed cadence (not per-action) give a
    short, mobile-readable status: **done / total**, what's in flight, blockers. When the
    profile supports sending files/images, **attach screenshots of new or changed features**
    as they land so the user can course-correct early — cheap steering beats a wrong demo at
@@ -250,6 +302,69 @@ the premium context and biases the final gate). Three separate roles:
     its **base**; don't read, diff against, fetch, or checkout any other branch (or peek at
     other refs) unless strictly required and the user approves. Diff against the base you
     were given, not a guessed default.
+16. **Out-of-scope defects: record them, never fix them.** Hunters, verifiers and workers
+    will find real bugs that no change request asked for — pre-existing breakage, adjacent
+    rough edges, defects in code the sprint only reads. **Do not fix any of them.** Write
+    each one to the report's *Out of scope — found, not fixed* section (§Proof artifact) and
+    move on. This holds for every sprint, silent or not, and for every role: a worker that
+    trips over one notes it in its return and leaves it; a validator reports it in the
+    separate out-of-scope bucket, where it **does not fail the gate** (§Stop rule).
+    Classify **at the moment of discovery**, not after a fix is already written — the bar
+    must not move because something looked quick.
+
+    Why this is a hard rule and not a preference: an unrequested fix widens the diff the
+    reviewer agreed to, can regress code the sprint has no tests for, and makes the blind
+    gate judge work that was never specified. It also breaks the burndown — scope the user
+    never approved silently lands in their branch. A found-and-recorded defect is a
+    *successful* outcome; it becomes the next sprint's input, or a backlog entry under
+    `.hyper-sprint/backlog/` where the repo keeps one.
+
+    **The one exception:** a defect that **blocks the sprint's own work** — it breaks the
+    build, the test suite, or the harness the gate must drive. Then fix the minimum needed
+    to unblock, in its own commit, and record it in the same report section marked
+    *fixed — blocking*. Nothing else qualifies, and "it was a one-liner" does not.
+
+17. **Liveness beat — check that in-flight work is still moving, on a cadence.** A sprint
+    dies quietly far more often than it dies loudly: a sub-agent hits a session limit, a
+    remote validator vanishes, a poll waits on a file nothing will ever write. The
+    orchestrator must therefore keep a **live beat** over everything it is waiting on. This
+    is a *staleness detector*, not a status report — it exists to catch stuck work, and in
+    silent mode it produces **no user output at all**.
+
+    **Register every wait.** When you dispatch a worker, start a background command, or
+    spawn/poll an external session, record three things: what it is, when it started, and
+    the **deadline plus the expiry action** — what you will do if it never returns. **No
+    blocking wait may be unbounded.** A wait with no defined expiry action is the bug.
+
+    **Beat on a cadence** (roughly every 5–10 minutes of wall clock, or at each natural turn
+    boundary while work is outstanding) with **one cheap probe** over all in-flight items —
+    never a fan-out, never a sub-agent per item. Keep the beat's tool-result tiny: a line per
+    item, not a dump (principle 3).
+
+    **Judge progress, not presence.** "Still running" is not "still alive". Compare each item
+    against the previous beat and treat it as **stale** when it has not *moved*: token usage
+    unchanged, no new commit, no file written, no log line — while elapsed time keeps
+    growing. Concrete traps, all of which have happened:
+    - A remote session showing `RUNNING` with **0 tokens consumed** for many minutes is
+      stalled, not slow — especially after a worker restart.
+    - A session can **disappear entirely**. Probe the *dependency's* liveness, not your own
+      poller's: a healthy poll loop waiting on a dead producer looks exactly like progress.
+    - A wait loop whose own command line contains its match pattern (e.g.
+      `until ! pgrep -f "build.sh"`) **matches itself and never exits**. Anchor the pattern
+      so it cannot match the waiter.
+
+    **Act on stale, don't report it.** Per principle 12, replace a dead worker with a fresh
+    sub-agent — never absorb its work. For an expired wait, take the registered expiry action
+    and continue; a dependency that will not return must not strand the sprint. User-visible
+    output: **none in silent mode**; in a normal sprint, at most **one line, only when a
+    stall was detected and acted on**. The beat itself is never announced — a heartbeat the
+    user has to read is just principle 13 by another name.
+
+    **Never attest to something before it is true.** Do not write "committed and pushed",
+    "gate clean", or any verdict into a report, metadata file or return value in advance of
+    the act. Fill the value after the step succeeds, or leave the field absent. A placeholder
+    that ships (`"VERDICT_JSON"`, `TODO`) is a false statement in an artifact the user may be
+    reading instead of the thread.
 
 ## Phases
 
@@ -258,11 +373,14 @@ the premium context and biases the final gate). Three separate roles:
 vendored/declared deps, conventions, stop rule) — honor it over guesses. Identify the **agent
 profile** (`references/agent-profiles.md`) and reuse its known facts. Parse the change list into
 discrete, testable items; ask *now* (batched) about any that don't make sense or need a UX
-decision. Image-heavy PDF → rasterize + read the screenshots (recipe in the profile). If the
+decision. **In silent mode ask nothing** — resolve each such item by the most conservative,
+smallest-diff reading, or park it, and log the call to the report's *Assumptions & unilateral
+decisions* / *Parked* sections (§Silent mode). Image-heavy PDF → rasterize + read the screenshots (recipe in the profile). If the
 spec's screenshots are from a **different app version** than the base, flag it — some CRs may
 already be (partly) done; validate against the spec, don't blind-reimplement. Agree the **stop
 rule** explicitly (blind-hunt duration + proof artifact), and — in the same batched round of
-questions — decide the **gate style** (validator granularity: hybrid per-CR + cross-cutting is
+questions (**silent mode: decide all of these alone, using the defaults**) — decide the
+**gate style** (validator granularity: hybrid per-CR + cross-cutting is
 the default, see principle 7; adjust only for a good reason), the **driver style** (scripted vs
 interactive), and the **proof artifact** shape. Deciding these up front avoids building a
 validation round in one style and scrapping it for another once the CRs are already partitioned.
@@ -323,7 +441,8 @@ adds must be drivable by the repo's burst verb library**: emit the stable test-i
 expect (or update the verbs in the same change) — otherwise the blind gate can't drive the feature
 and you pay a mid-sprint reconciliation. The orchestrator
 merges sequentially, **full suite green between merges**, and posts a steering update (done/
-total + feature screenshots where supported, sent as a file/link — not pasted inline). Re-run
+total + feature screenshots where supported, sent as a file/link — not pasted inline;
+**silent mode: post nothing**). Re-run
 the suite after every fix. **At roughly the halfway point, run the mid-sprint cost checkpoint**
 (`assets/sprint-cost.py` gives a per-agent + per-model cost breakdown from the transcripts so
 far — a mid-sprint run catches hub bloat or an over-provisioned fan-out while there's still
@@ -363,6 +482,10 @@ clickable Markdown link** — `[Sprint "<codename>" report](https://github.com/<
 README on open). NEVER wrap the URL in backticks (that renders as non-clickable code) or hand
 over a bare repo path. Also offer the shorter **repo/branch-root** link — deep paths with a
 dot-folder (`.hyper-sprint`) often fall back to the browser, while short `github.com/<owner>/<repo>` links hand off to the GitHub mobile app more reliably. Then the final status vs the full list.
+**In silent mode this is the sprint's only user-visible message, and it is two lines**: the
+clickable report link, then `<N>/<M> CRs done · blind gate <clean|N rounds> · <K> parked`. No
+status recap, no summary of the work, no second link. Commit **and push** the archive before
+sending it, or the link 404s.
 
 ## Proof artifact — default: a Markdown sprint report (video optional)
 
@@ -373,7 +496,8 @@ burndown** (work-remaining = open CRs + agent-found defects; the blind-hunt roun
 scope, so the curve bumps up before zero — render with `assets/mk-burndown.py`) → **stats**
 (`assets/sprint-stats.py`) → **before/after per change** (screenshots the verifiers already
 captured: HEAD for "after", the base-commit render for "before") → **cost/savings**
-(`assets/sprint-cost.py`, grounded in real numbers) → **bugs found & fixed**. Use **relative**
+(`assets/sprint-cost.py`, grounded in real numbers) → **bugs found & fixed** → **out of scope — found, not fixed** (principle 16: every defect a
+worker or validator turned up that no CR asked for, recorded and left alone). Use **relative**
 `img/…` paths (GitHub renders those; it does *not* render base64 data-URIs) — optionally also
 emit a base64-inlined single-file copy for portable one-click viewing.
 
@@ -400,7 +524,7 @@ gotchas: **`references/demo-deck.md`**.
    recipe** + the **known-intentional behaviors / acceptance nuances**, and instructs:
    "confirm every feature in scope, then hunt ANY bug for **X min non-stop**; **report the
    literal observed output, not interpretations**; report pre-existing/out-of-scope issues
-   *separately* (they don't fail the gate)." **Withhold the sprint history** — bug counts,
+   *separately* and **do not fix them** (they don't fail the gate — principle 16)." **Withhold the sprint history** — bug counts,
    turns, elapsed time, "nearly done", the diff — so the verdict can't be anchored. Classify
    findings **in-scope defect vs cosmetic/out-of-scope from the start** — the bar never moves
    by round. Any in-scope finding → fix → **new** blind round (fresh agents; may share the
@@ -429,7 +553,9 @@ readiness, not a new dependency; do it. **Adding an undeclared language package*
 manager (`apt-get`) are fine. Allow-list (undeclared but safe, no approval — else ask):
 **`playwright`** (Node browser driver; browsers pre-provided) and **`poppler-utils`** (OS/apt:
 `pdftotext`+`pdftoppm` for spec PDFs). Never install a dep the repo config marks **vendored**.
-Anything else: stop and ask; the user amends this list to extend it.
+Anything else: stop and ask; the user amends this list to extend it. **In silent mode
+there is no asking**: treat a needed-but-unapproved package as unavailable — solve it with
+stdlib/vendored code, or park the CR with the package named under *Parked* (§Silent mode).
 
 ## Repo config & pre-requisites
 

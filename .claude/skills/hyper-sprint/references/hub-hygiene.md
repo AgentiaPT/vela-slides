@@ -48,7 +48,9 @@ context — not its own.
   the hub.
 - **Send steering updates as files/links, not inline blobs.** A "here's the new
   feature" update to the user can reference a screenshot path; it doesn't require the
-  image to be pasted into the orchestrator's own context to be shared.
+  image to be pasted into the orchestrator's own context to be shared. **In silent mode
+  send no steering update at all** (`references/silent-mode.md`) — the shots go straight
+  to the archive's `img/` and reach the user through the final report.
 - **Batch dispatch, don't drip it.** Give a worker a whole cluster (every issue sharing its
   file set) as one fat, self-contained objective rather than one dispatch round-trip per
   issue — on a long sprint with a big issue list, dispatch granularity is what drives turn

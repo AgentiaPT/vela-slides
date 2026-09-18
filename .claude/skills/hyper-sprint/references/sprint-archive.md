@@ -24,10 +24,27 @@ a base64-inlined single-file copy (`<Title>.md`) for portable one-click viewing 
 `slug, codename, title, started, completed, branch, base, base_commit, skill, version{from,to},
 tests{from,to}, change_requests[{id,area,summary}], blind_rounds, defects_found_and_fixed,
 cr_bugs_remaining, cost_usd_approx, artifacts{report,plan,images}`.
+Plus, for a silent sprint (`references/silent-mode.md`): `silent` (bool),
+`assumptions[{cr,ambiguity,reading,reversal}]`, `parked[{cr,reason,to_unblock}]`.
 
 ## Report arc (README.md)
 Scope table → **agentic burndown** → stats → **before/after per change** → cost/savings →
-bugs found & fixed → a short "how it was made" note. Cross-link `plan-*.md`.
+bugs found & fixed → **out of scope — found, not fixed** → a short "how it was made" note.
+Cross-link `plan-*.md`.
+
+**Out of scope — found, not fixed** is mandatory and is included even when empty ("none
+found" is information). One entry per defect a worker or validator turned up that no change
+request asked for: where it is, what is wrong, how it was seen, and severity. Per principle
+16 these are **recorded, never fixed** — they are the next sprint's input, not this one's
+scope creep. A defect that blocked the sprint's own build/suite/harness is listed here too,
+marked *fixed — blocking*, with its commit.
+
+**A silent sprint adds two sections, right after the scope table** — they carry the steering
+the user never got in the thread, so they are load-bearing, not appendices:
+**Assumptions & unilateral decisions** (per entry: the CR, the ambiguity, the reading taken,
+and how to reverse it) and **Parked / blocked** (per entry: the CR, why, what would unblock
+it). Include the *Parked* heading even when it is empty — "nothing parked" is information.
+Format and examples: `references/silent-mode.md` §4.
 
 ## Screenshots come FREE from verification (the synthesis)
 Do not run a separate capture step. In Phase 5 the blind verifiers already drive each feature
@@ -57,6 +74,9 @@ the commit timeline; the round results give the bumps).
    the input spec this sprint was scoped from) to `.hyper-sprint/archive/` once the sprint
    branch merges — repo root stays uncluttered with only genuinely open/pending requests.
 6. Deliver the report link (format below). Recorded video demo only if the user asks.
+   **Silent sprint:** push first, then send the two-line link block as the run's *only*
+   user-visible message — and write the report in **every** terminal state, failures
+   included (`references/silent-mode.md` §2, §5).
 
 ## Delivering the link (so it's clickable and can open the GitHub app)
 Hand over the report as a **clickable Markdown link**, never bare text or backticked code:
