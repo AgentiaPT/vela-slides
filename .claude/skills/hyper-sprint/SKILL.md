@@ -1,6 +1,6 @@
 ---
 name: hyper-sprint
-version: 2.5
+version: 2.6
 created: 2026-07-03
 description: >-
   Run a full "implement + test + verify a batch of change requests to zero bugs"
@@ -365,6 +365,33 @@ checkpoint as usual — just never report it; it steers *your* routing, not the 
     the act. Fill the value after the step succeeds, or leave the field absent. A placeholder
     that ships (`"VERDICT_JSON"`, `TODO`) is a false statement in an artifact the user may be
     reading instead of the thread.
+
+18. **Prime every sub-agent for minimal output — nobody reads its transcript.** A
+    sub-agent writes for a reader who does not exist. Its narration is pure cost, and it is
+    charged twice: its own output tokens, and then its **return value, which is pinned in the
+    orchestrator's context and cache-read on every later turn** for the rest of the run.
+    Principle 2 says where detail belongs (files); this says the dispatch prompt must
+    **make the agent's output contract explicit**, every time. An agent told only what to do
+    will narrate by default.
+
+    **Bound the output, never the thinking.** This is the distinction that makes the rule
+    safe: the agent should reason as hard as the task needs, run as many tool calls as it
+    needs, and write as much detail to disk as it needs. Only the **prose it emits** is
+    capped. A prompt that tells an agent to "be brief" without that separation buys a cheap
+    return by making the agent do less work — a far worse trade than the tokens it saves.
+
+    **Every dispatch carries the output contract** (ready-to-paste block:
+    `references/orchestration.md` §Sub-agent output contract). It fixes the return's shape
+    and a hard line ceiling, sends detail to a named path, and forbids the narration an
+    agent produces by reflex: restating the task, announcing steps before taking them,
+    recapping what it just did, summarising its own diff, preamble and sign-off.
+
+    **Verdict first, facts not prose.** The first line is the answer — `pass`, `fail`,
+    `ready`, `blocked`, the count. Everything after it is evidence, and an artifact is a
+    path, never a paste. A worker with a genuine uncertainty flags it in one line rather
+    than swallowing it: brevity must never cost the orchestrator a fact it needed. When a
+    return arrives over-long, do not ask the agent to shorten it — that pays the round-trip
+    twice; take what you need and tighten the next dispatch.
 
 ## Phases
 

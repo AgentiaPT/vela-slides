@@ -43,6 +43,7 @@ The orchestrator must NOT, between invocation and the final message:
 | Mid-sprint cost notes | Run the checkpoint, keep the number, report it in the archive. |
 | Progress pings, `ScheduleWakeup`, check-ins | Nothing. |
 | Inline confirmation re-drives | Zero — the normal "one for the whole sprint" budget is 0. |
+| A dispatch without the output contract | Never — every sub-agent gets it verbatim (principle 18). |
 
 What is **unchanged**: every tool call, every sub-agent, the task tracker, the plan file, the
 blind gate, the suite runs, the commits. Silent mode suppresses *output to the user*, not

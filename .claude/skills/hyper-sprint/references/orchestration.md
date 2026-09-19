@@ -66,6 +66,8 @@ Every hands-on task belongs to a sub-agent, always:
 Each implementation worker gets: a crisp **objective**, its **anchored edit map**
 (`file:line` + change), its **exclusive file set**, and "return a compact result: files
 changed, tests added, `suite: pass|fail`, notes." It does the edits *and* its tests.
+It also gets the **sub-agent output contract** verbatim (§Sub-agent output contract) —
+without it, a worker narrates its whole run back into the hub.
 
 **Parallelize via worktrees, partition to avoid merge pain.** Cluster by file-locality so
 concurrent workers touch **disjoint files**, each in its own git worktree. The
@@ -85,6 +87,39 @@ fix worker re-navigated a modal by hand through ~25 one-shot CLI round-trips (11
 calls for a task that should have been one burst) — the two other fix workers in the same
 sprint used one-off Node scripts instead, a defensible shortcut for a handful of checks, but
 the interactive-CLI path is never defensible once the check count passes a handful.
+
+## Sub-agent output contract
+
+Paste this into **every** dispatch — workers, recon, fix agents, validators (principle 18).
+An agent told only its objective narrates by default, and that narration is charged twice:
+once as its output, then again on every later hub turn as a pinned return value.
+
+```
+OUTPUT CONTRACT — read before you start, obey at the end.
+Nobody reads your transcript. Your return value is pinned in the orchestrator's
+context and re-read on every later turn, so every line costs for the rest of the run.
+
+Think as hard as the task needs. Use as many tool calls as it needs. Write as much
+detail as it needs — to FILES, at <ABSOLUTE PATH>. Only your final message is capped.
+
+Return AT MOST 12 lines, in this shape:
+  line 1  verdict: one of pass | fail | ready | blocked | done  (+ the number that matters)
+  then    the evidence, as facts: what changed, what ran, what it said
+  then    artifacts: absolute paths only — never paste a diff, log, or image
+  last    UNCERTAIN: <one line> — only if something genuinely needs the orchestrator's
+          judgement. Omit the line entirely when there is nothing.
+
+Do NOT: restate the task; announce steps before taking them; recap what you just did;
+summarise your own diff; add a preamble, a sign-off, or an offer of further help.
+Never shorten by leaving out a fact the orchestrator needs — flag it instead.
+```
+
+Adjust only the ceiling and the verdict vocabulary per role — a recon agent returns an
+index, a validator a verdict plus findings count. Keep the rest verbatim; the prohibitions
+are what do the work.
+
+**Do not ask an over-long return to be re-sent shorter** — that pays the round-trip twice
+and the long version is already pinned. Take what you need and tighten the next dispatch.
 
 ## Model & effort routing
 
