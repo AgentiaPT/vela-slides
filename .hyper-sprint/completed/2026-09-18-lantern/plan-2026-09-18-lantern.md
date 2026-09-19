@@ -70,3 +70,29 @@ recorded as a limitation rather than a pass.
 ## What happened vs plan
 
 _Appended at sprint close._
+
+## What happened vs plan
+
+The plan held in shape and was wrong about scale.
+
+**Held.** The 7-cluster partition by file locality was correct — all 7 workers ran in parallel
+worktrees and every cluster was independently testable. The three UX-research change requests (6, 13
+and 15) were decided by the workers and implemented rather than blocked on, which the brief's own
+wording invited. The Neutralino verification limit was called correctly in advance.
+
+**Wrong.** The plan assumed one blind round would close the sprint. It took **four**. Rounds 1, 2 and
+3 each found real in-scope defects, and the final round was clean only after 11 fixes. The gate found
+almost as many defects as the brief contained change requests — and it found them in the sprint's own
+new work, not in old code.
+
+**Not anticipated at all.** Four QA reports were misdiagnoses, each convincing enough to have produced
+a speculative fix: a phantom persistence bug (a debounced read), a phantom PDF truncation
+(`pdftotext` reading order), a phantom layout defect (measured against the wrong element), and a
+phantom drag data-loss (a driver artifact). Refusing to fix on report, and demanding an artifact
+instead, was worth more than any single fix in the sprint.
+
+**Process costs to carry forward.** Every worker overran the 50-tool-call restart budget by 2-3x with
+no quality loss, so the budget is mis-set. The harness blocked workers from writing report files, so
+detail landed in the orchestrator's context instead of on disk — peak standing context 336K tokens,
+re-read every turn. Two harness defects (`vrun --reset` ignored; the `galleryState` verb reading
+test-ids that exist nowhere) each cost real time and one of them nearly produced a false finding.

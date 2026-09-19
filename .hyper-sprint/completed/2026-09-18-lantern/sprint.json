@@ -1,0 +1,22 @@
+{
+  "codename": "lantern",
+  "date": "2026-09-18",
+  "branch": "claude/hyper-sprint-wg4gfj",
+  "baseCommit": "702256ff09e6cc04ed2c0dd98de757e85a5dddea",
+  "version": { "from": "13.74", "to": "13.76" },
+  "changeRequests": { "total": 19, "fixed": 17, "notABug": 2 },
+  "gate": {
+    "blindRounds": 4,
+    "finalRoundClean": true,
+    "defectsFoundAndFixed": 11,
+    "qaReportsRejectedAsMisdiagnoses": 4,
+    "selfInflictedIntegrationDefects": 1,
+    "timeBox": "engine-enforced deadline file per hunter (360s round 1, 600s rounds 2-4)"
+  },
+  "tests": { "pythonBefore": 561, "pythonAfter": 706, "uiBatteryAfter": 333, "failed": 0 },
+  "commits": 40,
+  "cost": { "totalUsd": 290.38, "opusUsd": 264.75, "sonnetUsd": 25.63, "tokens": 510615059, "cacheReadShare": 0.98 },
+  "knownOpenItems": 1,
+  "backlogged": 4,
+  "proof": "README.md with agentic burndown, 24 frame-checked before/after screenshots, and a full defect ledger"
+}
