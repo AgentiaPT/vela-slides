@@ -41,9 +41,10 @@ The orchestrator must NOT, between invocation and the final message:
 | Per-merge steering updates (principle 13) | Nothing. |
 | `SendUserFile`, screenshots, attachments | Nothing. Shots go to the archive `img/`. |
 | Mid-sprint cost notes | Run the checkpoint, keep the number, report it in the archive. |
-| Progress pings, `ScheduleWakeup`, check-ins | Nothing. |
+| Progress pings and check-ins *to the user* | Nothing. |
+| A self-wake used only for the liveness beat | **Allowed and required** — internal machinery, emits nothing (§4b). |
 | Inline confirmation re-drives | Zero — the normal "one for the whole sprint" budget is 0. |
-| A dispatch without the output contract | Never — every sub-agent gets it verbatim (principle 18). |
+| A dispatch without the output contract | Never — every sub-agent gets its prohibitions verbatim (principle 18). |
 
 What is **unchanged**: every tool call, every sub-agent, the task tracker, the plan file, the
 blind gate, the suite runs, the commits. Silent mode suppresses *output to the user*, not
@@ -88,6 +89,11 @@ possibly for hours. So in silent mode the beat is not optional and the rules tig
 - **The expiry action is always "proceed and ship honestly"**, never "keep waiting". A gate
   that will not return becomes `blind gate NOT clean` in the report and in the status line —
   it does not become silence.
+- **The beat needs a timer, and silent mode permits it.** The suppression table bans pings
+  and check-ins *to the user*; a self-wake scheduled only to run the beat is internal
+  machinery and is explicitly allowed. While the hub waits on one long validator it has no
+  natural turn boundary, so without that timer the cadence cannot run at all — and a
+  blocking sleep instead would be the unbounded wait principle 17 forbids.
 - **The beat emits nothing to the user.** Not the beat, not a detected stall, not the
   recovery. All of it goes to the report: a stalled-and-replaced worker or an expired gate
   belongs in *Assumptions & unilateral decisions*, because that is exactly what it is.

@@ -1,6 +1,6 @@
 ---
 name: hyper-sprint
-version: 2.6
+version: 2.7
 created: 2026-07-03
 description: >-
   Run a full "implement + test + verify a batch of change requests to zero bugs"
@@ -109,7 +109,11 @@ not quietly relax the bar to produce a tidy link.
 **Silent mode tightens hub hygiene (this is why it is cheap).** On top of principles 3, 6
 and 9: **zero** inline confirmation re-drives (the normal "at most one for the whole sprint"
 budget drops to none), zero images in the hub without exception, no `SendUserFile`, no
-progress pings or wake-ups. Keep hub tool-results to verdicts. Run the mid-sprint cost
+progress pings. Keep hub tool-results to verdicts.
+**The liveness beat is exempt** (principle 17): a self-wake used *only* to check in-flight
+work is internal machinery, not output, and silent mode suppresses output — never work. It
+emits nothing to the user. Without it a silent sprint has no turn boundary while it waits,
+and the stall it cannot afford becomes undetectable. Run the mid-sprint cost
 checkpoint as usual — just never report it; it steers *your* routing, not the user.
 
 ## Operating principles (the economy rules)
@@ -171,7 +175,9 @@ checkpoint as usual — just never report it; it steers *your* routing, not the 
 6. **Orchestrator, not worker — one canonical verify command; trust green, re-drive by
    exception.** The biggest main-loop turn-inflator is the orchestrator re-verifying every
    worker by hand. Define a
-   *single* repo verify entrypoint; **workers paste its real output** and the orchestrator
+   *single* repo verify entrypoint; **workers paste that run's real summary line(s)** —
+   verbatim, never a paraphrase, with the full log left at a path (a whole log is not a hub
+   payload, principle 3, and the output contract of principle 18 forbids it) — and the orchestrator
    **trusts a green standardized run**, re-driving only on a worker's explicitly-flagged
    uncertainty. And **never hand-write bespoke drivers in the main context** — each ad-hoc
    script sits in the premium context and is re-read (cache-read tax) every later turn; call
@@ -307,10 +313,17 @@ checkpoint as usual — just never report it; it steers *your* routing, not the 
     rough edges, defects in code the sprint only reads. **Do not fix any of them.** Write
     each one to the report's *Out of scope — found, not fixed* section (§Proof artifact) and
     move on. This holds for every sprint, silent or not, and for every role: a worker that
-    trips over one notes it in its return and leaves it; a validator reports it in the
+    trips over one **writes it to the shared notes file and returns a count plus that path**
+    (never the defect list itself — principle 18's contract has no room for it) and leaves it; a validator reports it in the
     separate out-of-scope bucket, where it **does not fail the gate** (§Stop rule).
     Classify **at the moment of discovery**, not after a fix is already written — the bar
     must not move because something looked quick.
+
+    **A security defect is recorded by class, area and severity only** — never with a payload,
+    a reproduction, or a map of the unguarded surface. The report and the backlog are
+    committed to a public repository, so principle 14's disclosure discipline governs them;
+    the mechanics go to the non-public channel the repo uses. This case is expected, not
+    hypothetical: principle 7 runs a security lens over every fix round.
 
     Why this is a hard rule and not a preference: an unrequested fix widens the diff the
     reviewer agreed to, can regress code the sprint has no tests for, and makes the blind
@@ -381,10 +394,18 @@ checkpoint as usual — just never report it; it steers *your* routing, not the 
     return by making the agent do less work — a far worse trade than the tokens it saves.
 
     **Every dispatch carries the output contract** (ready-to-paste block:
-    `references/orchestration.md` §Sub-agent output contract). It fixes the return's shape
-    and a hard line ceiling, sends detail to a named path, and forbids the narration an
-    agent produces by reflex: restating the task, announcing steps before taking them,
-    recapping what it just did, summarising its own diff, preamble and sign-off.
+    `references/orchestration.md` §Sub-agent output contract). It fixes the return's shape,
+    sends detail to a named path, restates the restart budget the agent would otherwise
+    never see, and forbids the narration an agent produces by reflex: restating the task,
+    announcing steps before taking them, recapping what it just did, summarising its own
+    diff, preamble and sign-off.
+
+    **No line ceiling — "as short as the facts allow, no shorter".** An A/B against an
+    identical uncapped dispatch found a 12-line cap halved the prose but cost findings (2
+    contradictions against 5, missing three the uncapped arm caught) while spending more
+    tokens and more tool calls. One task, one sample per arm — a signal, not an effect size,
+    but it points the same way as the paragraph above: the prohibitions are free, a number is
+    not. A return that arrives long is a cheap problem; a finding that never arrives is not.
 
     **Verdict first, facts not prose.** The first line is the answer — `pass`, `fail`,
     `ready`, `blocked`, the count. Everything after it is evidence, and an artifact is a
@@ -524,7 +545,8 @@ scope, so the curve bumps up before zero — render with `assets/mk-burndown.py`
 (`assets/sprint-stats.py`) → **before/after per change** (screenshots the verifiers already
 captured: HEAD for "after", the base-commit render for "before") → **cost/savings**
 (`assets/sprint-cost.py`, grounded in real numbers) → **bugs found & fixed** → **out of scope — found, not fixed** (principle 16: every defect a
-worker or validator turned up that no CR asked for, recorded and left alone). Use **relative**
+worker or validator turned up that no CR asked for, recorded and left alone — plus any that
+blocked the sprint's own build or harness, marked *fixed — blocking*). Use **relative**
 `img/…` paths (GitHub renders those; it does *not* render base64 data-URIs) — optionally also
 emit a base64-inlined single-file copy for portable one-click viewing.
 

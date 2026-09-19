@@ -99,13 +99,22 @@ OUTPUT CONTRACT — read before you start, obey at the end.
 Nobody reads your transcript. Your return value is pinned in the orchestrator's
 context and re-read on every later turn, so every line costs for the rest of the run.
 
-Think as hard as the task needs. Use as many tool calls as it needs. Write as much
-detail as it needs — to FILES, at <ABSOLUTE PATH>. Only your final message is capped.
+Think as hard as the task needs, and do not trade depth for brevity — a missed finding
+costs far more than the lines it would have taken. Write as much detail as it needs — to
+FILES, at <ABSOLUTE PATH>. Only your final message is short.
 
-Return AT MOST 12 lines, in this shape:
+Work within the restart budget: keep `context.md` at <ABSOLUTE PATH>/context.md current
+(after each milestone, before any long run, and at least every 10 tool calls or 5 minutes),
+and at the first hard limit of 50 tool calls, 15 minutes or 3 completed turns, checkpoint
+and stop rather than pressing on. A long command already started may finish.
+
+Return as short as the facts allow and no shorter, in this shape:
   line 1  verdict: one of pass | fail | ready | blocked | done  (+ the number that matters)
-  then    the evidence, as facts: what changed, what ran, what it said
-  then    artifacts: absolute paths only — never paste a diff, log, or image
+  then    the evidence, as facts: what changed, what ran, what it said. A test run's real
+          summary line(s) belong here verbatim; the log itself goes to a path.
+  then    artifacts: absolute paths only — never paste a diff, whole log, or image
+  then    OUT-OF-SCOPE: <n> → <path> — defects you found that nothing asked for, written to
+          that file, never fixed. Omit when none. Security defects: class/area/severity only.
   last    UNCERTAIN: <one line> — only if something genuinely needs the orchestrator's
           judgement. Omit the line entirely when there is nothing.
 
@@ -114,9 +123,18 @@ summarise your own diff; add a preamble, a sign-off, or an offer of further help
 Never shorten by leaving out a fact the orchestrator needs — flag it instead.
 ```
 
-Adjust only the ceiling and the verdict vocabulary per role — a recon agent returns an
-index, a validator a verdict plus findings count. Keep the rest verbatim; the prohibitions
-are what do the work.
+Adjust the verdict vocabulary and add role fields as needed — a recon agent returns an
+index, a validator a verdict plus a findings count, a nested Build dispatch its prescribed
+JSON (§Isolated phase orchestration). Keep the prohibitions verbatim: they are what do the
+work, and an A/B on one task found they cost nothing.
+
+**Do not impose a line ceiling.** An earlier version of this block capped returns at 12
+lines. Measured against an identical dispatch with no contract, the capped arm returned
+about half the prose — and found 2 contradictions where the uncapped arm found 5, including
+three the capped arm missed entirely, while using *more* tokens and *more* tool calls. One
+task, one sample per arm, so treat it as a signal rather than an effect size; but the saving
+was small, the cost was findings, and "as short as the facts allow" carries the intent
+without the failure mode.
 
 **Do not ask an over-long return to be re-sent shorter** — that pays the round-trip twice
 and the long version is already pinned. Take what you need and tighten the next dispatch.
