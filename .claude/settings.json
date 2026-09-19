@@ -1,4 +1,44 @@
 {
+  "permissions": {
+    "deny": [
+      "Workflow"
+    ]
+  },
+  "skillOverrides": {
+    "dataviz": "off",
+    "artifact-design": "off",
+    "artifact-diagramming": "off",
+    "artifact-capabilities": "off",
+    "update-config": "off",
+    "keybindings-help": "off",
+    "fewer-permission-prompts": "off",
+    "loop": "off",
+    "workflow-authoring": "off",
+    "run": "off",
+    "init": "off",
+    "anthropic-skills:algorithmic-art": "off",
+    "anthropic-skills:booking-slots": "off",
+    "anthropic-skills:branch-merge": "off",
+    "anthropic-skills:custom-web-artifacts-builder": "off",
+    "anthropic-skills:docs": "off",
+    "anthropic-skills:docx": "off",
+    "anthropic-skills:fact-check-sourcer": "off",
+    "anthropic-skills:headless-browser-testing": "off",
+    "anthropic-skills:human-voice-writing": "off",
+    "anthropic-skills:import-memory": "off",
+    "anthropic-skills:lisa-loop-v2": "off",
+    "anthropic-skills:md2docx": "off",
+    "anthropic-skills:morning": "off",
+    "anthropic-skills:pdf": "off",
+    "anthropic-skills:plan-dotnet-app": "off",
+    "anthropic-skills:pptx": "off",
+    "anthropic-skills:quiz-maker": "off",
+    "anthropic-skills:skill-creator": "off",
+    "anthropic-skills:vela-slides": "off",
+    "anthropic-skills:xlsx": "off",
+    "copilot-session-cost": "off",
+    "session-start-hook": "off"
+  },
   "enabledPlugins": {
     "security-guidance@claude-plugins-official": true
   },
