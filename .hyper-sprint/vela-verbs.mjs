@@ -253,3 +253,23 @@ export async function hoverBlock(page, index = 0) {
   await page.waitForSelector("[data-testid=block-hover-toolbar]", { timeout: 2000 });
   return page.evaluate(() => { const t = document.querySelector("[data-testid=block-hover-toolbar]"); const r = t.getBoundingClientRect(); return { inside: t.dataset.chromeInside === "true", top: r.top, right: r.right }; });
 }
+// CR13 view switch. where: "top" (top bar, test-id view-switch), "gallery"
+// (gallery header, gallery-view-switch) or "fs" (fullscreen controls,
+// fs-view-switch). Clicks the segment with the REAL mouse only after
+// elementFromPoint at its centre hits that segment (not an overlay).
+// Returns { hit, active } — active is viewSwitchActive() after the click.
+export async function viewSwitch(page, where, mode) {
+  const tid = { top: "view-switch", gallery: "gallery-view-switch", fs: "fs-view-switch" }[where];
+  if (!tid) throw new Error(`viewSwitch: unknown place "${where}"`);
+  const pt = await page.evaluate((sel) => { const b = document.querySelector(`[data-testid=${sel}]`); if (!b) return null; const r = b.getBoundingClientRect(); const x = r.left + r.width / 2, y = r.top + r.height / 2; const top = document.elementFromPoint(x, y); return { x, y, hit: !!top && (top === b || b.contains(top)) }; }, `${tid}-${mode}`);
+  if (!pt) throw new Error(`viewSwitch: no ${tid}-${mode}`);
+  if (!pt.hit) throw new Error(`viewSwitch: ${tid}-${mode} is covered (elementFromPoint misses it)`);
+  await page.mouse.click(pt.x, pt.y);
+  await page.waitForTimeout(250);
+  return { hit: pt.hit, active: await viewSwitchActive(page) };
+}
+// Active view per mounted switch: { top, gallery, fs } — the aria-label of the
+// aria-pressed segment, or null when that switch is not mounted.
+export async function viewSwitchActive(page) {
+  return page.evaluate(() => { const a = (t) => { const g = document.querySelector(`[data-testid=${t}]`); if (!g) return null; const b = g.querySelector("button[aria-pressed=true]"); return b ? b.getAttribute("aria-label") : "none"; }; return { top: a("view-switch"), gallery: a("gallery-view-switch"), fs: a("fs-view-switch") }; });
+}
