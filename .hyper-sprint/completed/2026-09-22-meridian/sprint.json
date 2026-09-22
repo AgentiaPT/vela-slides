@@ -36,7 +36,8 @@
   "blind_rounds": 6,
   "defects_found_and_fixed": 17,
   "cr_bugs_remaining": 0,
-  "cost_usd_approx": 260.59,
+  "cost_usd_approx": 162.0,
+  "cost_usd_note": "Corrected after a retrospective found the cost script double-counted usage. See README.md Retrospective section.",
   "assumptions": [
     { "cr": "CR06", "ambiguity": "spec asks for UX research, not code", "reading": "shipped a research note only", "reversal": "implement the proposed duplicate-in-place step first" },
     { "cr": "CR07", "ambiguity": "reviewMode already names the comments-review feature", "reading": "used reviewed / Review cycle naming instead", "reversal": "rename via find/replace across three files" },

@@ -228,21 +228,27 @@ desktop AI-probe retry loop) — each is proven by its own test file, listed in 
 
 ## 7. Cost and savings
 
-Real numbers from `sprint-cost.py` (transcript-derived, to the cent), across the
-orchestrator and 39 sub-agent sessions used for implementation, review, and the blind gate:
+**Corrected figure. The first number this report gave, $260.59, was wrong.** The cost
+script counted each API call more than once (it summed usage per transcript line, and one
+call can write several lines). See the Retrospective section for the cause and the fix.
+
+The corrected cost, across the orchestrator and 39 sub-agent sessions used for
+implementation, review, and the blind gate:
 
 | | |
 |---|---|
-| Total cost | **$260.59** |
-| By model tier | Opus $235.11 · Sonnet $25.48 |
-| Total tokens | 423,250,669 (97% cache-read) |
-| Sessions | 40 (1 orchestrator + 39 sub-agents) |
+| Total cost (true, all sessions to sprint end) | **≈ $162** |
+| — true cost at sprint end (scanned sessions only) | ≈ $152 |
+| — plus security-review hook sessions and correct 1‑hour cache-write pricing | ≈ $162 |
+| By model tier (true) | Opus ≈ $137 · Sonnet ≈ $16 |
+| Total tokens (true, deduplicated) | ≈ 242,059,426 (about 97.5% cache-read) |
+| Sessions | 40 (1 orchestrator + 39 sub-agents), plus 13 hook sessions not in the original scan |
 
 The high cache-read share reflects the file-locality clustering strategy (each cluster's
 sub-agents keep re-reading the same few part-files as they iterate) and the 6-round blind
 gate re-driving the same offline render repeatedly. Routing view-only clusters (C2) to
 Sonnet and reserving Opus for the higher-risk canvas/export/desktop clusters kept the
-Sonnet share of cost at about 10% for roughly a quarter of the CR count.
+Sonnet share of cost lower for roughly a quarter of the CR count.
 
 ---
 
@@ -327,6 +333,94 @@ across all six blind rounds and all five clusters.
     slide.
 21. One end-to-end test (comments-review "R" key) is flaky only under full parallel test-suite
     load; it passes reliably when run alone.
+
+---
+
+## Retrospective
+
+A post-sprint review checked the cost numbers, the wall time, and the agent work. This
+section gives the short result. It does not include raw logs.
+
+### Cost-accounting bug
+
+The cost script, `sprint-cost.py`, added up API usage more than once for the same call.
+
+- **Cause:** function `scan()` reads every line of each agent transcript file. One API
+  call can write more than one line (for example a thinking line and a text line). The
+  script added the usage on each line, with no check for a line that repeats an earlier
+  call.
+- **Also affected:** function `audit_transcript()` has the same per-line count, so its
+  turn and cache-read numbers are also too high.
+- **Fix:** count each call once, using the message id and request id as a key. Keep the
+  last record for a repeated key instead of adding all of them.
+- **Status: not yet fixed.** The bug is still in `sprint-cost.py`. This report only
+  corrects the numbers by hand for this sprint.
+
+Top 5 sub-agents by true cost:
+
+| # | Agent role | Model | True cost |
+|---|---|---|---|
+| 1 | Worker C3 — canvas/branding | Opus | $14.02 |
+| 2 | Fix F2 — view switch + icons | Opus | $7.92 |
+| 3 | Fix F7 — header hysteresis + save retry | Opus | $7.84 |
+| 4 | Fix F6 — CR01 write-back on open | Opus | $7.45 |
+| 5 | Worker C1 — views-a | Opus | $6.58 |
+
+Orchestrator true cost: **$17.50** to the end of the sprint (about $4.40 of this was 46
+no-op "still working" turns; see waste item W6 below).
+
+### Wall time and critical path
+
+Total wall time: **218 minutes (3 h 38 min)**. The orchestrator was busy about 79 minutes
+and idle, waiting for agents, about **139 minutes (64%)**.
+
+Critical path (the chain of work that set the sprint length), in minutes:
+
+Recon 5.5 → Worker C3 25.7 → merge-conflict fix 5.4 → version bump + CI 3.3 → blind check
+6.0 → Fix F2 19.0 → merge + CI 3.5 → blind check 9.2 → Fix F4 24.3 → merge + CI 3.5 →
+blind check 8.5 → Fix F6 13.3 → merge + CI 3.7 → blind check 9.2 → Fix F7 23.3 →
+merge + CI 4.0 → blind check 11.0 → Fix F8 16.3 → merge + CI 4.3 → blind check 7.2 →
+report 7.9.
+
+Phase share of the total time:
+
+| Phase | Minutes | Share |
+|---|---|---|
+| Intake + recon | 7.2 | 3.3% |
+| Implementation (workers) | 25.9 | 11.9% |
+| Fix rounds + merge/CI | 115.9 | 53.1% |
+| Blind check rounds | 51.6 | 23.7% |
+| Report | 8.5 | 3.9% |
+
+The first pass (start to the first blind check) took 48 minutes. The other **170 minutes
+(78%)** was five repeats of the fix-then-check loop.
+
+### Waste, ranked by cost and time lost
+
+Estimated cost and the fix to use on the next sprint:
+
+| # | Waste | Est. cost | Est. minutes | Fix for next run |
+|---|---|---|---|---|
+| W1 | Five repeat fix/merge/check cycles, each finding only 1–2 defects | ≈$65 | ≈120 | Start the next check on a fixed version while other fixes still run. Merge each fix as it lands. Skip a full round for a single small defect — use one scoped check instead |
+| W2 | The save-path defect needed 4 rounds to close | ≈$26 | ≈75 | Write the save rules (open never writes, a save only advances on success, a newer edit is never lost) before coding, and test them as one state machine |
+| W3 | The top-bar layout defect needed 3 rounds to close | ≈$14 | ≈50 | Add a required width-range check (narrow and wide) to the worker's own test step, not just the blind check |
+| W4 | A lower-cost model shipped a risky UI change half-fixed, so a stronger model had to redo it | ≈$8 | 19 | Route cross-view UI chrome (switches, overlays, fullscreen) to the stronger model from the start |
+| W5 | A full CI run, blocking, on every merge, plus a repeated file conflict | ≈$1 | ≈20 | Do not commit generated files from worker branches. Run only the affected tests on merge; run full CI once, in the background |
+| W6 | Double wake-up per agent produced 46 no-op orchestrator turns | $4.40 | ≈0 | Send the orchestrator one wake-up per finished phase, not one per agent event |
+| W7 | Full CI and the full UI-test battery ran many more times than needed inside workers/fixers | ≈$7 | ≈12 | Workers run only the changed-area tests while iterating, and one full CI check before their final commit |
+| W8 | Every check agent used the strongest model, even for small, narrow checks | ≈$23 | ≈4/round | Use the strongest model for one broad check per round; use a lighter model for small, scoped checks |
+| W9 | A security-review check ran on every commit, including generated files | ≈$11 | ≈2 | Skip the check for generated files; run it once per merged version, not per worker commit |
+| W10 | The cost figure in this report was wrong (see above) | $0 direct | — | Fix `sprint-cost.py`, and run it only after the last agent finishes |
+| W11 | Agents were not restarted at the same call limit | ≈$2 | 0 | State one call limit per agent role and apply it the same way to every agent |
+| W12 | Repeated environment setup steps in most agents | ≈$2 | ≈1–2/agent | Give each agent one setup script that returns a ready environment in one step |
+| W13 | "Before" screenshots taken more than once for the same state | ≈$1 | <1 | Take each "before" screenshot once, early, and reuse it |
+
+### Expected saving for the next run
+
+Fixing the top items (W1, W2, W3, W5) could cut the sprint to about 3 rounds instead of 6:
+an estimated **90–120 minutes saved** (218 minutes down to about 100–130). Fixing the
+model-routing and process items as well (W4, W6, W7, W8, W9) could save a further
+**$50–70 of the ≈$162 all-in cost (about 30–40%)**.
 
 ---
 
