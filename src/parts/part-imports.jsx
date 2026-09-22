@@ -1822,6 +1822,10 @@ function resanitizeLoadedBranding(branding) {
 // Type-checked first (no coercion), charset-limited, no leading "_" (reserved
 // for renderer-private keys). Anything else is replaced by a fresh uid().
 const KEEPABLE_DECK_ID = /^[A-Za-z0-9][A-Za-z0-9-]{0,63}$/;
+// Ids key plain-object maps (gallery counts/colours, per-module storage
+// chunks). An id that names an Object.prototype member would read the
+// inherited value (a function) instead of "missing", so it is not keepable.
+const isKeepableDeckId = (v) => typeof v === "string" && KEEPABLE_DECK_ID.test(v) && !(v in Object.prototype);
 
 // Live deck update (external edit / deck switch): `sanitized` came from
 // validateAndSanitizeDeck(raw, { keepIds: true }). A lane/module whose id was
@@ -1839,7 +1843,7 @@ function adoptPriorDeckIds(sanitized, raw, cur) {
   const used = new Set();
   for (const l of sanitized.lanes) { used.add(l.id); for (const it of l.items || []) used.add(it.id); }
   const adopt = (obj, prior) => {
-    if (rawIds.has(obj.id) || !prior || typeof prior.id !== "string" || !KEEPABLE_DECK_ID.test(prior.id) || used.has(prior.id)) return;
+    if (rawIds.has(obj.id) || !prior || !isKeepableDeckId(prior.id) || used.has(prior.id)) return;
     used.delete(obj.id); obj.id = prior.id; used.add(obj.id);
   };
   sanitized.lanes.forEach((l, li) => {
@@ -1861,7 +1865,7 @@ function validateAndSanitizeDeck(raw, opts) {
   const keepIds = !!(opts && opts.keepIds === true);
   const seenIds = new Set();
   const deckId = (v) => {
-    if (keepIds && typeof v === "string" && KEEPABLE_DECK_ID.test(v) && !seenIds.has(v)) { seenIds.add(v); return v; }
+    if (keepIds && isKeepableDeckId(v) && !seenIds.has(v)) { seenIds.add(v); return v; }
     let id = uid();
     while (seenIds.has(id)) id = uid();
     seenIds.add(id);

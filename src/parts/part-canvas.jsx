@@ -132,9 +132,27 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
         const cs = getComputedStyle(p);
         if (cs.overflowY !== "visible" || cs.overflowX !== "visible") clipTop = Math.max(clipTop, p.getBoundingClientRect().top);
       }
-      const room = (r.top - clipTop) / (scale || 1);
-      const next = { bar: room < 8, pop: room < 35.5 }; // toolbar sits 8px above, popups 32-36px above
-      setChromeFlip((prev) => (prev[i]?.bar === next.bar && prev[i]?.pop === next.pop) ? prev : { ...prev, [i]: next });
+      const s = scale || 1;
+      const room = (r.top - clipTop) / s;
+      const next = { bar: room < 8, pop: room < 35.5, shift: 0 }; // toolbar sits 8px above, popups 32-36px above
+      // The editor overlay chrome (reviewed toggle, comment count, before/after
+      // bar — marked data-editor-overlay in part-slidepanel.jsx) paints above the
+      // slide. A toolbar under it cannot be clicked, so move the toolbar (and its
+      // popups) left until it is clear of every overlay it would touch.
+      const fx = el.closest("[data-testid='slide-fx-wrapper']");
+      const overlays = fx && fx.parentElement ? Array.from(fx.parentElement.querySelectorAll("[data-editor-overlay]")).map((o) => o.getBoundingClientRect()).filter((q) => q.width > 0) : [];
+      if (overlays.length) {
+        const n = 3 + (onBlockEdit ? 1 : 0) + (externalDispatch ? 1 : 0);
+        const barW = n * 18 + (n - 1) * 3, edge = next.bar ? 6 : -8;
+        const barTop = r.top + (next.bar ? 6 : -8) * s, barBottom = barTop + 18 * s;
+        for (let pass = 0; pass <= overlays.length; pass++) {
+          const barRight = r.right - (edge + next.shift) * s, barLeft = barRight - barW * s;
+          const hit = overlays.find((q) => q.left < barRight + 2 && q.right > barLeft - 2 && q.top < barBottom + 2 && q.bottom > barTop - 2);
+          if (!hit) break;
+          next.shift = Math.max(next.shift + 1, Math.ceil((r.right - hit.left + 4) / s - edge));
+        }
+      }
+      setChromeFlip((prev) => (prev[i]?.bar === next.bar && prev[i]?.pop === next.pop && prev[i]?.shift === next.shift) ? prev : { ...prev, [i]: next });
     } catch (_) {}
   };
 
@@ -474,7 +492,7 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
       {b.hidden && !presenting && <div style={{ position: "absolute", top: -6, left: -6, zIndex: 11, fontSize: 9, fontFamily: FONT.mono, fontWeight: 700, background: st.accent, color: "#fff", borderRadius: 4, padding: "0 4px", lineHeight: "14px", pointerEvents: "none" }} title="Hidden in presentation">🙈 hidden</div>}
       {editingBlockIdx === i && !presenting && <div style={{ position: "absolute", inset: -3, border: `2px solid ${st.accent}`, borderRadius: 6, pointerEvents: "none", zIndex: 10, boxShadow: `0 0 12px ${st.accent}40` }} />}
       {hoveredBlock === i && editingBlockIdx !== i && !presenting && <div style={{ position: "absolute", inset: -2, border: `1.5px dashed ${T.red}60`, borderRadius: 4, pointerEvents: "none", zIndex: 10 }} />}
-      {hoveredBlock === i && !itemHovered && !presenting && <div data-testid="block-hover-toolbar" data-chrome-inside={chromeFlip[i]?.bar ? "true" : undefined} style={{ position: "absolute", ...(chromeFlip[i]?.bar ? { top: 6, right: 6 } : { top: -8, right: -8 }), display: "flex", gap: 3, zIndex: 11 }}>
+      {hoveredBlock === i && !itemHovered && !presenting && <div data-testid="block-hover-toolbar" data-chrome-inside={chromeFlip[i]?.bar ? "true" : undefined} style={{ position: "absolute", ...(chromeFlip[i]?.bar ? { top: 6, right: 6 + (chromeFlip[i]?.shift || 0) } : { top: -8, right: -8 + (chromeFlip[i]?.shift || 0) }), display: "flex", gap: 3, zIndex: 11 }}>
         {onBlockEdit && <button onClick={(e) => { e.stopPropagation(); setEditingBlockIdx(editingBlockIdx === i ? null : i); setBlockPrompt(""); setEditingLink(null); }} style={{ width: 18, height: 18, borderRadius: "50%", background: editingBlockIdx === i ? st.accent : T.bgPanel, border: `1px solid ${editingBlockIdx === i ? st.accent : T.border}`, color: editingBlockIdx === i ? "#fff" : T.textDim, fontSize: 9, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", lineHeight: 1, padding: 0, boxShadow: "0 2px 6px rgba(0,0,0,0.4)" }} title="Edit this block with AI">🎯</button>}
         <button onClick={(e) => { e.stopPropagation(); setEditingLink(editingLink === i ? null : i); setEditingBlockIdx(null); setCommentingBlockIdx(null); }} style={{ width: 18, height: 18, borderRadius: "50%", background: b.link ? T.accent : T.bgPanel, border: `1px solid ${b.link ? T.accent : T.border}`, color: b.link ? "#fff" : T.textDim, fontSize: 9, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", lineHeight: 1, padding: 0, boxShadow: "0 2px 6px rgba(0,0,0,0.4)" }} title={b.link ? `Link: ${b.link}` : "Add link"}>🔗</button>
         {externalDispatch && <button onClick={(e) => { e.stopPropagation(); setCommentingBlockIdx(commentingBlockIdx === i ? null : i); setCommentText(""); setEditingBlockIdx(null); setEditingLink(null); }} style={{ width: 18, height: 18, borderRadius: "50%", background: commentingBlockIdx === i ? T.amber : T.bgPanel, border: `1px solid ${commentingBlockIdx === i ? T.amber : T.border}`, color: commentingBlockIdx === i ? "#fff" : T.textDim, fontSize: 9, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", lineHeight: 1, padding: 0, boxShadow: "0 2px 6px rgba(0,0,0,0.4)" }} title="Add comment">💬</button>}
@@ -482,7 +500,7 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
         <button onClick={(e) => { e.stopPropagation(); handleBlockRemove(i); }} style={{ width: 18, height: 18, borderRadius: "50%", background: T.red, border: "none", color: "#fff", fontSize: 10, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", lineHeight: 1, padding: 0, boxShadow: "0 2px 6px rgba(0,0,0,0.4)" }}>✕</button>
       </div>}
       {/* Block edit popup */}
-      {editingBlockIdx === i && !presenting && <div data-testid="block-ai-popup" onClick={(e) => e.stopPropagation()} style={{ position: "absolute", top: (chromeFlip[i]?.pop ? (chromeFlip[i]?.bar ? 30 : 14) : -36), right: 0, zIndex: 12, display: "flex", gap: 4, alignItems: "center", background: "rgba(10,15,28,0.95)", border: `1px solid ${st.accent}50`, borderRadius: 8, padding: "4px 8px", boxShadow: `0 4px 16px rgba(0,0,0,0.6), 0 0 0 1px ${st.accent}20`, backdropFilter: "blur(12px)" }}>
+      {editingBlockIdx === i && !presenting && <div data-testid="block-ai-popup" onClick={(e) => e.stopPropagation()} style={{ position: "absolute", top: (chromeFlip[i]?.pop ? (chromeFlip[i]?.bar ? 30 : 14) : -36), right: chromeFlip[i]?.shift || 0, zIndex: 12, display: "flex", gap: 4, alignItems: "center", background: "rgba(10,15,28,0.95)", border: `1px solid ${st.accent}50`, borderRadius: 8, padding: "4px 8px", boxShadow: `0 4px 16px rgba(0,0,0,0.6), 0 0 0 1px ${st.accent}20`, backdropFilter: "blur(12px)" }}>
         <span style={{ fontSize: 9, color: st.accent, flexShrink: 0 }}>🎯</span>
         <input autoFocus value={blockPrompt} onChange={(e) => setBlockPrompt(e.target.value)}
           onKeyDown={(e) => { e.stopPropagation(); if (e.key === "Enter" && blockPrompt.trim() && !blockEditing) { e.preventDefault(); onBlockEdit(i, blockPrompt.trim()); } if (e.key === "Escape") { setEditingBlockIdx(null); setBlockPrompt(""); } }}
@@ -494,13 +512,13 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
           : <button onClick={() => { if (blockPrompt.trim()) onBlockEdit(i, blockPrompt.trim()); }} disabled={!blockPrompt.trim()} style={{ padding: "2px 8px", fontSize: 9, fontFamily: FONT.mono, fontWeight: 700, background: blockPrompt.trim() ? st.accent : "rgba(255,255,255,0.1)", color: "#fff", border: "none", borderRadius: 4, cursor: blockPrompt.trim() ? "pointer" : "default", opacity: blockPrompt.trim() ? 1 : 0.4, flexShrink: 0 }}>Go</button>}
         <button onClick={() => { setEditingBlockIdx(null); setBlockPrompt(""); }} style={{ background: "none", border: "none", color: "rgba(255,255,255,0.4)", cursor: "pointer", fontSize: 10, padding: 0, flexShrink: 0 }}>✕</button>
       </div>}
-      {editingLink === i && !presenting && <div data-testid="block-link-popup" onClick={(e) => e.stopPropagation()} style={{ position: "absolute", top: (chromeFlip[i]?.pop ? (chromeFlip[i]?.bar ? 30 : 14) : -32), right: 0, zIndex: 12, display: "flex", gap: 4, alignItems: "center", background: T.bgPanel, border: `1px solid ${T.border}`, borderRadius: 6, padding: "3px 6px", boxShadow: "0 4px 12px rgba(0,0,0,0.5)" }}>
+      {editingLink === i && !presenting && <div data-testid="block-link-popup" onClick={(e) => e.stopPropagation()} style={{ position: "absolute", top: (chromeFlip[i]?.pop ? (chromeFlip[i]?.bar ? 30 : 14) : -32), right: chromeFlip[i]?.shift || 0, zIndex: 12, display: "flex", gap: 4, alignItems: "center", background: T.bgPanel, border: `1px solid ${T.border}`, borderRadius: 6, padding: "3px 6px", boxShadow: "0 4px 12px rgba(0,0,0,0.5)" }}>
         <span style={{ fontSize: 9, color: T.textDim }}>🔗</span>
         <input autoFocus defaultValue={b.link || ""} placeholder="https://..." onKeyDown={(e) => { e.stopPropagation(); if (e.key === "Enter") { const url = e.target.value.trim(); handleBlockChange(i, { link: url || undefined }); setEditingLink(null); } if (e.key === "Escape") setEditingLink(null); }} onBlur={(e) => { const url = e.target.value.trim(); handleBlockChange(i, { link: url || undefined }); setEditingLink(null); }} style={{ width: 200, padding: "2px 6px", fontSize: 10, fontFamily: FONT.mono, background: T.bg, color: T.text, border: `1px solid ${T.border}`, borderRadius: 4, outline: "none" }} />
         {b.link && <button onClick={() => { handleBlockChange(i, { link: undefined }); setEditingLink(null); }} style={{ background: "none", border: "none", color: T.red, fontSize: 10, cursor: "pointer", padding: 0 }}>✕</button>}
       </div>}
       {/* Block comment popup */}
-      {commentingBlockIdx === i && !presenting && externalDispatch && <div data-testid="block-comment-popup" onClick={(e) => e.stopPropagation()} style={{ position: "absolute", top: (chromeFlip[i]?.pop ? (chromeFlip[i]?.bar ? 30 : 14) : -36), right: 0, zIndex: 12, display: "flex", gap: 4, alignItems: "center", background: "rgba(10,15,28,0.95)", border: `1px solid ${T.amber}50`, borderRadius: 8, padding: "4px 8px", boxShadow: `0 4px 16px rgba(0,0,0,0.6), 0 0 0 1px ${T.amber}20`, backdropFilter: "blur(12px)" }}>
+      {commentingBlockIdx === i && !presenting && externalDispatch && <div data-testid="block-comment-popup" onClick={(e) => e.stopPropagation()} style={{ position: "absolute", top: (chromeFlip[i]?.pop ? (chromeFlip[i]?.bar ? 30 : 14) : -36), right: chromeFlip[i]?.shift || 0, zIndex: 12, display: "flex", gap: 4, alignItems: "center", background: "rgba(10,15,28,0.95)", border: `1px solid ${T.amber}50`, borderRadius: 8, padding: "4px 8px", boxShadow: `0 4px 16px rgba(0,0,0,0.6), 0 0 0 1px ${T.amber}20`, backdropFilter: "blur(12px)" }}>
         <span style={{ fontSize: 9, flexShrink: 0 }}>💬</span>
         <input autoFocus value={commentText} onChange={(e) => setCommentText(e.target.value)}
           onKeyDown={(e) => { e.stopPropagation(); if (e.key === "Enter" && commentText.trim()) { e.preventDefault(); externalDispatch({ type: "ADD_COMMENT", itemId, slideIndex: index, text: commentText.trim(), blockIndex: i }); setCommentText(""); setCommentingBlockIdx(null); } if (e.key === "Escape") { setCommentingBlockIdx(null); setCommentText(""); } }}

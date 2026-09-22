@@ -16,7 +16,7 @@ that symbol in the named part for the line. No line numbers here — they rot.
 - Validation Constants: MAX_IMPORT_SIZE VALID_STATUSES VALID_IMPORTANCES SAFE_BLOCK_TYPES defaultBranding linkPreview
 - Sanitizers: sanitizeString sanitizeDeckTitle sanitizeUrl openExternalLink SVG_ALLOWED_TAGS SVG_URL_REF_ATTRS CSS_FETCH_SCHEME SVG_VALUE_FNS SVG_STYLE_PROPS SVG_ROOT_BLOCKED isSvgStyleSafe isSvgInlineStyleSafe sanitizeSvgMarkup SAFE_RASTER_DATA_IMAGE sanitizeImageDataUri SAFE_STYLE_KEYS STYLE_VALUE_REJECT sanitizeStyle CSS_COLOR_KEY scrubCssFields scrubColorFields CSS_LAYOUT_KEY scrubLayoutFields CSS_PAINT_KEY cssKeyStem scrubPaintFields velaTestSurfaceEnabled MAX_SUBOBJECT_DEPTH scrubSubObject cssUrl CSS_COLOR_OK cssColor CSS_GRADIENT_OK cssGradient
 - Deck-ingress key allowlists: SAFE_SLIDE_KEYS SAFE_BLOCK_KEYS SLIDE_NUMERIC_BOUNDS clampDeckNumber MAX_BLOCK_DEPTH sanitizeBlock VALID_COMMENT_STATUSES MAX_COMMENTS sanitizeComment
-- Offline Study Notes sanitizer: sanitizeStudyNotes sanitizeSlide sanitizeItem resanitizeLoadedLanes resanitizeLoadedBranding KEEPABLE_DECK_ID adoptPriorDeckIds validateAndSanitizeDeck
+- Offline Study Notes sanitizer: sanitizeStudyNotes sanitizeSlide sanitizeItem resanitizeLoadedLanes resanitizeLoadedBranding KEEPABLE_DECK_ID isKeepableDeckId adoptPriorDeckIds validateAndSanitizeDeck
 - Image Compression: compressImage IMG_SETTINGS compressSlideImage imageAspect PASTE_TITLE_BLOCKS pasteImageLayout gridColsFor
 - Status & Importance Meta: STATUSES STATUS_META IMP
 - Themes: themes T statusColor FONT buildTitleCardSlide
@@ -121,7 +121,7 @@ that symbol in the named part for the line. No line numbers here — they rot.
 - AI editor request ownership: _editorOwnershipSetup _openQuickEditor _openAiSlideAdder
 - Product Tour Suite: _productTourSetup
 - meridian CR04 / CR14 / CR07 (sprint "meridian"): _m1RowTitles _m1Undo _m1ClickRow
-- Sprint meridian (C3): split image alignment, accent 0, docked branding: _mrdSvg _mrdViewport _mrdFrame _mrdInject _mrdSetRange _mrdOpenBranding _mrdCloseBranding _mrdUndoTo _mrdHover _mrdUnhover
+- Sprint meridian (C3): split image alignment, accent 0, docked branding: _mrdSvg _mrdViewport _mrdFrame _mrdInject _mrdSetRange _mrdOpenBranding _mrdCloseBranding _mrdUndoTo _mrdHover _mrdUnhover _mrdCr15Clear
 - UI TEST RUNNER COMPONENT: computeDeckFingerprint DEMO_DECK_FP_TITLE VelaUITestRunner
 
 ### part-demo.jsx
@@ -319,7 +319,7 @@ add_lane add_item batch_add_items remove_item remove_lane rename_item rename_lan
 
 - part-imports.jsx: 860-line unbannered stretch after line 513
 - part-blocks.jsx: 764-line unbannered stretch after line 843
-- part-canvas.jsx: 435-line unbannered stretch after line 24
+- part-canvas.jsx: 453-line unbannered stretch after line 24
 - part-slidepanel.jsx: 471-line unbannered stretch after line 209
 - part-slidepanel.jsx: 404-line unbannered stretch after line 992
 - part-uitest.jsx: 616-line unbannered stretch after line 1230
