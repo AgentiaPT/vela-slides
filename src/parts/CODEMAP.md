@@ -83,7 +83,7 @@ that symbol in the named part for the line. No line numbers here — they rot.
 - StudentPanel — dispatcher: static studyNotes first, else live Vera: StudentPanel TeacherPanel SectionPicker
 
 ### part-slidepanel.jsx
-- Slide Panel — editor slide view, fullscreen/presenter nav, per-slide AI actions: SlidePanel
+- Slide Panel — editor slide view, fullscreen/presenter nav, per-slide AI actions: VIEW_SWITCH_SEGMENTS ViewSwitch SlidePanel
 
 ### part-list.jsx
 - (file preamble): _velaDrag _setDrag _clearDrag
@@ -121,6 +121,8 @@ that symbol in the named part for the line. No line numbers here — they rot.
 - AI editor request ownership: _editorOwnershipSetup _openQuickEditor _openAiSlideAdder
 - Product Tour Suite: _productTourSetup
 - meridian CR04 / CR14 / CR07 (sprint "meridian"): _m1RowTitles _m1Undo _m1ClickRow
+- meridian-CR10 / meridian-CR11: fullscreen nav icons keep a visible chip: _mrdIsLightTheme _mrdCheckNavGlyphs
+- meridian-CR13: editor|presenter|gallery view switcher next to Present: _mrdSeg _mrdActive _mrdOnTop _mrdSwitchTo _mrdGalleryOpen
 - Sprint meridian (C3): split image alignment, accent 0, docked branding: _mrdSvg _mrdViewport _mrdFrame _mrdInject _mrdSetRange _mrdOpenBranding _mrdCloseBranding _mrdUndoTo _mrdHover _mrdUnhover _mrdCr15Clear
 - UI TEST RUNNER COMPONENT: computeDeckFingerprint DEMO_DECK_FP_TITLE VelaUITestRunner
 
@@ -320,8 +322,8 @@ add_lane add_item batch_add_items remove_item remove_lane rename_item rename_lan
 - part-imports.jsx: 860-line unbannered stretch after line 513
 - part-blocks.jsx: 764-line unbannered stretch after line 843
 - part-canvas.jsx: 453-line unbannered stretch after line 24
-- part-slidepanel.jsx: 471-line unbannered stretch after line 209
-- part-slidepanel.jsx: 404-line unbannered stretch after line 992
+- part-slidepanel.jsx: 475-line unbannered stretch after line 230
+- part-slidepanel.jsx: 406-line unbannered stretch after line 1017
 - part-uitest.jsx: 616-line unbannered stretch after line 1230
 - part-uitest2.jsx: 448-line unbannered stretch after line 2
 - part-uitest2.jsx: 593-line unbannered stretch after line 1395
@@ -332,4 +334,3 @@ add_lane add_item batch_add_items remove_item remove_lane rename_item rename_lan
 - part-pdf-vector.jsx: 480-line unbannered stretch after line 459
 - part-pdf-vector.jsx: 524-line unbannered stretch after line 1204
 - part-pptx.jsx: no level-1 banners (1188 lines)
-- part-app.jsx: 356-line unbannered stretch after line 856
