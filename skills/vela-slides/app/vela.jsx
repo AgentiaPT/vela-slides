@@ -1627,7 +1627,8 @@ function sanitizeComment(c) {
     anchor: typeof c.anchor === "string" ? sanitizeString(c.anchor, 200) : null,
     blockIndex: typeof c.blockIndex === "number" ? c.blockIndex : null,
     status: VALID_COMMENT_STATUSES.has(c.status) ? c.status : "open",
-    createdAt: typeof c.createdAt === "string" ? c.createdAt.slice(0, 30) : now(),
+    // null, not now(): a stamp here changed an unchanged deck on each open (CR01).
+    createdAt: typeof c.createdAt === "string" ? c.createdAt.slice(0, 30) : null,
     resolvedAt: typeof c.resolvedAt === "string" ? c.resolvedAt.slice(0, 30) : null,
   };
 }
@@ -1734,12 +1735,27 @@ function sanitizeSlide(slide) {
   return clean;
 }
 
+// Deterministic short id from a string (djb2, base36). Used where a value is
+// DERIVED from deck content during sanitize, so the same deck gives the same
+// value on every open (CR01): a random id here made an unchanged deck look
+// edited. Not a security primitive — the output is a fixed charset.
+function stableIdFrom(str) {
+  let h = 5381;
+  for (let i = 0; i < str.length; i++) h = ((h << 5) + h + str.charCodeAt(i)) | 0;
+  return (h >>> 0).toString(36);
+}
+
 function sanitizeItem(item) {
   if (!item || typeof item !== "object") return null;
   const comments = Array.isArray(item.comments) ? item.comments.slice(0, MAX_COMMENTS).map(sanitizeComment).filter(Boolean) : [];
-  // Migrate legacy notes to a module-level comment if no comments exist
+  const createdAt = typeof item.createdAt === "string" ? item.createdAt.slice(0, 30) : null;
+  // Migrate legacy notes to a module-level comment if no comments exist.
+  // id + createdAt are derived from the module (not uid()/now()), so re-opening
+  // the same deck gives the same comment (CR01).
   if (comments.length === 0 && typeof item.notes === "string" && item.notes.trim()) {
-    comments.push({ id: "c_" + uid(), text: sanitizeString(item.notes.trim(), 1000), anchor: null, blockIndex: null, status: "open", createdAt: now(), resolvedAt: null });
+    const text = sanitizeString(item.notes.trim(), 1000);
+    const seed = (typeof item.id === "string" ? item.id.slice(0, 64) : "") + "\u0000" + (typeof item.title === "string" ? item.title.slice(0, 200) : "") + "\u0000" + text;
+    comments.push({ id: "c_n" + stableIdFrom(seed), text, anchor: null, blockIndex: null, status: "open", createdAt, resolvedAt: null });
   }
   return {
     id: uid(),
@@ -1750,7 +1766,9 @@ function sanitizeItem(item) {
     importance: VALID_IMPORTANCES.has(item.importance) ? item.importance : "should",
     order: typeof item.order === "number" ? item.order : 0,
     slides: Array.isArray(item.slides) ? item.slides.slice(0, 100).map(sanitizeSlide).filter(Boolean) : [],
-    createdAt: typeof item.createdAt === "string" ? item.createdAt.slice(0, 30) : now(),
+    // A missing createdAt stays absent (nothing reads it): stamping now() here
+    // changed the deck on every open (CR01).
+    ...(createdAt !== null ? { createdAt } : {}),
     ...(item.presentCard ? { presentCard: true } : {}),
   };
 }
@@ -1852,6 +1870,14 @@ function adoptPriorDeckIds(sanitized, raw, cur) {
     (l.items || []).forEach((it, ii) => adopt(it, cl && Array.isArray(cl.items) ? cl.items[ii] : null));
   });
   return sanitized;
+}
+
+// The deck content the local/desktop shell writes to the file (part-app.jsx
+// flushLocalStateRef). Its JSON is the no-edit guard's signature: a flush whose
+// signature equals the file's known content is skipped, so opening a deck the
+// user did not change never writes the file (CR01).
+function localDeckPayload(s) {
+  return { deckTitle: s.deckTitle, lanes: s.lanes, branding: s.branding, guidelines: s.guidelines };
 }
 
 function validateAndSanitizeDeck(raw, opts) {
@@ -24070,6 +24096,14 @@ export default function App() {
   const postDemoFlushRequest = useRef(null);
   const postDemoFlushModes = useRef({ local: false, storage: false });
   const flushLocalStateRef = useRef(null);
+  // No-edit guard (CR01): JSON of the deck payload the file is known to hold —
+  // the state right after a load from disk, then each payload we send. A flush
+  // whose payload equals it is skipped, so opening a deck the user did not
+  // change never rewrites the file (sanitize can normalize values on load).
+  const _localDiskSig = useRef(null);
+  // lanes object of the last LOAD from disk (startup patch / incoming update);
+  // the lanes effect adopts that state as the baseline instead of saving it.
+  const _localBaselineLanes = useRef(null);
   const flushStorageStateRef = useRef(null);
   const requestPostDemoFlushRef = useRef(null);
   _localSyncState.current = state; // always up-to-date
@@ -24090,8 +24124,12 @@ export default function App() {
     if (!save.lanes?.length || !totalSlides) return false;
     delete save.chatMessages; delete save.chatLoading; delete save.fullscreen;
     delete save.lastDebug; delete save._bootstrap; delete save._version;
+    const payload = localDeckPayload(source);
+    const sig = JSON.stringify(payload);
+    if (sig === _localDiskSig.current) return false; // unchanged vs file: nothing to write
     try {
-      window.__velaSendDeckUpdate({ deckTitle: source.deckTitle, lanes: save.lanes, branding: save.branding, guidelines: save.guidelines });
+      window.__velaSendDeckUpdate(payload);
+      _localDiskSig.current = sig;
       return true;
     } catch (error) {
       dbg("Local save error:", error);
@@ -24395,6 +24433,13 @@ export default function App() {
     // a deck switch (the _localSyncIncoming guard skips setting a new timer
     // but must still kill the old one).
     clearTimeout(localSyncTimer.current);
+    // First render of a deck just loaded from disk: record it as the file's
+    // content instead of scheduling a save (CR01 no-edit guard).
+    if (VELA_LOCAL_MODE && loaded.current && _localBaselineLanes.current && state.lanes === _localBaselineLanes.current) {
+      _localBaselineLanes.current = null;
+      _localDiskSig.current = JSON.stringify(localDeckPayload(_localSyncState.current));
+      return;
+    }
     if (!VELA_LOCAL_MODE || !loaded.current || _localSyncIncoming.current ||
         document.documentElement.dataset.velaDemoRunning === "true") return;
     localSyncTimer.current = setTimeout(() => flushLocalStateRef.current?.(null), 600);
@@ -24429,6 +24474,7 @@ export default function App() {
           // Reset selection when switching to a different deck so auto-select picks the first module
           ...(isDifferentDeck ? { selectedId: null, slideIndex: 0 } : {}),
         };
+        _localBaselineLanes.current = payload.lanes;
         dispatch({ type: "LOAD", payload });
       } catch (e) {
         // Fail closed: a malicious .vela edited on disk is pushed here over the serve.py
@@ -24712,7 +24758,12 @@ export default function App() {
         if (VELA_LOCAL_MODE) {
           // Local/folder mode: file on disk is always authoritative — apply directly
           // (localStorage may contain a different deck from the same origin)
-          try { applyStartupPatch(loadedDeck || { lanes: [] }, dispatch); } catch (err) { dbg("[PATCH] Error:", err); }
+          try {
+            applyStartupPatch(loadedDeck || { lanes: [] }, (a) => {
+              if (a && a.type === "LOAD" && a.payload) _localBaselineLanes.current = a.payload.lanes;
+              dispatch(a);
+            });
+          } catch (err) { dbg("[PATCH] Error:", err); }
         } else if (!loadedDeck) {
           // First run — no saved data, apply patch directly
           try { applyStartupPatch({ lanes: [] }, dispatch); } catch (err) { dbg("[PATCH] Error:", err); }
