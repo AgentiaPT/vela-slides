@@ -79,12 +79,23 @@ async function extFetch(pathname, body, timeoutMs) {
   try {
     // host literal "localhost" — the desktop CSP allows http://localhost:* and
     // it resolves to the loopback the gatekeeper binds.
-    const r = await fetch(`http://localhost:${hs.port}${pathname}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "x-vela-token": hs.token },
-      body: JSON.stringify(body || {}),
-      signal: controller.signal,
-    });
+    let r;
+    try {
+      r = await fetch(`http://localhost:${hs.port}${pathname}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-vela-token": hs.token },
+        body: JSON.stringify(body || {}),
+        signal: controller.signal,
+      });
+    } catch (e) {
+      // Network-level failure (connection refused / timeout): the cached
+      // port+token can be STALE — left by a previous gatekeeper that did not
+      // clean up, or read before a slow new gatekeeper rewrote the files. Keeping
+      // it made every retry and every manual rescan hit the same dead port until
+      // a restart (CR19). Drop it so the next call re-reads the handshake files.
+      handshake = null;
+      throw e;
+    }
     if (r.status === 401) { handshake = null; throw new Error("AI agent auth failed"); }
     const data = await r.json().catch(() => ({}));
     if (!r.ok || !data.ok) throw new Error(data.error || `agent error ${r.status}`);
@@ -127,9 +138,31 @@ async function detect() {
   return gatekeeperUp;
 }
 
+// Probe until an agent is available or the deadline passes. There is no early
+// exit on "gatekeeper answered, no agent": on a fresh build the agent's own
+// first `--version` run can be slow or blocked for a while and reads as a
+// negative, and the old 3-empty-answers cutoff (~2.4s) gave up long before the
+// startup budget. A real negative costs only a few cheap background probes.
+// Every attempt is reported to onAttempt(gatekeeperUp, or null on error).
+// `now` / `wait` are injectable for tests (fake clock).
+async function probeUntilReady({ deadline, onAttempt, now = () => Date.now(), wait = sleep } = {}) {
+  let delay = 500;
+  for (;;) {
+    let up = null;
+    try { up = await detect(); } catch { up = null; }
+    if (onAttempt) { try { onAttempt(up); } catch {} }
+    if (activeId && detected?.[activeId]?.available) return true;
+    if (!(now() < deadline)) return false;
+    await wait(Math.min(delay, Math.max(0, deadline - now())));
+    delay = Math.min(Math.round(delay * 1.5), 4000);
+  }
+}
+
 export const agents = {
   // Re-probe availability (after install, or on manual refresh).
   async detect() { return detect(); },
+
+  probeUntilReady(opts) { return probeUntilReady(opts); },
 
   // Available providers only (for the picker UI).
   list() { return availableList(); },

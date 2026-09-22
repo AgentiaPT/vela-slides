@@ -148,6 +148,7 @@ class NeutralinoConfigInvariants(unittest.TestCase):
         expected = {
             "window.setFullScreen", "window.exitFullScreen", "window.maximize",
             "window.unmaximize", "window.isMaximized", "window.focus",
+            "window.setTitle",  # CR16 title sync (window-glue.js); string only, no path
         }
         self.assertEqual(window_entries, expected)
 

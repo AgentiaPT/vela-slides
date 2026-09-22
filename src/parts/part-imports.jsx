@@ -421,7 +421,10 @@ function applyStartupPatch(loadedDeck, dispatch) {
   if (STARTUP_PATCH.lanes) {
     dbg("[PATCH] Full deck replace");
     try {
-      const sanitized = validateAndSanitizeDeck(STARTUP_PATCH);
+      // keepIds: a startup patch REPLACES the whole deck (nothing else in state to
+      // collide with), so its own valid, unique ids survive. Minting fresh ids here
+      // churned every lane/module id on each desktop/local open (CR01).
+      const sanitized = validateAndSanitizeDeck(STARTUP_PATCH, { keepIds: true });
       dispatch({ type: "LOAD", payload: { ...sanitized, deckTitle: sanitizeDeckTitle(STARTUP_PATCH.deckTitle) } });
     } catch (e) {
       // Fail closed: never load an unsanitized deck. validateAndSanitizeDeck only throws
@@ -1812,15 +1815,66 @@ function resanitizeLoadedBranding(branding) {
   return b;
 }
 
-function validateAndSanitizeDeck(raw) {
+// Lane/module ids a deck may keep when the caller passes { keepIds: true }.
+// Type-checked first (no coercion), charset-limited, no leading "_" (reserved
+// for renderer-private keys). Anything else is replaced by a fresh uid().
+const KEEPABLE_DECK_ID = /^[A-Za-z0-9][A-Za-z0-9-]{0,63}$/;
+
+// Live deck update (external edit / deck switch): `sanitized` came from
+// validateAndSanitizeDeck(raw, { keepIds: true }). A lane/module whose id was
+// freshly minted (the raw id was missing/invalid/duplicate) takes the id at the
+// same position in `cur`, so selection survives an editor that dropped ids —
+// but only when that id is valid and not already used in `sanitized` (ids stay
+// unique). Ids the file kept are never overwritten (CR01).
+function adoptPriorDeckIds(sanitized, raw, cur) {
+  if (!sanitized || !Array.isArray(sanitized.lanes) || !cur || !Array.isArray(cur.lanes)) return sanitized;
+  const rawIds = new Set();
+  for (const l of (raw && Array.isArray(raw.lanes) ? raw.lanes : [])) {
+    if (l && typeof l.id === "string") rawIds.add(l.id);
+    for (const it of (l && Array.isArray(l.items) ? l.items : [])) if (it && typeof it.id === "string") rawIds.add(it.id);
+  }
+  const used = new Set();
+  for (const l of sanitized.lanes) { used.add(l.id); for (const it of l.items || []) used.add(it.id); }
+  const adopt = (obj, prior) => {
+    if (rawIds.has(obj.id) || !prior || typeof prior.id !== "string" || !KEEPABLE_DECK_ID.test(prior.id) || used.has(prior.id)) return;
+    used.delete(obj.id); obj.id = prior.id; used.add(obj.id);
+  };
+  sanitized.lanes.forEach((l, li) => {
+    const cl = cur.lanes[li];
+    adopt(l, cl);
+    (l.items || []).forEach((it, ii) => adopt(it, cl && Array.isArray(cl.items) ? cl.items[ii] : null));
+  });
+  return sanitized;
+}
+
+function validateAndSanitizeDeck(raw, opts) {
   if (!raw || typeof raw !== "object") throw new Error("Invalid deck format");
   if (!Array.isArray(raw.lanes)) throw new Error("Missing lanes array");
+  // Default (fresh import): every lane/module id is re-minted so an imported
+  // deck can never collide with ids already in state. keepIds (full-deck
+  // replace, e.g. the startup patch): keep each valid id that is unique across
+  // ALL lanes + modules of this deck; a duplicate or invalid id is repaired
+  // with a fresh one, so the collision defense still holds inside the deck.
+  const keepIds = !!(opts && opts.keepIds === true);
+  const seenIds = new Set();
+  const deckId = (v) => {
+    if (keepIds && typeof v === "string" && KEEPABLE_DECK_ID.test(v) && !seenIds.has(v)) { seenIds.add(v); return v; }
+    let id = uid();
+    while (seenIds.has(id)) id = uid();
+    seenIds.add(id);
+    return id;
+  };
   // Clamp rather than throw: a >50-lane deck must not be able to trip an exception
   // that a fail-open caller would catch and then load raw, unsanitized (sanitizer off-switch).
   const lanes = raw.lanes.slice(0, 50).map((lane) => {
     if (!lane || typeof lane !== "object") return null;
-    const items = Array.isArray(lane.items) ? lane.items.slice(0, 200).map(sanitizeItem).filter(Boolean) : [];
-    return { id: uid(), title: sanitizeString(lane.title || "Untitled", 100), collapsed: !!lane.collapsed, items };
+    const laneId = deckId(lane.id);
+    const items = Array.isArray(lane.items) ? lane.items.slice(0, 200).map((item) => {
+      const clean = sanitizeItem(item);
+      if (clean) clean.id = deckId(item.id);
+      return clean;
+    }).filter(Boolean) : [];
+    return { id: laneId, title: sanitizeString(lane.title || "Untitled", 100), collapsed: !!lane.collapsed, items };
   }).filter(Boolean);
   const rawBranding = raw.branding && typeof raw.branding === "object" ? raw.branding : {};
   const importedBranding = {
