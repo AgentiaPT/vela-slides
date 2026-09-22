@@ -68,10 +68,22 @@ document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "hidden") cancelPendingRetries();
 });
 
+// Give the document keyboard focus so Vela's window-level keydown handlers
+// (presenter, editor, gallery) receive events. DOM-only: it moves focus
+// inside our own page, never across processes or windows, so unlike
+// Neutralino.window.focus() it cannot steal the OS foreground from another
+// app (D2).
+function domFocusRestore() {
+  try {
+    if (document.body && typeof document.body.focus === "function") document.body.focus();
+  } catch { /* document not ready */ }
+}
+
 export function focusWindow() {
   cancelPendingRetries();
   const tryFocus = () => { try { Neutralino.window.focus(); } catch { /* window.* gated or not ready */ } };
   tryFocus();
+  domFocusRestore();
   pendingRetryTimers.push(setTimeout(tryFocus, 120));
   pendingRetryTimers.push(setTimeout(tryFocus, 400));
 }
@@ -91,8 +103,15 @@ export function installRefocus() {
     focusWindow();
   };
   window.addEventListener("focus", refocus);
+  // "visibilitychange" -> "visible" fires not only when the user returns, but
+  // also on window-occlusion changes (a covering window moves away, or an
+  // un-minimize) under WebView2/Chromium occlusion tracking. That is not "the
+  // user came back", so it must NOT call the native Neutralino.window.focus()
+  // — doing so would pull Vela over the app the user is actually using (D2).
+  // Restore only the in-page keyboard focus here; the native call stays
+  // gated to the two signals below, which fire only on a real focus gain.
   document.addEventListener("visibilitychange", () => {
-    if (document.visibilityState === "visible") refocus();
+    if (document.visibilityState === "visible") domFocusRestore();
   });
   try { Neutralino.events.on("windowFocus", refocus); } catch { /* events not ready */ }
   return refocus;

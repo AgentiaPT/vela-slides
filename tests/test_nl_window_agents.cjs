@@ -40,6 +40,7 @@ function makeTarget() {
 function loadGlue(Neu) {
   const win = makeTarget(), doc = makeTarget();
   doc.visibilityState = "visible";
+  doc.body = { focusCount: 0, focus() { this.focusCount++; } };
   const body = stripEsm(fs.readFileSync(path.join(JS, "window-glue.js"), "utf8")) +
     "\n;return { windowTitleFor, setWindowTitle, focusWindow, installRefocus };";
   // eslint-disable-next-line no-new-func
@@ -120,17 +121,36 @@ function makeNeu() {
     win.fire("focus");
     assert(Neu.calls.focus >= 1, "no native focus on window focus event");
   });
-  await test("meridian-CR18 native windowFocus and visibilitychange also re-arm focus", async () => {
+  await test("meridian-CR18 native windowFocus re-arms native focus", async () => {
     const Neu = makeNeu();
-    const { mod, doc } = loadGlue(Neu);
+    const { mod } = loadGlue(Neu);
     mod.installRefocus();
     assert(typeof Neu.calls.events.windowFocus === "function", "windowFocus listener not registered");
     Neu.calls.events.windowFocus();
-    const afterNative = Neu.calls.focus;
-    assert(afterNative >= 1, "no focus on native windowFocus");
-    await tick(700);                  // latch expires
+    assert(Neu.calls.focus >= 1, "no focus on native windowFocus");
+  });
+  await test("meridian-D2 visibilitychange 'visible' does NOT call native window.focus() (no foreground steal)", async () => {
+    const Neu = makeNeu();
+    const { mod, doc } = loadGlue(Neu);
+    mod.installRefocus();
+    doc.visibilityState = "visible";
     doc.fire("visibilitychange");
-    assert(Neu.calls.focus > afterNative, "no focus on visibilitychange");
+    assert(Neu.calls.focus === 0, "visibilitychange stole native OS focus: " + Neu.calls.focus);
+  });
+  await test("meridian-D2 visibilitychange 'visible' still restores DOM keyboard focus", async () => {
+    const Neu = makeNeu();
+    const { mod, doc } = loadGlue(Neu);
+    mod.installRefocus();
+    doc.visibilityState = "visible";
+    doc.fire("visibilitychange");
+    assert(doc.body.focusCount >= 1, "no DOM focus restore on visibilitychange");
+  });
+  await test("meridian-D2 real focus events still restore DOM keyboard focus too", async () => {
+    const Neu = makeNeu();
+    const { mod, win, doc } = loadGlue(Neu);
+    mod.installRefocus();
+    win.fire("focus");
+    assert(doc.body.focusCount >= 1, "no DOM focus restore on real focus event");
   });
   await test("meridian-CR18 every alt-tab cycle re-arms focus (not only the first)", async () => {
     const Neu = makeNeu();
