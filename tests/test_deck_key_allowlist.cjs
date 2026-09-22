@@ -35,7 +35,7 @@ const prelude = `
 const combined = prelude + "\n" + importsSrc.slice(sliceStart, sliceEnd) + "\n" +
   "; return { sanitizeSlide, sanitizeBlock, sanitizeItem, validateAndSanitizeDeck," +
   " buildTitleCardSlide, SAFE_SLIDE_KEYS, SAFE_BLOCK_KEYS, SLIDE_NUMERIC_BOUNDS," +
-  " MAX_BLOCK_DEPTH, MAX_SUBOBJECT_DEPTH };";
+  " MAX_BLOCK_DEPTH, MAX_SUBOBJECT_DEPTH, resanitizeLoadedBranding };";
 
 let API;
 try {
@@ -457,6 +457,22 @@ const baseSlide = (extra) => ({ duration: 60, blocks: [{ type: "heading", text: 
   const s = sanitizeSlide({ blocks: [], bgImage: dataUri });
   assert("v13.25: a legitimate slide bgImage data: URI still survives ingress",
     s.bgImage === dataUri);
+}
+
+// CR08 (meridian): accent height 0 means "no top line". It must survive deck
+// ingress and the storage-reload re-scrub as 0, not fall back to the 4px default.
+{
+  const { resanitizeLoadedBranding } = API;
+  const loaded = validateAndSanitizeDeck({ deckTitle: "D", branding: { enabled: true, accentBar: true, accentHeight: 0 },
+    lanes: [{ title: "L", items: [{ title: "M", slides: [baseSlide()] }] }] });
+  assert("CR08: branding.accentHeight 0 survives deck ingress", loaded.branding.accentHeight === 0,
+    `got ${loaded.branding.accentHeight}`);
+  const reloaded = resanitizeLoadedBranding(JSON.parse(JSON.stringify(loaded.branding)));
+  assert("CR08: branding.accentHeight 0 survives the storage-reload scrub", reloaded.accentHeight === 0,
+    `got ${reloaded.accentHeight}`);
+  const again = validateAndSanitizeDeck(JSON.parse(JSON.stringify(loaded)));
+  assert("CR08: branding.accentHeight 0 survives a save/load round trip", again.branding.accentHeight === 0,
+    `got ${again.branding.accentHeight}`);
 }
 
 console.log(`\n  ${pass} passed, ${fail} failed`);

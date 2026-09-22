@@ -183,3 +183,41 @@ export async function swipe(page, dir = -1) {
   await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
   await page.waitForTimeout(150);
 }
+
+// ── Branding pane + block chrome (sprint meridian C3) ─────────────────────────
+// Published driver contract (data-testids): brand-toggle, branding-panel
+// (data-docked="right" on desktop), branding-panel-close, branding-accent-height,
+// block-hover-toolbar (data-chrome-inside="true" when drawn inside the block),
+// block-ai-popup, block-link-popup, block-comment-popup; link badges carry
+// data-link-badge + data-link-badge-placed="text-end"|"corner".
+export async function openBrandingPane(page) {
+  if (!await page.$("[data-testid=branding-panel]")) await page.click("[data-testid=brand-toggle]");
+  await page.waitForSelector("[data-testid=branding-panel]", { timeout: 4000 });
+  return page.evaluate(() => { const p = document.querySelector("[data-testid=branding-panel]"); const r = p.getBoundingClientRect(); return { docked: p.dataset.docked || null, left: r.left, width: r.width }; });
+}
+export async function closeBrandingPane(page) {
+  const close = await page.$("[data-testid=branding-panel-close]");
+  if (close) await close.click();
+  await page.waitForFunction(() => !document.querySelector("[data-testid=branding-panel]"), undefined, { timeout: 4000 });
+}
+// Drive the accent-height slider through React's value setter (range inputs ignore fill()).
+// Returns the number of accent bars drawn on the editor slide afterwards.
+export async function setBrandingAccentHeight(page, px) {
+  await openBrandingPane(page);
+  await page.evaluate((px) => {
+    const el = document.querySelector("[data-testid=branding-accent-height]");
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set.call(el, String(px));
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+  }, px);
+  await page.waitForTimeout(120);
+  return page.evaluate(() => document.querySelectorAll("[data-testid=slide-viewport] [data-branding-accent]").length);
+}
+// Hover the Nth block on the editor slide with the real mouse; returns the toolbar placement.
+export async function hoverBlock(page, index = 0) {
+  const pt = await page.evaluate((i) => { const b = document.querySelectorAll("[data-testid=slide-viewport] [data-block-type]")[i]; if (!b) return null; const r = b.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + Math.min(40, r.height / 2) }; }, index);
+  if (!pt) throw new Error(`hoverBlock: no block #${index} on the editor slide`);
+  await page.mouse.move(1, 1);
+  await page.mouse.move(pt.x, pt.y, { steps: 4 });
+  await page.waitForSelector("[data-testid=block-hover-toolbar]", { timeout: 2000 });
+  return page.evaluate(() => { const t = document.querySelector("[data-testid=block-hover-toolbar]"); const r = t.getBoundingClientRect(); return { inside: t.dataset.chromeInside === "true", top: r.top, right: r.right }; });
+}

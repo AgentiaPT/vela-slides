@@ -36,6 +36,7 @@ that symbol in the named part for the line. No line numbers here — they rot.
 - X-Ray Glossary Link — inline popover for [term](#key) refs: GlossaryLink EditableText
 - Block Helpers: stg COL_TOOLBAR_PAD patchItemAt removeItemAt setItemLink itemLinkOf addItemAt moveItemAt _noPin reorderCtl itemReorder blankItemFor PLACEHOLDER_FIELDS cloneGridCell clonePoint newItemFor
 - Add-Item Affordance — "+ add" button shown only in edit mode: AddItem ItemText IconBubble
+- Link Badge — one placement rule for every link badge (CR17): linkBadgeTextEnd LinkBadge
 - Per-Item Chrome — hover toolbar (🔗 link + ✕ delete) for one item of a multi-item block: ItemHoverContext itemChromeBtn reorderArrowBtn ItemChrome
 - Icon Row Item (per-item link + delete): IconRowItem
 - Bullet Item (per-item link + delete): BulletItem
@@ -119,6 +120,7 @@ that symbol in the named part for the line. No line numbers here — they rot.
 - CR5: Consistent AI-working animation: _fxWrap _normColor _settleFx _cr5Setup _allCssText
 - AI editor request ownership: _editorOwnershipSetup _openQuickEditor _openAiSlideAdder
 - Product Tour Suite: _productTourSetup
+- Sprint meridian (C3): split image alignment, accent 0, docked branding: _mrdSvg _mrdViewport _mrdFrame _mrdInject _mrdSetRange _mrdOpenBranding _mrdCloseBranding _mrdUndoTo _mrdHover _mrdUnhover
 - UI TEST RUNNER COMPONENT: computeDeckFingerprint DEMO_DECK_FP_TITLE VelaUITestRunner
 
 ### part-demo.jsx
@@ -314,10 +316,10 @@ add_lane add_item batch_add_items remove_item remove_lane rename_item rename_lan
 ## Navigability debt (WARN — candidates for banners or splits)
 
 - part-imports.jsx: 860-line unbannered stretch after line 509
-- part-blocks.jsx: 764-line unbannered stretch after line 769
-- part-canvas.jsx: 414-line unbannered stretch after line 24
+- part-blocks.jsx: 764-line unbannered stretch after line 843
+- part-canvas.jsx: 435-line unbannered stretch after line 24
 - part-slidepanel.jsx: 446-line unbannered stretch after line 206
-- part-slidepanel.jsx: 394-line unbannered stretch after line 964
+- part-slidepanel.jsx: 398-line unbannered stretch after line 964
 - part-uitest.jsx: 616-line unbannered stretch after line 1230
 - part-uitest2.jsx: 448-line unbannered stretch after line 2
 - part-uitest2.jsx: 593-line unbannered stretch after line 1395

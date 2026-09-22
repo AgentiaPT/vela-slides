@@ -219,7 +219,7 @@ function ScopeSelector({ icon, scope, setScope, concept, slideIndex, slides, cur
     </div>
   );
 }
-function BrandingPanel({ branding, guidelines, dispatch, isMobile }) {
+function BrandingPanel({ branding, guidelines, dispatch, isMobile, docked, onClose }) {
   const b = branding || defaultBranding;
   const [guidelinesOpen, setGuidelinesOpen] = useState(!!guidelines?.trim());
   const set = (patch) => {
@@ -245,19 +245,25 @@ function BrandingPanel({ branding, guidelines, dispatch, isMobile }) {
   const inp = (extra = {}) => ({ flex: 1, padding: "3px 6px", fontSize: 10, fontFamily: FONT.body, background: T.bgInput, border: `1px solid ${T.border}`, borderRadius: 3, color: T.text, outline: "none", minWidth: 0, ...extra });
 
   return (
-    <div data-testid="branding-panel" style={{ padding: "8px 12px", borderBottom: `1px solid ${T.border}`, background: T.accent + "08" }}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+    // docked: right-side properties pane (CR09) — fixed width, full editor
+    // height, own scroll, sticky header with a close control. Undocked (mobile)
+    // keeps the original full-width strip above the canvas.
+    <div data-testid="branding-panel" data-docked={docked ? "right" : undefined} style={docked
+      ? { width: 300, flexShrink: 0, height: "100%", overflowY: "auto", boxSizing: "border-box", padding: "0 14px 12px", borderLeft: `1px solid ${T.border}`, background: T.bgPanel }
+      : { padding: "8px 12px", borderBottom: `1px solid ${T.border}`, background: T.accent + "08" }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 8, ...(docked ? { position: "sticky", top: 0, zIndex: 1, background: T.bgPanel, padding: "10px 0 8px", borderBottom: `1px solid ${T.border}` } : {}) }}>
         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
           <span style={{ fontSize: 13 }}>🎨</span>
           <span style={{ fontFamily: FONT.mono, fontSize: 10, fontWeight: 700, color: T.accent }}>BRANDING</span>
         </div>
-        <span style={{ fontFamily: FONT.mono, fontSize: 9, color: b.enabled ? T.accent : T.textDim }}>{b.enabled ? "● Active" : "○ Set values to activate"}</span>
+        <span style={{ fontFamily: FONT.mono, fontSize: 9, color: b.enabled ? T.accent : T.textDim, marginLeft: docked ? "auto" : undefined }}>{b.enabled ? "● Active" : "○ Set values to activate"}</span>
+        {onClose && <button data-testid="branding-panel-close" onClick={onClose} title="Close branding" aria-label="Close branding" style={{ background: "none", border: "none", color: T.textDim, cursor: "pointer", fontSize: 13, padding: "0 2px", lineHeight: 1 }}>✕</button>}
       </div>
         <div style={row}>
           <span style={lbl}>Header</span>
           <input type="color" value={b.accentColor || "#3B82F6"} onChange={(e) => set({ accentColor: e.target.value })} style={{ width: 22, height: 18, border: "none", padding: 0, cursor: "pointer", background: "transparent" }} />
-          <input type="range" min="0" max="8" value={b.accentHeight || 4} onChange={(e) => set({ accentHeight: parseInt(e.target.value) })} style={{ width: 50 }} />
-          <span style={{ fontFamily: FONT.mono, fontSize: 9, color: T.textDim }}>{b.accentHeight}px</span>
+          <input data-testid="branding-accent-height" type="range" min="0" max="8" value={b.accentHeight ?? 4} onChange={(e) => set({ accentHeight: parseInt(e.target.value) })} style={{ width: 50 }} />
+          <span style={{ fontFamily: FONT.mono, fontSize: 9, color: T.textDim }}>{b.accentHeight ?? 4}px</span>
         </div>
         <div style={row}>
           <span style={lbl}>Logo</span>
