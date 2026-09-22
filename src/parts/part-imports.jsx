@@ -1627,7 +1627,8 @@ function sanitizeComment(c) {
     anchor: typeof c.anchor === "string" ? sanitizeString(c.anchor, 200) : null,
     blockIndex: typeof c.blockIndex === "number" ? c.blockIndex : null,
     status: VALID_COMMENT_STATUSES.has(c.status) ? c.status : "open",
-    createdAt: typeof c.createdAt === "string" ? c.createdAt.slice(0, 30) : now(),
+    // null, not now(): a stamp here changed an unchanged deck on each open (CR01).
+    createdAt: typeof c.createdAt === "string" ? c.createdAt.slice(0, 30) : null,
     resolvedAt: typeof c.resolvedAt === "string" ? c.resolvedAt.slice(0, 30) : null,
   };
 }
@@ -1734,12 +1735,27 @@ function sanitizeSlide(slide) {
   return clean;
 }
 
+// Deterministic short id from a string (djb2, base36). Used where a value is
+// DERIVED from deck content during sanitize, so the same deck gives the same
+// value on every open (CR01): a random id here made an unchanged deck look
+// edited. Not a security primitive — the output is a fixed charset.
+function stableIdFrom(str) {
+  let h = 5381;
+  for (let i = 0; i < str.length; i++) h = ((h << 5) + h + str.charCodeAt(i)) | 0;
+  return (h >>> 0).toString(36);
+}
+
 function sanitizeItem(item) {
   if (!item || typeof item !== "object") return null;
   const comments = Array.isArray(item.comments) ? item.comments.slice(0, MAX_COMMENTS).map(sanitizeComment).filter(Boolean) : [];
-  // Migrate legacy notes to a module-level comment if no comments exist
+  const createdAt = typeof item.createdAt === "string" ? item.createdAt.slice(0, 30) : null;
+  // Migrate legacy notes to a module-level comment if no comments exist.
+  // id + createdAt are derived from the module (not uid()/now()), so re-opening
+  // the same deck gives the same comment (CR01).
   if (comments.length === 0 && typeof item.notes === "string" && item.notes.trim()) {
-    comments.push({ id: "c_" + uid(), text: sanitizeString(item.notes.trim(), 1000), anchor: null, blockIndex: null, status: "open", createdAt: now(), resolvedAt: null });
+    const text = sanitizeString(item.notes.trim(), 1000);
+    const seed = (typeof item.id === "string" ? item.id.slice(0, 64) : "") + "\u0000" + (typeof item.title === "string" ? item.title.slice(0, 200) : "") + "\u0000" + text;
+    comments.push({ id: "c_n" + stableIdFrom(seed), text, anchor: null, blockIndex: null, status: "open", createdAt, resolvedAt: null });
   }
   return {
     id: uid(),
@@ -1750,7 +1766,9 @@ function sanitizeItem(item) {
     importance: VALID_IMPORTANCES.has(item.importance) ? item.importance : "should",
     order: typeof item.order === "number" ? item.order : 0,
     slides: Array.isArray(item.slides) ? item.slides.slice(0, 100).map(sanitizeSlide).filter(Boolean) : [],
-    createdAt: typeof item.createdAt === "string" ? item.createdAt.slice(0, 30) : now(),
+    // A missing createdAt stays absent (nothing reads it): stamping now() here
+    // changed the deck on every open (CR01).
+    ...(createdAt !== null ? { createdAt } : {}),
     ...(item.presentCard ? { presentCard: true } : {}),
   };
 }
@@ -1852,6 +1870,14 @@ function adoptPriorDeckIds(sanitized, raw, cur) {
     (l.items || []).forEach((it, ii) => adopt(it, cl && Array.isArray(cl.items) ? cl.items[ii] : null));
   });
   return sanitized;
+}
+
+// The deck content the local/desktop shell writes to the file (part-app.jsx
+// flushLocalStateRef). Its JSON is the no-edit guard's signature: a flush whose
+// signature equals the file's known content is skipped, so opening a deck the
+// user did not change never writes the file (CR01).
+function localDeckPayload(s) {
+  return { deckTitle: s.deckTitle, lanes: s.lanes, branding: s.branding, guidelines: s.guidelines };
 }
 
 function validateAndSanitizeDeck(raw, opts) {

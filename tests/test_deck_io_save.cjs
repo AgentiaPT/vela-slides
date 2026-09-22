@@ -489,6 +489,35 @@ const PATH = "/decks/a.vela";
       "flushSave still clears pending before the write (data-loss regression)");
   });
 
+  // meridian-F6 (CR01): opening a deck never writes the file. The only writer
+  // is saveCurrent(), which the app calls only for a changed deck (no-edit
+  // guard in part-app.jsx flushLocalStateRef, tested in test_deck_id_stable.cjs).
+  await test("meridian-F6 openDeck reads the file and never writes it", async () => {
+    const text = JSON.stringify({ deckTitle: "A", lanes: [{ title: "Main", items: [{ title: "M", slides: [{ blocks: [] }] }] }] });
+    const N = makeNeu({ files: { [PATH]: text } });
+    const m = buildModule(N);
+    m.state.folder = "/decks";
+    let loaded = null;
+    m.deckIO.onDeckLoaded((d) => { loaded = d; });
+    await m.deckIO.openDeck(PATH);
+    await tick(300); // longer than SAVE_DEBOUNCE_MS (200)
+    assert(loaded && loaded.deckTitle === "A", "deck not handed to the app");
+    assert(N.writeCount() === 0, "open wrote the file: " + N.writeCount());
+    assert(N.files[PATH] === text, "file bytes changed on open");
+  });
+  await test("meridian-F6 a real edit after open still saves", async () => {
+    const text = JSON.stringify({ deckTitle: "A", lanes: [] });
+    const N = makeNeu({ files: { [PATH]: text } });
+    const m = buildModule(N);
+    m.state.folder = "/decks";
+    await m.deckIO.openDeck(PATH);
+    const edited = DECK(); edited.deckTitle = "A edited";
+    m.saveCurrent(edited);
+    await m.flushNow();
+    assert(N.writeCount() === 1, "edit not written: " + N.writeCount());
+    assert(JSON.parse(N.files[PATH]).deckTitle === "A edited", "wrong bytes on disk");
+  });
+
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail === 0 ? 0 : 1);
 })();

@@ -18,6 +18,10 @@ const TITLE_STRIP = /[\u0000-\u001f\u007f-\u009f\u061c\u200b-\u200f\u2028\u2029\
 // map to the plain app name, the same as an empty title, not show up as text.
 const NO_TITLE_SENTINEL = "Untitled";
 
+// A title "starts with the app name" only at a word boundary: "Vela Slides",
+// "Vela Slides - X" do; "Vela Slideshow" does not (it gets the prefix).
+const APP_NAME_PREFIX = /^vela slides(?![\p{L}\p{N}_])/iu;
+
 // Pure: deck title -> native window title. Type-check first: a non-string
 // never reaches the native call. A title that already starts with the app
 // name is used as-is so the bar never reads "Vela Slides - Vela Slides ...".
@@ -25,7 +29,7 @@ export function windowTitleFor(deckTitle) {
   if (typeof deckTitle !== "string") return APP_NAME;
   const t = deckTitle.replace(TITLE_STRIP, "").trim().slice(0, 200);
   if (!t || t === NO_TITLE_SENTINEL) return APP_NAME;
-  if (t.toLowerCase().startsWith(APP_NAME.toLowerCase())) return t;
+  if (APP_NAME_PREFIX.test(t)) return t;
   return `${APP_NAME} - ${t}`;
 }
 
@@ -73,9 +77,21 @@ document.addEventListener("visibilitychange", () => {
 // inside our own page, never across processes or windows, so unlike
 // Neutralino.window.focus() it cannot steal the OS foreground from another
 // app (D2).
+// document.body.focus() is a no-op (body is not focusable without tabindex),
+// so focus the app root, made programmatically focusable with tabindex="-1"
+// (not in the Tab order). Only when nothing in the page holds focus: an
+// input, button or dialog control that has focus keeps it.
 function domFocusRestore() {
   try {
-    if (document.body && typeof document.body.focus === "function") document.body.focus();
+    const active = document.activeElement;
+    if (active && active !== document.body && active !== document.documentElement) return;
+    const root = document.getElementById("root");
+    if (!root || typeof root.focus !== "function") return;
+    if (!root.hasAttribute("tabindex")) {
+      root.setAttribute("tabindex", "-1");
+      root.style.outline = "none"; // app chrome: no focus ring around the whole app
+    }
+    root.focus({ preventScroll: true });
   } catch { /* document not ready */ }
 }
 

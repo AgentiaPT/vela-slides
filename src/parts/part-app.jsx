@@ -51,6 +51,14 @@ export default function App() {
   const postDemoFlushRequest = useRef(null);
   const postDemoFlushModes = useRef({ local: false, storage: false });
   const flushLocalStateRef = useRef(null);
+  // No-edit guard (CR01): JSON of the deck payload the file is known to hold —
+  // the state right after a load from disk, then each payload we send. A flush
+  // whose payload equals it is skipped, so opening a deck the user did not
+  // change never rewrites the file (sanitize can normalize values on load).
+  const _localDiskSig = useRef(null);
+  // lanes object of the last LOAD from disk (startup patch / incoming update);
+  // the lanes effect adopts that state as the baseline instead of saving it.
+  const _localBaselineLanes = useRef(null);
   const flushStorageStateRef = useRef(null);
   const requestPostDemoFlushRef = useRef(null);
   _localSyncState.current = state; // always up-to-date
@@ -71,8 +79,12 @@ export default function App() {
     if (!save.lanes?.length || !totalSlides) return false;
     delete save.chatMessages; delete save.chatLoading; delete save.fullscreen;
     delete save.lastDebug; delete save._bootstrap; delete save._version;
+    const payload = localDeckPayload(source);
+    const sig = JSON.stringify(payload);
+    if (sig === _localDiskSig.current) return false; // unchanged vs file: nothing to write
     try {
-      window.__velaSendDeckUpdate({ deckTitle: source.deckTitle, lanes: save.lanes, branding: save.branding, guidelines: save.guidelines });
+      window.__velaSendDeckUpdate(payload);
+      _localDiskSig.current = sig;
       return true;
     } catch (error) {
       dbg("Local save error:", error);
@@ -376,6 +388,13 @@ export default function App() {
     // a deck switch (the _localSyncIncoming guard skips setting a new timer
     // but must still kill the old one).
     clearTimeout(localSyncTimer.current);
+    // First render of a deck just loaded from disk: record it as the file's
+    // content instead of scheduling a save (CR01 no-edit guard).
+    if (VELA_LOCAL_MODE && loaded.current && _localBaselineLanes.current && state.lanes === _localBaselineLanes.current) {
+      _localBaselineLanes.current = null;
+      _localDiskSig.current = JSON.stringify(localDeckPayload(_localSyncState.current));
+      return;
+    }
     if (!VELA_LOCAL_MODE || !loaded.current || _localSyncIncoming.current ||
         document.documentElement.dataset.velaDemoRunning === "true") return;
     localSyncTimer.current = setTimeout(() => flushLocalStateRef.current?.(null), 600);
@@ -410,6 +429,7 @@ export default function App() {
           // Reset selection when switching to a different deck so auto-select picks the first module
           ...(isDifferentDeck ? { selectedId: null, slideIndex: 0 } : {}),
         };
+        _localBaselineLanes.current = payload.lanes;
         dispatch({ type: "LOAD", payload });
       } catch (e) {
         // Fail closed: a malicious .vela edited on disk is pushed here over the serve.py
@@ -693,7 +713,12 @@ export default function App() {
         if (VELA_LOCAL_MODE) {
           // Local/folder mode: file on disk is always authoritative — apply directly
           // (localStorage may contain a different deck from the same origin)
-          try { applyStartupPatch(loadedDeck || { lanes: [] }, dispatch); } catch (err) { dbg("[PATCH] Error:", err); }
+          try {
+            applyStartupPatch(loadedDeck || { lanes: [] }, (a) => {
+              if (a && a.type === "LOAD" && a.payload) _localBaselineLanes.current = a.payload.lanes;
+              dispatch(a);
+            });
+          } catch (err) { dbg("[PATCH] Error:", err); }
         } else if (!loadedDeck) {
           // First run — no saved data, apply patch directly
           try { applyStartupPatch({ lanes: [] }, dispatch); } catch (err) { dbg("[PATCH] Error:", err); }

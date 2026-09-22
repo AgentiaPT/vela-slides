@@ -20,7 +20,7 @@ const body = `
   var crypto = (typeof globalThis !== "undefined" && globalThis.crypto) ? globalThis.crypto : {};
 
 ` + importsSrc.slice(sliceStart, sliceEnd).replace(/^(?:const|let) STARTUP_PATCH = null;$/m, "var STARTUP_PATCH = null;") + `
-; return { validateAndSanitizeDeck, adoptPriorDeckIds, open: function (deck) {
+; return { validateAndSanitizeDeck, adoptPriorDeckIds, localDeckPayload, open: function (deck) {
     STARTUP_PATCH = deck; var out = null;
     applyStartupPatch({ lanes: [] }, function (a) { if (a.type === "LOAD") out = a.payload; });
     return out; } };`;
@@ -126,6 +126,56 @@ const hr = receive(hdeck, hcur);
 const hids = hr.lanes.flatMap((l) => [l.id, ...l.items.map((i) => i.id)]);
 check("meridian-CR01 live update: ids unique, kept id wins, repaired id adopts free prior id",
   new Set(hids).size === hids.length && hr.lanes[0].id === "cur-m2" && hr.lanes[0].items[0].id === "cur-m1" && hr.lanes[0].items[1].id !== "cur-m2", JSON.stringify(hids));
+
+// ── meridian-F6: a valid deck WITHOUT createdAt / with legacy notes ──
+// sanitize must not stamp new values on each open (was now()/uid()).
+const legacy = { deckTitle: "T", lanes: [{ id: "L1", title: "a", items: [
+  { id: "M1", title: "m", notes: "legacy note", slides: [{ blocks: [{ type: "text", text: "x" }] }] },
+  { id: "M2", title: "n", notes: "legacy note", slides: [] },
+  { title: "no id", notes: "other note", slides: [] },
+] }] };
+const la = API.open(JSON.parse(JSON.stringify(legacy)));
+const lb = API.open(JSON.parse(JSON.stringify(legacy)));
+check("meridian-F6 missing module createdAt stays absent (no now() stamp)",
+  la.lanes[0].items.every((i) => !("createdAt" in i)), JSON.stringify(la.lanes[0].items.map((i) => i.createdAt)));
+const cm = (d) => JSON.stringify(d.lanes[0].items.map((i) => i.comments));
+check("meridian-F6 legacy-notes comment is identical on every open (id + createdAt)", cm(la) === cm(lb), cm(la) + " vs " + cm(lb));
+const lids = la.lanes[0].items.map((i) => i.comments[0] && i.comments[0].id);
+check("meridian-F6 legacy-notes comment ids are unique across modules and fixed-charset",
+  new Set(lids).size === lids.length && lids.every((x) => /^c_n[0-9a-z]+$/.test(x)), JSON.stringify(lids));
+check("meridian-F6 legacy-notes comment text still sanitized", (() => {
+  const h = API.open({ lanes: [{ id: "L", items: [{ id: "M", title: "t", notes: "<img src=x onerror=alert(1)>hi", slides: [] }] }] });
+  return !/[<>]/.test(h.lanes[0].items[0].comments[0].text);
+})());
+check("meridian-F6 a createdAt the file carries is kept", API.open({ lanes: [{ id: "L", items: [{ id: "M", title: "t", createdAt: "2026-01-01T00:00:00.000Z" }] }] }).lanes[0].items[0].createdAt === "2026-01-01T00:00:00.000Z");
+check("meridian-F6 non-string createdAt is dropped, not coerced", !("createdAt" in API.open({ lanes: [{ id: "L", items: [{ id: "M", title: "t", createdAt: { toString() { return "x"; } } }] }] }).lanes[0].items[0]));
+
+// No-edit guard signature (part-app.jsx flushLocalStateRef): the payload of an
+// unchanged reopen equals the payload right after the first open, so the save
+// path skips it. study-notes-demo.vela has a module with no id/createdAt.
+const sig = (st) => JSON.stringify(API.localDeckPayload(st));
+const sn = JSON.parse(fs.readFileSync(P("examples/study-notes-demo.vela"), "utf8"));
+const snA = API.open(JSON.parse(JSON.stringify(sn)));
+check("meridian-F6 study-notes-demo: open gives no createdAt stamp", snA.lanes.every((l) => l.items.every((i) => !("createdAt" in i))));
+const snSaved = JSON.parse(sig(snA));
+const snB = API.open(JSON.parse(JSON.stringify(snSaved)));
+check("meridian-F6 study-notes-demo: open -> save -> reopen signature is stable", sig(snA) === sig(snB));
+check("meridian-F6 legacy deck: reopen of saved payload gives the same signature",
+  sig(la) === sig(API.open(JSON.parse(sig(la)))));
+check("meridian-F6 a real edit changes the signature (edits still save)", (() => {
+  const e = JSON.parse(JSON.stringify(la)); e.lanes[0].items[0].title = "edited"; return sig(e) !== sig(la);
+})());
+// Wiring: the save path compares the signature BEFORE the write hook, and the
+// boot / incoming LOAD paths record the baseline.
+{
+  const app = fs.readFileSync(P("src/parts/part-app.jsx"), "utf8");
+  const f = app.indexOf("flushLocalStateRef.current = (");
+  const fb = app.slice(f, app.indexOf("flushStorageStateRef.current = (", f));
+  const g = fb.indexOf("sig === _localDiskSig.current"), w = fb.indexOf("window.__velaSendDeckUpdate(payload)");
+  check("meridian-F6 flush skips an unchanged payload before __velaSendDeckUpdate", g > 0 && w > g);
+  check("meridian-F6 boot startup patch + incoming update record the on-disk baseline",
+    (app.match(/_localBaselineLanes\.current = /g) || []).length >= 3 && /_localDiskSig\.current = JSON\.stringify\(localDeckPayload\(/.test(app));
+}
 
 console.log(`\n  ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

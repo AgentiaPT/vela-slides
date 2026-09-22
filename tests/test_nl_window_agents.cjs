@@ -40,7 +40,19 @@ function makeTarget() {
 function loadGlue(Neu) {
   const win = makeTarget(), doc = makeTarget();
   doc.visibilityState = "visible";
-  doc.body = { focusCount: 0, focus() { this.focusCount++; } };
+  // body.focus() is a no-op in a real browser (body has no tabindex), so the
+  // fake body does not count focus; only a focusable #root can take it.
+  doc.body = { tagName: "BODY", focus() {} };
+  doc.documentElement = { tagName: "HTML" };
+  doc.activeElement = doc.body;
+  const attrs = {};
+  doc.root = {
+    tagName: "DIV", focusCount: 0, style: {}, attrs,
+    hasAttribute: (k) => Object.prototype.hasOwnProperty.call(attrs, k),
+    setAttribute: (k, v) => { attrs[k] = String(v); },
+    focus() { if (!("tabindex" in attrs)) return; this.focusCount++; doc.activeElement = this; },
+  };
+  doc.getElementById = (id) => (id === "root" ? doc.root : null);
   const body = stripEsm(fs.readFileSync(path.join(JS, "window-glue.js"), "utf8")) +
     "\n;return { windowTitleFor, setWindowTitle, focusWindow, installRefocus };";
   // eslint-disable-next-line no-new-func
@@ -112,6 +124,41 @@ function makeNeu() {
     assert(/window\.__velaOnDeckTitle\(state\.deckTitle/.test(app), "part-app does not call __velaOnDeckTitle");
   });
 
+  await test("meridian-F6 app-name prefix check needs a word boundary", () => {
+    const { mod } = loadGlue(makeNeu());
+    const cases = {
+      "Vela Slideshow": "Vela Slides - Vela Slideshow",
+      "Vela Slideshow tips": "Vela Slides - Vela Slideshow tips",
+      "vela slides2": "Vela Slides - vela slides2",
+      "Vela Slides": "Vela Slides",
+      "Vela Slides - X": "Vela Slides - X",
+      "Vela Slides: Q3": "Vela Slides: Q3",
+    };
+    for (const [inp, want] of Object.entries(cases)) {
+      const got = mod.windowTitleFor(inp);
+      assert(got === want, `${inp} -> ${got} (want ${want})`);
+    }
+  });
+
+  await test("meridian-F6 DOM focus restore focuses a focusable #root (tabindex -1)", () => {
+    const { mod, win, doc } = loadGlue(makeNeu());
+    mod.installRefocus();
+    win.fire("focus");
+    assert(doc.root.attrs.tabindex === "-1", "root not made focusable: " + JSON.stringify(doc.root.attrs));
+    assert(doc.activeElement === doc.root, "keyboard focus did not move to the app root");
+  });
+  await test("meridian-F6 DOM focus restore never steals focus from an input", () => {
+    const { mod, doc } = loadGlue(makeNeu());
+    const input = { tagName: "INPUT" };
+    doc.activeElement = input;
+    mod.installRefocus();
+    doc.visibilityState = "visible";
+    doc.fire("visibilitychange");
+    mod.focusWindow();
+    assert(doc.activeElement === input, "focus moved away from the focused input");
+    assert(doc.root.focusCount === 0, "root took focus while an input held it");
+  });
+
   // ─────────── CR18 ───────────
   await test("meridian-CR18 DOM window focus re-calls Neutralino.window.focus()", async () => {
     const Neu = makeNeu();
@@ -143,14 +190,14 @@ function makeNeu() {
     mod.installRefocus();
     doc.visibilityState = "visible";
     doc.fire("visibilitychange");
-    assert(doc.body.focusCount >= 1, "no DOM focus restore on visibilitychange");
+    assert(doc.root.focusCount >= 1, "no DOM focus restore on visibilitychange");
   });
   await test("meridian-D2 real focus events still restore DOM keyboard focus too", async () => {
     const Neu = makeNeu();
     const { mod, win, doc } = loadGlue(Neu);
     mod.installRefocus();
     win.fire("focus");
-    assert(doc.body.focusCount >= 1, "no DOM focus restore on real focus event");
+    assert(doc.root.focusCount >= 1, "no DOM focus restore on real focus event");
   });
   await test("meridian-CR18 every alt-tab cycle re-arms focus (not only the first)", async () => {
     const Neu = makeNeu();
