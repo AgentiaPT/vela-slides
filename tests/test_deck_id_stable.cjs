@@ -70,6 +70,24 @@ check("meridian-CR01 hostile deck: first valid unique id kept, later duplicate r
 check("meridian-CR01 hostile deck: invalid/forged ids replaced, valid id kept",
   !all.includes("_private") && !all.includes("a/../b") && !all.includes("obj") && h.lanes[1].items[6].id === "ok-id");
 
+// Ids that name Object.prototype members would make id-keyed plain-object maps
+// return inherited values, so they are re-minted like invalid ids (meridian F3).
+const PROTO_NAMES = ["constructor", "toString", "valueOf", "hasOwnProperty", "isPrototypeOf", "propertyIsEnumerable", "toLocaleString", "__proto__", "__defineGetter__"];
+const protoDeck = { deckTitle: "P", lanes: [{ id: "constructor", title: "L", items: PROTO_NAMES.map((n, i) => ({ id: n, title: "M" + i, slides: [] })).concat([{ id: "Constructor", title: "MC", slides: [] }]) }] };
+const pd = API.open(protoDeck);
+const pIds = pd.lanes.flatMap((l) => [l.id, ...l.items.map((i) => i.id)]);
+check("meridian-F3 prototype-member ids are re-minted (not kept)", pIds.every((x) => !(x in Object.prototype)) && pIds.length === PROTO_NAMES.length + 2, JSON.stringify(pIds));
+check("meridian-F3 re-minted ids are unique and safe; a valid near-name id is kept",
+  new Set(pIds).size === pIds.length && pIds.every((x) => /^[A-Za-z0-9][A-Za-z0-9-]{0,63}$/.test(x)) && pd.lanes[0].items[PROTO_NAMES.length].id === "Constructor", JSON.stringify(pIds));
+const counts = {};
+for (const id of pIds) counts[id] = (counts[id] || 0) + 1;
+check("meridian-F3 id-keyed plain-object map stays numeric", Object.values(counts).every((c) => c === 1) && pIds.every((x) => counts[x] === 1));
+const pcur = { lanes: [{ id: "toString", items: [{ id: "valueOf" }] }] };
+const pr = API.validateAndSanitizeDeck({ lanes: [{ title: "L", items: [{ title: "A", slides: [] }] }] }, { keepIds: true });
+API.adoptPriorDeckIds(pr, { lanes: [{ items: [{}] }] }, pcur);
+check("meridian-F3 live update never adopts a prototype-member prior id",
+  pr.lanes[0].id !== "toString" && pr.lanes[0].items[0].id !== "valueOf", JSON.stringify([pr.lanes[0].id, pr.lanes[0].items[0].id]));
+
 // Fresh import (no option) still re-mints every id — the import collision defense.
 const imp = API.validateAndSanitizeDeck(JSON.parse(JSON.stringify(demo)));
 const impIds = imp.lanes.flatMap((l) => [l.id, ...l.items.map((i) => i.id)]);

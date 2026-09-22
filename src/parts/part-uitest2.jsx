@@ -2269,6 +2269,14 @@ uiSuite("meridian-CR09 branding side pane", [
   }},
 ], { setup: _selectFirstModule });
 
+// F3: every toolbar button and every editor overlay (✓ reviewed toggle,
+// comment count) must be the top element at its own centre.
+const _mrdCr15Clear = (bar, kind) => {
+  const top = (el) => { const r = el.getBoundingClientRect(); const h = document.elementFromPoint((r.left + r.right) / 2, (r.top + r.bottom) / 2); return !!h && el.contains(h); };
+  const where = kind ? kind + ": " : "";
+  for (const b of bar.querySelectorAll("button")) if (!top(b)) throw new Error(`${where}toolbar button "${b.title || b.textContent}" is covered`);
+  for (const o of document.querySelectorAll("[data-editor-overlay]")) if (!top(o)) throw new Error(`${where}editor overlay "${o.dataset.editorOverlay}" is covered`);
+};
 uiSuite("meridian-CR15 toolbar room above", [
   { name: "CR15: full-bleed image keeps its toolbar and popups inside the slide", fn: async () => {
     const block = await _mrdInject([{ type: "image", src: _mrdSvg(960, 540, "f59e0b") }], null,
@@ -2281,6 +2289,7 @@ uiSuite("meridian-CR15 toolbar room above", [
       if (bar.dataset.chromeInside !== "true" || !inView(bar)) throw new Error("toolbar is drawn above the slide edge");
       const hit = (el) => { const r = el.getBoundingClientRect(); const h = document.elementFromPoint((r.left + r.right) / 2, (r.top + r.bottom) / 2); return !!h && el.contains(h); };
       if (!hit(bar)) throw new Error("toolbar is not clickable");
+      _mrdCr15Clear(bar);
       _click(bar.querySelector("button[title='Add link']"));
       const pop = await _waitFor(() => _$("[data-testid='block-link-popup']"), 1500);
       if (!inView(pop) || !hit(pop)) throw new Error("link popup is cut off or covered");
@@ -2298,9 +2307,28 @@ uiSuite("meridian-CR15 toolbar room above", [
       const bar = await _waitFor(() => _mrdViewport().querySelector("[data-testid='block-hover-toolbar']"), 1500);
       if (bar.dataset.chromeInside) throw new Error("toolbar moved inside on a block with room above");
       if (bar.getBoundingClientRect().top >= block.getBoundingClientRect().top) throw new Error("toolbar is not above the block");
+      _mrdCr15Clear(bar);
     } finally {
       await _mrdUnhover(block);
     }
+  }},
+  { name: "F3: toolbar stays clear of the comment badge and reviewed toggle", fn: async () => {
+    const extra = { comments: [{ id: "cr15-f3", text: "F3 badge", status: "open", createdAt: Date.now() }] };
+    for (const [kind, blocks, sel] of [
+      ["full-bleed", [{ type: "image", src: _mrdSvg(960, 540, "10b981") }], "[data-block-type='image']"],
+      ["normal", [{ type: "heading", text: "CR15 F3 normal" }, { type: "text", text: "Body" }], "[data-block-type='heading']"],
+    ]) {
+      const block = await _mrdInject(blocks, extra, (vp) => (vp && _$("[data-editor-overlay='comments']") && vp.querySelector(sel)) || null);
+      await _mrdHover(block);
+      try {
+        const bar = await _waitFor(() => _mrdViewport().querySelector("[data-testid='block-hover-toolbar']"), 1500);
+        await _mrdFrame();
+        _mrdCr15Clear(bar, kind);
+      } finally {
+        await _mrdUnhover(block);
+      }
+    }
+    _hooks().injectBlocks([{ type: "text", text: "F3 done" }], { comments: [] });
   }},
 ], { setup: _selectFirstModule });
 
