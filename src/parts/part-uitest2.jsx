@@ -2176,6 +2176,39 @@ uiSuite("meridian-CR13 View Switcher", [
     if (w < need) throw new Error(`deck title squeezed to ${Math.round(w)}px at ${window.innerWidth}px wide`);
     if (h.scrollWidth > h.clientWidth + 1) throw new Error(`header overflows (${h.scrollWidth} > ${h.clientWidth})`);
   }},
+  { name: "Top bar fits on one line at every width 1024-1920 (8px sweep)", fn: async () => {
+    // The top bar fits itself to its own measured width, so forcing the header
+    // width stands in for a window resize. Sweeps up, then down (hysteresis).
+    const h = await _waitFor(() => _$("header"), 2000);
+    const frames = () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+    const prev = h.style.width;
+    const bad = [];
+    try {
+      for (const dir of [1, -1]) {
+        for (let i = 0; i <= 112; i++) {
+          const w = dir > 0 ? 1024 + i * 8 : 1920 - i * 8;
+          h.style.width = `${w}px`;
+          for (let f = 0; f < 3; f++) await frames();
+          const btns = _$$("button", h).filter((b) => b.offsetParent && !b.closest("[role='group']"));
+          const minH = Math.min(...btns.map((b) => b.offsetHeight));
+          const wrapped = btns.filter((b) => b.offsetHeight > minH + 8).map((b) => b.title || b.textContent.trim());
+          const t = _$$("span", h).find((s) => s.title && s.title === s.textContent);
+          const vs = _$("[data-testid='view-switch']", h);
+          const hr = h.getBoundingClientRect(), vr = vs ? vs.getBoundingClientRect() : null;
+          const errs = [];
+          if (h.scrollWidth > h.clientWidth + 1) errs.push(`overflow ${h.scrollWidth}>${h.clientWidth}`);
+          if (wrapped.length) errs.push(`wrapped: ${wrapped.join(", ")}`);
+          if (!t || t.getBoundingClientRect().width < Math.min(120, t.scrollWidth) - 1) errs.push(`title ${t ? Math.round(t.getBoundingClientRect().width) : "missing"}px`);
+          if (!vr || vr.width < 60 || vr.left < hr.left || vr.right > hr.right + 1) errs.push("view switch not fully shown");
+          if (errs.length) bad.push(`${w}px: ${errs.join("; ")}`);
+        }
+      }
+    } finally {
+      h.style.width = prev;
+      await frames();
+    }
+    if (bad.length) throw new Error(`${bad.length} widths fail — ${bad.slice(0, 4).join(" | ")}`);
+  }},
   { name: "Gallery is reachable in one click from the editor", fn: async () => {
     await _mrdSwitchTo("view-switch", "gallery");
     await _waitFor(_mrdGalleryOpen, 2000);

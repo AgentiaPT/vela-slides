@@ -8,14 +8,19 @@
 // vanish on a dark chip (CR10). Editor uses the memo glyph, not a pen: the
 // dark-blue pen emoji is unreadable on the accent-filled active segment.
 const VIEW_SWITCH_SEGMENTS = [["editor", "\u{1F4DD}", "Editor"], ["presenter", "\u{1F5A5}\uFE0F", "Presenter"], ["gallery", "\u{1F5C2}\uFE0F", "Gallery"]];
+// Compact segments keep their label in the DOM at zero width (the top bar
+// measures it to decide when full labels fit); a full segment is 2px wider on
+// each side. VIEW_SWITCH_LABEL_EXTRA is that padding growth for the whole switch.
+const VIEW_SWITCH_PAD = { compact: 7, full: 9 };
+const VIEW_SWITCH_LABEL_EXTRA = VIEW_SWITCH_SEGMENTS.length * 2 * (VIEW_SWITCH_PAD.full - VIEW_SWITCH_PAD.compact);
 function ViewSwitch({ mode, onSet, disabled, compact, onDark, testid = "view-switch", style }) {
   const idle = onDark ? "#fff" : T.textDim;
   return <div data-testid={testid} role="group" aria-label="View" onClick={(e) => e.stopPropagation()} style={{ display: "flex", alignItems: "center", border: `1px solid ${onDark ? "rgba(255,255,255,0.3)" : T.border}`, borderRadius: 6, overflow: "hidden", flexShrink: 0, background: onDark ? "rgba(0,0,0,0.55)" : undefined, ...style }}>
     {VIEW_SWITCH_SEGMENTS.map(([m, icon, label]) => {
       const on = mode === m;
       return <button key={m} data-testid={`${testid}-${m}`} onClick={() => onSet?.(m)} disabled={disabled} title={label} aria-label={label} aria-pressed={on}
-        style={{ display: "flex", alignItems: "center", gap: 4, padding: compact ? "4px 7px" : "4px 9px", background: on ? T.accent : "transparent", color: on ? "#fff" : idle, border: "none", cursor: disabled ? "default" : "pointer", opacity: disabled ? 0.4 : 1, fontFamily: FONT.mono, fontSize: 12, fontWeight: 700, whiteSpace: "nowrap" }}>
-        <span aria-hidden="true" style={{ fontSize: onDark ? 15 : undefined }}>{icon}</span>{!compact && <span>{label}</span>}
+        style={{ display: "flex", alignItems: "center", gap: 4, padding: `4px ${compact ? VIEW_SWITCH_PAD.compact : VIEW_SWITCH_PAD.full}px`, background: on ? T.accent : "transparent", color: on ? "#fff" : idle, border: "none", cursor: disabled ? "default" : "pointer", opacity: disabled ? 0.4 : 1, fontFamily: FONT.mono, fontSize: 12, fontWeight: 700, whiteSpace: "nowrap" }}>
+        <span aria-hidden="true" style={{ fontSize: onDark ? 15 : undefined }}>{icon}</span>{compact ? <span data-vs-label="" aria-hidden="true" style={{ display: "inline-block", width: 0, overflow: "hidden", marginLeft: -4, verticalAlign: "top" }}>{label}</span> : <span>{label}</span>}
       </button>;
     })}
   </div>;

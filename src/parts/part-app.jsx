@@ -478,14 +478,56 @@ export default function App() {
 
   // ━━━ Mobile ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   const isMobile = useIsMobile();
-  // CR13: top-bar width bucket, so the deck title keeps readable room. Below
-  // 1440px the view switch is icon-only; below 1200px some action buttons also
-  // hide their label visually (text stays in the DOM; the title attr names them).
-  const hdrBucket = () => (typeof window === "undefined" ? 2 : window.innerWidth >= 1440 ? 2 : window.innerWidth >= 1200 ? 1 : 0);
-  const [hdrSize, setHdrSize] = useState(hdrBucket);
-  useEffect(() => { const h = () => setHdrSize(hdrBucket()); window.addEventListener("resize", h); return () => window.removeEventListener("resize", h); }, []);
-  const wideHeader = hdrSize === 2;
-  const hdrLabel = (txt) => (hdrSize === 0 ? <span style={{ display: "none" }}>{txt}</span> : txt);
+  // CR13: top-bar density level, measured from the real free space (no fixed
+  // breakpoints). 4 = all labels + labelled view switch; 3 = all labels,
+  // icon-only switch; 2 = six action buttons hide their label visually; 1 = the
+  // Present label hides too; 0 = as 1, but the action group may shrink (labels
+  // can wrap), the last resort for narrow windows. A hidden label stays in the
+  // DOM at zero width (so it can be measured; the title attr names the button).
+  // A level shows only while it fits on one line with the deck title >=
+  // HDR_TITLE_MIN; the switch labels also need the whole title to fit.
+  // hdrFailRef keeps the widest header width at which each level did not fit,
+  // so levels cannot flap.
+  const HDR_TITLE_MIN = 120, HDR_TOP = 4;
+  const hdrGap = (lvl) => (lvl < 3 ? 8 : 10);
+  const [hdrSize, setHdrSize] = useState(1);
+  const hdrSizeRef = useRef(1);
+  hdrSizeRef.current = hdrSize;
+  const hdrRef = useRef(null), hdrBoxRef = useRef(null), hdrSpacerRef = useRef(null), hdrTitleRef = useRef(null);
+  const hdrFailRef = useRef({ key: null, w: [0, 0, 0, 0, 0] });
+  const fitHeader = useCallback(() => {
+    const h = hdrRef.current, box = hdrBoxRef.current, sp = hdrSpacerRef.current;
+    if (!h || !box || !sp) return;
+    const ti = hdrTitleRef.current, w = h.clientWidth, lvl = hdrSizeRef.current;
+    const key = ti ? ti.textContent : "";
+    if (hdrFailRef.current.key !== key) hdrFailRef.current = { key, w: [0, 0, 0, 0, 0] };
+    const fail = hdrFailRef.current.w;
+    const over = h.scrollWidth > w + 1;
+    const titleCut = !!ti && ti.scrollWidth > ti.clientWidth + 1;
+    const hidden = (sel) => Array.from(h.querySelectorAll(sel)).reduce((sum, e) => sum + e.scrollWidth, 0);
+    let next = lvl;
+    if (lvl > 0 && (over || (lvl === HDR_TOP && titleCut))) { fail[lvl] = Math.max(fail[lvl], w); next = lvl - 1; }
+    else if (lvl < HDR_TOP && !over && w > fail[lvl + 1]) {
+      const up = lvl + 1;
+      if (up === 1) next = up; // same labels, no shrink: try it (a failure is remembered)
+      else if (up === HDR_TOP) {
+        if (!titleCut && sp.offsetWidth >= hidden("[data-testid='view-switch'] [data-vs-label]") + VIEW_SWITCH_LABEL_EXTRA + 2) next = up;
+      } else {
+        const gaps = (hdrGap(up) - hdrGap(lvl)) * (h.children.length - 1 + box.children.length - 1);
+        const room = sp.offsetWidth + Math.max(0, (ti ? ti.offsetWidth : HDR_TITLE_MIN) - HDR_TITLE_MIN);
+        if (room >= hidden(`[data-hdr-label='${up}']`) + gaps + 2) next = up;
+      }
+    }
+    if (next !== lvl) { hdrSizeRef.current = next; setHdrSize(next); }
+  }, []);
+  useLayoutEffect(() => { fitHeader(); });
+  useEffect(() => {
+    if (typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(() => fitHeader());
+    [hdrRef.current, hdrBoxRef.current, hdrTitleRef.current].forEach((el) => el && ro.observe(el));
+    return () => ro.disconnect();
+  }, [fitHeader, isMobile, state.fullscreen, editingTitle]);
+  const hdrLabel = (txt, need = 3) => (hdrSize < need ? <span data-hdr-label={need} style={{ display: "inline-block", width: 0, overflow: "hidden", whiteSpace: "pre", marginLeft: -4, verticalAlign: "top" }}>{txt}</span> : txt);
   const [mobileTab, setMobileTab] = useState("list"); // "list" | "slides" | "chat"
   const [mobileMenu, setMobileMenu] = useState(false);
   const [viewMenu, setViewMenu] = useState(false);
@@ -915,7 +957,7 @@ export default function App() {
       </div>}
 
       {/* ── TOP BAR — title left, actions right, dropdown buttons ── */}
-      {!state.fullscreen && <header style={{ padding: isMobile ? "6px 10px" : "0 14px", borderBottom: `1px solid ${T.border}`, display: "flex", alignItems: "center", gap: isMobile || hdrSize === 0 ? 8 : 10, background: T.bgPanel, flexShrink: 0, height: isMobile ? 40 : 44 }}>
+      {!state.fullscreen && <header ref={hdrRef} style={{ padding: isMobile ? "6px 10px" : "0 14px", borderBottom: `1px solid ${T.border}`, display: "flex", alignItems: "center", gap: isMobile ? 8 : hdrGap(hdrSize), background: T.bgPanel, flexShrink: 0, height: isMobile ? 40 : 44 }}>
         {/* Left: icon + title + time */}
         {isMobile && mobileTab !== "list" && <button onClick={() => { setMobileTab("list"); if (mobileTab === "slides") dispatch({ type: "DESELECT" }); }} style={S.btn({ padding: "2px 4px", color: T.accent, fontSize: 16 })}>{"←"}</button>}
         <span onClick={() => { if (typeof window !== "undefined" && typeof window.__velaOpenDeckPicker === "function") { window.__velaOpenDeckPicker(); } else { setShowChangelog(true); } }} style={{ cursor: "pointer", display: "flex", alignItems: "center" }} title={typeof window !== "undefined" && typeof window.__velaOpenDeckPicker === "function" ? "Open deck (Ctrl+O)" : "About"}><VelaIcon size={20} /></span>
@@ -944,13 +986,14 @@ export default function App() {
             onBlur={commitTitle}
             style={S.input({ padding: "3px 8px", fontSize: 14, fontWeight: 700, width: 200, minWidth: 60, flexShrink: 1, border: `1px solid ${T.accent}`, fontFamily: FONT.display })} />
         ) : (
-          <span onClick={startEditTitle} style={{ fontSize: 14, fontWeight: 700, color: T.text, fontFamily: FONT.display, cursor: "pointer", padding: "2px 4px", borderRadius: 4, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flexShrink: 1, minWidth: isMobile ? 0 : 120, maxWidth: isMobile ? "40vw" : undefined }} title={state.deckTitle || "Untitled"}>{state.deckTitle || "Untitled"}</span>
+          <span ref={hdrTitleRef} onClick={startEditTitle} style={{ fontSize: 14, fontWeight: 700, color: T.text, fontFamily: FONT.display, cursor: "pointer", padding: "2px 4px", borderRadius: 4, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flexShrink: 1, minWidth: isMobile ? 0 : HDR_TITLE_MIN, maxWidth: isMobile ? "40vw" : undefined }} title={state.deckTitle || "Untitled"}>{state.deckTitle || "Untitled"}</span>
         )}
         {!isMobile && (deckTime > 0 || total > 0) && <span onClick={() => setShowStats(true)} title={`${deckTimeAll > 0 ? fmtTime(deckTimeAll) + " total · " : ""}${slideCountVisible} slides · ${total} sections${hiddenSlideCount > 0 ? ` · ${hiddenSlideCount} hidden` : ""} — click for stats`} style={{ fontFamily: FONT.mono, fontSize: 13, fontWeight: 700, color: T.text, whiteSpace: "nowrap", flexShrink: 0, background: T.accent + "12", padding: "2px 8px", borderRadius: 4, cursor: "pointer" }}>{deckTime > 0 ? `⏱${fmtTimeMin(deckTime)} · ` : ""}{slideCountVisible}sl · {total}§{hiddenSlideCount > 0 ? <span style={{ opacity: 0.6 }}> · {hiddenSlideCount}⊘</span> : ""}</span>}
         {/* Spacer — pushes actions right */}
-        <div style={{ flex: 1, minWidth: isMobile ? 4 : 0 }} />
-        {/* Right: deck-level actions with dropdowns */}
-        {!isMobile && <>
+        <div ref={hdrSpacerRef} style={{ flex: 1, minWidth: isMobile ? 4 : 0 }} />
+        {/* Right: deck-level actions with dropdowns. Level >= 1 never shrinks (so no
+            label wraps; fitHeader drops a level instead); level 0 may shrink. */}
+        {!isMobile && <div ref={hdrBoxRef} style={{ display: "flex", alignItems: "center", gap: hdrGap(hdrSize), flexShrink: hdrSize === 0 ? 1 : 0 }}>
           {/* View dropdown — shows current ratio */}
           {(() => {
             const sa = slideActionsRef.current;
@@ -978,8 +1021,8 @@ export default function App() {
                   Present. Shows the live view and switches to it in one click — the
                   gallery is no longer reachable only from the Overview button below
                   the slide. */}
-              <ViewSwitch mode={sa?.viewMode || "editor"} onSet={(m) => sa?.setView?.(m)} disabled={!has} compact={!wideHeader} />
-              <button data-testid="present-btn" onClick={() => sa?.present?.()} disabled={!has} style={{ display: "flex", alignItems: "center", gap: 5, padding: "5px 14px", background: has ? T.green : T.border, color: has ? "#fff" : T.textDim, border: "none", borderRadius: 6, cursor: has ? "pointer" : "default", opacity: has ? 1 : 0.5, fontFamily: FONT.mono, fontSize: 14, fontWeight: 700 }}>{"▶"} Present</button>
+              <ViewSwitch mode={sa?.viewMode || "editor"} onSet={(m) => sa?.setView?.(m)} disabled={!has} compact={hdrSize < HDR_TOP} />
+              <button data-testid="present-btn" onClick={() => sa?.present?.()} disabled={!has} style={{ display: "flex", alignItems: "center", gap: 5, padding: "5px 14px", background: has ? T.green : T.border, color: has ? "#fff" : T.textDim, border: "none", borderRadius: 6, cursor: has ? "pointer" : "default", opacity: has ? 1 : 0.5, fontFamily: FONT.mono, fontSize: 14, fontWeight: 700 }} title="Present">{"▶"}{hdrLabel(" Present", 2)}</button>
             </>;
           })()}
           <div style={{ width: 1, height: 22, background: T.border, flexShrink: 0 }} />
@@ -1010,7 +1053,7 @@ export default function App() {
           <div style={{ width: 1, height: 22, background: T.border, flexShrink: 0 }} />
           <button data-testid="comments-toggle" onClick={() => { const entering = !state.reviewMode; dispatch({ type: "SET_REVIEW_MODE", value: entering }); if (entering) { dispatch({ type: "SET_COMMENTS_PANEL", open: true }); dispatch({ type: "SET_CHAT", open: false }); } else { dispatch({ type: "SET_COMMENTS_PANEL", open: false }); } }} style={S.btn({ padding: "4px 10px", fontSize: 14, background: state.reviewMode ? T.amber : "transparent", color: state.reviewMode ? "#fff" : T.amber, borderRadius: 4, display: "flex", alignItems: "center", gap: 4 })} title="Comments">{"💬"}{hdrLabel(" Comments")}</button>
           <button onClick={() => { dispatch({ type: "SET_CHAT", open: !state.chatOpen }); if (!state.chatOpen) { dispatch({ type: "SET_COMMENTS_PANEL", open: false }); dispatch({ type: "SET_REVIEW_MODE", value: false }); } }} style={S.btn({ padding: "4px 10px", fontSize: 14, background: state.chatOpen ? T.accent : "transparent", color: state.chatOpen ? "#fff" : T.accent, borderRadius: 4, display: "flex", alignItems: "center", gap: 4 })}>{"🤖"} Vera</button>
-        </>}
+        </div>}
         {isMobile && <>
           <button onClick={() => setNewDeckDialog(true)} style={{ padding: "4px 10px", fontSize: 14, color: T.accent, background: "transparent", border: `1px solid ${T.accent}40`, borderRadius: 4, cursor: "pointer", flexShrink: 0, fontWeight: 700 }} title="New Deck">{"+"}</button>
           {total > 0 && <button onClick={() => { const sa = slideActionsRef.current; if (sa?.present) sa.present(); }} style={{ padding: "4px 10px", background: T.green, color: "#fff", border: "none", borderRadius: 4, fontFamily: FONT.mono, fontSize: 11, fontWeight: 700, cursor: "pointer", flexShrink: 0 }} title="Present">{"▶"}</button>}
