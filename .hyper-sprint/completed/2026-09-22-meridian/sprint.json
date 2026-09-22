@@ -1,0 +1,54 @@
+{
+  "slug": "2026-09-22-meridian",
+  "codename": "meridian",
+  "title": "Meridian: 19 change requests from a live-use review",
+  "started": "2026-09-22T17:32:00Z",
+  "completed": "2026-09-22T21:10:00Z",
+  "branch": "claude/nice-allen-4zrvzg",
+  "base": "claude/nice-allen-4zrvzg",
+  "base_commit": "a9408a8f452bcd595c102b1ac29eb8a714f960ae",
+  "head_commit": "aed1bb19adfc565d61eb44a0d7e2d07092d14dbf",
+  "skill": "hyper-sprint",
+  "silent": true,
+  "version": { "from": "13.74", "to": "13.75" },
+  "tests": { "from": 561, "to": 579 },
+  "change_requests": [
+    { "id": "CR01", "area": "neutralino/ingress", "summary": "Stable lane/module ids and timestamps on open" },
+    { "id": "CR02", "area": "export/validate", "summary": "validate.py flags a gradient in the solid-color bg field" },
+    { "id": "CR03", "area": "canvas", "summary": "Side-image alignment (confirmed already fixed, regression-locked)" },
+    { "id": "CR04", "area": "views", "summary": "Gallery: hide-slide option beside delete" },
+    { "id": "CR05", "area": "export/pdf", "summary": "Vector PDF: correct size for WinAnsi symbols (e.g. euro)" },
+    { "id": "CR06", "area": "editor", "summary": "Copy/paste of blocks — UX research only, parked" },
+    { "id": "CR07", "area": "reducer/canvas", "summary": "Review mode: cycle unreviewed slides, toggle reviewed" },
+    { "id": "CR08", "area": "branding", "summary": "Accent line removable at 0px" },
+    { "id": "CR09", "area": "branding/app", "summary": "Branding settings moved to a right-side pane" },
+    { "id": "CR10", "area": "views", "summary": "Gallery top-right icon contrast" },
+    { "id": "CR11", "area": "views", "summary": "Presenter top-right edit icon contrast (same fix as CR10)" },
+    { "id": "CR12", "area": "neutralino", "summary": "Fix desktop HTML export (duplicate useState declaration)" },
+    { "id": "CR13", "area": "app", "summary": "Editor/presenter/gallery view switch next to Present" },
+    { "id": "CR14", "area": "views", "summary": "TOC: delete-slide icon on slide rows" },
+    { "id": "CR15", "area": "canvas", "summary": "Block toolbar stays visible on full-bleed images" },
+    { "id": "CR16", "area": "neutralino", "summary": "Desktop window title shows the deck title" },
+    { "id": "CR17", "area": "canvas", "summary": "Consistent link-badge placement in text blocks" },
+    { "id": "CR18", "area": "neutralino", "summary": "Desktop keyboard responsive immediately after alt-tab" },
+    { "id": "CR19", "area": "neutralino/app", "summary": "Desktop AI agent detected on first start after a build" }
+  ],
+  "blind_rounds": 6,
+  "defects_found_and_fixed": 17,
+  "cr_bugs_remaining": 0,
+  "cost_usd_approx": 260.59,
+  "assumptions": [
+    { "cr": "CR06", "ambiguity": "spec asks for UX research, not code", "reading": "shipped a research note only", "reversal": "implement the proposed duplicate-in-place step first" },
+    { "cr": "CR07", "ambiguity": "reviewMode already names the comments-review feature", "reading": "used reviewed / Review cycle naming instead", "reversal": "rename via find/replace across three files" },
+    { "cr": "CR13", "ambiguity": "spec calls Overview the wrong place but does not ask to remove it", "reading": "kept Overview, added a new switch next to Present", "reversal": "delete the Overview button and reassign its shortcut" },
+    { "cr": "CR01", "ambiguity": "Import / merge-patch use-new-version minting fresh ids", "reading": "classified as by-design collision defense, not opening a deck", "reversal": "narrow keepIds to also cover this path" }
+  ],
+  "parked": [
+    { "cr": "CR06", "reason": "spec explicitly asks for UX research, not an implementation", "to_unblock": "pick the duplicate-in-place step (low effort) and/or cross-slide clipboard step (medium effort) from the report's research note" }
+  ],
+  "artifacts": {
+    "report": "README.md",
+    "plan": "plan-2026-09-22-meridian.md",
+    "images": "img/"
+  }
+}

@@ -28,3 +28,15 @@ Gate: hybrid blind — one verifier per cluster surface + one broad hunter, burs
 - CR06 parked: spec asks for UX research; a research proposal ships in the report, no code.
 - CR07 uses new names (`reviewed` slide field, review-cycle toggle) because `reviewMode` already names the comments review feature.
 - Neutralino CRs (CR12, CR16, CR18, CR19): the GUI cannot run in this container; proof is headless unit/node tests + code review.
+
+## What happened vs plan
+
+Clusters C1–C5 landed as planned; C5's first worker hit its budget mid-task and was
+replaced by C5b, which finished the cluster on its own branch. The blind gate ran 6 rounds
+instead of 1: round 1 found 9 in-scope defects, round 2 found 4 (plus one finding resolved
+as by-design, not a bug), round 3 found 1, round 4 found 2, round 5 found 1, and round 6 came
+back clean — fix rounds F1 through F8 closed each round's findings before the next round ran.
+In round 3 the canvas/branding surface was not re-driven by its own dedicated verifier
+because it was unchanged since round 2's clean verdict; the round's broad hunter still
+covered it, and that coverage choice is recorded in the report's Assumptions section. Full
+detail: [`README.md`](./README.md).
