@@ -83,7 +83,7 @@ that symbol in the named part for the line. No line numbers here — they rot.
 - StudentPanel — dispatcher: static studyNotes first, else live Vera: StudentPanel TeacherPanel SectionPicker
 
 ### part-slidepanel.jsx
-- Slide Panel — editor slide view, fullscreen/presenter nav, per-slide AI actions: VIEW_SWITCH_SEGMENTS ViewSwitch SlidePanel
+- Slide Panel — editor slide view, fullscreen/presenter nav, per-slide AI actions: VIEW_SWITCH_SEGMENTS VIEW_SWITCH_PAD VIEW_SWITCH_LABEL_EXTRA ViewSwitch SlidePanel
 
 ### part-list.jsx
 - (file preamble): _velaDrag _setDrag _clearDrag
@@ -322,8 +322,8 @@ add_lane add_item batch_add_items remove_item remove_lane rename_item rename_lan
 - part-imports.jsx: 860-line unbannered stretch after line 513
 - part-blocks.jsx: 764-line unbannered stretch after line 843
 - part-canvas.jsx: 453-line unbannered stretch after line 24
-- part-slidepanel.jsx: 475-line unbannered stretch after line 230
-- part-slidepanel.jsx: 406-line unbannered stretch after line 1017
+- part-slidepanel.jsx: 475-line unbannered stretch after line 235
+- part-slidepanel.jsx: 406-line unbannered stretch after line 1022
 - part-uitest.jsx: 616-line unbannered stretch after line 1230
 - part-uitest2.jsx: 448-line unbannered stretch after line 2
 - part-uitest2.jsx: 593-line unbannered stretch after line 1395
