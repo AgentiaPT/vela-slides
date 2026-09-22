@@ -2135,7 +2135,7 @@ const getCss = () => `
 .vela-wide-scroll::-webkit-scrollbar{width:10px} .vela-wide-scroll::-webkit-scrollbar-thumb{background:${T.textDim};border-radius:5px}
 .concept-row{transition:all .15s;cursor:pointer} .concept-row:hover{background:${T.accentGlow}!important} .concept-row.selected{background:${T.accent}18!important;border-left-color:${T.accent}!important}
 .status-btn{cursor:pointer;transition:transform .15s} .status-btn:hover{transform:scale(1.3)}
-.slide-nav-btn{opacity:.4;transition:opacity .2s;cursor:pointer} .slide-nav-btn:hover{opacity:1}
+.slide-nav-btn{opacity:.85;transition:opacity .2s,background .2s;cursor:pointer;background:rgba(0,0,0,0.38);backdrop-filter:blur(2px);-webkit-backdrop-filter:blur(2px)} .slide-nav-btn:hover{opacity:1;background:rgba(0,0,0,0.55)}
 .imp-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0}
 .add-btn{transition:all .15s} .add-btn:hover{background:${T.accent}!important;color:#fff!important}
 .lane-header{transition:background .15s} .lane-header:hover{background:${T.bgCard}!important}

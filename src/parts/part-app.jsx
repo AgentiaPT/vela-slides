@@ -966,7 +966,25 @@ export default function App() {
             return <>
               <button data-testid="batch-edit-toggle" onClick={() => sa?.toggleBatchEdit?.()} disabled={!aiOk || !has || !sa?.slidesCount} title={aiOk ? "Batch edit across slides" : VELA_AI_UNAVAILABLE_MSG} style={S.btn({ padding: "4px 10px", fontSize: 14, color: !aiOk ? T.textDim + "60" : sa?.showBatchEdit ? T.accent : (sa?.improving ? T.red : T.textDim), background: sa?.showBatchEdit || sa?.improving ? T.accent + "20" : "transparent", borderRadius: 4, opacity: aiOk && has && sa?.slidesCount ? 1 : 0.4, display: "flex", alignItems: "center", gap: 4, cursor: aiOk ? "pointer" : "not-allowed" })}>{sa?.improving ? "⏹" : "🔄"} Batch</button>
               <button data-testid="brand-toggle" onClick={() => sa?.toggleBranding?.()} disabled={!has} title="Branding & guidelines" style={S.btn({ padding: "4px 10px", fontSize: 14, color: sa?.showBranding ? T.accent : (sa?.hasBranding ? T.accent : T.textDim), background: sa?.showBranding ? T.accent + "20" : "transparent", borderRadius: 4, opacity: has ? 1 : 0.4, display: "flex", alignItems: "center", gap: 4 })}>{"🎨"} Brand</button>
-              <button onClick={() => sa?.present?.()} disabled={!has} style={{ display: "flex", alignItems: "center", gap: 5, padding: "5px 14px", background: has ? T.green : T.border, color: has ? "#fff" : T.textDim, border: "none", borderRadius: 6, cursor: has ? "pointer" : "default", opacity: has ? 1 : 0.5, fontFamily: FONT.mono, fontSize: 14, fontWeight: 700 }}>{"▶"} Present</button>
+              {/* CR13: view switcher (editor | presenter | gallery), placed next to
+                  Present. Shows the live view and switches to it in one click — the
+                  gallery is no longer reachable only from the Overview button below
+                  the slide. */}
+              {(() => {
+                const vm = sa?.viewMode || "editor";
+                const seg = (mode, icon, label) => (
+                  <button key={mode} data-testid={`view-switch-${mode}`} onClick={() => sa?.setView?.(mode)} disabled={!has} title={label} aria-pressed={vm === mode}
+                    style={{ display: "flex", alignItems: "center", gap: 4, padding: "4px 9px", background: vm === mode ? T.accent : "transparent", color: vm === mode ? "#fff" : T.textDim, border: "none", cursor: has ? "pointer" : "default", opacity: has ? 1 : 0.4, fontFamily: FONT.mono, fontSize: 12, fontWeight: 700 }}>
+                    <span>{icon}</span><span>{label}</span>
+                  </button>
+                );
+                return <div data-testid="view-switch" style={{ display: "flex", alignItems: "center", border: `1px solid ${T.border}`, borderRadius: 6, overflow: "hidden", flexShrink: 0 }}>
+                  {seg("editor", "🖊", "Editor")}
+                  {seg("presenter", "🖥️", "Presenter")}
+                  {seg("gallery", "🗂", "Gallery")}
+                </div>;
+              })()}
+              <button data-testid="present-btn" onClick={() => sa?.present?.()} disabled={!has} style={{ display: "flex", alignItems: "center", gap: 5, padding: "5px 14px", background: has ? T.green : T.border, color: has ? "#fff" : T.textDim, border: "none", borderRadius: 6, cursor: has ? "pointer" : "default", opacity: has ? 1 : 0.5, fontFamily: FONT.mono, fontSize: 14, fontWeight: 700 }}>{"▶"} Present</button>
             </>;
           })()}
           <div style={{ width: 1, height: 22, background: T.border, flexShrink: 0 }} />

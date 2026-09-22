@@ -2068,6 +2068,80 @@ uiSuite("meridian-CR07 Review cycle", [
   }},
 ], { setup: _editorSetup });
 
+// ── meridian-CR10 / meridian-CR11: fullscreen nav icons keep a visible chip
+// on any slide background (light or dark), so they do not fade into the slide. ──
+uiSuite("meridian-CR10-CR11 Nav Icon Contrast", [
+  { name: "Enter fullscreen (Present)", fn: async () => {
+    document.activeElement?.blur(); await _wait(100);
+    _key("f");
+    await _waitFor(() => !_$("header"));
+  }},
+  { name: "gallery/presenter/edit nav buttons render with a non-transparent chip", fn: async () => {
+    const ids = ["gallery-toggle", "presenter-toggle", "present-edit-toggle"];
+    for (const id of ids) {
+      const el = await _waitFor(() => _$(`[data-testid='${id}']`), 2000);
+      const bg = getComputedStyle(el).backgroundColor;
+      // A transparent/near-transparent chip means the icon has no backing plate
+      // and can vanish against a light slide (CR10/CR11's reported bug).
+      if (!bg || bg === "rgba(0, 0, 0, 0)" || bg === "transparent") {
+        throw new Error(`${id}: no backing chip (background=${bg})`);
+      }
+    }
+  }},
+  { name: "edit icon stays visible on toggle (on/off, CR11's 'sometimes shows')", fn: async () => {
+    const btn = await _waitFor(() => _$("[data-testid='present-edit-toggle']"), 2000);
+    const bgOff = getComputedStyle(btn).backgroundColor;
+    if (bgOff === "rgba(0, 0, 0, 0)" || bgOff === "transparent") throw new Error("edit icon has no chip while off");
+    _click(btn);
+    await _wait(120);
+    const bgOn = getComputedStyle(btn).backgroundColor;
+    if (bgOn === "rgba(0, 0, 0, 0)" || bgOn === "transparent") throw new Error("edit icon has no chip while on");
+    _click(btn); // restore
+    await _wait(120);
+  }},
+  { name: "Exit fullscreen", fn: async () => {
+    _key("f");
+    await _waitFor(() => _$("header"));
+  }},
+]);
+
+// ── meridian-CR13: editor|presenter|gallery view switcher next to Present ──
+uiSuite("meridian-CR13 View Switcher", [
+  { name: "View switcher renders next to Present in the editor", fn: async () => {
+    await _waitFor(() => _$("[data-testid='view-switch']") && _$("[data-testid='present-btn']"), 2000);
+  }},
+  { name: "Editor segment is the active view on load", fn: async () => {
+    const btn = await _waitFor(() => _$("[data-testid='view-switch-editor']"), 2000);
+    if (btn.getAttribute("aria-pressed") !== "true") throw new Error("editor segment not marked active");
+  }},
+  { name: "Gallery is reachable in one click from the editor", fn: async () => {
+    const btn = await _waitFor(() => _$("[data-testid='view-switch-gallery']"), 2000);
+    _click(btn);
+    await _waitFor(() => _$text("GALLERY"), 2000);
+    const active = await _waitFor(() => _$("[data-testid='view-switch-gallery']"), 2000);
+    if (active.getAttribute("aria-pressed") !== "true") throw new Error("gallery segment not marked active after switch");
+  }},
+  { name: "Editor segment returns from gallery to the editor", fn: async () => {
+    const btn = await _waitFor(() => _$("[data-testid='view-switch-editor']"), 2000);
+    _click(btn);
+    await _waitFor(() => !_$text("GALLERY") && _$("header"), 2000);
+  }},
+  { name: "Presenter segment enters fullscreen Present", fn: async () => {
+    // The top bar (and this switcher) is not mounted while in fullscreen Present —
+    // the same audience-facing surface that hides all other edit chrome. So the
+    // switcher only needs to be checked as the way IN; exiting fullscreen uses the
+    // existing close/F-key controls tested elsewhere.
+    const btn = await _waitFor(() => _$("[data-testid='view-switch-presenter']"), 2000);
+    _click(btn);
+    await _waitFor(() => !_$("header"), 2000);
+  }},
+  { name: "Exit fullscreen back to the editor (F key)", fn: async () => {
+    document.activeElement?.blur(); await _wait(100);
+    _key("f");
+    await _waitFor(() => _$("header"), 2000);
+  }},
+]);
+
 // ━━━ UI TEST RUNNER COMPONENT ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 // Demo deck guard — UI tests only run against the original demo deck

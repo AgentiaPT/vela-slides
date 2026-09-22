@@ -318,8 +318,8 @@ add_lane add_item batch_add_items remove_item remove_lane rename_item rename_lan
 - part-imports.jsx: 860-line unbannered stretch after line 512
 - part-blocks.jsx: 764-line unbannered stretch after line 769
 - part-canvas.jsx: 414-line unbannered stretch after line 24
-- part-slidepanel.jsx: 464-line unbannered stretch after line 209
-- part-slidepanel.jsx: 400-line unbannered stretch after line 985
+- part-slidepanel.jsx: 471-line unbannered stretch after line 209
+- part-slidepanel.jsx: 400-line unbannered stretch after line 992
 - part-uitest.jsx: 616-line unbannered stretch after line 1230
 - part-uitest2.jsx: 448-line unbannered stretch after line 2
 - part-uitest2.jsx: 593-line unbannered stretch after line 1395
@@ -330,3 +330,4 @@ add_lane add_item batch_add_items remove_item remove_lane rename_item rename_lan
 - part-pdf-vector.jsx: 480-line unbannered stretch after line 459
 - part-pdf-vector.jsx: 524-line unbannered stretch after line 1204
 - part-pptx.jsx: no level-1 banners (1188 lines)
+- part-app.jsx: 356-line unbannered stretch after line 856
