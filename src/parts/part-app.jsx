@@ -390,18 +390,12 @@ export default function App() {
       _localSyncIncoming.current = true;
       try {
         const cur = _localSyncState.current;
-        const sanitized = validateAndSanitizeDeck(deck);
-        // Preserve lane/item IDs so selection stays valid
+        // Keep the file's own valid, unique ids (deck open/switch must not churn
+        // ids — CR01); only minted ids fall back to the current id at that
+        // position, so selection stays valid after an editor drops ids.
+        const sanitized = validateAndSanitizeDeck(deck, { keepIds: true });
         if (cur.lanes && sanitized.lanes && cur.lanes.length === sanitized.lanes.length) {
-          for (let li = 0; li < sanitized.lanes.length; li++) {
-            sanitized.lanes[li].id = cur.lanes[li].id;
-            if (sanitized.lanes[li].items && cur.lanes[li].items) {
-              const minItems = Math.min(sanitized.lanes[li].items.length, cur.lanes[li].items.length);
-              for (let ii = 0; ii < minItems; ii++) {
-                sanitized.lanes[li].items[ii].id = cur.lanes[li].items[ii].id;
-              }
-            }
-          }
+          adoptPriorDeckIds(sanitized, deck, cur);
         }
         // Check if this is a different deck (picker switch) vs same-deck external edit
         const isDifferentDeck = !cur.lanes?.length || cur.lanes.length !== sanitized.lanes.length ||
@@ -764,6 +758,8 @@ export default function App() {
   React.useEffect(() => {
     const name = state.deckTitle || "Untitled";
     document.title = name === "Untitled" ? "Vela Slides" : `${name} — Vela Slides`;
+    // Desktop shell hook (nl-boot.js): mirror the sanitized title to the native window.
+    if (typeof window.__velaOnDeckTitle === "function") { try { window.__velaOnDeckTitle(state.deckTitle || ""); } catch (_) {} }
   }, [state.deckTitle]);
 
   // Export

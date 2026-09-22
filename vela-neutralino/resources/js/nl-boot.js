@@ -24,6 +24,7 @@ import { trust } from "./trust.js";
 import { checkForUpdate } from "./update-check.js";
 import { fsGuard } from "./fs-guard.js";
 import { showDeckWarning } from "./deck-warning.js";
+import { focusWindow, installRefocus, setWindowTitle } from "./window-glue.js";
 
 const $ = (id) => document.getElementById(id);
 const loadingMsg = $("vela-loading-msg");
@@ -53,19 +54,7 @@ function showError(text) {
   host.appendChild(body);
 }
 
-// Bring the native OS window to the foreground and give it keyboard focus.
-// Neutralino opens the window but on Windows/WebView2 (and some Linux WMs) it
-// does NOT grab focus on launch — so keydown events never reach the webview
-// until the user clicks the window. That breaks every "press Enter to confirm"
-// dialog on first run (deck warning, trust prompt, React confirm modals). We
-// focus explicitly after init, and retry a couple of times because the native
-// window is created asynchronously and an immediate focus() can no-op.
-function focusWindow() {
-  const tryFocus = () => { try { Neutralino.window.focus(); } catch { /* window.* gated or not ready */ } };
-  tryFocus();
-  setTimeout(tryFocus, 120);
-  setTimeout(tryFocus, 400);
-}
+// focusWindow() / installRefocus() / setWindowTitle() live in window-glue.js.
 
 async function boot() {
   setMsg("Starting Neutralino…");
@@ -75,6 +64,11 @@ async function boot() {
     return showError("Neutralino.init() failed: " + e.message);
   }
   focusWindow();
+  // Re-arm keyboard focus after every alt-tab / refocus, not only at launch (CR18).
+  installRefocus();
+  // Native window title follows the app's own sanitized deck title (CR16):
+  // part-app.jsx calls this on mount, on title edit and on deck switch.
+  window.__velaOnDeckTitle = setWindowTitle;
   // Wrap Neutralino.filesystem.* so every path must resolve inside an allowed
   // root (the decks folder + ~/.vela, registered by deck-io/config-store).
   // Installed before any module touches the filesystem.
@@ -414,7 +408,25 @@ async function selectProvider(id) {
   window.dispatchEvent(new Event("vela-agent-update"));
 }
 
+// Startup budget for agent detection: a cold, AV-scanned gatekeeper (and its
+// first agent `--version` run) can need this long on a fresh build.
+const AGENT_STARTUP_BUDGET_MS = 45000;
+const RESCAN_BUDGET_MS = 10000;
+let bootDeadline = 0;
+
+function publishAgentState(up) {
+  if (up === null) {
+    window.__velaAgentReady = false;
+  } else {
+    window.__velaAgentInfo = agents.info();
+    window.__velaAgentReady = agents.available();
+    window.__velaAgentActive = window.__velaAgentInfo.model || window.__velaAgentInfo.id;
+  }
+  window.dispatchEvent(new Event("vela-agent-update"));
+}
+
 function installAgentsBridge() {
+  bootDeadline = Date.now() + AGENT_STARTUP_BUDGET_MS;
   // Default to unavailable until detection completes.
   window.__velaAgentReady = false;
   window.__velaAgentInfo = { id: null, label: "—", available: false, version: null, model: null, providers: [] };
@@ -437,13 +449,13 @@ function installAgentsBridge() {
     list: () => agents.list(),
     activeId: () => agents.activeId(),
     pick: (id) => selectProvider(id),
-    refresh: async () => {
-      await agents.detect();
-      window.__velaAgentInfo = agents.info();
-      window.__velaAgentReady = agents.available();
-      window.__velaAgentActive = window.__velaAgentInfo.model || window.__velaAgentInfo.id;
-      window.dispatchEvent(new Event("vela-agent-update"));
-    },
+    // Manual rescan: same retry loop as boot. Inside the startup budget it keeps
+    // probing until the boot deadline; after it, it still gets a short window,
+    // so one click during a slow gatekeeper start is not a final "offline".
+    refresh: () => agents.probeUntilReady({
+      deadline: Math.max(bootDeadline, Date.now() + RESCAN_BUDGET_MS),
+      onAttempt: publishAgentState,
+    }),
   };
   // Consumed by trust.js to render the provider choice in the confirm modal.
   window.__velaSelectProvider = selectProvider;
@@ -455,31 +467,7 @@ function installAgentsBridge() {
   // whole session shows AI as unavailable until the app is closed and reopened.
   // Retry with backoff until the gatekeeper answers (or a budget elapses), so a
   // slow first launch self-heals instead of needing a manual restart.
-  (async () => {
-    const deadline = Date.now() + 45000; // give a cold, AV-scanned exe time to boot
-    let emptyTries = 0;                   // gatekeeper answered but no agent installed
-    let delay = 500;
-    for (;;) {
-      let gatekeeperUp = false;
-      try {
-        gatekeeperUp = await agents.detect();
-        window.__velaAgentInfo = agents.info();
-        window.__velaAgentReady = agents.available();
-        window.__velaAgentActive = window.__velaAgentInfo.model || window.__velaAgentInfo.id;
-      } catch {
-        window.__velaAgentReady = false;
-      }
-      window.dispatchEvent(new Event("vela-agent-update"));
-
-      if (window.__velaAgentReady) break;              // found an agent — done
-      // Gatekeeper responded but reported no agent: mostly a real negative, but a
-      // slow first-run `claude --version` can time out too, so allow a few retries.
-      if (gatekeeperUp && ++emptyTries >= 3) break;
-      if (Date.now() >= deadline) break;               // gatekeeper never came up
-      await new Promise((r) => setTimeout(r, delay));
-      delay = Math.min(Math.round(delay * 1.5), 4000);
-    }
-  })();
+  agents.probeUntilReady({ deadline: bootDeadline, onAttempt: publishAgentState });
 }
 
 // ---------- Fullscreen bridge ---------------------------------------------
