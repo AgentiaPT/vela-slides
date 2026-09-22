@@ -26,14 +26,19 @@ function BrandingOverlay({ branding, index, total, displayIndex, displayTotal, s
   // it stays scrubber-only like every other text-color field. (v13.27)
   const footerBg = isDefaultFooter && isLight ? "rgba(0,0,0,0.06)" : (cssColor(b.footerBg) || "rgba(0,0,0,0.35)");
   const footerColor = isDefaultColor && isLight ? "#475569" : (b.footerColor || "#94a3b8");
+  // Accent height 0 is a real user choice ("no top line"): a falsy `|| 4`
+  // fallback turned it back into 4px. Use 4 only when the value is missing,
+  // and draw no bar at all when the height is 0 or less.
+  const accentH = Number.isFinite(b.accentHeight) ? Math.max(0, b.accentHeight) : 4;
+  const showAccent = !!b.accentBar && accentH > 0;
   return <>
-    {b.accentBar && <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: b.accentHeight || 4, background: cssColor(b.accentColor) || T.accent, zIndex: 5 }} />}
+    {showAccent && <div data-branding-accent="true" style={{ position: "absolute", top: 0, left: 0, right: 0, height: accentH, background: cssColor(b.accentColor) || T.accent, zIndex: 5 }} />}
     {b.logo && (() => {
       const pos = b.logoPosition || "top-left";
       const sz = b.logoSize || 56;
       const isTop = pos.startsWith("top");
       const isLeft = pos.endsWith("left");
-      const vOffset = isTop ? (b.accentBar ? (b.accentHeight || 4) + 8 : 10) : 36;
+      const vOffset = isTop ? (showAccent ? accentH + 8 : 10) : 36;
       const style = { position: "absolute", height: sz, objectFit: "contain", zIndex: 1, opacity: 0.9 };
       if (isTop) style.top = vOffset; else style.bottom = vOffset;
       if (isLeft) style.left = 16; else style.right = 16;

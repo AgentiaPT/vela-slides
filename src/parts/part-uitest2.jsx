@@ -2141,6 +2141,214 @@ uiSuite("meridian-CR13 View Switcher", [
     await _waitFor(() => _$("header"), 2000);
   }},
 ]);
+// ── Sprint meridian (C3): split image alignment, accent 0, docked branding
+// pane, toolbar room above, link badge placement ──────────────────────
+const _mrdSvg = (w, h, color) =>
+  `data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='${w}'%20height='${h}'%3E%3Crect%20width='${w}'%20height='${h}'%20fill='%23${color}'/%3E%3C/svg%3E`;
+const _mrdViewport = () => _$("[data-testid='slide-viewport']");
+const _mrdFrame = () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+const _mrdInject = async (blocks, extra, ready) => {
+  const hooks = _hooks();
+  if (typeof hooks.injectBlocks !== "function") throw new Error("injectBlocks test hook not exposed");
+  hooks.injectBlocks(blocks, { layout: undefined, verticalAlign: undefined, padding: null, ...(extra || {}) });
+  const el = await _waitFor(() => ready(_mrdViewport()), 3000);
+  await _mrdFrame();
+  return el;
+};
+const _mrdSetRange = (el, value) => {
+  Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set.call(el, String(value));
+  el.dispatchEvent(new Event("input", { bubbles: true }));
+};
+const _mrdOpenBranding = async () => {
+  if (!_$("[data-testid='branding-panel']")) _click("[data-testid='brand-toggle']");
+  return _waitFor(() => _$("[data-testid='branding-panel']"), 2000);
+};
+const _mrdCloseBranding = async () => {
+  const close = _$("[data-testid='branding-panel-close']");
+  if (close) _click(close);
+  await _waitFor(() => !_$("[data-testid='branding-panel']"), 2000).catch(() => {});
+};
+// Undo every history step a test added, so branding edits do not leak.
+const _mrdUndoTo = async (past) => {
+  const hooks = _hooks();
+  document.activeElement?.blur?.();
+  for (let i = 0; i < 20 && hooks.getHistoryCounts && hooks.getHistoryCounts().past > past; i++) {
+    _key("z", { ctrlKey: true });
+    await _wait(60);
+  }
+};
+const _mrdHover = async (el) => {
+  el.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
+  await _mrdFrame();
+};
+const _mrdUnhover = async (el) => {
+  el.dispatchEvent(new MouseEvent("mouseout", { bubbles: true, relatedTarget: document.body }));
+  await _mrdFrame();
+};
+
+uiSuite("meridian-CR03 split image alignment", [
+  { name: "CR03: image-left/right keep the image centred with the content column", fn: async () => {
+    for (const layout of ["image-left", "image-right"]) {
+      const marker = `CR03 ${layout}`;
+      const img = await _mrdInject([
+        { type: "heading", text: marker },
+        { type: "bullets", items: ["One point", "Two point", "Three point"] },
+        { type: "image", src: _mrdSvg(400, 300, "3b82f6") },
+      ], { layout }, (vp) => vp?.textContent.includes(marker) && vp.querySelector("[data-split-image] img")?.naturalWidth > 0 ? vp.querySelector("[data-split-image]") : null);
+      const con = _mrdViewport().querySelector("[data-split-content]");
+      if (getComputedStyle(img).justifyContent !== "center") throw new Error(`${layout}: image column justify is ${getComputedStyle(img).justifyContent}`);
+      if (!/center/.test(getComputedStyle(con).justifyContent)) throw new Error(`${layout}: content column justify is ${getComputedStyle(con).justifyContent}`);
+      // The side image gets a measured height cap after first paint; poll until
+      // the layout settles, then compare the two column centres.
+      let m = null;
+      const measure = () => {
+        const ir = img.querySelector("img").getBoundingClientRect();
+        const kids = Array.from(con.children).map((c) => c.getBoundingClientRect()).filter((r) => r.height > 0);
+        m = { imageMid: (ir.top + ir.bottom) / 2, contentMid: (Math.min(...kids.map((r) => r.top)) + Math.max(...kids.map((r) => r.bottom))) / 2, gapTop: ir.top - img.getBoundingClientRect().top };
+        return Math.abs(m.imageMid - m.contentMid) <= 3 && m.gapTop >= 4;
+      };
+      await _waitFor(measure, 2500).catch(() => {
+        throw new Error(`${layout}: image centre ${m.imageMid.toFixed(1)} vs content centre ${m.contentMid.toFixed(1)}, top gap ${m.gapTop.toFixed(1)}`);
+      });
+    }
+  }},
+], { setup: _selectFirstModule });
+
+uiSuite("meridian-CR08 branding accent zero", [
+  { name: "CR08: accent height 0 removes the top line; the slider keeps 0", fn: async () => {
+    const hooks = _hooks();
+    const past = hooks.getHistoryCounts?.().past ?? 0;
+    await _mrdInject([{ type: "heading", text: "CR08 accent" }], null, (vp) => vp?.textContent.includes("CR08 accent") ? vp : null);
+    try {
+      const panel = await _mrdOpenBranding();
+      const range = panel.querySelector("[data-testid='branding-accent-height']");
+      if (!range) throw new Error("accent height slider missing");
+      _mrdSetRange(range, 6);
+      const bar = await _waitFor(() => _mrdViewport().querySelector("[data-branding-accent]"), 2000).catch(() => null);
+      if (!bar) throw new Error("accent bar not drawn at 6px");
+      _mrdSetRange(range, 0);
+      await _waitFor(() => !_mrdViewport().querySelector("[data-branding-accent]"), 2000)
+        .catch(() => { throw new Error("accent bar still drawn at 0px"); });
+      const live = _$("[data-testid='branding-accent-height']");
+      if (live.value !== "0") throw new Error(`slider jumped to ${live.value} after 0`);
+      if ((live.nextElementSibling?.textContent || "").trim() !== "0px") throw new Error(`label shows ${live.nextElementSibling?.textContent}`);
+    } finally {
+      await _mrdCloseBranding();
+      await _mrdUndoTo(past);
+    }
+  }},
+], { setup: _selectFirstModule });
+
+uiSuite("meridian-CR09 branding side pane", [
+  { name: "CR09: branding opens as a right pane beside the canvas and closes", fn: async () => {
+    await _mrdCloseBranding();
+    const before = _mrdViewport().getBoundingClientRect();
+    const panel = await _mrdOpenBranding();
+    await _mrdFrame();
+    await _wait(150);
+    try {
+      if (window.innerWidth >= 768) {
+        const p = panel.getBoundingClientRect();
+        const c = _mrdViewport().getBoundingClientRect();
+        if (panel.dataset.docked !== "right") throw new Error("panel is not docked right");
+        if (p.left < c.right - 1) throw new Error(`pane left ${p.left.toFixed(0)} overlaps canvas right ${c.right.toFixed(0)}`);
+        if (Math.abs(p.top - c.top) > 60 && p.top > c.top) throw new Error("pane is not beside the canvas");
+        if (c.width >= before.width - 1) throw new Error("canvas did not resize for the pane");
+        if (getComputedStyle(panel).overflowY !== "auto") throw new Error("pane does not scroll");
+        if (document.documentElement.scrollWidth > window.innerWidth + 1) throw new Error("pane caused horizontal page scroll");
+      }
+      for (const sel of ["[data-testid='branding-accent-height']", "input[placeholder='Name / Company']", "input[placeholder='Tagline']"]) {
+        if (!panel.querySelector(sel)) throw new Error(`control missing in pane: ${sel}`);
+      }
+    } finally {
+      await _mrdCloseBranding();
+    }
+    if (_$("[data-testid='branding-panel']")) throw new Error("close control did not close the pane");
+    await _waitFor(() => Math.abs(_mrdViewport().getBoundingClientRect().width - before.width) < 1.5, 2000)
+      .catch(() => { throw new Error("canvas did not return to full width"); });
+  }},
+], { setup: _selectFirstModule });
+
+uiSuite("meridian-CR15 toolbar room above", [
+  { name: "CR15: full-bleed image keeps its toolbar and popups inside the slide", fn: async () => {
+    const block = await _mrdInject([{ type: "image", src: _mrdSvg(960, 540, "f59e0b") }], null,
+      (vp) => { const b = vp?.querySelector("[data-block-type='image'] img"); return b?.naturalWidth > 0 ? vp.querySelector("[data-block-type='image']") : null; });
+    await _mrdHover(block);
+    try {
+      const bar = await _waitFor(() => _mrdViewport().querySelector("[data-testid='block-hover-toolbar']"), 1500);
+      const vp = _mrdViewport().getBoundingClientRect();
+      const inView = (el) => { const r = el.getBoundingClientRect(); return r.top >= vp.top - 0.5 && r.bottom <= vp.bottom + 0.5 && r.left >= vp.left - 0.5 && r.right <= vp.right + 0.5; };
+      if (bar.dataset.chromeInside !== "true" || !inView(bar)) throw new Error("toolbar is drawn above the slide edge");
+      const hit = (el) => { const r = el.getBoundingClientRect(); const h = document.elementFromPoint((r.left + r.right) / 2, (r.top + r.bottom) / 2); return !!h && el.contains(h); };
+      if (!hit(bar)) throw new Error("toolbar is not clickable");
+      _click(bar.querySelector("button[title='Add link']"));
+      const pop = await _waitFor(() => _$("[data-testid='block-link-popup']"), 1500);
+      if (!inView(pop) || !hit(pop)) throw new Error("link popup is cut off or covered");
+      _key("Escape");
+      pop.querySelector("input")?.blur();
+    } finally {
+      await _mrdUnhover(block);
+    }
+  }},
+  { name: "CR15: a normal slide keeps the toolbar outside the block top edge", fn: async () => {
+    const block = await _mrdInject([{ type: "heading", text: "CR15 normal" }, { type: "text", text: "Body" }], null,
+      (vp) => vp?.textContent.includes("CR15 normal") ? vp.querySelector("[data-block-type='heading']") : null);
+    await _mrdHover(block);
+    try {
+      const bar = await _waitFor(() => _mrdViewport().querySelector("[data-testid='block-hover-toolbar']"), 1500);
+      if (bar.dataset.chromeInside) throw new Error("toolbar moved inside on a block with room above");
+      if (bar.getBoundingClientRect().top >= block.getBoundingClientRect().top) throw new Error("toolbar is not above the block");
+    } finally {
+      await _mrdUnhover(block);
+    }
+  }},
+], { setup: _selectFirstModule });
+
+uiSuite("meridian-CR17 link badge placement", [
+  { name: "CR17: link badges sit just after the label text on every item kind", fn: async () => {
+    const L = "https://example.com/x";
+    const cases = {
+      "icon-row": [{ type: "icon-row", cols: 2, items: [
+        { icon: "MessageSquare", title: "ChatGPT", text: "chatgpt.com", link: L },
+        { icon: "Box", title: "Docker Sandboxes", text: "docker.com/products/docker-sandboxes", link: L },
+        { icon: "Cpu", title: "A long wrapped title that keeps going across the column width for sure", text: "sub", link: L },
+      ] }],
+      bullets: [{ type: "bullets", items: [{ text: "Short", link: L }, { text: "A much longer bullet line that wraps onto a second visual line so the badge must follow the last word of the text", link: L }, { text: "Iconed", icon: "Star", link: L }] }],
+      grid: [{ type: "grid", cols: 2, items: [{ blocks: [{ type: "text", text: "Wide cell word", link: L }] }, { blocks: [{ type: "heading", text: "Heading in a wide cell", link: L }] }] }],
+      text: [{ type: "text", text: "Block-level link on a plain text block", link: L }],
+    };
+    for (const [name, blocks] of Object.entries(cases)) {
+      const want = blocks[0].items ? blocks[0].items.length : blocks.length;
+      const placed = (vp) => {
+        const all = vp ? Array.from(vp.querySelectorAll("[data-link-badge]")) : [];
+        return all.length === want && all.every((b) => b.dataset.linkBadgePlaced === "text-end") ? all : null;
+      };
+      await _mrdInject(blocks, null, placed).catch(() => { throw new Error(`${name}: badges not placed at the text end`); });
+      await _wait(150);
+      // Re-query: a late re-render can replace the nodes found first.
+      const badges = placed(_mrdViewport());
+      if (!badges) throw new Error(`${name}: badges lost their text-end placement`);
+      for (const b of badges) {
+        const br = b.getBoundingClientRect();
+        const rects = [];
+        const walker = document.createTreeWalker(b.parentElement, NodeFilter.SHOW_TEXT);
+        const range = document.createRange();
+        for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+          if (b.contains(n) || !n.nodeValue.trim()) continue;
+          range.selectNodeContents(n);
+          rects.push(...Array.from(range.getClientRects()));
+        }
+        if (rects.some((r) => r.left < br.right - 0.5 && r.right > br.left + 0.5 && r.top < br.bottom - 0.5 && r.bottom > br.top + 0.5)) throw new Error(`${name}: badge overlaps text`);
+        const sameLine = rects.filter((r) => r.top < br.bottom && r.bottom > br.top && r.right <= br.left + 1);
+        const gap = sameLine.length ? Math.min(...sameLine.map((r) => br.left - r.right)) : Infinity;
+        if (!(gap >= 0 && gap <= 12)) {
+          const fmt = (r) => [r.left, r.top, r.right, r.bottom].map((v) => Math.round(v)).join(",");
+          throw new Error(`${name}: badge ${fmt(br)} is ${gap}px from the text end; text ${rects.map(fmt).join(" | ")}`);
+        }
+      }
+    }
+  }},
+], { setup: _selectFirstModule });
 
 // ━━━ UI TEST RUNNER COMPONENT ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
