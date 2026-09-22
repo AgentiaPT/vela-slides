@@ -16267,6 +16267,58 @@ uiSuite("meridian-CR01 local save retries after a failed write", [
   }},
 ]);
 
+// meridian-F8 (CR01): with a slow backend, the file must end equal to the
+// latest deck state after all writes settle — also when the latest state is
+// the one the file held before the in-flight write (edit, then undo).
+const _meridianF8SlowSave = async (steps, want) => {
+  const hooks = _hooks();
+  if (!hooks.capturePostDemoFlushForTest || !hooks.flushDemoSaveForTest || !hooks.setGuidelinesForTest) throw new Error("save test hooks missing");
+  const originalStorage = window.storage;
+  const originalLocalSend = window.__velaSendDeckUpdate;
+  const calls = [];
+  let pending = 0;
+  let disk = null;
+  let latency = 0;
+  window.storage = { ...(originalStorage || {}), set: async () => {}, delete: async () => {} };
+  // Stub backend: each write lands on "disk" in call order after `latency` ms.
+  window.__velaSendDeckUpdate = (payload) => {
+    calls.push(payload.guidelines);
+    pending++;
+    return new Promise((r) => setTimeout(() => { disk = payload.guidelines; pending--; r(true); }, latency));
+  };
+  const flush = () => hooks.flushDemoSaveForTest(hooks.capturePostDemoFlushForTest(), { local: true, storage: false });
+  const edit = async (g) => {
+    hooks.setGuidelinesForTest(g);
+    await _wait(50);
+    flush();
+    await _wait(30);
+  };
+  try {
+    // Baseline: a confirmed write puts "base" on disk.
+    await edit("meridian-F8 base");
+    await _waitFor(() => pending === 0 && disk === "meridian-F8 base", 2000);
+    latency = 400;
+    for (const g of steps) await edit(g); // later steps run while the first write is in flight
+    await _waitFor(() => pending === 0, 3000);
+    await _wait(100);
+    if (disk !== want) throw new Error(`disk "${disk}", want "${want}"; calls ${JSON.stringify(calls)}`);
+    // Settled and equal: one more flush of the same state writes nothing.
+    const n = calls.length;
+    flush();
+    await _wait(200);
+    if (calls.length !== n) throw new Error(`settled state written again; calls ${JSON.stringify(calls)}`);
+  } finally {
+    window.storage = originalStorage;
+    window.__velaSendDeckUpdate = originalLocalSend;
+    hooks.restoreStartupDeck?.();
+    await _wait(100);
+  }
+};
+uiSuite("meridian-CR01 local save ends at the latest state with a slow backend", [
+  { name: "Edit, then undo during the in-flight write: file ends at the original", fn: () => _meridianF8SlowSave(["meridian-F8 edit", "meridian-F8 base"], "meridian-F8 base") },
+  { name: "Edit, then edit again during the in-flight write: file ends at the last edit", fn: () => _meridianF8SlowSave(["meridian-F8 edit", "meridian-F8 edit 2"], "meridian-F8 edit 2") },
+]);
+
 // ━━━ UI TEST RUNNER COMPONENT ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 // Demo deck guard — UI tests only run against the original demo deck
@@ -24210,6 +24262,7 @@ export default function App() {
   // write — a failed or unconfirmed send must not mark the payload as on disk,
   // or a later identical flush would skip it and the edit is lost.
   const _localSaveSeq = useRef({ sent: 0, done: 0 });
+  const _localSentSig = useRef(null); // payload JSON of the newest send
   // lanes object of the last LOAD from disk (startup patch / incoming update);
   // the lanes effect adopts that state as the baseline instead of saving it.
   const _localBaselineLanes = useRef(null);
@@ -24235,8 +24288,13 @@ export default function App() {
     delete save.lastDebug; delete save._bootstrap; delete save._version;
     const payload = localDeckPayload(source);
     const sig = JSON.stringify(payload);
-    if (sig === _localDiskSig.current) return false; // unchanged vs file: nothing to write
+    // Unchanged vs file: nothing to write — but only when no send of a
+    // different payload is still in flight. That send can land after this
+    // flush and overwrite the file (edit, then undo during a slow save).
+    const inFlight = _localSaveSeq.current.sent > _localSaveSeq.current.done;
+    if (sig === _localDiskSig.current && (!inFlight || sig === _localSentSig.current)) return false;
     const seq = ++_localSaveSeq.current.sent;
+    _localSentSig.current = sig;
     // Backend contract: a Promise that resolves true only after the write is
     // confirmed (false or a rejection = not written / superseded). A plain
     // return is a synchronous backend: false = failed, anything else = written.
