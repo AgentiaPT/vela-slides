@@ -51,7 +51,18 @@ const state = {
   saveStatus: null,   // latest emitted status (mirrored to window.__velaSaveState)
   lastWrittenSig: null, // signature of the exact bytes last written (echo guard)
   lastWrittenText: null, // those exact bytes — the signature alone can collide
+  saveWaiter: null,   // { deck, resolve } — the promise saveCurrent returned for pendingDeck
 };
+
+// Settle the promise saveCurrent returned (true = write confirmed on disk).
+// The app advances its "file already holds this" signature only on true, so a
+// failed or superseded save is never mistaken for a written one.
+function settleWaiter(deck, written) {
+  const w = state.saveWaiter;
+  if (!w || (deck !== undefined && w.deck !== deck)) return;
+  state.saveWaiter = null;
+  w.resolve(written);
+}
 
 // Cheap deterministic signature of a string, used for timing-independent
 // self-echo suppression in onWatchEvent: if the file on disk matches the exact
@@ -192,7 +203,8 @@ async function openDeck(path) {
 }
 
 function saveCurrent(deckObject) {
-  if (!state.currentPath || state.switching) return;
+  if (!state.currentPath || state.switching) return Promise.resolve(false);
+  settleWaiter(undefined, false); // superseded by this newer deck
   state.pendingDeck = deckObject;
   // Capture path NOW — flushSave must write to the file that was active
   // when the save was requested, not whatever currentPath points to later
@@ -200,6 +212,7 @@ function saveCurrent(deckObject) {
   state.pendingPath = state.currentPath;
   if (state.saveTimer) clearTimeout(state.saveTimer);
   state.saveTimer = setTimeout(flushSave, SAVE_DEBOUNCE_MS);
+  return new Promise((resolve) => { state.saveWaiter = { deck: deckObject, resolve }; });
 }
 
 async function flushSave() {
@@ -220,7 +233,7 @@ async function flushSave() {
   for (let i = 0; i < attempts; i++) {
     // A deck switch (openDeck/newDeck) moved the target — a fresher flush owns
     // the new path; abandon this stale write rather than clobbering it.
-    if (state.pendingPath && state.pendingPath !== path) return;
+    if (state.pendingPath && state.pendingPath !== path) { settleWaiter(deck, false); return; }
     try {
       state.lastWriteAt = Date.now();
       await Neutralino.filesystem.writeFile(path, json);
@@ -235,6 +248,7 @@ async function flushSave() {
       state.lastWrittenText = json;
       state.lastWriteAt = Date.now();
       if (state.pendingDeck === deck) { state.pendingDeck = null; state.pendingPath = null; }
+      settleWaiter(deck, true);
       if (verdict === "unknown") {
         // The bytes went out and the platform reported no error, but we could not
         // read them back to prove it. Report that honestly rather than showing a
@@ -264,6 +278,7 @@ async function flushSave() {
   // The raw error and the absolute path stay here (console); the renderer gets
   // only the state + basename.
   console.error("[deck-io] save failed:", path, lastErr);
+  settleWaiter(deck, false);
   emitStatus({ state: conn ? "reconnecting" : "failed", path, at: Date.now() });
 }
 

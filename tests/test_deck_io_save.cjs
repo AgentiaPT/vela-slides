@@ -518,6 +518,41 @@ const PATH = "/decks/a.vela";
     assert(JSON.parse(N.files[PATH]).deckTitle === "A edited", "wrong bytes on disk");
   });
 
+  // meridian-F7: saveCurrent returns a promise that is true only after a
+  // confirmed write. The app moves its "file holds this" signature only on
+  // true, so a failed save is retried by the next identical flush.
+  await test("meridian-F7 saveCurrent resolves true only after a confirmed write", async () => {
+    const N = makeNeu({});
+    const m = buildModule(N);
+    m.state.folder = "/decks"; m.state.currentPath = PATH;
+    const p = m.saveCurrent(DECK());
+    assert(p && typeof p.then === "function", "saveCurrent did not return a promise");
+    let settled = null;
+    p.then((v) => { settled = v; });
+    await tick(5);
+    assert(settled === null, "resolved before the write ran");
+    await m.flushNow();
+    await tick(5);
+    assert(settled === true, "not true after a confirmed write: " + settled);
+  });
+  await test("meridian-F7 failed write resolves false; a superseded save resolves false", async () => {
+    const cfg = { write: () => new Error("EACCES denied") };
+    const N = makeNeu(cfg);
+    const m = buildModule(N);
+    m.state.folder = "/decks"; m.state.currentPath = PATH;
+    const first = m.saveCurrent(DECK());
+    const second = m.saveCurrent(DECK());
+    assert((await first) === false, "superseded save did not resolve false");
+    await m.flushNow();
+    assert((await second) === false, "failed write did not resolve false");
+    cfg.write = () => "ok";
+    const third = m.saveCurrent(DECK());
+    await m.flushNow();
+    assert((await third) === true, "retry after failure did not resolve true");
+    m.state.currentPath = null;
+    assert((await m.saveCurrent(DECK())) === false, "no-target save did not resolve false");
+  });
+
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail === 0 ? 0 : 1);
 })();

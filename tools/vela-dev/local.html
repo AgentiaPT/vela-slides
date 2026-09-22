@@ -193,19 +193,32 @@
           setTimeout(poll, 2000);
         });
 
-      // Called by the Vela app when deck state changes (browser edits)
+      // Called by the Vela app when deck state changes (browser edits).
+      // Returns a Promise: true only after the server confirms the write;
+      // false when the POST fails or a newer call supersedes this one. The app
+      // marks a payload as "on disk" only on true, so a failed save is retried.
+      var _pendingResolve = null;
       window.__velaSendDeckUpdate = function(deck) {
         if (debounceTimer) clearTimeout(debounceTimer);
-        debounceTimer = setTimeout(function() {
-          _suppressNextUpdate = true;
-          fetch('/save', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ type: 'deck_save', deck: deck })
-          }).catch(function(e) {
-            console.error('[vela-sync] Save failed:', e);
-          });
-        }, DEBOUNCE_MS);
+        if (_pendingResolve) { _pendingResolve(false); _pendingResolve = null; }
+        return new Promise(function(resolve) {
+          _pendingResolve = resolve;
+          debounceTimer = setTimeout(function() {
+            _pendingResolve = null;
+            _suppressNextUpdate = true;
+            fetch('/save', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ type: 'deck_save', deck: deck })
+            }).then(function(res) {
+              if (!res.ok) throw new Error('HTTP ' + res.status);
+              resolve(true);
+            }).catch(function(e) {
+              console.error('[vela-sync] Save failed:', e);
+              resolve(false);
+            });
+          }, DEBOUNCE_MS);
+        });
       };
     })();
   </script>
