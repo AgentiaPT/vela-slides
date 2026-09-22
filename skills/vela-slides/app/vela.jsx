@@ -1822,6 +1822,10 @@ function resanitizeLoadedBranding(branding) {
 // Type-checked first (no coercion), charset-limited, no leading "_" (reserved
 // for renderer-private keys). Anything else is replaced by a fresh uid().
 const KEEPABLE_DECK_ID = /^[A-Za-z0-9][A-Za-z0-9-]{0,63}$/;
+// Ids key plain-object maps (gallery counts/colours, per-module storage
+// chunks). An id that names an Object.prototype member would read the
+// inherited value (a function) instead of "missing", so it is not keepable.
+const isKeepableDeckId = (v) => typeof v === "string" && KEEPABLE_DECK_ID.test(v) && !(v in Object.prototype);
 
 // Live deck update (external edit / deck switch): `sanitized` came from
 // validateAndSanitizeDeck(raw, { keepIds: true }). A lane/module whose id was
@@ -1839,7 +1843,7 @@ function adoptPriorDeckIds(sanitized, raw, cur) {
   const used = new Set();
   for (const l of sanitized.lanes) { used.add(l.id); for (const it of l.items || []) used.add(it.id); }
   const adopt = (obj, prior) => {
-    if (rawIds.has(obj.id) || !prior || typeof prior.id !== "string" || !KEEPABLE_DECK_ID.test(prior.id) || used.has(prior.id)) return;
+    if (rawIds.has(obj.id) || !prior || !isKeepableDeckId(prior.id) || used.has(prior.id)) return;
     used.delete(obj.id); obj.id = prior.id; used.add(obj.id);
   };
   sanitized.lanes.forEach((l, li) => {
@@ -1861,7 +1865,7 @@ function validateAndSanitizeDeck(raw, opts) {
   const keepIds = !!(opts && opts.keepIds === true);
   const seenIds = new Set();
   const deckId = (v) => {
-    if (keepIds && typeof v === "string" && KEEPABLE_DECK_ID.test(v) && !seenIds.has(v)) { seenIds.add(v); return v; }
+    if (keepIds && isKeepableDeckId(v) && !seenIds.has(v)) { seenIds.add(v); return v; }
     let id = uid();
     while (seenIds.has(id)) id = uid();
     seenIds.add(id);
@@ -4382,9 +4386,27 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
         const cs = getComputedStyle(p);
         if (cs.overflowY !== "visible" || cs.overflowX !== "visible") clipTop = Math.max(clipTop, p.getBoundingClientRect().top);
       }
-      const room = (r.top - clipTop) / (scale || 1);
-      const next = { bar: room < 8, pop: room < 35.5 }; // toolbar sits 8px above, popups 32-36px above
-      setChromeFlip((prev) => (prev[i]?.bar === next.bar && prev[i]?.pop === next.pop) ? prev : { ...prev, [i]: next });
+      const s = scale || 1;
+      const room = (r.top - clipTop) / s;
+      const next = { bar: room < 8, pop: room < 35.5, shift: 0 }; // toolbar sits 8px above, popups 32-36px above
+      // The editor overlay chrome (reviewed toggle, comment count, before/after
+      // bar — marked data-editor-overlay in part-slidepanel.jsx) paints above the
+      // slide. A toolbar under it cannot be clicked, so move the toolbar (and its
+      // popups) left until it is clear of every overlay it would touch.
+      const fx = el.closest("[data-testid='slide-fx-wrapper']");
+      const overlays = fx && fx.parentElement ? Array.from(fx.parentElement.querySelectorAll("[data-editor-overlay]")).map((o) => o.getBoundingClientRect()).filter((q) => q.width > 0) : [];
+      if (overlays.length) {
+        const n = 3 + (onBlockEdit ? 1 : 0) + (externalDispatch ? 1 : 0);
+        const barW = n * 18 + (n - 1) * 3, edge = next.bar ? 6 : -8;
+        const barTop = r.top + (next.bar ? 6 : -8) * s, barBottom = barTop + 18 * s;
+        for (let pass = 0; pass <= overlays.length; pass++) {
+          const barRight = r.right - (edge + next.shift) * s, barLeft = barRight - barW * s;
+          const hit = overlays.find((q) => q.left < barRight + 2 && q.right > barLeft - 2 && q.top < barBottom + 2 && q.bottom > barTop - 2);
+          if (!hit) break;
+          next.shift = Math.max(next.shift + 1, Math.ceil((r.right - hit.left + 4) / s - edge));
+        }
+      }
+      setChromeFlip((prev) => (prev[i]?.bar === next.bar && prev[i]?.pop === next.pop && prev[i]?.shift === next.shift) ? prev : { ...prev, [i]: next });
     } catch (_) {}
   };
 
@@ -4724,7 +4746,7 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
       {b.hidden && !presenting && <div style={{ position: "absolute", top: -6, left: -6, zIndex: 11, fontSize: 9, fontFamily: FONT.mono, fontWeight: 700, background: st.accent, color: "#fff", borderRadius: 4, padding: "0 4px", lineHeight: "14px", pointerEvents: "none" }} title="Hidden in presentation">🙈 hidden</div>}
       {editingBlockIdx === i && !presenting && <div style={{ position: "absolute", inset: -3, border: `2px solid ${st.accent}`, borderRadius: 6, pointerEvents: "none", zIndex: 10, boxShadow: `0 0 12px ${st.accent}40` }} />}
       {hoveredBlock === i && editingBlockIdx !== i && !presenting && <div style={{ position: "absolute", inset: -2, border: `1.5px dashed ${T.red}60`, borderRadius: 4, pointerEvents: "none", zIndex: 10 }} />}
-      {hoveredBlock === i && !itemHovered && !presenting && <div data-testid="block-hover-toolbar" data-chrome-inside={chromeFlip[i]?.bar ? "true" : undefined} style={{ position: "absolute", ...(chromeFlip[i]?.bar ? { top: 6, right: 6 } : { top: -8, right: -8 }), display: "flex", gap: 3, zIndex: 11 }}>
+      {hoveredBlock === i && !itemHovered && !presenting && <div data-testid="block-hover-toolbar" data-chrome-inside={chromeFlip[i]?.bar ? "true" : undefined} style={{ position: "absolute", ...(chromeFlip[i]?.bar ? { top: 6, right: 6 + (chromeFlip[i]?.shift || 0) } : { top: -8, right: -8 + (chromeFlip[i]?.shift || 0) }), display: "flex", gap: 3, zIndex: 11 }}>
         {onBlockEdit && <button onClick={(e) => { e.stopPropagation(); setEditingBlockIdx(editingBlockIdx === i ? null : i); setBlockPrompt(""); setEditingLink(null); }} style={{ width: 18, height: 18, borderRadius: "50%", background: editingBlockIdx === i ? st.accent : T.bgPanel, border: `1px solid ${editingBlockIdx === i ? st.accent : T.border}`, color: editingBlockIdx === i ? "#fff" : T.textDim, fontSize: 9, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", lineHeight: 1, padding: 0, boxShadow: "0 2px 6px rgba(0,0,0,0.4)" }} title="Edit this block with AI">🎯</button>}
         <button onClick={(e) => { e.stopPropagation(); setEditingLink(editingLink === i ? null : i); setEditingBlockIdx(null); setCommentingBlockIdx(null); }} style={{ width: 18, height: 18, borderRadius: "50%", background: b.link ? T.accent : T.bgPanel, border: `1px solid ${b.link ? T.accent : T.border}`, color: b.link ? "#fff" : T.textDim, fontSize: 9, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", lineHeight: 1, padding: 0, boxShadow: "0 2px 6px rgba(0,0,0,0.4)" }} title={b.link ? `Link: ${b.link}` : "Add link"}>🔗</button>
         {externalDispatch && <button onClick={(e) => { e.stopPropagation(); setCommentingBlockIdx(commentingBlockIdx === i ? null : i); setCommentText(""); setEditingBlockIdx(null); setEditingLink(null); }} style={{ width: 18, height: 18, borderRadius: "50%", background: commentingBlockIdx === i ? T.amber : T.bgPanel, border: `1px solid ${commentingBlockIdx === i ? T.amber : T.border}`, color: commentingBlockIdx === i ? "#fff" : T.textDim, fontSize: 9, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", lineHeight: 1, padding: 0, boxShadow: "0 2px 6px rgba(0,0,0,0.4)" }} title="Add comment">💬</button>}
@@ -4732,7 +4754,7 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
         <button onClick={(e) => { e.stopPropagation(); handleBlockRemove(i); }} style={{ width: 18, height: 18, borderRadius: "50%", background: T.red, border: "none", color: "#fff", fontSize: 10, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", lineHeight: 1, padding: 0, boxShadow: "0 2px 6px rgba(0,0,0,0.4)" }}>✕</button>
       </div>}
       {/* Block edit popup */}
-      {editingBlockIdx === i && !presenting && <div data-testid="block-ai-popup" onClick={(e) => e.stopPropagation()} style={{ position: "absolute", top: (chromeFlip[i]?.pop ? (chromeFlip[i]?.bar ? 30 : 14) : -36), right: 0, zIndex: 12, display: "flex", gap: 4, alignItems: "center", background: "rgba(10,15,28,0.95)", border: `1px solid ${st.accent}50`, borderRadius: 8, padding: "4px 8px", boxShadow: `0 4px 16px rgba(0,0,0,0.6), 0 0 0 1px ${st.accent}20`, backdropFilter: "blur(12px)" }}>
+      {editingBlockIdx === i && !presenting && <div data-testid="block-ai-popup" onClick={(e) => e.stopPropagation()} style={{ position: "absolute", top: (chromeFlip[i]?.pop ? (chromeFlip[i]?.bar ? 30 : 14) : -36), right: chromeFlip[i]?.shift || 0, zIndex: 12, display: "flex", gap: 4, alignItems: "center", background: "rgba(10,15,28,0.95)", border: `1px solid ${st.accent}50`, borderRadius: 8, padding: "4px 8px", boxShadow: `0 4px 16px rgba(0,0,0,0.6), 0 0 0 1px ${st.accent}20`, backdropFilter: "blur(12px)" }}>
         <span style={{ fontSize: 9, color: st.accent, flexShrink: 0 }}>🎯</span>
         <input autoFocus value={blockPrompt} onChange={(e) => setBlockPrompt(e.target.value)}
           onKeyDown={(e) => { e.stopPropagation(); if (e.key === "Enter" && blockPrompt.trim() && !blockEditing) { e.preventDefault(); onBlockEdit(i, blockPrompt.trim()); } if (e.key === "Escape") { setEditingBlockIdx(null); setBlockPrompt(""); } }}
@@ -4744,13 +4766,13 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
           : <button onClick={() => { if (blockPrompt.trim()) onBlockEdit(i, blockPrompt.trim()); }} disabled={!blockPrompt.trim()} style={{ padding: "2px 8px", fontSize: 9, fontFamily: FONT.mono, fontWeight: 700, background: blockPrompt.trim() ? st.accent : "rgba(255,255,255,0.1)", color: "#fff", border: "none", borderRadius: 4, cursor: blockPrompt.trim() ? "pointer" : "default", opacity: blockPrompt.trim() ? 1 : 0.4, flexShrink: 0 }}>Go</button>}
         <button onClick={() => { setEditingBlockIdx(null); setBlockPrompt(""); }} style={{ background: "none", border: "none", color: "rgba(255,255,255,0.4)", cursor: "pointer", fontSize: 10, padding: 0, flexShrink: 0 }}>✕</button>
       </div>}
-      {editingLink === i && !presenting && <div data-testid="block-link-popup" onClick={(e) => e.stopPropagation()} style={{ position: "absolute", top: (chromeFlip[i]?.pop ? (chromeFlip[i]?.bar ? 30 : 14) : -32), right: 0, zIndex: 12, display: "flex", gap: 4, alignItems: "center", background: T.bgPanel, border: `1px solid ${T.border}`, borderRadius: 6, padding: "3px 6px", boxShadow: "0 4px 12px rgba(0,0,0,0.5)" }}>
+      {editingLink === i && !presenting && <div data-testid="block-link-popup" onClick={(e) => e.stopPropagation()} style={{ position: "absolute", top: (chromeFlip[i]?.pop ? (chromeFlip[i]?.bar ? 30 : 14) : -32), right: chromeFlip[i]?.shift || 0, zIndex: 12, display: "flex", gap: 4, alignItems: "center", background: T.bgPanel, border: `1px solid ${T.border}`, borderRadius: 6, padding: "3px 6px", boxShadow: "0 4px 12px rgba(0,0,0,0.5)" }}>
         <span style={{ fontSize: 9, color: T.textDim }}>🔗</span>
         <input autoFocus defaultValue={b.link || ""} placeholder="https://..." onKeyDown={(e) => { e.stopPropagation(); if (e.key === "Enter") { const url = e.target.value.trim(); handleBlockChange(i, { link: url || undefined }); setEditingLink(null); } if (e.key === "Escape") setEditingLink(null); }} onBlur={(e) => { const url = e.target.value.trim(); handleBlockChange(i, { link: url || undefined }); setEditingLink(null); }} style={{ width: 200, padding: "2px 6px", fontSize: 10, fontFamily: FONT.mono, background: T.bg, color: T.text, border: `1px solid ${T.border}`, borderRadius: 4, outline: "none" }} />
         {b.link && <button onClick={() => { handleBlockChange(i, { link: undefined }); setEditingLink(null); }} style={{ background: "none", border: "none", color: T.red, fontSize: 10, cursor: "pointer", padding: 0 }}>✕</button>}
       </div>}
       {/* Block comment popup */}
-      {commentingBlockIdx === i && !presenting && externalDispatch && <div data-testid="block-comment-popup" onClick={(e) => e.stopPropagation()} style={{ position: "absolute", top: (chromeFlip[i]?.pop ? (chromeFlip[i]?.bar ? 30 : 14) : -36), right: 0, zIndex: 12, display: "flex", gap: 4, alignItems: "center", background: "rgba(10,15,28,0.95)", border: `1px solid ${T.amber}50`, borderRadius: 8, padding: "4px 8px", boxShadow: `0 4px 16px rgba(0,0,0,0.6), 0 0 0 1px ${T.amber}20`, backdropFilter: "blur(12px)" }}>
+      {commentingBlockIdx === i && !presenting && externalDispatch && <div data-testid="block-comment-popup" onClick={(e) => e.stopPropagation()} style={{ position: "absolute", top: (chromeFlip[i]?.pop ? (chromeFlip[i]?.bar ? 30 : 14) : -36), right: chromeFlip[i]?.shift || 0, zIndex: 12, display: "flex", gap: 4, alignItems: "center", background: "rgba(10,15,28,0.95)", border: `1px solid ${T.amber}50`, borderRadius: 8, padding: "4px 8px", boxShadow: `0 4px 16px rgba(0,0,0,0.6), 0 0 0 1px ${T.amber}20`, backdropFilter: "blur(12px)" }}>
         <span style={{ fontSize: 9, flexShrink: 0 }}>💬</span>
         <input autoFocus value={commentText} onChange={(e) => setCommentText(e.target.value)}
           onKeyDown={(e) => { e.stopPropagation(); if (e.key === "Enter" && commentText.trim()) { e.preventDefault(); externalDispatch({ type: "ADD_COMMENT", itemId, slideIndex: index, text: commentText.trim(), blockIndex: i }); setCommentText(""); setCommentingBlockIdx(null); } if (e.key === "Escape") { setCommentingBlockIdx(null); setCommentText(""); } }}
@@ -7469,7 +7491,7 @@ function PresenterView({ current, next, index, total, duration, elapsed, brandin
 }
 
 const GALLERY_MODULE_COLORS = ["#60a5fa","#a78bfa","#f472b6","#34d399","#f59e0b","#38bdf8","#fb7185","#818cf8","#2dd4bf","#e879f9","#fbbf24","#67e8f9"];
-function GalleryView({ lanes, currentConceptId, slideIndex, dispatch, onClose, branding }) {
+function GalleryView({ lanes, currentConceptId, slideIndex, dispatch, onClose, branding, headerExtra }) {
   const gridRef = useRef(null);
   const activeRef = useRef(null);
   const ZOOM_SIZES = [140, 180, 224, 300, 400, 560, 800];
@@ -7618,6 +7640,7 @@ function GalleryView({ lanes, currentConceptId, slideIndex, dispatch, onClose, b
         <span style={{ fontFamily: FONT.mono, fontSize: 14, fontWeight: 700, color: T.accent, letterSpacing: "0.05em" }}>GALLERY</span>
         <span style={{ fontFamily: FONT.mono, fontSize: 13, color: T.textMuted }}>{allSlides.filter((s) => !s.isTitleCard).length} slides</span>
         <span style={{ marginLeft: "auto", fontFamily: FONT.mono, fontSize: 13, color: T.textDim }}>+/− zoom · drag to reorder · G or ESC to close</span>
+        {headerExtra}
         <button data-testid="gallery-close" onClick={onClose} style={{ background: "none", border: "none", color: T.textMuted, cursor: "pointer", fontSize: 18, padding: 4 }}>✕</button>
       </div>
       <div ref={gridRef} onClick={(e) => e.stopPropagation()} onWheel={(e) => e.stopPropagation()} style={{ flex: 1, overflowY: "auto", padding: "20px 32px", userSelect: dragActive ? "none" : "auto" }}>
@@ -8125,6 +8148,27 @@ function SectionPicker({ mods, onPick, autoFocus = true, emptyLabel = "No other 
 }
 // © 2025-present Rui Quintino. Vela Slides — licensed under ELv2. See LICENSE.
 // ━━━ Slide Panel — editor slide view, fullscreen/presenter nav, per-slide AI actions ━━━
+// CR13: the one editor | presenter | gallery switch. The top bar (App), the
+// gallery header and the fullscreen top-right controls all render this with
+// SlidePanel's viewMode/setView, so the view state has one source of truth.
+// Glyphs are emoji-presentation (U+FE0F where the code point needs it): a
+// text-presentation glyph draws monochrome in the inherited colour and can
+// vanish on a dark chip (CR10). Editor uses the memo glyph, not a pen: the
+// dark-blue pen emoji is unreadable on the accent-filled active segment.
+const VIEW_SWITCH_SEGMENTS = [["editor", "\u{1F4DD}", "Editor"], ["presenter", "\u{1F5A5}\uFE0F", "Presenter"], ["gallery", "\u{1F5C2}\uFE0F", "Gallery"]];
+function ViewSwitch({ mode, onSet, disabled, compact, onDark, testid = "view-switch", style }) {
+  const idle = onDark ? "#fff" : T.textDim;
+  return <div data-testid={testid} role="group" aria-label="View" onClick={(e) => e.stopPropagation()} style={{ display: "flex", alignItems: "center", border: `1px solid ${onDark ? "rgba(255,255,255,0.3)" : T.border}`, borderRadius: 6, overflow: "hidden", flexShrink: 0, background: onDark ? "rgba(0,0,0,0.55)" : undefined, ...style }}>
+    {VIEW_SWITCH_SEGMENTS.map(([m, icon, label]) => {
+      const on = mode === m;
+      return <button key={m} data-testid={`${testid}-${m}`} onClick={() => onSet?.(m)} disabled={disabled} title={label} aria-label={label} aria-pressed={on}
+        style={{ display: "flex", alignItems: "center", gap: 4, padding: compact ? "4px 7px" : "4px 9px", background: on ? T.accent : "transparent", color: on ? "#fff" : idle, border: "none", cursor: disabled ? "default" : "pointer", opacity: disabled ? 0.4 : 1, fontFamily: FONT.mono, fontSize: 12, fontWeight: 700, whiteSpace: "nowrap" }}>
+        <span aria-hidden="true" style={{ fontSize: onDark ? 15 : undefined }}>{icon}</span>{!compact && <span>{label}</span>}
+      </button>;
+    })}
+  </div>;
+}
+
 function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, branding, guidelines, isMobile, fontScale, actionsRef, onRibbonUpdate }) {
   const deckEpochRef = useRef(state._deckEpoch);
   deckEpochRef.current = state._deckEpoch;
@@ -8465,6 +8509,15 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
   const [editingDuration, setEditingDuration] = useState(false);
   const navToastTimer = useRef(null);
 
+  // CR13: live view for every ViewSwitch. An open gallery wins over fullscreen,
+  // so the gallery opened from Present shows "Gallery" as the active segment.
+  const viewMode = showGallery ? "gallery" : (fullscreen ? "presenter" : "editor");
+  const setView = (mode) => {
+    if (mode === "editor") { setGallery(false); if (fullscreen) { stopAll(); dispatch({ type: "SET_FULLSCREEN", value: false }); } }
+    else if (mode === "gallery") { setGallery(true); }
+    else if (mode === "presenter") { setGallery(false); if (!fullscreen) { stopAll(); dispatch({ type: "SET_FULLSCREEN", value: true }); } }
+  };
+
   // Expose slide panel state + actions to app ribbon via ref
   useEffect(() => {
     if (!actionsRef) return;
@@ -8480,12 +8533,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       present: () => { stopAll(); dispatch({ type: "SET_FULLSCREEN", value: true }); },
       getLayoutStats: () => computeSlideLayoutStats(slideRef.current),
       // CR13: view state read by the top-bar view switcher (editor|presenter|gallery).
-      viewMode: fullscreen ? "presenter" : (showGallery ? "gallery" : "editor"),
-      setView: (mode) => {
-        if (mode === "editor") { setGallery(false); if (fullscreen) { stopAll(); dispatch({ type: "SET_FULLSCREEN", value: false }); } }
-        else if (mode === "gallery") { setGallery(true); }
-        else if (mode === "presenter") { setGallery(false); if (!fullscreen) { stopAll(); dispatch({ type: "SET_FULLSCREEN", value: true }); } }
-      },
+      viewMode, setView,
     };
     onRibbonUpdate?.();
   }, [slides.length, moduleTime, previewRatio, showBranding, showTimingScope, estimating, showImproveInput, improving, fullscreen, showGallery]);
@@ -9228,14 +9276,16 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
           <div style={{ fontFamily: FONT.mono, fontSize: 10, color: "rgba(255,255,255,0.5)" }}>{improving.current}/{improving.total}</div>
         </div>}
         <div className="slide-nav-btn" onClick={() => dispatch({ type: "SET_FULLSCREEN", value: false })} style={{ position: "absolute", top: isMobile ? 8 : 16, right: isMobile ? 8 : 16, padding: isMobile ? 12 : 8 }}><Minimize2 size={isMobile ? 22 : 18} color="#fff" /></div>
-        {!isMobile && <div data-testid="student-toggle" className="slide-nav-btn" onClick={() => dispatch({ type: "SET_VERA_MODE", mode: isStudent ? "editor" : "student" })} title={isStudent ? "Exit student mode" : "Student mode — Vera teaches"} style={{ position: "absolute", top: 16, right: 52, padding: 8, background: isStudent ? T.accent + "30" : undefined, borderRadius: 6 }}><span style={{ fontSize: 16 }}>🎓</span></div>}
-        {!isMobile && <div data-testid="gallery-toggle" className="slide-nav-btn" onClick={() => setGallery((v) => !v)} title="Gallery view (G)" style={{ position: "absolute", top: 16, right: 88, padding: 8, background: showGallery ? T.accent + "30" : undefined, borderRadius: 6 }}><span style={{ fontSize: 16 }}>🗂</span></div>}
-        {!isMobile && <div data-testid="presenter-toggle" className="slide-nav-btn" onClick={() => setPresenterView((v) => !v)} title={showPresenterView ? "Exit presenter view (S)" : "Presenter view — notes, next slide, timer (S)"} style={{ position: "absolute", top: 16, right: 124, padding: 8, background: showPresenterView ? T.accent + "30" : undefined, borderRadius: 6 }}><span style={{ fontSize: 16 }}>🖥️</span></div>}
+        {!isMobile && <div data-testid="student-toggle" className="slide-nav-btn" onClick={() => dispatch({ type: "SET_VERA_MODE", mode: isStudent ? "editor" : "student" })} title={isStudent ? "Exit student mode" : "Student mode — Vera teaches"} style={{ position: "absolute", top: 16, right: 52, padding: 8, background: isStudent ? T.accent + "30" : undefined, borderRadius: 6 }}><span style={{ fontSize: 16, color: "#fff" }}>🎓</span></div>}
+        {!isMobile && <div data-testid="gallery-toggle" className="slide-nav-btn" onClick={() => setGallery((v) => !v)} title="Gallery view (G)" style={{ position: "absolute", top: 16, right: 88, padding: 8, background: showGallery ? T.accent + "30" : undefined, borderRadius: 6 }}><span style={{ fontSize: 16, color: "#fff" }}>{"\u{1F5C2}\uFE0F"}</span></div>}
+        {!isMobile && <div data-testid="presenter-toggle" className="slide-nav-btn" onClick={() => setPresenterView((v) => !v)} title={showPresenterView ? "Exit presenter view (S)" : "Presenter view — notes, next slide, timer (S)"} style={{ position: "absolute", top: 16, right: 124, padding: 8, background: showPresenterView ? T.accent + "30" : undefined, borderRadius: 6 }}><span style={{ fontSize: 16, color: "#fff" }}>🖥️</span></div>}
         {/* Present Edit toggle (Shift+E): restore inline click-to-edit while
             presenting. Uses the Lucide pencil (SVG), NOT the ✏ emoji, so the
             CR-03 "no edit chrome" test still passes when edit mode is off.
             Hidden in student mode, where editing is disabled by design. */}
         {!isMobile && !isStudent && <div data-testid="present-edit-toggle" className="slide-nav-btn" onClick={() => setPresentEdit((v) => !v)} title={presentEdit ? "Editing on — click text/icons to edit (Shift+E)" : "Edit mode — click text/icons to edit while presenting (Shift+E)"} style={{ position: "absolute", top: 16, right: 160, padding: 8, background: presentEdit ? T.accent + "30" : undefined, borderRadius: 6 }}>{getIcon("edit", { size: 18, color: "#fff" })}</div>}
+        {/* CR13: the same view switch as the top bar, left of the icon row. */}
+        {!isMobile && <ViewSwitch testid="fs-view-switch" mode={viewMode} onSet={setView} compact onDark style={{ position: "absolute", top: 16, right: VELA_LOCAL_MODE ? 200 : 236 }} />}
         {/* Browser fullscreen toggle removed — Vela fullscreen (F key / minimize button) is sufficient */}
         {!isMobile && !VELA_LOCAL_MODE && <>
           <div className="slide-nav-btn" onClick={() => setShowCinemaTip((v) => !v)} title="Cinema mode — fullscreen in browser" style={{ position: "absolute", top: 16, right: 196, padding: 8 }}><VelaIcon size={18} /></div>
@@ -9257,7 +9307,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       </div>
       </div>
       {isStudent && <StudentPanel state={state} dispatch={dispatch} lanes={lanes} selectedId={concept.id} slideIndex={slideIndex} />}
-      {showGallery && <GalleryView lanes={lanes} currentConceptId={concept.id} slideIndex={slideIndex} dispatch={dispatch} onClose={() => setGallery(false)} branding={branding} />}
+      {showGallery && <GalleryView lanes={lanes} currentConceptId={concept.id} slideIndex={slideIndex} dispatch={dispatch} onClose={() => setGallery(false)} branding={branding} headerExtra={<ViewSwitch testid="gallery-view-switch" mode={viewMode} onSet={setView} />} />}
       {showPresenterView && (() => {
         let nextIdx = -1;
         for (let i = slideIndex + 1; i < presSlides.length; i++) if (!presSlides[i].hidden) { nextIdx = i; break; }
@@ -9327,12 +9377,12 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
                   {!fullscreen && !state.commentsPanelOpen && !showCommentPopover && (() => {
                     const sc = (slides[slideIndex]?.comments || []).filter((c) => c.status === "open");
                     if (sc.length === 0) return null;
-                    return <div onClick={(e) => { e.stopPropagation(); dispatch({ type: "SET_COMMENTS_PANEL", open: true }); dispatch({ type: "SET_REVIEW_MODE", value: true }); }} style={{ position: "absolute", top: 8, right: 8, zIndex: 10, minWidth: 22, height: 22, borderRadius: 11, background: T.amber, color: "#fff", fontFamily: FONT.mono, fontSize: 10, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", padding: "0 6px", cursor: "pointer", boxShadow: "0 2px 8px rgba(0,0,0,0.3)" }} title={`${sc.length} open comment${sc.length > 1 ? "s" : ""}`}>{sc.length}</div>;
+                    return <div data-editor-overlay="comments" onClick={(e) => { e.stopPropagation(); dispatch({ type: "SET_COMMENTS_PANEL", open: true }); dispatch({ type: "SET_REVIEW_MODE", value: true }); }} style={{ position: "absolute", top: 8, right: 8, zIndex: 10, minWidth: 22, height: 22, borderRadius: 11, background: T.amber, color: "#fff", fontFamily: FONT.mono, fontSize: 10, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", padding: "0 6px", cursor: "pointer", boxShadow: "0 2px 8px rgba(0,0,0,0.3)" }} title={`${sc.length} open comment${sc.length > 1 ? "s" : ""}`}>{sc.length}</div>;
                   })()}
                   {/* CR07: reviewed checkmark (editor only; an overlay, so exports never render it) */}
                   {!fullscreen && slides[slideIndex] && (() => {
                     const rv = !!slides[slideIndex].reviewed;
-                    return <button data-testid="reviewed-toggle" data-reviewed={rv ? "1" : "0"} aria-pressed={rv} onClick={(e) => { e.stopPropagation(); dispatch({ type: "TOGGLE_SLIDE_REVIEWED", id: concept.id, index: slideIndex }); }} title={rv ? "Reviewed — click to mark not reviewed" : "Mark slide reviewed"} style={{ position: "absolute", top: 8, right: 44, zIndex: 10, width: 24, height: 24, borderRadius: 12, border: `1.5px solid ${rv ? T.green : "rgba(255,255,255,0.7)"}`, background: rv ? T.green : "rgba(0,0,0,0.35)", color: "#fff", fontSize: 13, fontWeight: 700, lineHeight: 1, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", padding: 0, opacity: rv ? 1 : 0.75, boxShadow: "0 2px 8px rgba(0,0,0,0.3)" }}>✓</button>;
+                    return <button data-testid="reviewed-toggle" data-editor-overlay="reviewed" data-reviewed={rv ? "1" : "0"} aria-pressed={rv} onClick={(e) => { e.stopPropagation(); dispatch({ type: "TOGGLE_SLIDE_REVIEWED", id: concept.id, index: slideIndex }); }} title={rv ? "Reviewed — click to mark not reviewed" : "Mark slide reviewed"} style={{ position: "absolute", top: 8, right: 44, zIndex: 10, width: 24, height: 24, borderRadius: 12, border: `1.5px solid ${rv ? T.green : "rgba(255,255,255,0.7)"}`, background: rv ? T.green : "rgba(0,0,0,0.35)", color: "#fff", fontSize: 13, fontWeight: 700, lineHeight: 1, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", padding: 0, opacity: rv ? 1 : 0.75, boxShadow: "0 2px 8px rgba(0,0,0,0.3)" }}>✓</button>;
                   })()}
                   {/* Study notes badge (top-left) — pure indicator in editor mode */}
                   {!fullscreen && slides[slideIndex]?.studyNotes?.text && (
@@ -9355,7 +9405,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
                 </div>
                 <div style={{ fontFamily: FONT.mono, fontSize: 9, color: "rgba(255,255,255,0.5)" }}>{improving.current}/{improving.total}</div>
               </div>}
-              {!improving && beforeSlides && <div style={{ position: "absolute", top: 8, right: 8, display: "flex", gap: 4, zIndex: 10 }}>
+              {!improving && beforeSlides && <div data-editor-overlay="before-after" style={{ position: "absolute", top: 8, right: 8, display: "flex", gap: 4, zIndex: 10 }}>
                 <button onClick={() => setShowBefore((v) => !v)} style={S.btn({ background: showBefore ? T.amber + "30" : "rgba(0,0,0,0.5)", color: showBefore ? T.amber : "#fff", border: `1px solid ${showBefore ? T.amber : "rgba(255,255,255,0.2)"}`, fontSize: 9, padding: "2px 8px" })}>{showBefore ? "◀ Before" : "After ▶"}</button>
                 <button onClick={() => setBeforeSlides(null)} style={S.btn({ background: "rgba(0,0,0,0.5)", color: "rgba(255,255,255,0.6)", border: "1px solid rgba(255,255,255,0.15)", fontSize: 9, padding: "2px 6px" })}>✕</button>
               </div>}
@@ -9514,7 +9564,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       </div>
       {showBranding && !isMobile && <BrandingPanel docked branding={branding} guidelines={guidelines} dispatch={dispatch} isMobile={isMobile} onClose={() => setShowBranding(false)} />}
       </div>
-      {showGallery && <GalleryView lanes={lanes} currentConceptId={concept.id} slideIndex={slideIndex} dispatch={dispatch} onClose={() => setGallery(false)} branding={branding} />}
+      {showGallery && <GalleryView lanes={lanes} currentConceptId={concept.id} slideIndex={slideIndex} dispatch={dispatch} onClose={() => setGallery(false)} branding={branding} headerExtra={<ViewSwitch testid="gallery-view-switch" mode={viewMode} onSet={setView} />} />}
     </div>
   );
 }
@@ -15657,6 +15707,22 @@ uiSuite("meridian-CR07 Review cycle", [
 
 // ── meridian-CR10 / meridian-CR11: fullscreen nav icons keep a visible chip
 // on any slide background (light or dark), so they do not fade into the slide. ──
+// Emoji glyphs must carry emoji presentation and a light colour: a text-style
+// glyph draws in the inherited (dark, light-theme) text colour on the dark chip.
+const _mrdIsLightTheme = () => { const h = _$("header"); const m = (h ? getComputedStyle(h).backgroundColor : "").match(/\d+/g); return !!m && (+m[0] + +m[1] + +m[2]) / 3 >= 128; };
+const _mrdCheckNavGlyphs = async () => {
+  for (const id of ["gallery-toggle", "presenter-toggle", "student-toggle"]) {
+    const el = await _waitFor(() => _$(`[data-testid='${id}']`), 2000);
+    const sp = el.querySelector("span");
+    if (!sp) throw new Error(`${id}: no glyph`);
+    if (id !== "student-toggle" && !/️/.test(sp.textContent)) throw new Error(`${id}: glyph lacks emoji presentation (U+FE0F)`);
+    const c = getComputedStyle(sp).color;
+    if (c !== "rgb(255, 255, 255)") throw new Error(`${id}: glyph colour ${c} is not light`);
+    const r = el.getBoundingClientRect();
+    const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+    if (!hit || !el.contains(hit)) throw new Error(`${id}: covered by another element`);
+  }
+};
 uiSuite("meridian-CR10-CR11 Nav Icon Contrast", [
   { name: "Enter fullscreen (Present)", fn: async () => {
     document.activeElement?.blur(); await _wait(100);
@@ -15675,6 +15741,7 @@ uiSuite("meridian-CR10-CR11 Nav Icon Contrast", [
       }
     }
   }},
+  { name: "emoji nav glyphs are emoji-presentation and light in this app theme", fn: _mrdCheckNavGlyphs },
   { name: "edit icon stays visible on toggle (on/off, CR11's 'sometimes shows')", fn: async () => {
     const btn = await _waitFor(() => _$("[data-testid='present-edit-toggle']"), 2000);
     const bgOff = getComputedStyle(btn).backgroundColor;
@@ -15690,9 +15757,41 @@ uiSuite("meridian-CR10-CR11 Nav Icon Contrast", [
     _key("f");
     await _waitFor(() => _$("header"));
   }},
+  { name: "emoji nav glyphs stay light in the other app theme too", fn: async () => {
+    const before = _mrdIsLightTheme();
+    document.activeElement?.blur(); await _wait(50);
+    _key("d");
+    await _waitFor(() => _mrdIsLightTheme() !== before, 2000);
+    try {
+      _key("f");
+      await _waitFor(() => !_$("header"), 2000);
+      await _mrdCheckNavGlyphs();
+    } finally {
+      if (!_$("header")) { _key("f"); await _waitFor(() => _$("header"), 2000); }
+      document.activeElement?.blur(); await _wait(50);
+      _key("d");
+      await _waitFor(() => _mrdIsLightTheme() === before, 2000);
+    }
+  }},
 ]);
 
 // ── meridian-CR13: editor|presenter|gallery view switcher next to Present ──
+// One switch in three places — top bar (view-switch), gallery header
+// (gallery-view-switch) and fullscreen controls (fs-view-switch) — all driven by
+// SlidePanel's single view state. Each must be on top (elementFromPoint) where shown.
+const _mrdSeg = (where, mode) => _$(`[data-testid='${where}-${mode}']`);
+const _mrdActive = (where) => _$(`[data-testid='${where}'] button[aria-pressed='true']`)?.getAttribute("aria-label") || null;
+const _mrdOnTop = (el, label) => {
+  const r = el.getBoundingClientRect();
+  const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+  if (!hit || !el.contains(hit)) throw new Error(`${label} is covered (elementFromPoint hit ${hit?.tagName || "nothing"})`);
+};
+const _mrdSwitchTo = async (where, mode) => {
+  const btn = await _waitFor(() => _mrdSeg(where, mode), 2000);
+  _mrdOnTop(btn, `${where}-${mode}`);
+  _click(btn);
+};
+const _mrdGalleryOpen = () => !!_$("[data-testid='gallery-close']");
 uiSuite("meridian-CR13 View Switcher", [
   { name: "View switcher renders next to Present in the editor", fn: async () => {
     await _waitFor(() => _$("[data-testid='view-switch']") && _$("[data-testid='present-btn']"), 2000);
@@ -15701,23 +15800,58 @@ uiSuite("meridian-CR13 View Switcher", [
     const btn = await _waitFor(() => _$("[data-testid='view-switch-editor']"), 2000);
     if (btn.getAttribute("aria-pressed") !== "true") throw new Error("editor segment not marked active");
   }},
-  { name: "Gallery is reachable in one click from the editor", fn: async () => {
-    const btn = await _waitFor(() => _$("[data-testid='view-switch-gallery']"), 2000);
-    _click(btn);
-    await _waitFor(() => _$text("GALLERY"), 2000);
-    const active = await _waitFor(() => _$("[data-testid='view-switch-gallery']"), 2000);
-    if (active.getAttribute("aria-pressed") !== "true") throw new Error("gallery segment not marked active after switch");
+  { name: "Switch glyphs use emoji presentation (no text-style glyph)", fn: async () => {
+    const g = await _waitFor(() => _mrdSeg("view-switch", "gallery"), 2000);
+    if (!/️/.test(g.textContent)) throw new Error("gallery glyph lacks U+FE0F");
   }},
-  { name: "Editor segment returns from gallery to the editor", fn: async () => {
-    const btn = await _waitFor(() => _$("[data-testid='view-switch-editor']"), 2000);
-    _click(btn);
-    await _waitFor(() => !_$text("GALLERY") && _$("header"), 2000);
+  { name: "Deck title keeps readable width in the top bar", fn: async () => {
+    const h = await _waitFor(() => _$("header"), 2000);
+    const t = _$$("span", h).find((s) => s.title && s.title === s.textContent);
+    if (!t) throw new Error("deck title not found in header");
+    const w = t.getBoundingClientRect().width;
+    const need = Math.min(100, t.scrollWidth);
+    if (w < need) throw new Error(`deck title squeezed to ${Math.round(w)}px at ${window.innerWidth}px wide`);
+    if (h.scrollWidth > h.clientWidth + 1) throw new Error(`header overflows (${h.scrollWidth} > ${h.clientWidth})`);
+  }},
+  { name: "Gallery is reachable in one click from the editor", fn: async () => {
+    await _mrdSwitchTo("view-switch", "gallery");
+    await _waitFor(_mrdGalleryOpen, 2000);
+    // The top bar re-reads the view state one render later (ribbon update).
+    await _waitFor(() => _mrdActive("view-switch") === "Gallery", 2000).catch(() => { throw new Error("gallery segment not marked active after switch"); });
+  }},
+  { name: "Gallery header shows the switch on top, Gallery active", fn: async () => {
+    await _waitFor(() => _$("[data-testid='gallery-view-switch']"), 2000);
+    if (_mrdActive("gallery-view-switch") !== "Gallery") throw new Error(`gallery switch active=${_mrdActive("gallery-view-switch")}`);
+    for (const m of ["editor", "presenter", "gallery"]) _mrdOnTop(_mrdSeg("gallery-view-switch", m), `gallery-view-switch-${m}`);
+  }},
+  { name: "Editor segment in the gallery returns to the editor", fn: async () => {
+    await _mrdSwitchTo("gallery-view-switch", "editor");
+    await _waitFor(() => !_mrdGalleryOpen() && _$("header"), 2000);
+    await _waitFor(() => _mrdActive("view-switch") === "Editor", 2000).catch(() => { throw new Error("top switch not back on Editor"); });
+  }},
+  { name: "Presenter segment in the gallery enters fullscreen Present", fn: async () => {
+    await _mrdSwitchTo("view-switch", "gallery");
+    await _waitFor(_mrdGalleryOpen, 2000);
+    await _mrdSwitchTo("gallery-view-switch", "presenter");
+    await _waitFor(() => !_mrdGalleryOpen() && !_$("header"), 2000);
+  }},
+  { name: "Fullscreen shows the switch on top, Presenter active", fn: async () => {
+    await _waitFor(() => _$("[data-testid='fs-view-switch']"), 2000);
+    if (_mrdActive("fs-view-switch") !== "Presenter") throw new Error(`fs switch active=${_mrdActive("fs-view-switch")}`);
+    for (const m of ["editor", "presenter", "gallery"]) _mrdOnTop(_mrdSeg("fs-view-switch", m), `fs-view-switch-${m}`);
+  }},
+  { name: "Gallery segment in fullscreen opens the gallery (Gallery active)", fn: async () => {
+    await _mrdSwitchTo("fs-view-switch", "gallery");
+    await _waitFor(_mrdGalleryOpen, 2000);
+    if (_mrdActive("gallery-view-switch") !== "Gallery") throw new Error("gallery switch not on Gallery");
+    await _mrdSwitchTo("gallery-view-switch", "presenter");
+    await _waitFor(() => !_mrdGalleryOpen() && _mrdActive("fs-view-switch") === "Presenter", 2000);
+  }},
+  { name: "Editor segment in fullscreen exits to the editor", fn: async () => {
+    await _mrdSwitchTo("fs-view-switch", "editor");
+    await _waitFor(() => _$("header") && _mrdActive("view-switch") === "Editor", 2000);
   }},
   { name: "Presenter segment enters fullscreen Present", fn: async () => {
-    // The top bar (and this switcher) is not mounted while in fullscreen Present —
-    // the same audience-facing surface that hides all other edit chrome. So the
-    // switcher only needs to be checked as the way IN; exiting fullscreen uses the
-    // existing close/F-key controls tested elsewhere.
     const btn = await _waitFor(() => _$("[data-testid='view-switch-presenter']"), 2000);
     _click(btn);
     await _waitFor(() => !_$("header"), 2000);
@@ -15856,6 +15990,14 @@ uiSuite("meridian-CR09 branding side pane", [
   }},
 ], { setup: _selectFirstModule });
 
+// F3: every toolbar button and every editor overlay (✓ reviewed toggle,
+// comment count) must be the top element at its own centre.
+const _mrdCr15Clear = (bar, kind) => {
+  const top = (el) => { const r = el.getBoundingClientRect(); const h = document.elementFromPoint((r.left + r.right) / 2, (r.top + r.bottom) / 2); return !!h && el.contains(h); };
+  const where = kind ? kind + ": " : "";
+  for (const b of bar.querySelectorAll("button")) if (!top(b)) throw new Error(`${where}toolbar button "${b.title || b.textContent}" is covered`);
+  for (const o of document.querySelectorAll("[data-editor-overlay]")) if (!top(o)) throw new Error(`${where}editor overlay "${o.dataset.editorOverlay}" is covered`);
+};
 uiSuite("meridian-CR15 toolbar room above", [
   { name: "CR15: full-bleed image keeps its toolbar and popups inside the slide", fn: async () => {
     const block = await _mrdInject([{ type: "image", src: _mrdSvg(960, 540, "f59e0b") }], null,
@@ -15868,6 +16010,7 @@ uiSuite("meridian-CR15 toolbar room above", [
       if (bar.dataset.chromeInside !== "true" || !inView(bar)) throw new Error("toolbar is drawn above the slide edge");
       const hit = (el) => { const r = el.getBoundingClientRect(); const h = document.elementFromPoint((r.left + r.right) / 2, (r.top + r.bottom) / 2); return !!h && el.contains(h); };
       if (!hit(bar)) throw new Error("toolbar is not clickable");
+      _mrdCr15Clear(bar);
       _click(bar.querySelector("button[title='Add link']"));
       const pop = await _waitFor(() => _$("[data-testid='block-link-popup']"), 1500);
       if (!inView(pop) || !hit(pop)) throw new Error("link popup is cut off or covered");
@@ -15885,9 +16028,28 @@ uiSuite("meridian-CR15 toolbar room above", [
       const bar = await _waitFor(() => _mrdViewport().querySelector("[data-testid='block-hover-toolbar']"), 1500);
       if (bar.dataset.chromeInside) throw new Error("toolbar moved inside on a block with room above");
       if (bar.getBoundingClientRect().top >= block.getBoundingClientRect().top) throw new Error("toolbar is not above the block");
+      _mrdCr15Clear(bar);
     } finally {
       await _mrdUnhover(block);
     }
+  }},
+  { name: "F3: toolbar stays clear of the comment badge and reviewed toggle", fn: async () => {
+    const extra = { comments: [{ id: "cr15-f3", text: "F3 badge", status: "open", createdAt: Date.now() }] };
+    for (const [kind, blocks, sel] of [
+      ["full-bleed", [{ type: "image", src: _mrdSvg(960, 540, "10b981") }], "[data-block-type='image']"],
+      ["normal", [{ type: "heading", text: "CR15 F3 normal" }, { type: "text", text: "Body" }], "[data-block-type='heading']"],
+    ]) {
+      const block = await _mrdInject(blocks, extra, (vp) => (vp && _$("[data-editor-overlay='comments']") && vp.querySelector(sel)) || null);
+      await _mrdHover(block);
+      try {
+        const bar = await _waitFor(() => _mrdViewport().querySelector("[data-testid='block-hover-toolbar']"), 1500);
+        await _mrdFrame();
+        _mrdCr15Clear(bar, kind);
+      } finally {
+        await _mrdUnhover(block);
+      }
+    }
+    _hooks().injectBlocks([{ type: "text", text: "F3 done" }], { comments: [] });
   }},
 ], { setup: _selectFirstModule });
 
@@ -24295,6 +24457,14 @@ export default function App() {
 
   // ━━━ Mobile ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   const isMobile = useIsMobile();
+  // CR13: top-bar width bucket, so the deck title keeps readable room. Below
+  // 1440px the view switch is icon-only; below 1200px some action buttons also
+  // hide their label visually (text stays in the DOM; the title attr names them).
+  const hdrBucket = () => (typeof window === "undefined" ? 2 : window.innerWidth >= 1440 ? 2 : window.innerWidth >= 1200 ? 1 : 0);
+  const [hdrSize, setHdrSize] = useState(hdrBucket);
+  useEffect(() => { const h = () => setHdrSize(hdrBucket()); window.addEventListener("resize", h); return () => window.removeEventListener("resize", h); }, []);
+  const wideHeader = hdrSize === 2;
+  const hdrLabel = (txt) => (hdrSize === 0 ? <span style={{ display: "none" }}>{txt}</span> : txt);
   const [mobileTab, setMobileTab] = useState("list"); // "list" | "slides" | "chat"
   const [mobileMenu, setMobileMenu] = useState(false);
   const [viewMenu, setViewMenu] = useState(false);
@@ -24724,7 +24894,7 @@ export default function App() {
       </div>}
 
       {/* ── TOP BAR — title left, actions right, dropdown buttons ── */}
-      {!state.fullscreen && <header style={{ padding: isMobile ? "6px 10px" : "0 14px", borderBottom: `1px solid ${T.border}`, display: "flex", alignItems: "center", gap: isMobile ? 8 : 10, background: T.bgPanel, flexShrink: 0, height: isMobile ? 40 : 44 }}>
+      {!state.fullscreen && <header style={{ padding: isMobile ? "6px 10px" : "0 14px", borderBottom: `1px solid ${T.border}`, display: "flex", alignItems: "center", gap: isMobile || hdrSize === 0 ? 8 : 10, background: T.bgPanel, flexShrink: 0, height: isMobile ? 40 : 44 }}>
         {/* Left: icon + title + time */}
         {isMobile && mobileTab !== "list" && <button onClick={() => { setMobileTab("list"); if (mobileTab === "slides") dispatch({ type: "DESELECT" }); }} style={S.btn({ padding: "2px 4px", color: T.accent, fontSize: 16 })}>{"←"}</button>}
         <span onClick={() => { if (typeof window !== "undefined" && typeof window.__velaOpenDeckPicker === "function") { window.__velaOpenDeckPicker(); } else { setShowChangelog(true); } }} style={{ cursor: "pointer", display: "flex", alignItems: "center" }} title={typeof window !== "undefined" && typeof window.__velaOpenDeckPicker === "function" ? "Open deck (Ctrl+O)" : "About"}><VelaIcon size={20} /></span>
@@ -24753,7 +24923,7 @@ export default function App() {
             onBlur={commitTitle}
             style={S.input({ padding: "3px 8px", fontSize: 14, fontWeight: 700, width: 200, minWidth: 60, flexShrink: 1, border: `1px solid ${T.accent}`, fontFamily: FONT.display })} />
         ) : (
-          <span onClick={startEditTitle} style={{ fontSize: 14, fontWeight: 700, color: T.text, fontFamily: FONT.display, cursor: "pointer", padding: "2px 4px", borderRadius: 4, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flexShrink: 1, minWidth: 0, maxWidth: isMobile ? "40vw" : undefined }} title={state.deckTitle || "Untitled"}>{state.deckTitle || "Untitled"}</span>
+          <span onClick={startEditTitle} style={{ fontSize: 14, fontWeight: 700, color: T.text, fontFamily: FONT.display, cursor: "pointer", padding: "2px 4px", borderRadius: 4, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flexShrink: 1, minWidth: isMobile ? 0 : 120, maxWidth: isMobile ? "40vw" : undefined }} title={state.deckTitle || "Untitled"}>{state.deckTitle || "Untitled"}</span>
         )}
         {!isMobile && (deckTime > 0 || total > 0) && <span onClick={() => setShowStats(true)} title={`${deckTimeAll > 0 ? fmtTime(deckTimeAll) + " total · " : ""}${slideCountVisible} slides · ${total} sections${hiddenSlideCount > 0 ? ` · ${hiddenSlideCount} hidden` : ""} — click for stats`} style={{ fontFamily: FONT.mono, fontSize: 13, fontWeight: 700, color: T.text, whiteSpace: "nowrap", flexShrink: 0, background: T.accent + "12", padding: "2px 8px", borderRadius: 4, cursor: "pointer" }}>{deckTime > 0 ? `⏱${fmtTimeMin(deckTime)} · ` : ""}{slideCountVisible}sl · {total}§{hiddenSlideCount > 0 ? <span style={{ opacity: 0.6 }}> · {hiddenSlideCount}⊘</span> : ""}</span>}
         {/* Spacer — pushes actions right */}
@@ -24781,37 +24951,24 @@ export default function App() {
             const sa = slideActionsRef.current;
             const has = !!selectedConcept;
             return <>
-              <button data-testid="batch-edit-toggle" onClick={() => sa?.toggleBatchEdit?.()} disabled={!aiOk || !has || !sa?.slidesCount} title={aiOk ? "Batch edit across slides" : VELA_AI_UNAVAILABLE_MSG} style={S.btn({ padding: "4px 10px", fontSize: 14, color: !aiOk ? T.textDim + "60" : sa?.showBatchEdit ? T.accent : (sa?.improving ? T.red : T.textDim), background: sa?.showBatchEdit || sa?.improving ? T.accent + "20" : "transparent", borderRadius: 4, opacity: aiOk && has && sa?.slidesCount ? 1 : 0.4, display: "flex", alignItems: "center", gap: 4, cursor: aiOk ? "pointer" : "not-allowed" })}>{sa?.improving ? "⏹" : "🔄"} Batch</button>
-              <button data-testid="brand-toggle" onClick={() => sa?.toggleBranding?.()} disabled={!has} title="Branding & guidelines" style={S.btn({ padding: "4px 10px", fontSize: 14, color: sa?.showBranding ? T.accent : (sa?.hasBranding ? T.accent : T.textDim), background: sa?.showBranding ? T.accent + "20" : "transparent", borderRadius: 4, opacity: has ? 1 : 0.4, display: "flex", alignItems: "center", gap: 4 })}>{"🎨"} Brand</button>
+              <button data-testid="batch-edit-toggle" onClick={() => sa?.toggleBatchEdit?.()} disabled={!aiOk || !has || !sa?.slidesCount} title={aiOk ? "Batch edit across slides" : VELA_AI_UNAVAILABLE_MSG} style={S.btn({ padding: "4px 10px", fontSize: 14, color: !aiOk ? T.textDim + "60" : sa?.showBatchEdit ? T.accent : (sa?.improving ? T.red : T.textDim), background: sa?.showBatchEdit || sa?.improving ? T.accent + "20" : "transparent", borderRadius: 4, opacity: aiOk && has && sa?.slidesCount ? 1 : 0.4, display: "flex", alignItems: "center", gap: 4, cursor: aiOk ? "pointer" : "not-allowed" })}>{sa?.improving ? "⏹" : "🔄"}{hdrLabel(" Batch")}</button>
+              <button data-testid="brand-toggle" onClick={() => sa?.toggleBranding?.()} disabled={!has} title="Branding & guidelines" style={S.btn({ padding: "4px 10px", fontSize: 14, color: sa?.showBranding ? T.accent : (sa?.hasBranding ? T.accent : T.textDim), background: sa?.showBranding ? T.accent + "20" : "transparent", borderRadius: 4, opacity: has ? 1 : 0.4, display: "flex", alignItems: "center", gap: 4 })}>{"🎨"}{hdrLabel(" Brand")}</button>
               {/* CR13: view switcher (editor | presenter | gallery), placed next to
                   Present. Shows the live view and switches to it in one click — the
                   gallery is no longer reachable only from the Overview button below
                   the slide. */}
-              {(() => {
-                const vm = sa?.viewMode || "editor";
-                const seg = (mode, icon, label) => (
-                  <button key={mode} data-testid={`view-switch-${mode}`} onClick={() => sa?.setView?.(mode)} disabled={!has} title={label} aria-pressed={vm === mode}
-                    style={{ display: "flex", alignItems: "center", gap: 4, padding: "4px 9px", background: vm === mode ? T.accent : "transparent", color: vm === mode ? "#fff" : T.textDim, border: "none", cursor: has ? "pointer" : "default", opacity: has ? 1 : 0.4, fontFamily: FONT.mono, fontSize: 12, fontWeight: 700 }}>
-                    <span>{icon}</span><span>{label}</span>
-                  </button>
-                );
-                return <div data-testid="view-switch" style={{ display: "flex", alignItems: "center", border: `1px solid ${T.border}`, borderRadius: 6, overflow: "hidden", flexShrink: 0 }}>
-                  {seg("editor", "🖊", "Editor")}
-                  {seg("presenter", "🖥️", "Presenter")}
-                  {seg("gallery", "🗂", "Gallery")}
-                </div>;
-              })()}
+              <ViewSwitch mode={sa?.viewMode || "editor"} onSet={(m) => sa?.setView?.(m)} disabled={!has} compact={!wideHeader} />
               <button data-testid="present-btn" onClick={() => sa?.present?.()} disabled={!has} style={{ display: "flex", alignItems: "center", gap: 5, padding: "5px 14px", background: has ? T.green : T.border, color: has ? "#fff" : T.textDim, border: "none", borderRadius: 6, cursor: has ? "pointer" : "default", opacity: has ? 1 : 0.5, fontFamily: FONT.mono, fontSize: 14, fontWeight: 700 }}>{"▶"} Present</button>
             </>;
           })()}
           <div style={{ width: 1, height: 22, background: T.border, flexShrink: 0 }} />
           {/* New Deck */}
-          <button onClick={() => setNewDeckDialog(true)} style={S.btn({ padding: "4px 10px", fontSize: 14, color: T.accent, display: "flex", alignItems: "center", gap: 4, borderRadius: 4 })}>{"+"} New</button>
+          <button onClick={() => setNewDeckDialog(true)} style={S.btn({ padding: "4px 10px", fontSize: 14, color: T.accent, display: "flex", alignItems: "center", gap: 4, borderRadius: 4 })} title="New deck">{"+"}{hdrLabel(" New")}</button>
           {/* Import */}
-          <button onClick={() => fileInputRef.current?.click()} style={S.btn({ padding: "4px 10px", fontSize: 14, color: T.textMuted, display: "flex", alignItems: "center", gap: 4, borderRadius: 4 })}>{"📥"} Import</button>
+          <button onClick={() => fileInputRef.current?.click()} style={S.btn({ padding: "4px 10px", fontSize: 14, color: T.textMuted, display: "flex", alignItems: "center", gap: 4, borderRadius: 4 })} title="Import deck">{"📥"}{hdrLabel(" Import")}</button>
           {/* Export dropdown */}
           <div style={{ position: "relative" }}>
-            <button data-testid="export-menu-toggle" onClick={() => { setExportMenu((v) => !v); setViewMenu(false); }} style={S.btn({ padding: "4px 10px", fontSize: 14, color: exportMenu ? T.accent : T.textMuted, display: "flex", alignItems: "center", gap: 4, background: exportMenu ? T.accent + "15" : "transparent", borderRadius: 4 })}>{"📤"} Export <span style={{ fontSize: 9, opacity: 0.5 }}>▾</span></button>
+            <button data-testid="export-menu-toggle" onClick={() => { setExportMenu((v) => !v); setViewMenu(false); }} style={S.btn({ padding: "4px 10px", fontSize: 14, color: exportMenu ? T.accent : T.textMuted, display: "flex", alignItems: "center", gap: 4, background: exportMenu ? T.accent + "15" : "transparent", borderRadius: 4 })} title="Export">{"📤"}{hdrLabel(" Export ")}<span style={{ fontSize: 9, opacity: 0.5 }}>▾</span></button>
             {exportMenu && <>
               <div onClick={() => setExportMenu(false)} style={{ position: "fixed", inset: 0, zIndex: 9998 }} />
               <div style={{ position: "absolute", top: "100%", right: 0, zIndex: 9999, marginTop: 4, background: T.bgPanel, border: `1px solid ${T.border}`, borderRadius: 8, boxShadow: "0 8px 32px rgba(0,0,0,0.4)", padding: "4px 0", minWidth: 180 }}>
@@ -24830,7 +24987,7 @@ export default function App() {
           <CostBadge /></>}
           <button data-testid="run-demo" onClick={() => window.dispatchEvent(new CustomEvent("vela-run-demo"))} disabled={!!demoUnavailableReason} style={S.btn({ padding: "4px 10px", fontSize: 14, color: T.textMuted, borderRadius: 4, display: "flex", alignItems: "center", gap: 4, opacity: demoUnavailableReason ? 0.4 : 1, cursor: demoUnavailableReason ? "not-allowed" : "pointer" })} title={demoUnavailableReason || "Run product tour"}>{"🎬"}</button>
           <div style={{ width: 1, height: 22, background: T.border, flexShrink: 0 }} />
-          <button data-testid="comments-toggle" onClick={() => { const entering = !state.reviewMode; dispatch({ type: "SET_REVIEW_MODE", value: entering }); if (entering) { dispatch({ type: "SET_COMMENTS_PANEL", open: true }); dispatch({ type: "SET_CHAT", open: false }); } else { dispatch({ type: "SET_COMMENTS_PANEL", open: false }); } }} style={S.btn({ padding: "4px 10px", fontSize: 14, background: state.reviewMode ? T.amber : "transparent", color: state.reviewMode ? "#fff" : T.amber, borderRadius: 4, display: "flex", alignItems: "center", gap: 4 })}>{"💬"} Comments</button>
+          <button data-testid="comments-toggle" onClick={() => { const entering = !state.reviewMode; dispatch({ type: "SET_REVIEW_MODE", value: entering }); if (entering) { dispatch({ type: "SET_COMMENTS_PANEL", open: true }); dispatch({ type: "SET_CHAT", open: false }); } else { dispatch({ type: "SET_COMMENTS_PANEL", open: false }); } }} style={S.btn({ padding: "4px 10px", fontSize: 14, background: state.reviewMode ? T.amber : "transparent", color: state.reviewMode ? "#fff" : T.amber, borderRadius: 4, display: "flex", alignItems: "center", gap: 4 })} title="Comments">{"💬"}{hdrLabel(" Comments")}</button>
           <button onClick={() => { dispatch({ type: "SET_CHAT", open: !state.chatOpen }); if (!state.chatOpen) { dispatch({ type: "SET_COMMENTS_PANEL", open: false }); dispatch({ type: "SET_REVIEW_MODE", value: false }); } }} style={S.btn({ padding: "4px 10px", fontSize: 14, background: state.chatOpen ? T.accent : "transparent", color: state.chatOpen ? "#fff" : T.accent, borderRadius: 4, display: "flex", alignItems: "center", gap: 4 })}>{"🤖"} Vera</button>
         </>}
         {isMobile && <>
