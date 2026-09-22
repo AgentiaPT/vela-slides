@@ -94,6 +94,16 @@ function makeNeu() {
     const want = ["Vela Slides - Deck A", "Vela Slides - Deck B", "Vela Slides"];
     assert(JSON.stringify(Neu.calls.setTitle) === JSON.stringify(want), JSON.stringify(Neu.calls.setTitle));
   });
+  await test("meridian-D1 'Untitled' sentinel maps to plain 'Vela Slides'", () => {
+    const { mod } = loadGlue(makeNeu());
+    assert(mod.windowTitleFor("Untitled") === "Vela Slides", mod.windowTitleFor("Untitled"));
+  });
+  await test("meridian-D3 bidi/line-separator controls stripped from title", () => {
+    const { mod } = loadGlue(makeNeu());
+    const t = mod.windowTitleFor("\u061cRTL\u2028B\u2029C");
+    assert(!/[\u061c\u2028\u2029]/.test(t), "bidi/line-separator chars left: " + JSON.stringify(t));
+    assert(t === "Vela Slides - RTLBC", t);
+  });
   await test("meridian-CR16 nl-boot wires the app hook; part-app calls it", () => {
     const boot = fs.readFileSync(path.join(JS, "nl-boot.js"), "utf8");
     const app = fs.readFileSync(path.join(__dirname, "..", "src", "parts", "part-app.jsx"), "utf8");
@@ -130,6 +140,36 @@ function makeNeu() {
     await tick(700);
     win.fire("focus");
     assert(Neu.calls.focus > a, "second refocus ignored");
+  });
+
+  await test("meridian-D2 blur cancels pending focus retries", async () => {
+    const Neu = makeNeu();
+    const { mod, win } = loadGlue(Neu);
+    mod.focusWindow();
+    const afterImmediate = Neu.calls.focus;
+    win.fire("blur");
+    await tick(500);                  // past both the 120ms and 400ms retries
+    assert(Neu.calls.focus === afterImmediate, "a retry fired after blur: " + Neu.calls.focus);
+  });
+  await test("meridian-D2 hidden (visibilitychange) also cancels pending retries", async () => {
+    const Neu = makeNeu();
+    const { mod, doc } = loadGlue(Neu);
+    mod.focusWindow();
+    const afterImmediate = Neu.calls.focus;
+    doc.visibilityState = "hidden";
+    doc.fire("visibilitychange");
+    await tick(500);
+    assert(Neu.calls.focus === afterImmediate, "a retry fired after hidden: " + Neu.calls.focus);
+  });
+  await test("meridian-D2 refocus-on-return still works after a blur", async () => {
+    const Neu = makeNeu();
+    const { mod, win } = loadGlue(Neu);
+    mod.installRefocus();
+    mod.focusWindow();
+    win.fire("blur");                 // cancels the pending retries above
+    await tick(10);
+    win.fire("focus");                // user comes back
+    assert(Neu.calls.focus > 1, "no re-arm on return: " + Neu.calls.focus);
   });
 
   // ─────────── CR19 ───────────

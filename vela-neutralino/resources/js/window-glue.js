@@ -12,7 +12,11 @@ const APP_NAME = "Vela Slides";
 // Control, bidi and zero-width characters have no place in a native title bar
 // (they can visually reorder or hide text). The value comes from the app's own
 // sanitized state; this is only a last cheap filter + length cap.
-const TITLE_STRIP = /[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u206f\ufeff]/g;
+const TITLE_STRIP = /[\u0000-\u001f\u007f-\u009f\u061c\u200b-\u200f\u2028\u2029\u202a-\u202e\u2060-\u2064\u2066-\u206f\ufeff]/g;
+
+// The app's own "no title" sentinel (part-reducer.jsx / part-app.jsx). It must
+// map to the plain app name, the same as an empty title, not show up as text.
+const NO_TITLE_SENTINEL = "Untitled";
 
 // Pure: deck title -> native window title. Type-check first: a non-string
 // never reaches the native call. A title that already starts with the app
@@ -20,7 +24,7 @@ const TITLE_STRIP = /[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2060
 export function windowTitleFor(deckTitle) {
   if (typeof deckTitle !== "string") return APP_NAME;
   const t = deckTitle.replace(TITLE_STRIP, "").trim().slice(0, 200);
-  if (!t) return APP_NAME;
+  if (!t || t === NO_TITLE_SENTINEL) return APP_NAME;
   if (t.toLowerCase().startsWith(APP_NAME.toLowerCase())) return t;
   return `${APP_NAME} - ${t}`;
 }
@@ -46,11 +50,30 @@ export function setWindowTitle(deckTitle) {
 // dialog on first run (deck warning, trust prompt, React confirm modals). We
 // focus explicitly after init, and retry a couple of times because the native
 // window is created asynchronously and an immediate focus() can no-op.
+let pendingRetryTimers = [];
+
+// Drop any focus() retries still waiting to fire. Called on blur/hidden so a
+// delayed retry can never raise Vela back over an app the user switched to.
+function cancelPendingRetries() {
+  for (const id of pendingRetryTimers) clearTimeout(id);
+  pendingRetryTimers = [];
+}
+
+// The moment the user leaves the window, cancel the retries below. The
+// refocus-on-return behavior is untouched: installRefocus() calls
+// focusWindow() again on the next focus/visible/windowFocus signal, which
+// arms a fresh retry sequence.
+window.addEventListener("blur", cancelPendingRetries);
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "hidden") cancelPendingRetries();
+});
+
 export function focusWindow() {
+  cancelPendingRetries();
   const tryFocus = () => { try { Neutralino.window.focus(); } catch { /* window.* gated or not ready */ } };
   tryFocus();
-  setTimeout(tryFocus, 120);
-  setTimeout(tryFocus, 400);
+  pendingRetryTimers.push(setTimeout(tryFocus, 120));
+  pendingRetryTimers.push(setTimeout(tryFocus, 400));
 }
 
 // The same platform quirk repeats on every focus transition, not only at
