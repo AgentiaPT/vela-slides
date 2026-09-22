@@ -427,6 +427,35 @@ async function driveExport(page) {
         check('table cell font carries the fitScale factor (20px @ scale .5 → ~10, not 20)',
           tblScale.found && tblScale.fontSize > 8 && tblScale.fontSize < 12, JSON.stringify(tblScale));
       }
+
+      // Regression (meridian CR05): € and other symbols outside Latin-1 stay real
+      // text in PPTX (UTF-8 OOXML, no WinAnsi narrowing) — kept by the extractor
+      // and emitted literally inside <a:t> by the emitter.
+      const GLYPHS = 'Price: 1.234 € – “quotes” … ™ • £';
+      const glyph = await page.evaluate((g) => {
+        if (typeof pptxTextSp !== 'function' || typeof pptxExtractTextBoxes !== 'function') return null;
+        const host = document.createElement('div');
+        host.style.cssText = 'position:absolute;left:0;top:0;width:600px';
+        const p = document.createElement('div');
+        p.style.cssText = 'color:#fff;font-size:18px';
+        p.textContent = g;
+        host.appendChild(p);
+        document.body.appendChild(host);
+        let boxes = [];
+        try { boxes = pptxExtractTextBoxes(host, host.getBoundingClientRect()) || []; } catch (e) {}
+        document.body.removeChild(host);
+        const box = boxes.find((b) => b.text && b.text.indexOf('Price') >= 0);
+        const xml = pptxTextSp(7, { x: 0, y: 0, w: 600, h: 24, fontSize: 18, text: g });
+        return { boxText: box ? String(box.text) : null, xml };
+      }, GLYPHS);
+      if (glyph === null) {
+        check('glyph unit: pptxTextSp/pptxExtractTextBoxes reachable in page scope', false, 'fns not global');
+      } else {
+        check('PPTX extractor keeps € and WinAnsi symbols in the text box',
+          glyph.boxText !== null && glyph.boxText.replace(/\s+/g, ' ').trim() === GLYPHS, JSON.stringify(glyph.boxText));
+        check('PPTX emitter writes € and WinAnsi symbols literally inside <a:t>',
+          glyph.xml.includes('<a:t>' + GLYPHS + '</a:t>'), glyph.xml.slice(0, 300));
+      }
     }
 
     await page.close();

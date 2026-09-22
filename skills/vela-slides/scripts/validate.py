@@ -8,7 +8,7 @@ Usage:
   python3 validate.py <deck.vela>
 """
 
-import sys, json, os
+import sys, json, os, re
 
 # ── Terminal-output funnel ──────────────────────────────────────────────
 # COMPLETE MEDIATION: every human-readable byte this script writes leaves
@@ -73,6 +73,37 @@ def check_slide_numerics(slide, loc, errors):
             errors.append(f"{loc}: '{key}' out of range — must be {lo}..{hi} (got {v})")
 
 
+# Solid-color-only background fields. The app renders each of these through
+# cssColor() (src/parts/part-imports.jsx), a fail-closed solid-color allowlist:
+# a gradient value there is dropped and the element falls back to its default
+# color. Only the slide has a gradient field (`bgGradient`, via cssGradient()).
+# Flag the mistake here so the author sees it before the deck renders wrong.
+SOLID_BG_KEYS = ("bg", "iconBg", "headerBg")
+_GRADIENT_TOKEN = re.compile(r"gradient\s*\(", re.I)
+
+
+def _is_gradient(v):
+    return isinstance(v, str) and bool(_GRADIENT_TOKEN.search(v))
+
+
+def check_block_gradients(node, loc, errors, path=""):
+    """Report a gradient in any solid-color-only bg field of a block tree."""
+    if isinstance(node, list):
+        for i, child in enumerate(node):
+            check_block_gradients(child, loc, errors, f"{path}[{i}]")
+    elif isinstance(node, dict):
+        for key, val in node.items():
+            here = f"{path}.{key}" if path else key
+            if key in SOLID_BG_KEYS and _is_gradient(val):
+                errors.append(
+                    f"{loc}: '{here}' contains a CSS gradient — this field is "
+                    f"solid-color only and the gradient is dropped (default "
+                    f"color shows). Use a solid color here; put slide "
+                    f"gradients in the slide's 'bgGradient'")
+            elif isinstance(val, (dict, list)):
+                check_block_gradients(val, loc, errors, here)
+
+
 def validate(path):
     with open(path, 'r', encoding="utf-8") as f:
         deck = json.load(f)
@@ -131,6 +162,11 @@ def validate(path):
                 # Background check
                 if not slide.get("bg") and not slide.get("bgGradient"):
                     errors.append(f"{loc}: Missing 'bg' or 'bgGradient'")
+                if _is_gradient(slide.get("bg")):
+                    errors.append(
+                        f"{loc}: 'bg' contains a CSS gradient — 'bg' is "
+                        f"solid-color only, so the slide shows the default "
+                        f"background. Move the gradient to 'bgGradient'")
 
                 # Color check + contrast auto-fix
                 if not slide.get("color"):
@@ -193,6 +229,7 @@ def validate(path):
                     warnings.append(f"{loc}: {len(blocks)} blocks — may overflow (max 7 recommended)")
 
                 for bi, block in enumerate(blocks):
+                    check_block_gradients(block, f"{loc}/B{bi+1}", errors)
                     stats["blocks"] += 1
                     bt = block.get("type", "unknown")
                     stats["block_types"][bt] = stats["block_types"].get(bt, 0) + 1
@@ -215,6 +252,7 @@ def validate(path):
                 # L/R blocks (cols layout)
                 for col_key in ("L", "R"):
                     for bi, block in enumerate(slide.get(col_key, [])):
+                        check_block_gradients(block, f"{loc}/{col_key}{bi+1}", errors)
                         stats["blocks"] += 1
                         bt = block.get("type", "unknown")
                         stats["block_types"][bt] = stats["block_types"].get(bt, 0) + 1
