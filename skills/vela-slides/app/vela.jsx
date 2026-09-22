@@ -16163,6 +16163,110 @@ uiSuite("meridian-CR17 link badge placement", [
   }},
 ], { setup: _selectFirstModule });
 
+// meridian-F7 (CR13): the top-bar density level is a function of the current
+// width only. The level at a width must not depend on the widths before it.
+uiSuite("meridian-CR13 top bar level has no history", [
+  { name: "Level at each width equals the level after a fresh jump (sweep down, then up)", fn: async () => {
+    const h = await _waitFor(() => _$("header[data-hdr-level]"), 2000);
+    const frames = () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+    // Read the level from what is drawn (hidden labels sit at zero width), and
+    // check that it agrees with the header's own data-hdr-level.
+    const hiddenLabel = (sel) => _$$(sel, h).some((e) => e.style.width === "0px");
+    const drawnLevel = () => {
+      if (!hiddenLabel("[data-testid='view-switch'] [data-vs-label]")) return "4";
+      if (!hiddenLabel("[data-hdr-label='3']")) return "3";
+      if (!hiddenLabel("[data-hdr-label='2']")) return "2";
+      return _$("[data-testid='present-btn']", h)?.parentElement?.style.flexShrink === "1" ? "0" : "1";
+    };
+    const settle = async (w) => {
+      h.style.width = `${w}px`;
+      for (let f = 0; f < 3; f++) await frames();
+      const lvl = drawnLevel();
+      if (h.dataset.hdrLevel !== lvl) throw new Error(`${w}px: data-hdr-level ${h.dataset.hdrLevel} but drawn level ${lvl}`);
+      return lvl;
+    };
+    const widths = [1000];
+    for (let w = 1024; w <= 1920; w += 32) widths.push(w);
+    widths.push(1440);
+    const prev = h.style.width;
+    const bad = [];
+    try {
+      // "Fresh" reference: jump to the width from a narrow bar (the boot level is low).
+      const fresh = {};
+      for (const w of widths) { await settle(700); fresh[w] = await settle(w); }
+      for (const w of widths) { await settle(2400); const got = await settle(w); if (got !== fresh[w]) bad.push(`${w}px from wide: ${got} vs fresh ${fresh[w]}`); }
+      const down = [...widths].sort((a, b) => b - a);
+      for (const w of down) { const got = await settle(w); if (got !== fresh[w]) bad.push(`${w}px sweep down: ${got} vs fresh ${fresh[w]}`); }
+      for (const w of [...down].reverse()) { const got = await settle(w); if (got !== fresh[w]) bad.push(`${w}px sweep up: ${got} vs fresh ${fresh[w]}`); }
+      // The reported case: a narrow bar that grows must get its labels back.
+      await settle(1000);
+      const grown = await settle(1440);
+      if (grown !== fresh[1440]) bad.push(`1000->1440: ${grown} vs fresh ${fresh[1440]}`);
+      // No flapping: the level stays put over many frames at a fixed width.
+      for (const w of [1024, 1440, 1920]) {
+        const first = await settle(w);
+        for (let f = 0; f < 6; f++) { await frames(); if (h.dataset.hdrLevel !== first) { bad.push(`${w}px flaps ${first}->${h.dataset.hdrLevel}`); break; } }
+      }
+      if (fresh[1920] !== "4") bad.push(`1920px level ${fresh[1920]}, want 4`);
+    } finally {
+      h.style.width = prev;
+      await frames();
+    }
+    if (bad.length) throw new Error(`${bad.length} mismatches — ${bad.slice(0, 4).join(" | ")}`);
+  }},
+], { setup: _selectFirstModule });
+
+// meridian-F7 (CR01): the "file already holds this" signature moves only after
+// a confirmed write. A failed or rejected save must be retried by the next
+// identical flush, or the edit is lost.
+uiSuite("meridian-CR01 local save retries after a failed write", [
+  { name: "Failed save is retried; a confirmed save is not repeated", fn: async () => {
+    const hooks = _hooks();
+    if (!hooks.capturePostDemoFlushForTest || !hooks.flushDemoSaveForTest || !hooks.setGuidelinesForTest) throw new Error("save test hooks missing");
+    const originalStorage = window.storage;
+    const originalLocalSend = window.__velaSendDeckUpdate;
+    const writes = [];
+    let outcome = "fail";
+    window.storage = { ...(originalStorage || {}), set: async () => {}, delete: async () => {} };
+    window.__velaSendDeckUpdate = (payload) => {
+      writes.push(payload);
+      if (outcome === "reject") return Promise.reject(new Error("save failed (test)"));
+      return Promise.resolve(outcome === "ok");
+    };
+    const flush = () => hooks.flushDemoSaveForTest(hooks.capturePostDemoFlushForTest(), { local: true, storage: false });
+    try {
+      hooks.setGuidelinesForTest("meridian-F7 unsaved edit");
+      await _wait(50);
+      flush();
+      await _waitFor(() => writes.length === 1, 2000);
+      await _wait(30);
+      flush(); // same payload, previous write failed: must write again
+      await _waitFor(() => writes.length === 2, 2000).catch(() => { throw new Error("identical flush after a failed save was skipped"); });
+      outcome = "reject";
+      await _wait(30);
+      flush();
+      await _waitFor(() => writes.length === 3, 2000).catch(() => { throw new Error("identical flush after a failed save was skipped (2)"); });
+      await _wait(30);
+      flush(); // previous write rejected: must write again
+      await _waitFor(() => writes.length === 4, 2000).catch(() => { throw new Error("identical flush after a rejected save was skipped"); });
+      outcome = "ok";
+      await _wait(30);
+      flush();
+      await _waitFor(() => writes.length === 5, 2000).catch(() => { throw new Error("retry after failures was skipped"); });
+      await _wait(30);
+      flush(); // confirmed on disk now: nothing to write
+      await _wait(200);
+      if (writes.length !== 5) throw new Error(`confirmed payload written again (${writes.length} writes)`);
+      if (writes.some((p) => p.guidelines !== "meridian-F7 unsaved edit")) throw new Error("wrong payload sent");
+    } finally {
+      window.storage = originalStorage;
+      window.__velaSendDeckUpdate = originalLocalSend;
+      hooks.restoreStartupDeck?.();
+      await _wait(100);
+    }
+  }},
+]);
+
 // ━━━ UI TEST RUNNER COMPONENT ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 // Demo deck guard — UI tests only run against the original demo deck
@@ -24101,6 +24205,11 @@ export default function App() {
   // whose payload equals it is skipped, so opening a deck the user did not
   // change never rewrites the file (sanitize can normalize values on load).
   const _localDiskSig = useRef(null);
+  // Save ordering for the guard above: `sent` numbers each send, `done` is the
+  // newest send whose result is known. _localDiskSig moves only on a CONFIRMED
+  // write — a failed or unconfirmed send must not mark the payload as on disk,
+  // or a later identical flush would skip it and the edit is lost.
+  const _localSaveSeq = useRef({ sent: 0, done: 0 });
   // lanes object of the last LOAD from disk (startup patch / incoming update);
   // the lanes effect adopts that state as the baseline instead of saving it.
   const _localBaselineLanes = useRef(null);
@@ -24127,12 +24236,25 @@ export default function App() {
     const payload = localDeckPayload(source);
     const sig = JSON.stringify(payload);
     if (sig === _localDiskSig.current) return false; // unchanged vs file: nothing to write
+    const seq = ++_localSaveSeq.current.sent;
+    // Backend contract: a Promise that resolves true only after the write is
+    // confirmed (false or a rejection = not written / superseded). A plain
+    // return is a synchronous backend: false = failed, anything else = written.
+    const settle = (okWrite) => {
+      const q = _localSaveSeq.current;
+      if (seq <= q.done) return; // a newer result or a disk load already decided
+      if (okWrite) { q.done = seq; _localDiskSig.current = sig; }
+      else if (seq === q.sent) { q.done = seq; _localDiskSig.current = null; } // file state unknown: next flush retries
+    };
     try {
-      window.__velaSendDeckUpdate(payload);
-      _localDiskSig.current = sig;
+      const res = window.__velaSendDeckUpdate(payload);
+      if (res && typeof res.then === "function") {
+        res.then((v) => settle(v === true), (error) => { dbg("Local save error:", error); settle(false); });
+      } else settle(res !== false);
       return true;
     } catch (error) {
       dbg("Local save error:", error);
+      settle(false);
       return false;
     }
   };
@@ -24438,6 +24560,7 @@ export default function App() {
     if (VELA_LOCAL_MODE && loaded.current && _localBaselineLanes.current && state.lanes === _localBaselineLanes.current) {
       _localBaselineLanes.current = null;
       _localDiskSig.current = JSON.stringify(localDeckPayload(_localSyncState.current));
+      _localSaveSeq.current.done = _localSaveSeq.current.sent; // older in-flight results must not replace this
       return;
     }
     if (!VELA_LOCAL_MODE || !loaded.current || _localSyncIncoming.current ||
@@ -24551,48 +24674,64 @@ export default function App() {
   // DOM at zero width (so it can be measured; the title attr names the button).
   // A level shows only while it fits on one line with the deck title >=
   // HDR_TITLE_MIN; the switch labels also need the whole title to fit.
-  // hdrFailRef keeps the widest header width at which each level did not fit,
-  // so levels cannot flap.
-  const HDR_TITLE_MIN = 120, HDR_TOP = 4;
+  // The level is a function of the current space only (meridian-F7): each
+  // level's natural width is computed from measured widths, and the widest level
+  // that fits wins. No memory of past widths, so a window that grows gets its
+  // labels back at once, and the same width always gives the same level.
+  const HDR_TITLE_MIN = 120, HDR_TOP = 4, HDR_LABEL_GAP = 4;
   const hdrGap = (lvl) => (lvl < 3 ? 8 : 10);
   const [hdrSize, setHdrSize] = useState(1);
   const hdrSizeRef = useRef(1);
   hdrSizeRef.current = hdrSize;
   const hdrRef = useRef(null), hdrBoxRef = useRef(null), hdrSpacerRef = useRef(null), hdrTitleRef = useRef(null);
-  const hdrFailRef = useRef({ key: null, w: [0, 0, 0, 0, 0] });
+  const hdrSigRef = useRef(null);
   const fitHeader = useCallback(() => {
     const h = hdrRef.current, box = hdrBoxRef.current, sp = hdrSpacerRef.current;
     if (!h || !box || !sp) return;
-    const ti = hdrTitleRef.current, w = h.clientWidth, lvl = hdrSizeRef.current;
-    const key = ti ? ti.textContent : "";
-    if (hdrFailRef.current.key !== key) hdrFailRef.current = { key, w: [0, 0, 0, 0, 0] };
-    const fail = hdrFailRef.current.w;
-    const over = h.scrollWidth > w + 1;
-    const titleCut = !!ti && ti.scrollWidth > ti.clientWidth + 1;
-    const hidden = (sel) => Array.from(h.querySelectorAll(sel)).reduce((sum, e) => sum + e.scrollWidth, 0);
-    let next = lvl;
-    if (lvl > 0 && (over || (lvl === HDR_TOP && titleCut))) { fail[lvl] = Math.max(fail[lvl], w); next = lvl - 1; }
-    else if (lvl < HDR_TOP && !over && w > fail[lvl + 1]) {
-      const up = lvl + 1;
-      if (up === 1) next = up; // same labels, no shrink: try it (a failure is remembered)
-      else if (up === HDR_TOP) {
-        if (!titleCut && sp.offsetWidth >= hidden("[data-testid='view-switch'] [data-vs-label]") + VIEW_SWITCH_LABEL_EXTRA + 2) next = up;
-      } else {
-        const gaps = (hdrGap(up) - hdrGap(lvl)) * (h.children.length - 1 + box.children.length - 1);
-        const room = sp.offsetWidth + Math.max(0, (ti ? ti.offsetWidth : HDR_TITLE_MIN) - HDR_TITLE_MIN);
-        if (room >= hidden(`[data-hdr-label='${up}']`) + gaps + 2) next = up;
-      }
-    }
+    const ti = hdrTitleRef.current, lvl = hdrSizeRef.current;
+    // Skip the measurement when nothing that decides the level has changed.
+    const sig = [h.clientWidth, h.scrollWidth, box.scrollWidth, sp.offsetWidth, ti ? ti.scrollWidth : -1, ti ? ti.offsetWidth : -1, lvl].join("|");
+    if (hdrSigRef.current === sig) return;
+    hdrSigRef.current = sig;
+    const avail = h.getBoundingClientRect().width;
+    // Natural width at the current level: lay the bar out at max-content for one
+    // synchronous read (title and action group at full size), then restore.
+    const prevW = h.style.width;
+    h.style.width = "max-content";
+    const nat = h.getBoundingClientRect().width;
+    const tiNat = ti ? ti.getBoundingClientRect().width : 0;
+    h.style.width = prevW;
+    // A label's text width is the same shown or hidden (a hidden label stays in
+    // the DOM at zero width). A top-bar label cancels its button's 4px flex gap
+    // (margin -4, the space is in the text); a view-switch label adds the gap.
+    const range = document.createRange();
+    const textW = (sel, gap) => Array.from(h.querySelectorAll(sel)).reduce((sum, e) => { range.selectNodeContents(e); return sum + range.getBoundingClientRect().width + gap; }, 0);
+    const lab2 = textW("[data-hdr-label='2']", 0), lab3 = textW("[data-hdr-label='3']", 0);
+    // View-switch labels: the second span of each segment (shown or zero-width).
+    const lab4 = textW("[data-testid='view-switch'] button > span:nth-child(2)", HDR_LABEL_GAP) + VIEW_SWITCH_LABEL_EXTRA;
+    const inFlow = (e) => { const cs = getComputedStyle(e); return cs.display !== "none" && cs.position !== "absolute" && cs.position !== "fixed"; };
+    const gaps = Array.from(h.children).filter(inFlow).length - 1 + Array.from(box.children).filter(inFlow).length - 1;
+    const extra = (L) => (L >= 2 ? lab2 : 0) + (L >= 3 ? lab3 : 0) + (L >= 4 ? lab4 : 0) + hdrGap(L) * gaps;
+    const titleSlack = ti ? Math.max(0, tiNat - HDR_TITLE_MIN) : 0;
+    const base = nat - extra(lvl);
+    // Level 4 needs the whole title; levels 1-3 may shrink it to HDR_TITLE_MIN.
+    const need = (L) => base + extra(L) - (L < HDR_TOP ? titleSlack : 0);
+    let next = 0; // level 0: nothing fits unshrunk, so the action group may shrink
+    for (let L = HDR_TOP; L >= 1; L--) if (need(L) <= avail + 0.5) { next = L; break; }
     if (next !== lvl) { hdrSizeRef.current = next; setHdrSize(next); }
   }, []);
   useLayoutEffect(() => { fitHeader(); });
   useEffect(() => {
     if (typeof ResizeObserver === "undefined") return;
+    // Web fonts change label widths without resizing the bar: measure again.
+    try { document.fonts?.ready.then(() => { hdrSigRef.current = null; fitHeader(); }); } catch (_) {}
     const ro = new ResizeObserver(() => fitHeader());
     [hdrRef.current, hdrBoxRef.current, hdrTitleRef.current].forEach((el) => el && ro.observe(el));
     return () => ro.disconnect();
   }, [fitHeader, isMobile, state.fullscreen, editingTitle]);
-  const hdrLabel = (txt, need = 3) => (hdrSize < need ? <span data-hdr-label={need} style={{ display: "inline-block", width: 0, overflow: "hidden", whiteSpace: "pre", marginLeft: -4, verticalAlign: "top" }}>{txt}</span> : txt);
+  // Shown or hidden, a label is the same span text ("pre": the leading space is
+  // the icon gap, margin -4 cancels the flex gap), so fitHeader can measure it.
+  const hdrLabel = (txt, need = 3) => (hdrSize < need ? <span data-hdr-label={need} style={{ display: "inline-block", width: 0, overflow: "hidden", whiteSpace: "pre", marginLeft: -4, verticalAlign: "top" }}>{txt}</span> : <span data-hdr-label={need} style={{ whiteSpace: "pre", marginLeft: -4 }}>{txt}</span>);
   const [mobileTab, setMobileTab] = useState("list"); // "list" | "slides" | "chat"
   const [mobileMenu, setMobileMenu] = useState(false);
   const [viewMenu, setViewMenu] = useState(false);
@@ -25027,7 +25166,7 @@ export default function App() {
       </div>}
 
       {/* ── TOP BAR — title left, actions right, dropdown buttons ── */}
-      {!state.fullscreen && <header ref={hdrRef} style={{ padding: isMobile ? "6px 10px" : "0 14px", borderBottom: `1px solid ${T.border}`, display: "flex", alignItems: "center", gap: isMobile ? 8 : hdrGap(hdrSize), background: T.bgPanel, flexShrink: 0, height: isMobile ? 40 : 44 }}>
+      {!state.fullscreen && <header ref={hdrRef} data-hdr-level={isMobile ? undefined : hdrSize} style={{ padding: isMobile ? "6px 10px" : "0 14px", borderBottom: `1px solid ${T.border}`, display: "flex", alignItems: "center", gap: isMobile ? 8 : hdrGap(hdrSize), background: T.bgPanel, flexShrink: 0, height: isMobile ? 40 : 44 }}>
         {/* Left: icon + title + time */}
         {isMobile && mobileTab !== "list" && <button onClick={() => { setMobileTab("list"); if (mobileTab === "slides") dispatch({ type: "DESELECT" }); }} style={S.btn({ padding: "2px 4px", color: T.accent, fontSize: 16 })}>{"←"}</button>}
         <span onClick={() => { if (typeof window !== "undefined" && typeof window.__velaOpenDeckPicker === "function") { window.__velaOpenDeckPicker(); } else { setShowChangelog(true); } }} style={{ cursor: "pointer", display: "flex", alignItems: "center" }} title={typeof window !== "undefined" && typeof window.__velaOpenDeckPicker === "function" ? "Open deck (Ctrl+O)" : "About"}><VelaIcon size={20} /></span>
@@ -25102,7 +25241,7 @@ export default function App() {
           <button onClick={() => fileInputRef.current?.click()} style={S.btn({ padding: "4px 10px", fontSize: 14, color: T.textMuted, display: "flex", alignItems: "center", gap: 4, borderRadius: 4 })} title="Import deck">{"📥"}{hdrLabel(" Import")}</button>
           {/* Export dropdown */}
           <div style={{ position: "relative" }}>
-            <button data-testid="export-menu-toggle" onClick={() => { setExportMenu((v) => !v); setViewMenu(false); }} style={S.btn({ padding: "4px 10px", fontSize: 14, color: exportMenu ? T.accent : T.textMuted, display: "flex", alignItems: "center", gap: 4, background: exportMenu ? T.accent + "15" : "transparent", borderRadius: 4 })} title="Export">{"📤"}{hdrLabel(" Export ")}<span style={{ fontSize: 9, opacity: 0.5 }}>▾</span></button>
+            <button data-testid="export-menu-toggle" onClick={() => { setExportMenu((v) => !v); setViewMenu(false); }} style={S.btn({ padding: "4px 10px", fontSize: 14, color: exportMenu ? T.accent : T.textMuted, display: "flex", alignItems: "center", gap: 4, background: exportMenu ? T.accent + "15" : "transparent", borderRadius: 4 })} title="Export">{"📤"}{hdrLabel(" Export")}<span style={{ fontSize: 9, opacity: 0.5 }}>▾</span></button>
             {exportMenu && <>
               <div onClick={() => setExportMenu(false)} style={{ position: "fixed", inset: 0, zIndex: 9998 }} />
               <div style={{ position: "absolute", top: "100%", right: 0, zIndex: 9999, marginTop: 4, background: T.bgPanel, border: `1px solid ${T.border}`, borderRadius: 8, boxShadow: "0 8px 32px rgba(0,0,0,0.4)", padding: "4px 0", minWidth: 180 }}>
