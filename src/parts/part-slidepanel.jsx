@@ -195,6 +195,9 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
   const [quickEditing, setQuickEditing] = useState(false);
   const [quickEditImage, setQuickEditImage] = useState(null); // { base64, preview }
   const [showGallery, setShowGallery] = useState(false);
+  // CR07: editor-only review cycle — arrow keys skip slides marked `reviewed`.
+  // Distinct from state.reviewMode (comments review), which owns that name.
+  const [reviewCycle, setReviewCycle] = useState(false);
   const showGalleryRef = useRef(false);
   const setGallery = (v) => { const val = typeof v === "function" ? v(showGalleryRef.current) : v; showGalleryRef.current = val; setShowGallery(val); };
   // ── Presenter view (CR-08) — single-screen speaker dashboard: current +
@@ -534,7 +537,25 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       // (editor nav keeps reaching them so they can be edited/unhidden).
       const nextVisible = (from) => { for (let i = from + 1; i < navSlides.length; i++) if (!fullscreen || !navSlides[i].hidden) return i; return -1; };
       const prevVisible = (from) => { for (let i = from - 1; i >= 0; i--) if (!fullscreen || !navSlides[i].hidden) return i; return -1; };
-      if (e.key === "ArrowRight" || e.key === "ArrowDown" || e.key === " ") {
+      // CR07: editor review cycle — step through unreviewed slides across modules.
+      // The current slide stays in the order (even if reviewed) only to anchor the step.
+      const reviewNav = !fullscreen && reviewCycle;
+      if (reviewNav && ["ArrowRight", "ArrowDown", " ", "ArrowLeft", "ArrowUp"].includes(e.key)) {
+        e.preventDefault();
+        stopAlternatives();
+        const dir = (e.key === "ArrowLeft" || e.key === "ArrowUp") ? -1 : 1;
+        const order = [];
+        for (const lane of (lanes || [])) {
+          if (lane.collapsed) continue;
+          for (const item of lane.items) (item.slides || []).forEach((sl, i) => { if (!sl.reviewed || (item.id === concept.id && i === slideIndex)) order.push({ id: item.id, i, title: item.title }); });
+        }
+        const t = order[order.findIndex((o) => o.id === concept.id && o.i === slideIndex) + dir];
+        if (t) {
+          if (t.id !== concept.id) { dispatch({ type: "SELECT", id: t.id }); showNavToast(t.title, null); }
+          dispatch({ type: "SET_SLIDE_INDEX", index: t.i });
+        }
+      }
+      if (!reviewNav && (e.key === "ArrowRight" || e.key === "ArrowDown" || e.key === " ")) {
         e.preventDefault();
         stopAlternatives(); // keep a running Improve alive across navigation
         const ni = navSlides.length > 0 ? nextVisible(slideIndex) : -1;
@@ -556,7 +577,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
           }
         }
       }
-      if (e.key === "ArrowLeft" || e.key === "ArrowUp") {
+      if (!reviewNav && (e.key === "ArrowLeft" || e.key === "ArrowUp")) {
         e.preventDefault();
         stopAlternatives(); // keep a running Improve alive across navigation
         const pi = navSlides.length > 0 ? prevVisible(slideIndex) : -1;
@@ -647,7 +668,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       if (e.key === "I" && e.shiftKey && !e.metaKey && !e.ctrlKey && slides.length > 0 && !improving && !altLoading && aiOk) { e.preventDefault(); runImproveRef.current?.(null, "slide"); }
     };
     window.addEventListener("keydown", handler); return () => window.removeEventListener("keydown", handler);
-  }, [slideIndex, slides, presSlides, fullscreen, dispatch, concept.id, flatModules, showNavToast, stopAll, altLoading, alternatives, altOriginal, fontScale, state.selectedSlideIndices]);
+  }, [slideIndex, slides, presSlides, fullscreen, dispatch, concept.id, flatModules, showNavToast, stopAll, altLoading, alternatives, altOriginal, fontScale, state.selectedSlideIndices, reviewCycle, lanes]);
 
   // ── Browser back button → exit fullscreen instead of leaving the page ──
   useEffect(() => {
@@ -1174,6 +1195,11 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
                     if (sc.length === 0) return null;
                     return <div onClick={(e) => { e.stopPropagation(); dispatch({ type: "SET_COMMENTS_PANEL", open: true }); dispatch({ type: "SET_REVIEW_MODE", value: true }); }} style={{ position: "absolute", top: 8, right: 8, zIndex: 10, minWidth: 22, height: 22, borderRadius: 11, background: T.amber, color: "#fff", fontFamily: FONT.mono, fontSize: 10, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", padding: "0 6px", cursor: "pointer", boxShadow: "0 2px 8px rgba(0,0,0,0.3)" }} title={`${sc.length} open comment${sc.length > 1 ? "s" : ""}`}>{sc.length}</div>;
                   })()}
+                  {/* CR07: reviewed checkmark (editor only; an overlay, so exports never render it) */}
+                  {!fullscreen && slides[slideIndex] && (() => {
+                    const rv = !!slides[slideIndex].reviewed;
+                    return <button data-testid="reviewed-toggle" data-reviewed={rv ? "1" : "0"} aria-pressed={rv} onClick={(e) => { e.stopPropagation(); dispatch({ type: "TOGGLE_SLIDE_REVIEWED", id: concept.id, index: slideIndex }); }} title={rv ? "Reviewed — click to mark not reviewed" : "Mark slide reviewed"} style={{ position: "absolute", top: 8, right: 44, zIndex: 10, width: 24, height: 24, borderRadius: 12, border: `1.5px solid ${rv ? T.green : "rgba(255,255,255,0.7)"}`, background: rv ? T.green : "rgba(0,0,0,0.35)", color: "#fff", fontSize: 13, fontWeight: 700, lineHeight: 1, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", padding: 0, opacity: rv ? 1 : 0.75, boxShadow: "0 2px 8px rgba(0,0,0,0.3)" }}>✓</button>;
+                  })()}
                   {/* Study notes badge (top-left) — pure indicator in editor mode */}
                   {!fullscreen && slides[slideIndex]?.studyNotes?.text && (
                     <div data-study-marker title="This slide has offline study notes — open student mode (🎓) to view" style={{ position: "absolute", top: 8, left: 8, zIndex: 10, width: 22, height: 22, borderRadius: 11, background: T.accent, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, boxShadow: "0 2px 8px rgba(0,0,0,0.3)", pointerEvents: "none" }}>🎓</div>
@@ -1322,6 +1348,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
           <button onClick={() => { dispatch({ type: "DUPLICATE_SLIDE", id: concept.id, index: slideIndex }); dispatch({ type: "SET_SLIDE_INDEX", index: slideIndex + 1 }); }} title="Duplicate slide" style={S.btn({ padding: "5px 12px", fontSize: 14, color: T.textDim, borderRadius: 4, display: "flex", alignItems: "center", gap: 5 })}>📋{!isMobile && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>Duplicate</span>}</button>
           <button ref={moveRef} onClick={() => setShowMoveToModule((v) => !v)} title="Move to module" style={S.btn({ padding: "5px 12px", fontSize: 14, color: showMoveToModule ? T.accent : T.textDim, background: showMoveToModule ? T.accent + "20" : "transparent", borderRadius: 4, display: "flex", alignItems: "center", gap: 5 })}>📦{!isMobile && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>Move</span>}</button>
           <button onClick={() => { dispatch({ type: "REMOVE_SLIDE", id: concept.id, index: slideIndex }); dispatch({ type: "SET_SLIDE_INDEX", index: Math.max(0, slideIndex - 1) }); }} title="Delete slide (Del)" style={S.btn({ padding: "5px 12px", fontSize: 14, color: T.red + "90", borderRadius: 4, display: "flex", alignItems: "center", gap: 5 })}>🗑{!isMobile && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>Delete</span>}</button>
+          <button data-testid="review-cycle-toggle" aria-pressed={reviewCycle} onClick={() => setReviewCycle((v) => !v)} title={reviewCycle ? "Review cycle on — arrow keys skip reviewed slides" : "Review cycle — arrow keys skip reviewed slides"} style={S.btn({ padding: "5px 12px", fontSize: 14, color: reviewCycle ? T.green : T.textDim, background: reviewCycle ? T.green + "20" : "transparent", borderRadius: 4, display: "flex", alignItems: "center", gap: 5 })}>✓{!isMobile && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>Review cycle</span>}</button>
           <div style={{ width: 1, height: 22, background: T.border + "60" }} />
           <button data-testid="editor-gallery-toggle" onClick={() => setGallery((v) => !v)} title="Overview — all slides (G)" style={S.btn({ padding: "5px 12px", fontSize: 14, color: showGallery ? T.accent : T.textDim, background: showGallery ? T.accent + "20" : "transparent", borderRadius: 4, display: "flex", alignItems: "center", gap: 5 })}>🗂{!isMobile && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>Overview</span>}</button>
         </div>}

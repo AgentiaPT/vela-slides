@@ -459,5 +459,17 @@ const baseSlide = (extra) => ({ duration: 60, blocks: [{ type: "heading", text: 
     s.bgImage === dataUri);
 }
 
+{
+  // meridian-CR07: `reviewed` is an allowlisted slide field, strict boolean only.
+  assert("CR07: reviewed is in SAFE_SLIDE_KEYS", SAFE_SLIDE_KEYS.has("reviewed"));
+  assert("CR07: reviewed=true survives slide ingress", sanitizeSlide(baseSlide({ reviewed: true })).reviewed === true);
+  for (const v of ["yes", 1, "true", {}, [true], false, null]) {
+    assert("CR07: non-true reviewed dropped (" + JSON.stringify(v) + ")", !("reviewed" in sanitizeSlide(baseSlide({ reviewed: v }))));
+  }
+  const d = validateAndSanitizeDeck({ deckTitle: "D", lanes: [{ title: "L", items: [{ title: "M", slides: [baseSlide({ reviewed: true }), baseSlide()] }] }] });
+  const sl = d && d.lanes && d.lanes[0].items[0].slides;
+  assert("CR07: reviewed round-trips through full-deck ingress", !!sl && sl[0].reviewed === true && !("reviewed" in sl[1]));
+}
+
 console.log(`\n  ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
