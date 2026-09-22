@@ -119,6 +119,7 @@ that symbol in the named part for the line. No line numbers here — they rot.
 - CR5: Consistent AI-working animation: _fxWrap _normColor _settleFx _cr5Setup _allCssText
 - AI editor request ownership: _editorOwnershipSetup _openQuickEditor _openAiSlideAdder
 - Product Tour Suite: _productTourSetup
+- meridian CR04 / CR14 / CR07 (sprint "meridian"): _m1RowTitles _m1Undo _m1ClickRow
 - UI TEST RUNNER COMPONENT: computeDeckFingerprint DEMO_DECK_FP_TITLE VelaUITestRunner
 
 ### part-demo.jsx
@@ -232,7 +233,7 @@ keyboard ternaries) or are currently unused — check before assuming a UI exist
 - REMOVE_COMMENT: part-app-modals.jsx part-canvas.jsx part-list.jsx part-slides.jsx
 - REMOVE_ITEM: part-list.jsx
 - REMOVE_LANE: (no direct dispatch site)
-- REMOVE_SLIDE: part-slidepanel.jsx part-slides.jsx
+- REMOVE_SLIDE: part-list.jsx part-slidepanel.jsx part-slides.jsx
 - REMOVE_SLIDES: part-list.jsx
 - RENAME_ITEM: part-list.jsx
 - RENAME_LANE: (no direct dispatch site)
@@ -273,7 +274,8 @@ keyboard ternaries) or are currently unused — check before assuming a UI exist
 - TOGGLE_LANE: (no direct dispatch site)
 - TOGGLE_PRESENT_CARD: part-list.jsx
 - TOGGLE_SECTION_COLLAPSE: part-list.jsx
-- TOGGLE_SLIDE_HIDDEN: part-list.jsx
+- TOGGLE_SLIDE_HIDDEN: part-list.jsx part-slides.jsx
+- TOGGLE_SLIDE_REVIEWED: part-slidepanel.jsx
 - UNDO: (no direct dispatch site)
 - UPDATE_COMMENT: (no direct dispatch site)
 - UPDATE_SLIDE: part-app.jsx part-imports.jsx part-list.jsx part-slidepanel.jsx
@@ -316,8 +318,8 @@ add_lane add_item batch_add_items remove_item remove_lane rename_item rename_lan
 - part-imports.jsx: 860-line unbannered stretch after line 509
 - part-blocks.jsx: 764-line unbannered stretch after line 769
 - part-canvas.jsx: 414-line unbannered stretch after line 24
-- part-slidepanel.jsx: 446-line unbannered stretch after line 206
-- part-slidepanel.jsx: 394-line unbannered stretch after line 964
+- part-slidepanel.jsx: 464-line unbannered stretch after line 209
+- part-slidepanel.jsx: 400-line unbannered stretch after line 985
 - part-uitest.jsx: 616-line unbannered stretch after line 1230
 - part-uitest2.jsx: 448-line unbannered stretch after line 2
 - part-uitest2.jsx: 593-line unbannered stretch after line 1395

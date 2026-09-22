@@ -1985,6 +1985,89 @@ uiSuite("Product Tour", [
   }},
 ], { setup: _productTourSetup });
 
+// ── meridian CR04 / CR14 / CR07 (sprint "meridian") ──────────────────
+const _m1RowTitles = () => _tocRows().map((r) => (Array.from(r.querySelectorAll("span")).find((x) => x.style.textOverflow === "ellipsis")?.textContent || "").trim());
+const _m1Undo = async () => { document.activeElement?.blur?.(); await _wait(80); _key("z", { ctrlKey: true }); await _wait(250); };
+const _m1ClickRow = async (i) => { const r = _tocRows()[i]; if (!r) throw new Error("no TOC row " + i); _click(r); await _waitFor(() => _tocRows()[i]?.getAttribute("aria-selected") === "true", 800).catch(() => {}); await _wait(150); document.activeElement?.blur?.(); };
+
+uiSuite("meridian-CR04 Gallery hide toggle", [
+  { name: "gallery card shows a hide toggle beside delete; click hides, click again unhides", fn: async () => {
+    const btn = _$("[data-testid='editor-gallery-toggle']");
+    if (!btn) throw new Error("editor-gallery-toggle missing");
+    _click(btn);
+    await _waitFor(() => _$("[data-testid='gallery-slide']"), 5000);
+    const card = () => _$$("[data-testid='gallery-slide']")[0];
+    const tog = () => card()?.querySelector("[data-testid='gallery-hide-toggle']");
+    if (!tog()) throw new Error("gallery-hide-toggle missing on the card");
+    const del = Array.from(card().querySelectorAll("button")).find((b) => b.title === "Delete slide");
+    if (!del || tog().nextElementSibling !== del) throw new Error("hide toggle is not next to the delete button");
+    if (tog().getAttribute("data-hidden") !== "0") throw new Error("first slide already hidden");
+    const rowHidden = () => (_tocRows()[0]?.textContent || "").includes("🙈");
+    _click(tog());
+    await _waitFor(() => tog()?.getAttribute("data-hidden") === "1", 1500);
+    if (!card().querySelector("[data-hidden-overlay]")) throw new Error("hidden card thumbnail not dimmed");
+    if (!rowHidden()) throw new Error("TOC row does not show the slide as hidden (not the same effect)");
+    _click(tog());
+    await _waitFor(() => tog()?.getAttribute("data-hidden") === "0", 1500);
+    if (card().querySelector("[data-hidden-overlay]") || rowHidden()) throw new Error("unhide did not restore the slide");
+    _click(_$("[data-testid='editor-gallery-toggle']"));
+    await _waitFor(() => !_$("[data-testid='gallery-slide']"), 3000).catch(() => {});
+  }},
+], { setup: _editorSetup });
+
+uiSuite("meridian-CR14 TOC slide delete", [
+  { name: "each slide row has a delete icon", fn: async () => {
+    const rows = _tocRows();
+    if (rows.length < 2) throw new Error("need >=2 slide rows, got " + rows.length);
+    if (!rows.every((r) => r.querySelector("[data-testid='toc-slide-delete']"))) throw new Error("a slide row has no toc-slide-delete icon");
+  }},
+  { name: "click deletes that slide only; undo restores it", fn: async () => {
+    const before = _m1RowTitles();
+    _click(_tocRows()[1].querySelector("[data-testid='toc-slide-delete']"));
+    await _waitFor(() => _tocRows().length === before.length - 1, 1500);
+    const want = before.filter((_, i) => i !== 1).join("|");
+    if (_m1RowTitles().join("|") !== want) throw new Error("wrong slide removed: " + _m1RowTitles().join("|"));
+    await _m1Undo();
+    await _waitFor(() => _tocRows().length === before.length, 1500);
+    if (_m1RowTitles().join("|") !== before.join("|")) throw new Error("undo did not restore the slide list");
+  }},
+], { setup: _editorSetup });
+
+uiSuite("meridian-CR07 Review cycle", [
+  { name: "reviewed checkmark and review-cycle toggle render in the editor", fn: async () => {
+    await _waitFor(() => _$("[data-testid='reviewed-toggle']") && _$("[data-testid='review-cycle-toggle']"), 2000);
+  }},
+  { name: "cycle on: arrows skip a reviewed slide; cycle off: arrows visit it again", fn: async () => {
+    if (_tocRows().length < 3) throw new Error("need >=3 slide rows");
+    const rt = () => _$("[data-testid='reviewed-toggle']");
+    const cyc = () => _$("[data-testid='review-cycle-toggle']");
+    const selIdx = () => _tocRows().findIndex((r) => r.getAttribute("aria-selected") === "true");
+    try {
+      await _m1ClickRow(1);
+      if (rt().getAttribute("data-reviewed") !== "0") throw new Error("slide 2 already reviewed");
+      _click(rt());
+      await _waitFor(() => rt()?.getAttribute("data-reviewed") === "1", 1500);
+      await _m1ClickRow(0);
+      _click(cyc());
+      await _waitFor(() => cyc()?.getAttribute("aria-pressed") === "true", 1500);
+      document.activeElement?.blur?.();
+      _key("ArrowRight");
+      await _waitFor(() => selIdx() === 2, 1500).catch(() => { throw new Error("ArrowRight did not skip the reviewed slide (at row " + selIdx() + ")"); });
+      _key("ArrowLeft");
+      await _waitFor(() => selIdx() === 0, 1500).catch(() => { throw new Error("ArrowLeft did not skip the reviewed slide (at row " + selIdx() + ")"); });
+      _click(cyc());
+      await _waitFor(() => cyc()?.getAttribute("aria-pressed") === "false", 1500);
+      document.activeElement?.blur?.();
+      _key("ArrowRight");
+      await _waitFor(() => selIdx() === 1, 1500).catch(() => { throw new Error("cycle off: ArrowRight did not visit slide 2 (at row " + selIdx() + ")"); });
+    } finally {
+      if (cyc()?.getAttribute("aria-pressed") === "true") _click(cyc());
+      await _m1ClickRow(1);
+      if (rt()?.getAttribute("data-reviewed") === "1") { _click(rt()); await _waitFor(() => rt()?.getAttribute("data-reviewed") === "0", 1500).catch(() => {}); }
+    }
+  }},
+], { setup: _editorSetup });
+
 // ━━━ UI TEST RUNNER COMPONENT ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 // Demo deck guard — UI tests only run against the original demo deck

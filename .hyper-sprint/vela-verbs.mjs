@@ -183,3 +183,36 @@ export async function swipe(page, dir = -1) {
   await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
   await page.waitForTimeout(150);
 }
+
+// ── meridian CR04 / CR14 / CR07 verbs ──────────────────────────────────────────
+// Contract testids: gallery-hide-toggle (data-hidden 0|1), toc-slide-delete,
+// reviewed-toggle (data-reviewed 0|1), review-cycle-toggle (aria-pressed).
+// Gallery must be open (openGallery). Clicks the i-th card's hide toggle; returns the new data-hidden.
+export async function galleryToggleHide(page, i = 0) {
+  const before = await page.evaluate((i) => { const t = document.querySelectorAll("[data-testid=gallery-slide]")[i]?.querySelector("[data-testid=gallery-hide-toggle]"); if (!t) return null; const v = t.getAttribute("data-hidden"); t.click(); return v; }, i);
+  if (before == null) throw new Error(`galleryToggleHide: no gallery-hide-toggle on card ${i}`);
+  await page.waitForFunction(({ i, before }) => document.querySelectorAll("[data-testid=gallery-slide]")[i]?.querySelector("[data-testid=gallery-hide-toggle]")?.getAttribute("data-hidden") !== before, { i, before }, { timeout: 3000 });
+  return page.evaluate((i) => document.querySelectorAll("[data-testid=gallery-slide]")[i].querySelector("[data-testid=gallery-hide-toggle]").getAttribute("data-hidden"), i);
+}
+// Clicks the delete icon on the i-th TOC slide row; waits for the row count to drop by one.
+export async function tocDeleteSlide(page, i = 0) {
+  const n = await page.evaluate((i) => { const rows = document.querySelectorAll("[data-testid=toc-slide-row]"); const d = rows[i]?.querySelector("[data-testid=toc-slide-delete]"); if (!d) return -1; d.click(); return rows.length; }, i);
+  if (n < 0) throw new Error(`tocDeleteSlide: no toc-slide-delete on row ${i}`);
+  await page.waitForFunction((n) => document.querySelectorAll("[data-testid=toc-slide-row]").length === n - 1, n, { timeout: 3000 });
+  return n - 1;
+}
+// Editor only. Toggles the current slide's reviewed checkmark; returns the new data-reviewed.
+export async function toggleReviewed(page) {
+  const before = await page.evaluate(() => { const b = document.querySelector("[data-testid=reviewed-toggle]"); if (!b) return null; const v = b.getAttribute("data-reviewed"); b.click(); return v; });
+  if (before == null) throw new Error("toggleReviewed: no reviewed-toggle (editor mode only)");
+  await page.waitForFunction((before) => document.querySelector("[data-testid=reviewed-toggle]")?.getAttribute("data-reviewed") !== before, before, { timeout: 3000 });
+  return page.evaluate(() => document.querySelector("[data-testid=reviewed-toggle]").getAttribute("data-reviewed"));
+}
+// Editor only. Sets the review cycle on/off (idempotent).
+export async function setReviewCycle(page, on = true) {
+  const ok = await page.evaluate((on) => { const b = document.querySelector("[data-testid=review-cycle-toggle]"); if (!b) return false; if ((b.getAttribute("aria-pressed") === "true") !== on) b.click(); return true; }, on);
+  if (!ok) throw new Error("setReviewCycle: no review-cycle-toggle (editor mode only)");
+  await page.waitForFunction((on) => document.querySelector("[data-testid=review-cycle-toggle]")?.getAttribute("aria-pressed") === String(on), on, { timeout: 3000 });
+}
+// Index of the active TOC slide row (aria-selected) among all rendered rows, or -1.
+export async function tocActiveRow(page) { return page.evaluate(() => [...document.querySelectorAll("[data-testid=toc-slide-row]")].findIndex((r) => r.getAttribute("aria-selected") === "true")); }
