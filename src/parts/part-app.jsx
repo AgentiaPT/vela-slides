@@ -61,6 +61,7 @@ export default function App() {
   // write — a failed or unconfirmed send must not mark the payload as on disk,
   // or a later identical flush would skip it and the edit is lost.
   const _localSaveSeq = useRef({ sent: 0, done: 0 });
+  const _localSentSig = useRef(null); // payload JSON of the newest send
   // lanes object of the last LOAD from disk (startup patch / incoming update);
   // the lanes effect adopts that state as the baseline instead of saving it.
   const _localBaselineLanes = useRef(null);
@@ -86,8 +87,13 @@ export default function App() {
     delete save.lastDebug; delete save._bootstrap; delete save._version;
     const payload = localDeckPayload(source);
     const sig = JSON.stringify(payload);
-    if (sig === _localDiskSig.current) return false; // unchanged vs file: nothing to write
+    // Unchanged vs file: nothing to write — but only when no send of a
+    // different payload is still in flight. That send can land after this
+    // flush and overwrite the file (edit, then undo during a slow save).
+    const inFlight = _localSaveSeq.current.sent > _localSaveSeq.current.done;
+    if (sig === _localDiskSig.current && (!inFlight || sig === _localSentSig.current)) return false;
     const seq = ++_localSaveSeq.current.sent;
+    _localSentSig.current = sig;
     // Backend contract: a Promise that resolves true only after the write is
     // confirmed (false or a rejection = not written / superseded). A plain
     // return is a synchronous backend: false = failed, anything else = written.
