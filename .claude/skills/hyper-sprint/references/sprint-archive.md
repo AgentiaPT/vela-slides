@@ -68,6 +68,8 @@ the commit timeline; the round results give the bumps).
 1. Blind gate clean (verifiers `ctx.shot()`'d their after-states along the way).
 2. Build base render → capture before-states with the same bursts.
 3. `mk-burndown.py` from the event list; `sprint-cost.py` / `sprint-stats.py` for numbers.
+   `sprint-cost.py` counts one usage per API call (deduped by message id + request id);
+   run it after the last agent returns, so the total is final.
 4. Assemble `README.md` (relative img paths); write `sprint.json`; append a row to
    `completed/README.md`; append "what happened vs plan" to `plan-*.md`.
 5. **Move the original sprint-request doc** (`.hyper-sprint/sprint-<date>-<n>-<codename>.md`,

@@ -28,6 +28,26 @@ TELEMETRY ADAPTER (non-Claude-Code stacks)
   file per agent, then point `--transcript` / `--subagents-glob` at those files. The
   per-agent / per-model rollup and pricing logic are otherwise agent-framework-agnostic.
 
+DEDUPE (one usage per API call)
+  Claude Code writes one JSONL line per content block (thinking / text / tool_use),
+  and each line repeats the same `usage`. The script keeps ONE usage per API call,
+  keyed by (message.id, requestId); when lines of one call differ (streaming), it
+  keeps the line with the largest output_tokens. The key is global across files, so
+  a copied line or a file found twice (symlink, overlapping globs) counts once. Lines
+  with no ids count once each (key = the line `uuid`, else file + line number).
+  Cache writes with a 1-hour TTL (usage.cache_creation.ephemeral_1h_input_tokens)
+  use the 1-hour rate; all other cache writes use the 5-minute rate.
+
+AUTO-DISCOVERY (no --main / --subagents-glob / --transcript given)
+  main       = newest <project-dir>/<session-id>.jsonl
+  sub-agents = <project-dir>/<session-id>/subagents/agent-*.jsonl of THAT session only
+  worktree   = <project-dir>--claude-worktrees-*/<session-id>.jsonl, i.e. sessions
+               that Claude Code stores for worktree agents and their hooks (for example
+               a Stop-hook review). The rule binds them to the run by the SAME session
+               id as the main transcript; other sessions are never added. Use
+               --no-worktree-sessions to leave them out.
+  Each file is resolved to its real path and scanned once.
+
 USAGE
   python3 sprint-cost.py                                   # auto-detect this project
   python3 sprint-cost.py --project-dir ~/.claude/projects/-home-user-foo
@@ -43,8 +63,8 @@ import argparse, glob, json, os, sys
 
 # ---------------------------------------------------------------------------
 # PRICING — edit this table when rates change or you add a model family.
-# $ per MILLION tokens: (input, output, cache_write, cache_read).
-# Update the tier's 4-tuple directly; add a new key + a substring match in
+# $ per MILLION tokens: (input, output, cache_write, cache_read, cache_write_1h).
+# Update the tier's 5-tuple directly; add a new key + a substring match in
 # tier() below for a new model family. cache_write is typically ~1.25x the
 # input rate (5-minute cache) and cache_read is typically ~0.1x input (a 10x
 # discount for a cache hit) — but always confirm against the current published
@@ -52,11 +72,13 @@ import argparse, glob, json, os, sys
 # include intro/promotional rates that expire on a stated date.
 # ---------------------------------------------------------------------------
 PRICE = {
-    #           in     out    cache_write  cache_read
-    "opus":    (5.00,  25.00,  6.25,        0.50),
-    "sonnet":  (2.00,  10.00,  2.50,        0.20),
-    "haiku":   (1.00,   5.00,  1.25,        0.10),
+    #           in     out    cache_write  cache_read  cache_write_1h
+    "opus":    (5.00,  25.00,  6.25,        0.50,       10.00),
+    "sonnet":  (2.00,  10.00,  2.50,        0.20,        4.00),
+    "haiku":   (1.00,   5.00,  1.25,        0.10,        2.00),
 }
+# cache_write is the 5-minute rate; cache_write_1h (typically 2x input) applies to
+# the 1-hour part (tok["cw1h"], a subset of tok["cw"]).
 DEFAULT_TIER = "opus"  # fallback when a turn's model string doesn't match any tier
 
 
@@ -70,13 +92,15 @@ def tier(model):
 
 
 def cost_of(tok, t):
-    pi, po, pw, pr = PRICE[t]
+    pi, po, pw, pr, pw1h = PRICE[t]
+    cw1h = tok.get("cw1h", 0)
     return (tok["in"] / 1e6 * pi + tok["out"] / 1e6 * po
-            + tok["cw"] / 1e6 * pw + tok["cr"] / 1e6 * pr)
+            + (tok["cw"] - cw1h) / 1e6 * pw + cw1h / 1e6 * pw1h
+            + tok["cr"] / 1e6 * pr)
 
 
 def usage_of(rec):
-    """Pull (model, in, out, cache_write, cache_read) off one transcript line.
+    """Pull (model, in, out, cache_write, cache_read, cache_write_1h) off one line.
     Accepts Claude-Code's {"message": {"model":..., "usage": {...}}} shape, or a
     flattened {"model":..., "usage": {...}} / top-level usage for adapters."""
     msg = rec.get("message") if isinstance(rec.get("message"), dict) else rec
@@ -94,18 +118,34 @@ def usage_of(rec):
     cr = u.get("cache_read_input_tokens", 0) or 0
     if it == 0 and ot == 0 and cw == 0 and cr == 0:
         return None
-    return model, it, ot, cw, cr
+    # 1-hour cache writes; 0 when the breakdown is absent (all at the 5-minute rate).
+    cc = u.get("cache_creation") if isinstance(u.get("cache_creation"), dict) else {}
+    cw1h = min(cw, cc.get("ephemeral_1h_input_tokens", 0) or 0)
+    return model, it, ot, cw, cr, cw1h
 
 
-def scan(path):
-    """Return {tier: {in,out,cw,cr}} and call count for one transcript file."""
-    agg, calls = {}, 0
+def call_key(rec, fallback):
+    """Dedupe key for one API call: (message.id, requestId). A line without both
+    ids uses its own `uuid`, else `fallback` (file + line number), so it counts once."""
+    msg = rec.get("message") if isinstance(rec.get("message"), dict) else {}
+    key = (msg.get("id"), rec.get("requestId"))
+    if key == (None, None):
+        return ("line", rec.get("uuid") or fallback)
+    return key
+
+
+def scan(path, seen=None):
+    """Return {tier: {in,out,cw,cr,cw1h}} and API-call count for one transcript file.
+    One usage per API call (see DEDUPE in the module docstring). `seen` is a set of
+    keys already counted in earlier files; this call adds its own keys to it."""
+    agg, per = {}, {}
+    seen = set() if seen is None else seen
     try:
         f = open(path, errors="ignore")
     except OSError:
-        return agg, calls
+        return agg, 0
     with f:
-        for line in f:
+        for n, line in enumerate(f):
             line = line.strip()
             if not line:
                 continue
@@ -116,12 +156,17 @@ def scan(path):
             u = usage_of(rec)
             if not u:
                 continue
-            model, it, ot, cw, cr = u
-            t = tier(model)
-            a = agg.setdefault(t, {"in": 0, "out": 0, "cw": 0, "cr": 0})
-            a["in"] += it; a["out"] += ot; a["cw"] += cw; a["cr"] += cr
-            calls += 1
-    return agg, calls
+            key = call_key(rec, (os.path.realpath(path), n))
+            if key in seen:
+                continue  # already counted in an earlier file
+            prev = per.get(key)
+            if prev is None or u[2] > prev[2]:  # keep the max output_tokens line
+                per[key] = u
+    seen.update(per)
+    for model, it, ot, cw, cr, cw1h in per.values():
+        a = agg.setdefault(tier(model), {"in": 0, "out": 0, "cw": 0, "cr": 0, "cw1h": 0})
+        a["in"] += it; a["out"] += ot; a["cw"] += cw; a["cr"] += cr; a["cw1h"] += cw1h
+    return agg, len(per)
 
 
 def default_project_dir():
@@ -144,18 +189,33 @@ def discover(args):
     if not paths:
         proj = args.project_dir or default_project_dir()
         # Claude-Code layout: <proj>/<session>.jsonl is the main loop, and
-        # <proj>/<session>/subagents/agent-*.jsonl are sub-agents. Without a
-        # specific session id we take the most-recently-modified top-level
-        # .jsonl as "main" and glob every subagents dir for the rest — this is
-        # a convenience default, not a hard dependency (pass explicit paths on
-        # any other layout).
+        # <proj>/<session>/subagents/agent-*.jsonl are its sub-agents. We take the
+        # most-recently-modified top-level .jsonl as "main" and add only the
+        # sub-agents and worktree sessions of THAT session id (see AUTO-DISCOVERY
+        # in the module docstring) — a convenience default, not a hard dependency
+        # (pass explicit paths on any other layout).
+        proj = proj.rstrip("/\\")
         if os.path.isdir(proj):
             top = sorted(glob.glob(os.path.join(proj, "*.jsonl")),
                           key=lambda p: os.path.getmtime(p))
             if top:
-                paths.append(top[-1])
-            paths += sorted(glob.glob(os.path.join(proj, "*", "subagents", "agent-*.jsonl")))
-    return paths
+                main = top[-1]
+                sid = os.path.basename(main)[:-len(".jsonl")]
+                paths.append(main)
+                paths += sorted(glob.glob(os.path.join(
+                    glob.escape(proj), glob.escape(sid), "subagents", "agent-*.jsonl")))
+                if not args.no_worktree_sessions:
+                    paths += sorted(glob.glob(os.path.join(
+                        glob.escape(proj) + "--claude-worktrees-*",
+                        glob.escape(sid) + ".jsonl")))
+    # Scan each real file once (symlinks / overlapping globs / repeated args).
+    out, real = [], set()
+    for p in paths:
+        rp = os.path.realpath(p)
+        if rp not in real:
+            real.add(rp)
+            out.append(p)
+    return out
 
 
 def agent_label(path, roles):
@@ -163,6 +223,10 @@ def agent_label(path, roles):
     aid = base.replace("agent-", "").replace(".jsonl", "")
     if roles and aid in roles:
         return roles[aid]
+    # worktree-agent / hook session of the same run (see AUTO-DISCOVERY)
+    parent = os.path.basename(os.path.dirname(os.path.abspath(path)))
+    if "--claude-worktrees-" in parent:
+        return "worktree session " + parent.split("--claude-worktrees-", 1)[1]
     # main/orchestrator transcripts sit directly under the project dir (no
     # /subagents/ in the path) — label generically rather than by session id.
     if "subagents" not in path.replace("\\", "/"):
@@ -194,6 +258,7 @@ def audit_transcript(path):
         return None
     assistant_turns = 0
     total_cr = 0
+    counted = set()      # one turn per API call (see DEDUPE), not per JSONL line
     peak_ctx = 1         # largest live context (in+cw+cr) seen on any turn
     images = []          # (turn_index_seen, est_tokens)  — base64 ~ len//4 tokens
     big_results = []     # (turn_index_seen, est_tokens)
@@ -201,7 +266,9 @@ def audit_transcript(path):
         msg = rec.get("message") if isinstance(rec.get("message"), dict) else rec
         if isinstance(msg, dict) and msg.get("role") == "assistant":
             u = usage_of(rec)
-            if u:  # u = (model, in, out, cache_write, cache_read)
+            key = call_key(rec, len(counted)) if u else None
+            if u and key not in counted:  # u = (model, in, out, cw, cr, cw1h)
+                counted.add(key)
                 assistant_turns += 1
                 total_cr += u[4]
                 peak_ctx = max(peak_ctx, u[1] + u[3] + u[4])
@@ -295,6 +362,9 @@ def main():
     ap.add_argument("--audit", action="store_true", help="also print a context-bloat "
                      "audit of the orchestrator transcript(s): images pinned in the hub "
                      "and their cache-read share, plus the largest pinned tool-results")
+    ap.add_argument("--no-worktree-sessions", action="store_true",
+                     help="auto-discovery only: leave out the worktree-agent / hook "
+                     "sessions of the main session id (see AUTO-DISCOVERY)")
     args = ap.parse_args()
 
     roles = load_roles(args.roles)
@@ -307,8 +377,9 @@ def main():
         # Not a hard error: a report with zero rows is still valid output.
 
     rows = []  # (label, total_cost, tokens{in,out,cw,cr}, calls, per_tier_agg)
+    seen = set()  # API-call keys counted so far, across all files
     for path in paths:
-        agg, calls = scan(path)
+        agg, calls = scan(path, seen)
         if not agg:
             continue
         tot = sum(cost_of(tok, t) for t, tok in agg.items())
@@ -325,7 +396,7 @@ def main():
     per_model = {}
     for _, _, _, _, agg in rows:
         for t, tok in agg.items():
-            m = per_model.setdefault(t, {"in": 0, "out": 0, "cw": 0, "cr": 0})
+            m = per_model.setdefault(t, {"in": 0, "out": 0, "cw": 0, "cr": 0, "cw1h": 0})
             for k in tok:
                 m[k] += tok[k]
     per_model_cost = {t: round(cost_of(tok, t), 2) for t, tok in per_model.items()}
