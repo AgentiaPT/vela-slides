@@ -147,7 +147,7 @@ that symbol in the named part for the line. No line numbers here — they rot.
 - Check if slide has image blocks: slideHasImages
 - Color parsing: _compositeBg compositeColor _isExportHidden parseColor
 - CSS linear-gradient parsing: parseLinearGradient gradientLineCoords buildShadingDict
-- PDF Text encoding: pdfStringEncode
+- PDF Text encoding: WIN_ANSI_HIGH WIN_ANSI_FROM_UNICODE pdfWinAnsiByte pdfStringEncode
 - Emoji detection and rendering: isEmojiCodepoint emojiCanvasCache renderEmojiToImage extractEmojiImages extractLogoImages
 - Font metrics for standard PDF fonts: CHAR_WIDTHS measureText
 - DOM Element Extraction: extractBoxes getTextLines getVisualScale extractTextRuns extractLinks
@@ -327,6 +327,6 @@ add_lane add_item batch_add_items remove_item remove_lane rename_item rename_lan
 - part-demo.jsx: 373-line unbannered stretch after line 917
 - part-pdf.jsx: 389-line unbannered stretch after line 582
 - part-pdf-vector.jsx: 441-line unbannered stretch after line 2
-- part-pdf-vector.jsx: 479-line unbannered stretch after line 459
-- part-pdf-vector.jsx: 524-line unbannered stretch after line 1209
+- part-pdf-vector.jsx: 480-line unbannered stretch after line 459
+- part-pdf-vector.jsx: 524-line unbannered stretch after line 1204
 - part-pptx.jsx: no level-1 banners (1188 lines)

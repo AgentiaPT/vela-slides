@@ -165,6 +165,32 @@ function buildShadingDict(gradient, coords) {
 // ━━━ PDF Text encoding ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // For standard fonts, PDF uses WinAnsiEncoding (Latin-1 subset)
 // Characters outside this range get replaced with ?
+
+// WinAnsiEncoding bytes 128-159 → Unicode code point (PDF 32000-1, Annex D).
+// The ONE copy of this table: pdfStringEncode (byte emitted), isEmojiCodepoint
+// (these are text glyphs, not emoji images) and the embedded-font width table
+// in part-pdf-vector.jsx (concatenated after this part) all read it. A second
+// copy drifts: a char the width table knows but the encoder does not is sent
+// down the emoji-image path or dropped (the € sizing bug).
+const WIN_ANSI_HIGH = {
+  128: 0x20AC, 130: 0x201A, 131: 0x0192, 132: 0x201E, 133: 0x2026,
+  134: 0x2020, 135: 0x2021, 136: 0x02C6, 137: 0x2030, 138: 0x0160,
+  139: 0x2039, 140: 0x0152, 142: 0x017D, 145: 0x2018, 146: 0x2019,
+  147: 0x201C, 148: 0x201D, 149: 0x2022, 150: 0x2013, 151: 0x2014,
+  152: 0x02DC, 153: 0x2122, 154: 0x0161, 155: 0x203A, 156: 0x0153,
+  158: 0x017E, 159: 0x0178
+};
+const WIN_ANSI_FROM_UNICODE = new Map(Object.keys(WIN_ANSI_HIGH).map((b) => [WIN_ANSI_HIGH[b], Number(b)]));
+
+// The single-byte code a PDF string uses for code point `cp`, or -1 when
+// WinAnsiEncoding has no slot for it. 32-126 and 128-255 pass through (the
+// encoder has always emitted 128-255 as their own byte).
+function pdfWinAnsiByte(cp) {
+  if ((cp >= 32 && cp <= 126) || (cp >= 128 && cp <= 255)) return cp;
+  const b = WIN_ANSI_FROM_UNICODE.get(cp);
+  return b === undefined ? -1 : b;
+}
+
 function pdfStringEncode(str) {
   let out = "(";
   for (let i = 0; i < str.length; i++) {
@@ -183,19 +209,13 @@ function pdfStringEncode(str) {
       // Latin-1 chars (©, ·, ×, etc.) — must use octal escape to avoid
       // UTF-8 double-encoding when TextEncoder converts to bytes
       out += "\\" + c.toString(8).padStart(3, "0");
+    } else if (WIN_ANSI_FROM_UNICODE.has(c)) {
+      // WinAnsi 128-159 glyphs (€ – — “ ” ‘ ’ • … ™ ‰ …) — emit their real
+      // byte as an octal escape (avoids UTF-8 double-encoding via TextEncoder)
+      out += "\\" + WIN_ANSI_FROM_UNICODE.get(c).toString(8).padStart(3, "0");
     } else {
-      // Typographic Unicode → WinAnsiEncoding substitutions
-      // Values use PDF octal escapes to avoid UTF-8 double-encoding via TextEncoder
+      // No WinAnsi slot: ASCII substitutions for a few common symbols
       const typoMap = {
-        0x2014: "\\227", // em dash (WinAnsi 0x97)
-        0x2013: "\\226", // en dash (WinAnsi 0x96)
-        0x201C: "\\223", // left double quote (WinAnsi 0x93)
-        0x201D: "\\224", // right double quote (WinAnsi 0x94)
-        0x2018: "\\221", // left single quote (WinAnsi 0x91)
-        0x2019: "\\222", // right single quote (WinAnsi 0x92)
-        0x2022: "\\267", // bullet → middle dot (WinAnsi 0xB7)
-        0x2026: "...",   // ellipsis
-        0x2122: "TM",    // trademark
         0x2192: "->",    // right arrow
         0x2190: "<-",    // left arrow
         0x21D2: "=>",    // double right arrow
@@ -219,8 +239,12 @@ function isEmojiCodepoint(cp) {
   if (cp === 0xFE0F || cp === 0xFE0E || cp === 0x200D) return false;
   // Skin tone modifiers — not standalone visual
   if (cp >= 0x1F3FB && cp <= 0x1F3FF) return false;
-  // Common typographic characters we handle as text substitutions
-  const textSubs = [0x2014,0x2013,0x201C,0x201D,0x2018,0x2019,0x2022,0x2026,0x2122,0x2192,0x2190,0x2191,0x2193,0x21D2];
+  // Every WinAnsi-representable glyph (€, –, “, …, ™, •) is real text: the
+  // embedded fonts draw it at text size. Sending it down the emoji-image path
+  // drew a square bitmap squeezed into the glyph box (wrong size / stretched).
+  if (WIN_ANSI_FROM_UNICODE.has(cp)) return false;
+  // Arrows we handle as ASCII text substitutions
+  const textSubs = [0x2192,0x2190,0x2191,0x2193,0x21D2];
   if (textSubs.includes(cp)) return false;
   return cp > 0xFF;
 }

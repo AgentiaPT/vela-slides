@@ -5,7 +5,7 @@ Themes are applied by setting consistent `bg`, `bgGradient`, `color`, and `accen
 ## Theme Structure
 
 A theme defines:
-- **bg range**: 2-4 background colors/gradients used across slides
+- **bg range**: 2-4 background colors/gradients used across slides (solid colors go in `bg`, gradients only in `bgGradient` — a gradient in `bg` is dropped)
 - **color**: primary text color
 - **muted**: secondary/body text color
 - **accent**: highlight color for icons, badges, metrics, dots
@@ -128,7 +128,8 @@ When the user provides custom colors or brand guidelines:
 
 ### Example: Custom Brand (hex #e63946)
 ```
-bg:      #1a0a0c, #2d1215, linear-gradient(135deg, #1a0a0c 0%, #2d1215 100%)
+bg:      #1a0a0c, #2d1215
+bgGradient: linear-gradient(135deg, #1a0a0c 0%, #2d1215 100%)
 color:   #fecdd3
 muted:   #f9a8b3
 accent:  #e63946

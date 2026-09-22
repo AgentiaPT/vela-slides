@@ -3882,6 +3882,113 @@ def test_slide_numeric_fields():
         fail("imageCols sink clamp missing in part-canvas.jsx")
 
 
+# ━━━ Gradient in a solid-color bg field (meridian CR02) ━━━━━━━━━━━
+# The app renders slide `bg` (and block bg / iconBg / headerBg) through
+# cssColor(), a fail-closed solid-color allowlist, so a gradient there is
+# dropped and the default color shows. validate.py must report it and point
+# the author to `bgGradient`.
+def test_bg_gradient_validation():
+    print("\n── Gradient in solid-color bg fields (validate.py) ──")
+    G = "linear-gradient(135deg, #0f172a 0%, #1e3a5f 100%)"
+
+    def deck_with(slide_extra, blocks=None):
+        s = {"title": "S", "bg": "#0f172a", "color": "#e2e8f0", "accent": "#3b82f6",
+             "duration": 60, "blocks": blocks or [{"type": "heading", "text": "Hi", "size": "2xl"}]}
+        s.update(slide_extra)
+        return {"deckTitle": "Gradient Test",
+                "lanes": [{"title": "Main", "items": [{"title": "T", "status": "done", "slides": [s]}]}]}
+
+    def run_validate(deck):
+        tmpdir = tempfile.mkdtemp()
+        try:
+            p = os.path.join(tmpdir, "g.vela")
+            with open(p, "w", encoding="utf-8") as f:
+                json.dump(deck, f)
+            r = subprocess.run([sys.executable, os.path.join(SCRIPTS, "validate.py"), p],
+                               capture_output=True, text=True)
+            return r.returncode, r.stdout + r.stderr
+        finally:
+            shutil.rmtree(tmpdir, ignore_errors=True)
+
+    # 1. Gradient in slide bg (no bgGradient) → error naming the slide + bgGradient
+    rc, out = run_validate(deck_with({"bg": G}))
+    if rc != 0 and "L1/I1/S1: 'bg' contains a CSS gradient" in out and "'bgGradient'" in out:
+        ok("validate.py rejects a gradient in slide bg and names the slide + bgGradient")
+    else:
+        fail("validate.py gradient in slide bg", f"rc={rc} out={out[:400]}")
+
+    # 2. Same, with a valid bgGradient beside it, other gradient functions, any case
+    for extra, label in [
+        ({"bg": G, "bgGradient": G}, "gradient in bg even when bgGradient is set"),
+        ({"bg": "radial-gradient(circle, #000, #fff)"}, "radial-gradient in bg"),
+        ({"bg": "repeating-linear-gradient(90deg, #000 0 10px, #fff 10px 20px)"}, "repeating gradient in bg"),
+        ({"bg": "LINEAR-GRADIENT (90deg, #000, #fff)"}, "upper-case gradient in bg"),
+    ]:
+        rc, out = run_validate(deck_with(extra))
+        if rc != 0 and "'bg' contains a CSS gradient" in out:
+            ok(f"validate.py rejects {label}")
+        else:
+            fail(f"validate.py rejects {label}", f"rc={rc} out={out[:300]}")
+
+    # 3. No false positives: solid bg, gradient correctly in bgGradient only
+    for extra, label in [
+        ({}, "solid hex bg"),
+        ({"bg": "rgb(15, 23, 42)"}, "solid rgb() bg"),
+        ({"bg": None, "bgGradient": G}, "gradient in bgGradient only"),
+        ({"bgGradient": G}, "solid bg + gradient in bgGradient"),
+    ]:
+        deck = deck_with(extra)
+        if extra.get("bg", 1) is None:
+            del deck["lanes"][0]["items"][0]["slides"][0]["bg"]
+        rc, out = run_validate(deck)
+        if rc == 0 and "gradient" not in out.lower():
+            ok(f"validate.py accepts {label}")
+        else:
+            fail(f"validate.py accepts {label}", f"rc={rc} out={out[:300]}")
+
+    # 4. Block-level solid-color bg fields (no gradient sibling exists there)
+    for blocks, where, label in [
+        ([{"type": "callout", "text": "x", "bg": G}], "L1/I1/S1/B1: 'bg'", "callout bg"),
+        ([{"type": "table", "headers": ["a"], "rows": [["b"]], "headerBg": G}], "'headerBg'", "table headerBg"),
+        ([{"type": "icon-row", "items": [{"icon": "Zap", "title": "t", "iconBg": G}]}], "'items[0].iconBg'", "icon-row item iconBg"),
+        ([{"type": "grid", "items": [{"bg": G, "blocks": [{"type": "text", "text": "x"}]}]}], "'items[0].bg'", "grid cell bg"),
+        ([{"type": "grid", "items": [{"blocks": [{"type": "callout", "text": "x", "bg": G}]}]}], "'items[0].blocks[0].bg'", "nested callout bg in a grid cell"),
+    ]:
+        rc, out = run_validate(deck_with({}, blocks))
+        if rc != 0 and where in out and "contains a CSS gradient" in out:
+            ok(f"validate.py rejects a gradient in {label}")
+        else:
+            fail(f"validate.py rejects a gradient in {label}", f"rc={rc} out={out[:400]}")
+
+    # cols layout (L/R) blocks are checked too
+    rc, out = run_validate(deck_with({"layout": "cols", "blocks": [],
+                                      "L": [{"type": "callout", "text": "x", "bg": G}],
+                                      "R": [{"type": "text", "text": "y"}]}))
+    if rc != 0 and "L1/I1/S1/L1: 'bg' contains a CSS gradient" in out:
+        ok("validate.py rejects a gradient in a cols-layout L block bg")
+    else:
+        fail("validate.py gradient in L block bg", f"rc={rc} out={out[:400]}")
+
+    # 5. Every shipped example deck still validates (no false positives in the wild)
+    tmpdir = tempfile.mkdtemp()
+    try:
+        bad = []
+        ex_dir = os.path.join(REPO_ROOT, "examples")
+        for src in sorted(os.path.join(ex_dir, n) for n in os.listdir(ex_dir) if n.endswith(".vela")):
+            dst = os.path.join(tmpdir, os.path.basename(src))  # validate.py may expand in place
+            shutil.copy(src, dst)
+            r = subprocess.run([sys.executable, os.path.join(SCRIPTS, "validate.py"), dst],
+                               capture_output=True, text=True)
+            if r.returncode != 0:
+                bad.append(os.path.basename(src))
+        if not bad:
+            ok("all examples/*.vela still pass validate.py")
+        else:
+            fail("examples failing validate.py", ", ".join(bad))
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+
 # ━━━ Deck-Ingress Key Allowlist (structural) ━━━━━━━━━━━━━━━━━━━━━━
 def test_deck_key_allowlist_structure():
     print("\n── Deck-Ingress Key Allowlist ──")
@@ -4826,6 +4933,7 @@ if __name__ == "__main__":
         test_block_primitives()
         test_study_notes()
         test_slide_numeric_fields()
+        test_bg_gradient_validation()
         test_deck_key_allowlist_structure()
         test_pdf_title_cards()
         test_script_context_escape_parity()
