@@ -56,7 +56,11 @@ acknowledgment before the deck mounts.
    keeping the webview's native surface minimal. `debug.log` is granted for the
    same reason — the client library's internal error handler writes to the
    fixed runtime log file (`logging.writeToLogFile` is on); it takes a message,
-   not a path, so it carries no arbitrary-path capability. Re-audit with:
+   not a path, so it carries no arbitrary-path capability. `window.setTitle`
+   is granted so the native title bar can show the open deck's title; it
+   takes only a string, which the shell passes as plain text (control, bidi
+   and zero-width characters stripped, length capped) — no path, no markup,
+   no command. Re-audit with:
    ```
    grep -rhoE "Neutralino\.[a-zA-Z]+\.[a-zA-Z]+" resources/ | sort -u
    ```

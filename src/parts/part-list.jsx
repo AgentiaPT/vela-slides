@@ -485,6 +485,12 @@ function SlideListWithAdder({ item, selected, slideIndex, selectedSlideIndices, 
               style={{ flexShrink: 0, marginLeft: 4, fontSize: 11, lineHeight: 1, cursor: "pointer", opacity: s.hidden ? 0.9 : 0.28, transition: "opacity .15s" }}
               onMouseEnter={(e) => e.currentTarget.style.opacity = 1} onMouseLeave={(e) => e.currentTarget.style.opacity = s.hidden ? 0.9 : 0.28}
             >{s.hidden ? "🙈" : "👁"}</span>
+            {/* CR14: inline delete for this one slide (undoable REMOVE_SLIDE), like the section-row ×. */}
+            <span data-testid="toc-slide-delete" onClick={(e) => { e.stopPropagation(); dispatch({ type: "REMOVE_SLIDE", id: item.id, index: si }); if (selected) dispatch({ type: "SET_SLIDE_SELECTION", indices: [], index: si < slideIndex ? slideIndex - 1 : si === slideIndex ? Math.max(0, si - 1) : slideIndex }); }}
+              title="Delete slide"
+              style={{ flexShrink: 0, marginLeft: 4, fontSize: 12, lineHeight: 1, color: T.textDim, cursor: "pointer", padding: "0 2px", opacity: 0.3, transition: "opacity .15s" }}
+              onMouseEnter={(e) => e.currentTarget.style.opacity = 1} onMouseLeave={(e) => e.currentTarget.style.opacity = 0.3}
+            >×</span>
           </div>
           <AddMenu item={item} insertIndex={si + 1} dispatch={dispatch} guidelines={guidelines} variant="row" laneId={laneId} deckEpoch={deckEpoch} />
         </React.Fragment>;

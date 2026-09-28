@@ -27,6 +27,7 @@
   "nativeAllowList": [
     "app.exit",
     "window.focus",
+    "window.setTitle",
     "window.setFullScreen",
     "window.exitFullScreen",
     "window.maximize",

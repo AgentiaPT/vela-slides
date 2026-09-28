@@ -267,7 +267,7 @@ async function runTests() {
 
   await test('Clicking Review opens Comments panel', async () => {
     await clickBtn('Comments');
-    await expectText('COMMENTS');
+    await expectText('"COMMENTS"'); // exact: a narrow top bar keeps a hidden "Comments" label in the DOM
   });
 
   await test('Comments panel shows filter tabs', async () => {

@@ -138,8 +138,9 @@ const velaClipboardReadSlides = async () => {
   return [];
 };
 
-const VELA_VERSION = "13.74";
+const VELA_VERSION = "13.75";
 const VELA_CHANGELOG = [
+  { v: "13.75", d: ["Editor: mark slides reviewed (✓); Review cycle makes arrow keys skip reviewed slides.", "View switch (editor | presenter | gallery) next to Present.", "Gallery: hide/unhide a slide beside delete; TOC: delete icon on slide rows (undoable).", "Fullscreen nav icons stay visible on any slide background.", "Branding: right-side settings pane; accent line removable at 0px.", "Block toolbar stays visible on full-bleed images; link badges sit right after the text.", "Vector PDF: € and other WinAnsi symbols render as text at correct size.", "validate: reports a gradient in solid-color bg fields (use bgGradient).", "Opening or switching a deck keeps lane/module ids.", "Desktop: window title shows the deck title; keyboard works after alt-tab; AI agents detected on first start; HTML export fixed."] },
   { v: "13.74", d: ["Security: CLI output now neutralizes terminal control sequences in deck text (CWE-150 class), closing a display-spoofing channel.", "Security: the machine-readable --json output is fully escaped for the same class.", "Added one canonical output encoder, a CI gate keeping every CLI output path routed through it, and regression tests."] },
   { v: "13.73", d: ["Security (High): hardened the deck-injection build path — trusted app source is now transformed before untrusted deck data is injected.", "Security: added a fail-closed integrity check that refuses to write an artifact whose trusted bytes changed.", "Local preview server: same injection-last ordering applied to its HTML build path.", "Tests: added build-pipeline trust-boundary regression coverage."] },
   { v: "13.72", d: "Demo: synchronized the bundled product-tour deck and its content fingerprint." },
@@ -421,7 +422,10 @@ function applyStartupPatch(loadedDeck, dispatch) {
   if (STARTUP_PATCH.lanes) {
     dbg("[PATCH] Full deck replace");
     try {
-      const sanitized = validateAndSanitizeDeck(STARTUP_PATCH);
+      // keepIds: a startup patch REPLACES the whole deck (nothing else in state to
+      // collide with), so its own valid, unique ids survive. Minting fresh ids here
+      // churned every lane/module id on each desktop/local open (CR01).
+      const sanitized = validateAndSanitizeDeck(STARTUP_PATCH, { keepIds: true });
       dispatch({ type: "LOAD", payload: { ...sanitized, deckTitle: sanitizeDeckTitle(STARTUP_PATCH.deckTitle) } });
     } catch (e) {
       // Fail closed: never load an unsanitized deck. validateAndSanitizeDeck only throws
@@ -1397,7 +1401,7 @@ const SAFE_SLIDE_KEYS = new Set([
   "align", "verticalAlign", "padding", "gap",
   "splitGap", "contentFlex", "imageFlex", "imageCols",
   // presentation metadata
-  "duration", "timeLock", "hidden", "notes", "speakerNotes", "studyNotes",
+  "duration", "timeLock", "hidden", "reviewed", "notes", "speakerNotes", "studyNotes",
   "comments", "image",
 ]);
 const SAFE_BLOCK_KEYS = new Set([
@@ -1623,7 +1627,8 @@ function sanitizeComment(c) {
     anchor: typeof c.anchor === "string" ? sanitizeString(c.anchor, 200) : null,
     blockIndex: typeof c.blockIndex === "number" ? c.blockIndex : null,
     status: VALID_COMMENT_STATUSES.has(c.status) ? c.status : "open",
-    createdAt: typeof c.createdAt === "string" ? c.createdAt.slice(0, 30) : now(),
+    // null, not now(): a stamp here changed an unchanged deck on each open (CR01).
+    createdAt: typeof c.createdAt === "string" ? c.createdAt.slice(0, 30) : null,
     resolvedAt: typeof c.resolvedAt === "string" ? c.resolvedAt.slice(0, 30) : null,
   };
 }
@@ -1692,6 +1697,8 @@ function sanitizeSlide(slide) {
   }
   // `hidden` (slide excluded from presentation/counts) — strict boolean only.
   if ("hidden" in clean) { if (clean.hidden === true) clean.hidden = true; else delete clean.hidden; }
+  // `reviewed` (editor review-cycle mark; never rendered or exported) — strict boolean only.
+  if ("reviewed" in clean) { if (clean.reviewed === true) clean.reviewed = true; else delete clean.reviewed; }
   // NOTE: wrap the sanitizeBlock calls — a bare `.map(sanitizeBlock)` would pass
   // the array INDEX into the recursion-depth parameter.
   if (Array.isArray(clean.blocks)) clean.blocks = clean.blocks.slice(0, 30).map((b) => sanitizeBlock(b)).filter(Boolean);
@@ -1728,12 +1735,27 @@ function sanitizeSlide(slide) {
   return clean;
 }
 
+// Deterministic short id from a string (djb2, base36). Used where a value is
+// DERIVED from deck content during sanitize, so the same deck gives the same
+// value on every open (CR01): a random id here made an unchanged deck look
+// edited. Not a security primitive — the output is a fixed charset.
+function stableIdFrom(str) {
+  let h = 5381;
+  for (let i = 0; i < str.length; i++) h = ((h << 5) + h + str.charCodeAt(i)) | 0;
+  return (h >>> 0).toString(36);
+}
+
 function sanitizeItem(item) {
   if (!item || typeof item !== "object") return null;
   const comments = Array.isArray(item.comments) ? item.comments.slice(0, MAX_COMMENTS).map(sanitizeComment).filter(Boolean) : [];
-  // Migrate legacy notes to a module-level comment if no comments exist
+  const createdAt = typeof item.createdAt === "string" ? item.createdAt.slice(0, 30) : null;
+  // Migrate legacy notes to a module-level comment if no comments exist.
+  // id + createdAt are derived from the module (not uid()/now()), so re-opening
+  // the same deck gives the same comment (CR01).
   if (comments.length === 0 && typeof item.notes === "string" && item.notes.trim()) {
-    comments.push({ id: "c_" + uid(), text: sanitizeString(item.notes.trim(), 1000), anchor: null, blockIndex: null, status: "open", createdAt: now(), resolvedAt: null });
+    const text = sanitizeString(item.notes.trim(), 1000);
+    const seed = (typeof item.id === "string" ? item.id.slice(0, 64) : "") + "\u0000" + (typeof item.title === "string" ? item.title.slice(0, 200) : "") + "\u0000" + text;
+    comments.push({ id: "c_n" + stableIdFrom(seed), text, anchor: null, blockIndex: null, status: "open", createdAt, resolvedAt: null });
   }
   return {
     id: uid(),
@@ -1744,7 +1766,9 @@ function sanitizeItem(item) {
     importance: VALID_IMPORTANCES.has(item.importance) ? item.importance : "should",
     order: typeof item.order === "number" ? item.order : 0,
     slides: Array.isArray(item.slides) ? item.slides.slice(0, 100).map(sanitizeSlide).filter(Boolean) : [],
-    createdAt: typeof item.createdAt === "string" ? item.createdAt.slice(0, 30) : now(),
+    // A missing createdAt stays absent (nothing reads it): stamping now() here
+    // changed the deck on every open (CR01).
+    ...(createdAt !== null ? { createdAt } : {}),
     ...(item.presentCard ? { presentCard: true } : {}),
   };
 }
@@ -1812,15 +1836,78 @@ function resanitizeLoadedBranding(branding) {
   return b;
 }
 
-function validateAndSanitizeDeck(raw) {
+// Lane/module ids a deck may keep when the caller passes { keepIds: true }.
+// Type-checked first (no coercion), charset-limited, no leading "_" (reserved
+// for renderer-private keys). Anything else is replaced by a fresh uid().
+const KEEPABLE_DECK_ID = /^[A-Za-z0-9][A-Za-z0-9-]{0,63}$/;
+// Ids key plain-object maps (gallery counts/colours, per-module storage
+// chunks). An id that names an Object.prototype member would read the
+// inherited value (a function) instead of "missing", so it is not keepable.
+const isKeepableDeckId = (v) => typeof v === "string" && KEEPABLE_DECK_ID.test(v) && !(v in Object.prototype);
+
+// Live deck update (external edit / deck switch): `sanitized` came from
+// validateAndSanitizeDeck(raw, { keepIds: true }). A lane/module whose id was
+// freshly minted (the raw id was missing/invalid/duplicate) takes the id at the
+// same position in `cur`, so selection survives an editor that dropped ids —
+// but only when that id is valid and not already used in `sanitized` (ids stay
+// unique). Ids the file kept are never overwritten (CR01).
+function adoptPriorDeckIds(sanitized, raw, cur) {
+  if (!sanitized || !Array.isArray(sanitized.lanes) || !cur || !Array.isArray(cur.lanes)) return sanitized;
+  const rawIds = new Set();
+  for (const l of (raw && Array.isArray(raw.lanes) ? raw.lanes : [])) {
+    if (l && typeof l.id === "string") rawIds.add(l.id);
+    for (const it of (l && Array.isArray(l.items) ? l.items : [])) if (it && typeof it.id === "string") rawIds.add(it.id);
+  }
+  const used = new Set();
+  for (const l of sanitized.lanes) { used.add(l.id); for (const it of l.items || []) used.add(it.id); }
+  const adopt = (obj, prior) => {
+    if (rawIds.has(obj.id) || !prior || !isKeepableDeckId(prior.id) || used.has(prior.id)) return;
+    used.delete(obj.id); obj.id = prior.id; used.add(obj.id);
+  };
+  sanitized.lanes.forEach((l, li) => {
+    const cl = cur.lanes[li];
+    adopt(l, cl);
+    (l.items || []).forEach((it, ii) => adopt(it, cl && Array.isArray(cl.items) ? cl.items[ii] : null));
+  });
+  return sanitized;
+}
+
+// The deck content the local/desktop shell writes to the file (part-app.jsx
+// flushLocalStateRef). Its JSON is the no-edit guard's signature: a flush whose
+// signature equals the file's known content is skipped, so opening a deck the
+// user did not change never writes the file (CR01).
+function localDeckPayload(s) {
+  return { deckTitle: s.deckTitle, lanes: s.lanes, branding: s.branding, guidelines: s.guidelines };
+}
+
+function validateAndSanitizeDeck(raw, opts) {
   if (!raw || typeof raw !== "object") throw new Error("Invalid deck format");
   if (!Array.isArray(raw.lanes)) throw new Error("Missing lanes array");
+  // Default (fresh import): every lane/module id is re-minted so an imported
+  // deck can never collide with ids already in state. keepIds (full-deck
+  // replace, e.g. the startup patch): keep each valid id that is unique across
+  // ALL lanes + modules of this deck; a duplicate or invalid id is repaired
+  // with a fresh one, so the collision defense still holds inside the deck.
+  const keepIds = !!(opts && opts.keepIds === true);
+  const seenIds = new Set();
+  const deckId = (v) => {
+    if (keepIds && isKeepableDeckId(v) && !seenIds.has(v)) { seenIds.add(v); return v; }
+    let id = uid();
+    while (seenIds.has(id)) id = uid();
+    seenIds.add(id);
+    return id;
+  };
   // Clamp rather than throw: a >50-lane deck must not be able to trip an exception
   // that a fail-open caller would catch and then load raw, unsanitized (sanitizer off-switch).
   const lanes = raw.lanes.slice(0, 50).map((lane) => {
     if (!lane || typeof lane !== "object") return null;
-    const items = Array.isArray(lane.items) ? lane.items.slice(0, 200).map(sanitizeItem).filter(Boolean) : [];
-    return { id: uid(), title: sanitizeString(lane.title || "Untitled", 100), collapsed: !!lane.collapsed, items };
+    const laneId = deckId(lane.id);
+    const items = Array.isArray(lane.items) ? lane.items.slice(0, 200).map((item) => {
+      const clean = sanitizeItem(item);
+      if (clean) clean.id = deckId(item.id);
+      return clean;
+    }).filter(Boolean) : [];
+    return { id: laneId, title: sanitizeString(lane.title || "Untitled", 100), collapsed: !!lane.collapsed, items };
   }).filter(Boolean);
   const rawBranding = raw.branding && typeof raw.branding === "object" ? raw.branding : {};
   const importedBranding = {
@@ -2079,7 +2166,7 @@ const getCss = () => `
 .vela-wide-scroll::-webkit-scrollbar{width:10px} .vela-wide-scroll::-webkit-scrollbar-thumb{background:${T.textDim};border-radius:5px}
 .concept-row{transition:all .15s;cursor:pointer} .concept-row:hover{background:${T.accentGlow}!important} .concept-row.selected{background:${T.accent}18!important;border-left-color:${T.accent}!important}
 .status-btn{cursor:pointer;transition:transform .15s} .status-btn:hover{transform:scale(1.3)}
-.slide-nav-btn{opacity:.4;transition:opacity .2s;cursor:pointer} .slide-nav-btn:hover{opacity:1}
+.slide-nav-btn{opacity:.85;transition:opacity .2s,background .2s;cursor:pointer;background:rgba(0,0,0,0.38);backdrop-filter:blur(2px);-webkit-backdrop-filter:blur(2px)} .slide-nav-btn:hover{opacity:1;background:rgba(0,0,0,0.55)}
 .imp-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0}
 .add-btn{transition:all .15s} .add-btn:hover{background:${T.accent}!important;color:#fff!important}
 .lane-header{transition:background .15s} .lane-header:hover{background:${T.bgCard}!important}

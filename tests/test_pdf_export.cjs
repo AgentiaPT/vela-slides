@@ -45,6 +45,11 @@ const PDF_INJECTION_LINK = "https://a.example/)/S/JavaScript/JS(app.alert)/Dummy
 // render/finalize loop (~350-450ms/slide × 2 paths) shrinks ~9×. Keeps a heading
 // ("Vela") and body ("slide") so the vector text-layer assertion still finds
 // extractable words. Full format (lanes/items/slides) so expectedPageCount reads it.
+// € – “ ” … ™ • are WinAnsi bytes 128-159 (outside Latin-1); £ is Latin-1;
+// 😀 is a real emoji. Byte escapes each glyph must appear as in a "(…) Tj" run.
+const GLYPH_TEXT = "Price: 1.234 \u20AC  \u2013 \u201Cquotes\u201D \u2026 \u2122 \u2022 \u00A3 \u{1F600}";
+const GLYPH_BYTES = { "\u20AC": "\\200", "\u2013": "\\226", "\u201C": "\\223", "\u201D": "\\224",
+  "\u2026": "\\205", "\u2122": "\\231", "\u2022": "\\225", "\u00A3": "\\243" };
 const DECK = (() => {
   const deck = {
     deckTitle: "PDF Export Smoke",
@@ -52,6 +57,9 @@ const DECK = (() => {
       { bg: "#0f172a", color: "#e2e8f0", accent: "#3b82f6", blocks: [{ type: "heading", text: "Vela Slides", link: PDF_INJECTION_LINK }] },
       { bg: "#0f172a", color: "#e2e8f0", accent: "#3b82f6", blocks: [{ type: "text", text: "A slide with body text for the vector text layer." }] },
       { bg: "#0f172a", color: "#e2e8f0", accent: "#10b981", blocks: [{ type: "metric", value: "42", label: "Answer" }] },
+      // WinAnsi symbols (€ etc.) must be real text at text size, not emoji images.
+      // The one real emoji keeps the image path. (meridian CR05)
+      { bg: "#0f172a", color: "#e2e8f0", accent: "#3b82f6", blocks: [{ type: "text", text: GLYPH_TEXT }] },
     ] }] }],
   };
   // Unique per-process path so concurrent runs (parallel CI stacks / devs) can't
@@ -275,6 +283,20 @@ function assertPdf(label, buf, expectedPages, { vector }) {
     }
     check(`[${label}] extractable slide text present in a "(…) Tj" run`, !!hit,
       hit ? `matched "${hit}"` : `none of ${JSON.stringify(words)}`);
+    // CR05: WinAnsi symbols are encoded as their real byte inside Tj text runs
+    // (drawn with the run's font at text size), never dropped, never imaged.
+    const tjRuns = (text.match(/\((?:[^()\\]|\\.)*\)\s*Tj/g) || []).join("\n");
+    check(`[${label}] "Price: 1.234 €" is one text run with the € byte (\\200)`,
+      /\(Price: 1\.234\s*\\200/.test(tjRuns), 'no "(Price: 1.234 \\200" Tj run');
+    for (const [ch, esc] of Object.entries(GLYPH_BYTES)) {
+      check(`[${label}] ${ch} (U+${ch.codePointAt(0).toString(16).toUpperCase()}) encoded as ${esc} in a Tj run`,
+        tjRuns.includes(esc), `missing ${esc}`);
+    }
+    // Emoji images are raw /DeviceRGB XObjects without a filter. The fixture has
+    // exactly one real emoji and no logo, so exactly one such image is expected:
+    // more means a WinAnsi symbol went down the emoji-image path again.
+    const rawImages = (text.match(/\/Subtype \/Image \/Width \d+ \/Height \d+ \/ColorSpace \/DeviceRGB \/BitsPerComponent 8 \/Length/g) || []).length;
+    check(`[${label}] only the real emoji is an image (1 raw image XObject)`, rawImages === 1, `rawImages=${rawImages}`);
     // Sanity: an embedded TrueType or fallback font must back that text.
     check(`[${label}] declares at least one /Font resource`, /\/Type\s*\/Font\b/.test(text));
   } else {

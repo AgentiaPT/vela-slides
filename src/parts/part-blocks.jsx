@@ -505,6 +505,80 @@ function IconBubble({ icon, size = 20, color, bg, shape, strokeWidth = 1.5 }) {
   return <div style={{ width: d, height: d, borderRadius: shape === "square" ? 8 : "50%", background: cssColor(bg), display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>{el}</div>;
 }
 
+// ━━━ Link Badge — one placement rule for every link badge (CR17) ━━━━━━━━━━━━━
+// A badge pinned to the wrapper's top-right corner lands on the last letters of
+// a short label (the wrapper hugs the text) or far to the right of it (a wide
+// cell or a longer second line). LinkBadge instead measures where the FIRST text
+// element of its wrapper (the item's label / the block's text) ends and sits just
+// after that point, centred on that line. Chrome is skipped: absolutely
+// positioned descendants and SVG are not treated as label text. With no
+// measurable text it falls back to the caller's corner anchor.
+function linkBadgeTextEnd(wrap, self, label) {
+  const skip = (node) => {
+    for (let p = node.parentElement; p && p !== wrap; p = p.parentElement) {
+      if (p === self || p.namespaceURI === "http://www.w3.org/2000/svg") return true;
+      const cs = getComputedStyle(p);
+      if (cs.position === "absolute" || cs.position === "fixed" || cs.display === "none") return true;
+    }
+    return false;
+  };
+  const walker = document.createTreeWalker(wrap, NodeFilter.SHOW_TEXT, {
+    acceptNode: (n) => (n.nodeValue.trim() && !skip(n)) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT,
+  });
+  const hostOf = (n) => {
+    let h = n.parentElement;
+    while (h && h !== wrap && getComputedStyle(h).display.startsWith("inline")) h = h.parentElement;
+    return h;
+  };
+  // Prefer the element that shows the link label (an item title, not a step
+  // number or a date above it); else the first text element.
+  const norm = (t) => String(t || "").replace(/[*_~`]/g, "").replace(/\s+/g, " ").trim();
+  const want = norm(label);
+  let host = null;
+  for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+    const h = hostOf(n);
+    if (!h) continue;
+    if (!host) host = h;
+    if (!want) break;
+    if (norm(h.textContent) === want) { host = h; break; }
+  }
+  if (!host) return null;
+  const range = document.createRange();
+  range.selectNodeContents(host);
+  const rects = Array.from(range.getClientRects()).filter((r) => r.width > 0.5 && r.height > 0.5);
+  return rects.length ? rects[rects.length - 1] : null;
+}
+function LinkBadge({ fallback, style, label, gap = 4, children, ...rest }) {
+  const ref = useRef(null);
+  const [pos, setPos] = useState(null);
+  const measure = React.useCallback(() => {
+    const self = ref.current;
+    const wrap = self?.parentElement;
+    if (!self || !wrap) return;
+    try {
+      const end = linkBadgeTextEnd(wrap, self, label);
+      const wr = wrap.getBoundingClientRect();
+      const scale = wrap.offsetWidth > 0 ? wr.width / wrap.offsetWidth : 1;
+      const next = end ? {
+        left: Math.round(((end.right - wr.left) / scale + gap) * 10) / 10,
+        top: Math.round((((end.top - wr.top) + end.height / 2) / scale - self.offsetHeight / 2) * 10) / 10,
+      } : null;
+      setPos((prev) => (prev?.left === next?.left && prev?.top === next?.top) ? prev : next);
+    } catch (_) {}
+  }, [gap, label]);
+  React.useLayoutEffect(() => { measure(); });
+  useEffect(() => {
+    const wrap = ref.current?.parentElement;
+    if (!wrap || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(() => measure());
+    ro.observe(wrap);
+    try { document.fonts?.ready?.then(() => measure()); } catch (_) {}
+    return () => ro.disconnect();
+  }, [measure]);
+  return <div ref={ref} data-link-badge="true" data-link-badge-placed={pos ? "text-end" : "corner"} {...rest}
+    style={{ ...style, position: "absolute", ...(pos ? { top: pos.top, left: pos.left } : fallback) }}>{children}</div>;
+}
+
 // ━━━ Per-Item Chrome — hover toolbar (🔗 link + ✕ delete) for one item of a multi-item block ━━
 // In edit mode, hovering an item shows a small cluster to attach/edit a link or delete the item.
 // Out of edit mode, a linked item becomes clickable (and feeds PDF export via data-pdf-link).
@@ -549,9 +623,9 @@ function ItemChrome({ editable, presenting, onDelete, link, onSetLink, children,
       onMouseEnter={enter} onMouseLeave={leave}>
       {children}
       {/* Idle link badge — edit mode, cluster not shown */}
-      {link && showLinkUI && !clusterVisible && editMode && <div onClick={(e) => { e.stopPropagation(); setEditingLink(true); }} style={{ position: "absolute", ...ba, width: 14, height: 14, borderRadius: "50%", background: T.accent + "80", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 7, zIndex: 5, cursor: "pointer" }} title={link}>🔗</div>}
+      {link && showLinkUI && !clusterVisible && editMode && <LinkBadge fallback={ba} label={linkLabel} onClick={(e) => { e.stopPropagation(); setEditingLink(true); }} style={{ width: 14, height: 14, borderRadius: "50%", background: T.accent + "80", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 7, zIndex: 5, cursor: "pointer" }} title={link}>🔗</LinkBadge>}
       {/* Idle link badge — presenter */}
-      {link && presenting && !noLinkBadge && <div onClick={(e) => { e.stopPropagation(); openExternalLink(link); }} style={{ position: "absolute", ...ba, padding: "2px 5px", borderRadius: 4, background: T.accent, fontSize: 9, color: "#fff", zIndex: 12, cursor: "pointer", opacity: hovered ? 1 : 0.3, transition: "opacity 0.2s", boxShadow: "0 2px 6px rgba(0,0,0,0.4)" }}>🔗</div>}
+      {link && presenting && !noLinkBadge && <LinkBadge fallback={ba} label={linkLabel} onClick={(e) => { e.stopPropagation(); openExternalLink(link); }} style={{ padding: "2px 5px", borderRadius: 4, background: T.accent, fontSize: 9, color: "#fff", zIndex: 12, cursor: "pointer", opacity: hovered ? 1 : 0.3, transition: "opacity 0.2s", boxShadow: "0 2px 6px rgba(0,0,0,0.4)" }}>🔗</LinkBadge>}
       {/* Hover cluster — edit mode (or pinned after a reorder move) */}
       {clusterVisible && editMode && (showLinkUI || deletable || reorder) && <div style={{ position: "absolute", ...a, display: "flex", alignItems: "center", gap: 3, zIndex: 11 }}>
         {reorder && <button onClick={(e) => { e.stopPropagation(); reorder.onUp?.(); }} disabled={!reorder.onUp} style={reorderArrowBtn(!!reorder.onUp)} title="Move up">▲</button>}
@@ -645,9 +719,9 @@ function GridCellBlock({ block, staggerIdx, slideTheme, editable, onChange, slid
       <RenderBlock block={block} staggerIdx={staggerIdx} slideTheme={slideTheme} editable={link ? false : editMode} slideAlign={slideAlign} fontScale={fontScale} presenting={presenting}
         onChange={onChange} />
       {/* Presenter mode: persistent link pill */}
-      {link && presenting && <div onClick={(e) => { e.stopPropagation(); openExternalLink(link); }} style={{ position: "absolute", top: -8, right: -8, padding: "1px 6px", borderRadius: 4, background: T.accent, fontSize: 9, fontFamily: FONT.mono, color: "#fff", fontWeight: 600, zIndex: 12, cursor: "pointer", opacity: hovered ? 1 : 0.3, transition: "opacity 0.2s", boxShadow: "0 2px 6px rgba(0,0,0,0.4)" }}>🔗</div>}
+      {link && presenting && <LinkBadge fallback={{ top: -8, right: -8 }} label={block.text || block.value || block.title} onClick={(e) => { e.stopPropagation(); openExternalLink(link); }} style={{ padding: "1px 6px", borderRadius: 4, background: T.accent, fontSize: 9, fontFamily: FONT.mono, color: "#fff", fontWeight: 600, zIndex: 12, cursor: "pointer", opacity: hovered ? 1 : 0.3, transition: "opacity 0.2s", boxShadow: "0 2px 6px rgba(0,0,0,0.4)" }}>🔗</LinkBadge>}
       {/* Link badge (not hovered, edit mode) */}
-      {link && !hovered && editMode && <div style={{ position: "absolute", top: -8, right: -8, width: 14, height: 14, borderRadius: "50%", background: T.accent + "80", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 7, zIndex: 5, cursor: "pointer" }} title={link} onClick={(e) => { e.stopPropagation(); setEditingLink(true); }}>🔗</div>}
+      {link && !hovered && editMode && <LinkBadge fallback={{ top: -8, right: -8 }} label={block.text || block.value || block.title} style={{ width: 14, height: 14, borderRadius: "50%", background: T.accent + "80", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 7, zIndex: 5, cursor: "pointer" }} title={link} onClick={(e) => { e.stopPropagation(); setEditingLink(true); }}>🔗</LinkBadge>}
       {/* Hover chrome (edit mode) */}
       {hovered && editMode && <div style={{ position: "absolute", top: -10, right: -10, display: "flex", gap: 3, zIndex: 11 }}>
         <button onClick={(e) => { e.stopPropagation(); setEditingLink(!editingLink); }} style={{ width: 18, height: 18, borderRadius: "50%", background: link ? T.accent : T.bgPanel, border: `1px solid ${link ? T.accent : T.border}`, color: link ? "#fff" : T.textDim, fontSize: 9, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", lineHeight: 1, padding: 0, boxShadow: "0 2px 6px rgba(0,0,0,0.4)" }} title={link ? `Link: ${link}` : "Add link"}>🔗</button>

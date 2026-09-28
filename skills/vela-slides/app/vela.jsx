@@ -138,8 +138,9 @@ const velaClipboardReadSlides = async () => {
   return [];
 };
 
-const VELA_VERSION = "13.74";
+const VELA_VERSION = "13.75";
 const VELA_CHANGELOG = [
+  { v: "13.75", d: ["Editor: mark slides reviewed (✓); Review cycle makes arrow keys skip reviewed slides.", "View switch (editor | presenter | gallery) next to Present.", "Gallery: hide/unhide a slide beside delete; TOC: delete icon on slide rows (undoable).", "Fullscreen nav icons stay visible on any slide background.", "Branding: right-side settings pane; accent line removable at 0px.", "Block toolbar stays visible on full-bleed images; link badges sit right after the text.", "Vector PDF: € and other WinAnsi symbols render as text at correct size.", "validate: reports a gradient in solid-color bg fields (use bgGradient).", "Opening or switching a deck keeps lane/module ids.", "Desktop: window title shows the deck title; keyboard works after alt-tab; AI agents detected on first start; HTML export fixed."] },
   { v: "13.74", d: ["Security: CLI output now neutralizes terminal control sequences in deck text (CWE-150 class), closing a display-spoofing channel.", "Security: the machine-readable --json output is fully escaped for the same class.", "Added one canonical output encoder, a CI gate keeping every CLI output path routed through it, and regression tests."] },
   { v: "13.73", d: ["Security (High): hardened the deck-injection build path — trusted app source is now transformed before untrusted deck data is injected.", "Security: added a fail-closed integrity check that refuses to write an artifact whose trusted bytes changed.", "Local preview server: same injection-last ordering applied to its HTML build path.", "Tests: added build-pipeline trust-boundary regression coverage."] },
   { v: "13.72", d: "Demo: synchronized the bundled product-tour deck and its content fingerprint." },
@@ -421,7 +422,10 @@ function applyStartupPatch(loadedDeck, dispatch) {
   if (STARTUP_PATCH.lanes) {
     dbg("[PATCH] Full deck replace");
     try {
-      const sanitized = validateAndSanitizeDeck(STARTUP_PATCH);
+      // keepIds: a startup patch REPLACES the whole deck (nothing else in state to
+      // collide with), so its own valid, unique ids survive. Minting fresh ids here
+      // churned every lane/module id on each desktop/local open (CR01).
+      const sanitized = validateAndSanitizeDeck(STARTUP_PATCH, { keepIds: true });
       dispatch({ type: "LOAD", payload: { ...sanitized, deckTitle: sanitizeDeckTitle(STARTUP_PATCH.deckTitle) } });
     } catch (e) {
       // Fail closed: never load an unsanitized deck. validateAndSanitizeDeck only throws
@@ -1397,7 +1401,7 @@ const SAFE_SLIDE_KEYS = new Set([
   "align", "verticalAlign", "padding", "gap",
   "splitGap", "contentFlex", "imageFlex", "imageCols",
   // presentation metadata
-  "duration", "timeLock", "hidden", "notes", "speakerNotes", "studyNotes",
+  "duration", "timeLock", "hidden", "reviewed", "notes", "speakerNotes", "studyNotes",
   "comments", "image",
 ]);
 const SAFE_BLOCK_KEYS = new Set([
@@ -1623,7 +1627,8 @@ function sanitizeComment(c) {
     anchor: typeof c.anchor === "string" ? sanitizeString(c.anchor, 200) : null,
     blockIndex: typeof c.blockIndex === "number" ? c.blockIndex : null,
     status: VALID_COMMENT_STATUSES.has(c.status) ? c.status : "open",
-    createdAt: typeof c.createdAt === "string" ? c.createdAt.slice(0, 30) : now(),
+    // null, not now(): a stamp here changed an unchanged deck on each open (CR01).
+    createdAt: typeof c.createdAt === "string" ? c.createdAt.slice(0, 30) : null,
     resolvedAt: typeof c.resolvedAt === "string" ? c.resolvedAt.slice(0, 30) : null,
   };
 }
@@ -1692,6 +1697,8 @@ function sanitizeSlide(slide) {
   }
   // `hidden` (slide excluded from presentation/counts) — strict boolean only.
   if ("hidden" in clean) { if (clean.hidden === true) clean.hidden = true; else delete clean.hidden; }
+  // `reviewed` (editor review-cycle mark; never rendered or exported) — strict boolean only.
+  if ("reviewed" in clean) { if (clean.reviewed === true) clean.reviewed = true; else delete clean.reviewed; }
   // NOTE: wrap the sanitizeBlock calls — a bare `.map(sanitizeBlock)` would pass
   // the array INDEX into the recursion-depth parameter.
   if (Array.isArray(clean.blocks)) clean.blocks = clean.blocks.slice(0, 30).map((b) => sanitizeBlock(b)).filter(Boolean);
@@ -1728,12 +1735,27 @@ function sanitizeSlide(slide) {
   return clean;
 }
 
+// Deterministic short id from a string (djb2, base36). Used where a value is
+// DERIVED from deck content during sanitize, so the same deck gives the same
+// value on every open (CR01): a random id here made an unchanged deck look
+// edited. Not a security primitive — the output is a fixed charset.
+function stableIdFrom(str) {
+  let h = 5381;
+  for (let i = 0; i < str.length; i++) h = ((h << 5) + h + str.charCodeAt(i)) | 0;
+  return (h >>> 0).toString(36);
+}
+
 function sanitizeItem(item) {
   if (!item || typeof item !== "object") return null;
   const comments = Array.isArray(item.comments) ? item.comments.slice(0, MAX_COMMENTS).map(sanitizeComment).filter(Boolean) : [];
-  // Migrate legacy notes to a module-level comment if no comments exist
+  const createdAt = typeof item.createdAt === "string" ? item.createdAt.slice(0, 30) : null;
+  // Migrate legacy notes to a module-level comment if no comments exist.
+  // id + createdAt are derived from the module (not uid()/now()), so re-opening
+  // the same deck gives the same comment (CR01).
   if (comments.length === 0 && typeof item.notes === "string" && item.notes.trim()) {
-    comments.push({ id: "c_" + uid(), text: sanitizeString(item.notes.trim(), 1000), anchor: null, blockIndex: null, status: "open", createdAt: now(), resolvedAt: null });
+    const text = sanitizeString(item.notes.trim(), 1000);
+    const seed = (typeof item.id === "string" ? item.id.slice(0, 64) : "") + "\u0000" + (typeof item.title === "string" ? item.title.slice(0, 200) : "") + "\u0000" + text;
+    comments.push({ id: "c_n" + stableIdFrom(seed), text, anchor: null, blockIndex: null, status: "open", createdAt, resolvedAt: null });
   }
   return {
     id: uid(),
@@ -1744,7 +1766,9 @@ function sanitizeItem(item) {
     importance: VALID_IMPORTANCES.has(item.importance) ? item.importance : "should",
     order: typeof item.order === "number" ? item.order : 0,
     slides: Array.isArray(item.slides) ? item.slides.slice(0, 100).map(sanitizeSlide).filter(Boolean) : [],
-    createdAt: typeof item.createdAt === "string" ? item.createdAt.slice(0, 30) : now(),
+    // A missing createdAt stays absent (nothing reads it): stamping now() here
+    // changed the deck on every open (CR01).
+    ...(createdAt !== null ? { createdAt } : {}),
     ...(item.presentCard ? { presentCard: true } : {}),
   };
 }
@@ -1812,15 +1836,78 @@ function resanitizeLoadedBranding(branding) {
   return b;
 }
 
-function validateAndSanitizeDeck(raw) {
+// Lane/module ids a deck may keep when the caller passes { keepIds: true }.
+// Type-checked first (no coercion), charset-limited, no leading "_" (reserved
+// for renderer-private keys). Anything else is replaced by a fresh uid().
+const KEEPABLE_DECK_ID = /^[A-Za-z0-9][A-Za-z0-9-]{0,63}$/;
+// Ids key plain-object maps (gallery counts/colours, per-module storage
+// chunks). An id that names an Object.prototype member would read the
+// inherited value (a function) instead of "missing", so it is not keepable.
+const isKeepableDeckId = (v) => typeof v === "string" && KEEPABLE_DECK_ID.test(v) && !(v in Object.prototype);
+
+// Live deck update (external edit / deck switch): `sanitized` came from
+// validateAndSanitizeDeck(raw, { keepIds: true }). A lane/module whose id was
+// freshly minted (the raw id was missing/invalid/duplicate) takes the id at the
+// same position in `cur`, so selection survives an editor that dropped ids —
+// but only when that id is valid and not already used in `sanitized` (ids stay
+// unique). Ids the file kept are never overwritten (CR01).
+function adoptPriorDeckIds(sanitized, raw, cur) {
+  if (!sanitized || !Array.isArray(sanitized.lanes) || !cur || !Array.isArray(cur.lanes)) return sanitized;
+  const rawIds = new Set();
+  for (const l of (raw && Array.isArray(raw.lanes) ? raw.lanes : [])) {
+    if (l && typeof l.id === "string") rawIds.add(l.id);
+    for (const it of (l && Array.isArray(l.items) ? l.items : [])) if (it && typeof it.id === "string") rawIds.add(it.id);
+  }
+  const used = new Set();
+  for (const l of sanitized.lanes) { used.add(l.id); for (const it of l.items || []) used.add(it.id); }
+  const adopt = (obj, prior) => {
+    if (rawIds.has(obj.id) || !prior || !isKeepableDeckId(prior.id) || used.has(prior.id)) return;
+    used.delete(obj.id); obj.id = prior.id; used.add(obj.id);
+  };
+  sanitized.lanes.forEach((l, li) => {
+    const cl = cur.lanes[li];
+    adopt(l, cl);
+    (l.items || []).forEach((it, ii) => adopt(it, cl && Array.isArray(cl.items) ? cl.items[ii] : null));
+  });
+  return sanitized;
+}
+
+// The deck content the local/desktop shell writes to the file (part-app.jsx
+// flushLocalStateRef). Its JSON is the no-edit guard's signature: a flush whose
+// signature equals the file's known content is skipped, so opening a deck the
+// user did not change never writes the file (CR01).
+function localDeckPayload(s) {
+  return { deckTitle: s.deckTitle, lanes: s.lanes, branding: s.branding, guidelines: s.guidelines };
+}
+
+function validateAndSanitizeDeck(raw, opts) {
   if (!raw || typeof raw !== "object") throw new Error("Invalid deck format");
   if (!Array.isArray(raw.lanes)) throw new Error("Missing lanes array");
+  // Default (fresh import): every lane/module id is re-minted so an imported
+  // deck can never collide with ids already in state. keepIds (full-deck
+  // replace, e.g. the startup patch): keep each valid id that is unique across
+  // ALL lanes + modules of this deck; a duplicate or invalid id is repaired
+  // with a fresh one, so the collision defense still holds inside the deck.
+  const keepIds = !!(opts && opts.keepIds === true);
+  const seenIds = new Set();
+  const deckId = (v) => {
+    if (keepIds && isKeepableDeckId(v) && !seenIds.has(v)) { seenIds.add(v); return v; }
+    let id = uid();
+    while (seenIds.has(id)) id = uid();
+    seenIds.add(id);
+    return id;
+  };
   // Clamp rather than throw: a >50-lane deck must not be able to trip an exception
   // that a fail-open caller would catch and then load raw, unsanitized (sanitizer off-switch).
   const lanes = raw.lanes.slice(0, 50).map((lane) => {
     if (!lane || typeof lane !== "object") return null;
-    const items = Array.isArray(lane.items) ? lane.items.slice(0, 200).map(sanitizeItem).filter(Boolean) : [];
-    return { id: uid(), title: sanitizeString(lane.title || "Untitled", 100), collapsed: !!lane.collapsed, items };
+    const laneId = deckId(lane.id);
+    const items = Array.isArray(lane.items) ? lane.items.slice(0, 200).map((item) => {
+      const clean = sanitizeItem(item);
+      if (clean) clean.id = deckId(item.id);
+      return clean;
+    }).filter(Boolean) : [];
+    return { id: laneId, title: sanitizeString(lane.title || "Untitled", 100), collapsed: !!lane.collapsed, items };
   }).filter(Boolean);
   const rawBranding = raw.branding && typeof raw.branding === "object" ? raw.branding : {};
   const importedBranding = {
@@ -2079,7 +2166,7 @@ const getCss = () => `
 .vela-wide-scroll::-webkit-scrollbar{width:10px} .vela-wide-scroll::-webkit-scrollbar-thumb{background:${T.textDim};border-radius:5px}
 .concept-row{transition:all .15s;cursor:pointer} .concept-row:hover{background:${T.accentGlow}!important} .concept-row.selected{background:${T.accent}18!important;border-left-color:${T.accent}!important}
 .status-btn{cursor:pointer;transition:transform .15s} .status-btn:hover{transform:scale(1.3)}
-.slide-nav-btn{opacity:.4;transition:opacity .2s;cursor:pointer} .slide-nav-btn:hover{opacity:1}
+.slide-nav-btn{opacity:.85;transition:opacity .2s,background .2s;cursor:pointer;background:rgba(0,0,0,0.38);backdrop-filter:blur(2px);-webkit-backdrop-filter:blur(2px)} .slide-nav-btn:hover{opacity:1;background:rgba(0,0,0,0.55)}
 .imp-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0}
 .add-btn{transition:all .15s} .add-btn:hover{background:${T.accent}!important;color:#fff!important}
 .lane-header{transition:background .15s} .lane-header:hover{background:${T.bgCard}!important}
@@ -3038,6 +3125,80 @@ function IconBubble({ icon, size = 20, color, bg, shape, strokeWidth = 1.5 }) {
   return <div style={{ width: d, height: d, borderRadius: shape === "square" ? 8 : "50%", background: cssColor(bg), display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>{el}</div>;
 }
 
+// ━━━ Link Badge — one placement rule for every link badge (CR17) ━━━━━━━━━━━━━
+// A badge pinned to the wrapper's top-right corner lands on the last letters of
+// a short label (the wrapper hugs the text) or far to the right of it (a wide
+// cell or a longer second line). LinkBadge instead measures where the FIRST text
+// element of its wrapper (the item's label / the block's text) ends and sits just
+// after that point, centred on that line. Chrome is skipped: absolutely
+// positioned descendants and SVG are not treated as label text. With no
+// measurable text it falls back to the caller's corner anchor.
+function linkBadgeTextEnd(wrap, self, label) {
+  const skip = (node) => {
+    for (let p = node.parentElement; p && p !== wrap; p = p.parentElement) {
+      if (p === self || p.namespaceURI === "http://www.w3.org/2000/svg") return true;
+      const cs = getComputedStyle(p);
+      if (cs.position === "absolute" || cs.position === "fixed" || cs.display === "none") return true;
+    }
+    return false;
+  };
+  const walker = document.createTreeWalker(wrap, NodeFilter.SHOW_TEXT, {
+    acceptNode: (n) => (n.nodeValue.trim() && !skip(n)) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT,
+  });
+  const hostOf = (n) => {
+    let h = n.parentElement;
+    while (h && h !== wrap && getComputedStyle(h).display.startsWith("inline")) h = h.parentElement;
+    return h;
+  };
+  // Prefer the element that shows the link label (an item title, not a step
+  // number or a date above it); else the first text element.
+  const norm = (t) => String(t || "").replace(/[*_~`]/g, "").replace(/\s+/g, " ").trim();
+  const want = norm(label);
+  let host = null;
+  for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+    const h = hostOf(n);
+    if (!h) continue;
+    if (!host) host = h;
+    if (!want) break;
+    if (norm(h.textContent) === want) { host = h; break; }
+  }
+  if (!host) return null;
+  const range = document.createRange();
+  range.selectNodeContents(host);
+  const rects = Array.from(range.getClientRects()).filter((r) => r.width > 0.5 && r.height > 0.5);
+  return rects.length ? rects[rects.length - 1] : null;
+}
+function LinkBadge({ fallback, style, label, gap = 4, children, ...rest }) {
+  const ref = useRef(null);
+  const [pos, setPos] = useState(null);
+  const measure = React.useCallback(() => {
+    const self = ref.current;
+    const wrap = self?.parentElement;
+    if (!self || !wrap) return;
+    try {
+      const end = linkBadgeTextEnd(wrap, self, label);
+      const wr = wrap.getBoundingClientRect();
+      const scale = wrap.offsetWidth > 0 ? wr.width / wrap.offsetWidth : 1;
+      const next = end ? {
+        left: Math.round(((end.right - wr.left) / scale + gap) * 10) / 10,
+        top: Math.round((((end.top - wr.top) + end.height / 2) / scale - self.offsetHeight / 2) * 10) / 10,
+      } : null;
+      setPos((prev) => (prev?.left === next?.left && prev?.top === next?.top) ? prev : next);
+    } catch (_) {}
+  }, [gap, label]);
+  React.useLayoutEffect(() => { measure(); });
+  useEffect(() => {
+    const wrap = ref.current?.parentElement;
+    if (!wrap || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(() => measure());
+    ro.observe(wrap);
+    try { document.fonts?.ready?.then(() => measure()); } catch (_) {}
+    return () => ro.disconnect();
+  }, [measure]);
+  return <div ref={ref} data-link-badge="true" data-link-badge-placed={pos ? "text-end" : "corner"} {...rest}
+    style={{ ...style, position: "absolute", ...(pos ? { top: pos.top, left: pos.left } : fallback) }}>{children}</div>;
+}
+
 // ━━━ Per-Item Chrome — hover toolbar (🔗 link + ✕ delete) for one item of a multi-item block ━━
 // In edit mode, hovering an item shows a small cluster to attach/edit a link or delete the item.
 // Out of edit mode, a linked item becomes clickable (and feeds PDF export via data-pdf-link).
@@ -3082,9 +3243,9 @@ function ItemChrome({ editable, presenting, onDelete, link, onSetLink, children,
       onMouseEnter={enter} onMouseLeave={leave}>
       {children}
       {/* Idle link badge — edit mode, cluster not shown */}
-      {link && showLinkUI && !clusterVisible && editMode && <div onClick={(e) => { e.stopPropagation(); setEditingLink(true); }} style={{ position: "absolute", ...ba, width: 14, height: 14, borderRadius: "50%", background: T.accent + "80", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 7, zIndex: 5, cursor: "pointer" }} title={link}>🔗</div>}
+      {link && showLinkUI && !clusterVisible && editMode && <LinkBadge fallback={ba} label={linkLabel} onClick={(e) => { e.stopPropagation(); setEditingLink(true); }} style={{ width: 14, height: 14, borderRadius: "50%", background: T.accent + "80", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 7, zIndex: 5, cursor: "pointer" }} title={link}>🔗</LinkBadge>}
       {/* Idle link badge — presenter */}
-      {link && presenting && !noLinkBadge && <div onClick={(e) => { e.stopPropagation(); openExternalLink(link); }} style={{ position: "absolute", ...ba, padding: "2px 5px", borderRadius: 4, background: T.accent, fontSize: 9, color: "#fff", zIndex: 12, cursor: "pointer", opacity: hovered ? 1 : 0.3, transition: "opacity 0.2s", boxShadow: "0 2px 6px rgba(0,0,0,0.4)" }}>🔗</div>}
+      {link && presenting && !noLinkBadge && <LinkBadge fallback={ba} label={linkLabel} onClick={(e) => { e.stopPropagation(); openExternalLink(link); }} style={{ padding: "2px 5px", borderRadius: 4, background: T.accent, fontSize: 9, color: "#fff", zIndex: 12, cursor: "pointer", opacity: hovered ? 1 : 0.3, transition: "opacity 0.2s", boxShadow: "0 2px 6px rgba(0,0,0,0.4)" }}>🔗</LinkBadge>}
       {/* Hover cluster — edit mode (or pinned after a reorder move) */}
       {clusterVisible && editMode && (showLinkUI || deletable || reorder) && <div style={{ position: "absolute", ...a, display: "flex", alignItems: "center", gap: 3, zIndex: 11 }}>
         {reorder && <button onClick={(e) => { e.stopPropagation(); reorder.onUp?.(); }} disabled={!reorder.onUp} style={reorderArrowBtn(!!reorder.onUp)} title="Move up">▲</button>}
@@ -3178,9 +3339,9 @@ function GridCellBlock({ block, staggerIdx, slideTheme, editable, onChange, slid
       <RenderBlock block={block} staggerIdx={staggerIdx} slideTheme={slideTheme} editable={link ? false : editMode} slideAlign={slideAlign} fontScale={fontScale} presenting={presenting}
         onChange={onChange} />
       {/* Presenter mode: persistent link pill */}
-      {link && presenting && <div onClick={(e) => { e.stopPropagation(); openExternalLink(link); }} style={{ position: "absolute", top: -8, right: -8, padding: "1px 6px", borderRadius: 4, background: T.accent, fontSize: 9, fontFamily: FONT.mono, color: "#fff", fontWeight: 600, zIndex: 12, cursor: "pointer", opacity: hovered ? 1 : 0.3, transition: "opacity 0.2s", boxShadow: "0 2px 6px rgba(0,0,0,0.4)" }}>🔗</div>}
+      {link && presenting && <LinkBadge fallback={{ top: -8, right: -8 }} label={block.text || block.value || block.title} onClick={(e) => { e.stopPropagation(); openExternalLink(link); }} style={{ padding: "1px 6px", borderRadius: 4, background: T.accent, fontSize: 9, fontFamily: FONT.mono, color: "#fff", fontWeight: 600, zIndex: 12, cursor: "pointer", opacity: hovered ? 1 : 0.3, transition: "opacity 0.2s", boxShadow: "0 2px 6px rgba(0,0,0,0.4)" }}>🔗</LinkBadge>}
       {/* Link badge (not hovered, edit mode) */}
-      {link && !hovered && editMode && <div style={{ position: "absolute", top: -8, right: -8, width: 14, height: 14, borderRadius: "50%", background: T.accent + "80", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 7, zIndex: 5, cursor: "pointer" }} title={link} onClick={(e) => { e.stopPropagation(); setEditingLink(true); }}>🔗</div>}
+      {link && !hovered && editMode && <LinkBadge fallback={{ top: -8, right: -8 }} label={block.text || block.value || block.title} style={{ width: 14, height: 14, borderRadius: "50%", background: T.accent + "80", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 7, zIndex: 5, cursor: "pointer" }} title={link} onClick={(e) => { e.stopPropagation(); setEditingLink(true); }}>🔗</LinkBadge>}
       {/* Hover chrome (edit mode) */}
       {hovered && editMode && <div style={{ position: "absolute", top: -10, right: -10, display: "flex", gap: 3, zIndex: 11 }}>
         <button onClick={(e) => { e.stopPropagation(); setEditingLink(!editingLink); }} style={{ width: 18, height: 18, borderRadius: "50%", background: link ? T.accent : T.bgPanel, border: `1px solid ${link ? T.accent : T.border}`, color: link ? "#fff" : T.textDim, fontSize: 9, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", lineHeight: 1, padding: 0, boxShadow: "0 2px 6px rgba(0,0,0,0.4)" }} title={link ? `Link: ${link}` : "Add link"}>🔗</button>
@@ -4091,14 +4252,19 @@ function BrandingOverlay({ branding, index, total, displayIndex, displayTotal, s
   // it stays scrubber-only like every other text-color field. (v13.27)
   const footerBg = isDefaultFooter && isLight ? "rgba(0,0,0,0.06)" : (cssColor(b.footerBg) || "rgba(0,0,0,0.35)");
   const footerColor = isDefaultColor && isLight ? "#475569" : (b.footerColor || "#94a3b8");
+  // Accent height 0 is a real user choice ("no top line"): a falsy `|| 4`
+  // fallback turned it back into 4px. Use 4 only when the value is missing,
+  // and draw no bar at all when the height is 0 or less.
+  const accentH = Number.isFinite(b.accentHeight) ? Math.max(0, b.accentHeight) : 4;
+  const showAccent = !!b.accentBar && accentH > 0;
   return <>
-    {b.accentBar && <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: b.accentHeight || 4, background: cssColor(b.accentColor) || T.accent, zIndex: 5 }} />}
+    {showAccent && <div data-branding-accent="true" style={{ position: "absolute", top: 0, left: 0, right: 0, height: accentH, background: cssColor(b.accentColor) || T.accent, zIndex: 5 }} />}
     {b.logo && (() => {
       const pos = b.logoPosition || "top-left";
       const sz = b.logoSize || 56;
       const isTop = pos.startsWith("top");
       const isLeft = pos.endsWith("left");
-      const vOffset = isTop ? (b.accentBar ? (b.accentHeight || 4) + 8 : 10) : 36;
+      const vOffset = isTop ? (showAccent ? accentH + 8 : 10) : 36;
       const style = { position: "absolute", height: sz, objectFit: "contain", zIndex: 1, opacity: 0.9 };
       if (isTop) style.top = vOffset; else style.bottom = vOffset;
       if (isLeft) style.left = 16; else style.right = 16;
@@ -4230,6 +4396,45 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
   const [blockPrompt, setBlockPrompt] = useState("");
   const [commentingBlockIdx, setCommentingBlockIdx] = useState(null);
   const [commentText, setCommentText] = useState("");
+  // CR15: per-block "no room above" flags for the hover toolbar (bar) and its
+  // popups (pop). A block flush with a clipping edge (full-bleed image, first
+  // block under small padding) would have its outside-top chrome cut off, so
+  // that chrome is drawn inside the block's top edge instead.
+  const [chromeFlip, setChromeFlip] = useState({});
+  const measureChromeRoom = (el, i) => {
+    try {
+      const r = el.getBoundingClientRect();
+      const scale = el.offsetHeight > 0 ? r.height / el.offsetHeight : 1;
+      // The slide surface top is an edge too: chrome drawn above it overlaps the
+      // slide frame, or is cut off where the frame clips (fullscreen, fill modes).
+      let clipTop = Math.max(0, outerRef.current ? outerRef.current.getBoundingClientRect().top : 0);
+      for (let p = el.parentElement; p && p !== document.body; p = p.parentElement) {
+        const cs = getComputedStyle(p);
+        if (cs.overflowY !== "visible" || cs.overflowX !== "visible") clipTop = Math.max(clipTop, p.getBoundingClientRect().top);
+      }
+      const s = scale || 1;
+      const room = (r.top - clipTop) / s;
+      const next = { bar: room < 8, pop: room < 35.5, shift: 0 }; // toolbar sits 8px above, popups 32-36px above
+      // The editor overlay chrome (reviewed toggle, comment count, before/after
+      // bar — marked data-editor-overlay in part-slidepanel.jsx) paints above the
+      // slide. A toolbar under it cannot be clicked, so move the toolbar (and its
+      // popups) left until it is clear of every overlay it would touch.
+      const fx = el.closest("[data-testid='slide-fx-wrapper']");
+      const overlays = fx && fx.parentElement ? Array.from(fx.parentElement.querySelectorAll("[data-editor-overlay]")).map((o) => o.getBoundingClientRect()).filter((q) => q.width > 0) : [];
+      if (overlays.length) {
+        const n = 3 + (onBlockEdit ? 1 : 0) + (externalDispatch ? 1 : 0);
+        const barW = n * 18 + (n - 1) * 3, edge = next.bar ? 6 : -8;
+        const barTop = r.top + (next.bar ? 6 : -8) * s, barBottom = barTop + 18 * s;
+        for (let pass = 0; pass <= overlays.length; pass++) {
+          const barRight = r.right - (edge + next.shift) * s, barLeft = barRight - barW * s;
+          const hit = overlays.find((q) => q.left < barRight + 2 && q.right > barLeft - 2 && q.top < barBottom + 2 && q.bottom > barTop - 2);
+          if (!hit) break;
+          next.shift = Math.max(next.shift + 1, Math.ceil((r.right - hit.left + 4) / s - edge));
+        }
+      }
+      setChromeFlip((prev) => (prev[i]?.bar === next.bar && prev[i]?.pop === next.pop && prev[i]?.shift === next.shift) ? prev : { ...prev, [i]: next });
+    } catch (_) {}
+  };
 
   // Close popup when blockEditing finishes
   const prevEditing = useRef(blockEditing);
@@ -4563,11 +4768,11 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
       title={b.link ? linkPreview(b.link, b.text || b.value || b.title) : undefined}
       data-pdf-link={b.link || undefined}
       onClick={b.link ? (e) => { e.stopPropagation(); openExternalLink(b.link); } : undefined}
-      onMouseEnter={() => setHoveredBlock(i)} onMouseLeave={() => { setHoveredBlock(null); setItemHovered(false); }}>
+      onMouseEnter={(e) => { setHoveredBlock(i); measureChromeRoom(e.currentTarget, i); }} onMouseLeave={() => { setHoveredBlock(null); setItemHovered(false); }}>
       {b.hidden && !presenting && <div style={{ position: "absolute", top: -6, left: -6, zIndex: 11, fontSize: 9, fontFamily: FONT.mono, fontWeight: 700, background: st.accent, color: "#fff", borderRadius: 4, padding: "0 4px", lineHeight: "14px", pointerEvents: "none" }} title="Hidden in presentation">🙈 hidden</div>}
       {editingBlockIdx === i && !presenting && <div style={{ position: "absolute", inset: -3, border: `2px solid ${st.accent}`, borderRadius: 6, pointerEvents: "none", zIndex: 10, boxShadow: `0 0 12px ${st.accent}40` }} />}
       {hoveredBlock === i && editingBlockIdx !== i && !presenting && <div style={{ position: "absolute", inset: -2, border: `1.5px dashed ${T.red}60`, borderRadius: 4, pointerEvents: "none", zIndex: 10 }} />}
-      {hoveredBlock === i && !itemHovered && !presenting && <div style={{ position: "absolute", top: -8, right: -8, display: "flex", gap: 3, zIndex: 11 }}>
+      {hoveredBlock === i && !itemHovered && !presenting && <div data-testid="block-hover-toolbar" data-chrome-inside={chromeFlip[i]?.bar ? "true" : undefined} style={{ position: "absolute", ...(chromeFlip[i]?.bar ? { top: 6, right: 6 + (chromeFlip[i]?.shift || 0) } : { top: -8, right: -8 + (chromeFlip[i]?.shift || 0) }), display: "flex", gap: 3, zIndex: 11 }}>
         {onBlockEdit && <button onClick={(e) => { e.stopPropagation(); setEditingBlockIdx(editingBlockIdx === i ? null : i); setBlockPrompt(""); setEditingLink(null); }} style={{ width: 18, height: 18, borderRadius: "50%", background: editingBlockIdx === i ? st.accent : T.bgPanel, border: `1px solid ${editingBlockIdx === i ? st.accent : T.border}`, color: editingBlockIdx === i ? "#fff" : T.textDim, fontSize: 9, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", lineHeight: 1, padding: 0, boxShadow: "0 2px 6px rgba(0,0,0,0.4)" }} title="Edit this block with AI">🎯</button>}
         <button onClick={(e) => { e.stopPropagation(); setEditingLink(editingLink === i ? null : i); setEditingBlockIdx(null); setCommentingBlockIdx(null); }} style={{ width: 18, height: 18, borderRadius: "50%", background: b.link ? T.accent : T.bgPanel, border: `1px solid ${b.link ? T.accent : T.border}`, color: b.link ? "#fff" : T.textDim, fontSize: 9, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", lineHeight: 1, padding: 0, boxShadow: "0 2px 6px rgba(0,0,0,0.4)" }} title={b.link ? `Link: ${b.link}` : "Add link"}>🔗</button>
         {externalDispatch && <button onClick={(e) => { e.stopPropagation(); setCommentingBlockIdx(commentingBlockIdx === i ? null : i); setCommentText(""); setEditingBlockIdx(null); setEditingLink(null); }} style={{ width: 18, height: 18, borderRadius: "50%", background: commentingBlockIdx === i ? T.amber : T.bgPanel, border: `1px solid ${commentingBlockIdx === i ? T.amber : T.border}`, color: commentingBlockIdx === i ? "#fff" : T.textDim, fontSize: 9, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", lineHeight: 1, padding: 0, boxShadow: "0 2px 6px rgba(0,0,0,0.4)" }} title="Add comment">💬</button>}
@@ -4575,7 +4780,7 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
         <button onClick={(e) => { e.stopPropagation(); handleBlockRemove(i); }} style={{ width: 18, height: 18, borderRadius: "50%", background: T.red, border: "none", color: "#fff", fontSize: 10, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", lineHeight: 1, padding: 0, boxShadow: "0 2px 6px rgba(0,0,0,0.4)" }}>✕</button>
       </div>}
       {/* Block edit popup */}
-      {editingBlockIdx === i && !presenting && <div onClick={(e) => e.stopPropagation()} style={{ position: "absolute", top: -36, right: 0, zIndex: 12, display: "flex", gap: 4, alignItems: "center", background: "rgba(10,15,28,0.95)", border: `1px solid ${st.accent}50`, borderRadius: 8, padding: "4px 8px", boxShadow: `0 4px 16px rgba(0,0,0,0.6), 0 0 0 1px ${st.accent}20`, backdropFilter: "blur(12px)" }}>
+      {editingBlockIdx === i && !presenting && <div data-testid="block-ai-popup" onClick={(e) => e.stopPropagation()} style={{ position: "absolute", top: (chromeFlip[i]?.pop ? (chromeFlip[i]?.bar ? 30 : 14) : -36), right: chromeFlip[i]?.shift || 0, zIndex: 12, display: "flex", gap: 4, alignItems: "center", background: "rgba(10,15,28,0.95)", border: `1px solid ${st.accent}50`, borderRadius: 8, padding: "4px 8px", boxShadow: `0 4px 16px rgba(0,0,0,0.6), 0 0 0 1px ${st.accent}20`, backdropFilter: "blur(12px)" }}>
         <span style={{ fontSize: 9, color: st.accent, flexShrink: 0 }}>🎯</span>
         <input autoFocus value={blockPrompt} onChange={(e) => setBlockPrompt(e.target.value)}
           onKeyDown={(e) => { e.stopPropagation(); if (e.key === "Enter" && blockPrompt.trim() && !blockEditing) { e.preventDefault(); onBlockEdit(i, blockPrompt.trim()); } if (e.key === "Escape") { setEditingBlockIdx(null); setBlockPrompt(""); } }}
@@ -4587,13 +4792,13 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
           : <button onClick={() => { if (blockPrompt.trim()) onBlockEdit(i, blockPrompt.trim()); }} disabled={!blockPrompt.trim()} style={{ padding: "2px 8px", fontSize: 9, fontFamily: FONT.mono, fontWeight: 700, background: blockPrompt.trim() ? st.accent : "rgba(255,255,255,0.1)", color: "#fff", border: "none", borderRadius: 4, cursor: blockPrompt.trim() ? "pointer" : "default", opacity: blockPrompt.trim() ? 1 : 0.4, flexShrink: 0 }}>Go</button>}
         <button onClick={() => { setEditingBlockIdx(null); setBlockPrompt(""); }} style={{ background: "none", border: "none", color: "rgba(255,255,255,0.4)", cursor: "pointer", fontSize: 10, padding: 0, flexShrink: 0 }}>✕</button>
       </div>}
-      {editingLink === i && !presenting && <div onClick={(e) => e.stopPropagation()} style={{ position: "absolute", top: -32, right: 0, zIndex: 12, display: "flex", gap: 4, alignItems: "center", background: T.bgPanel, border: `1px solid ${T.border}`, borderRadius: 6, padding: "3px 6px", boxShadow: "0 4px 12px rgba(0,0,0,0.5)" }}>
+      {editingLink === i && !presenting && <div data-testid="block-link-popup" onClick={(e) => e.stopPropagation()} style={{ position: "absolute", top: (chromeFlip[i]?.pop ? (chromeFlip[i]?.bar ? 30 : 14) : -32), right: chromeFlip[i]?.shift || 0, zIndex: 12, display: "flex", gap: 4, alignItems: "center", background: T.bgPanel, border: `1px solid ${T.border}`, borderRadius: 6, padding: "3px 6px", boxShadow: "0 4px 12px rgba(0,0,0,0.5)" }}>
         <span style={{ fontSize: 9, color: T.textDim }}>🔗</span>
         <input autoFocus defaultValue={b.link || ""} placeholder="https://..." onKeyDown={(e) => { e.stopPropagation(); if (e.key === "Enter") { const url = e.target.value.trim(); handleBlockChange(i, { link: url || undefined }); setEditingLink(null); } if (e.key === "Escape") setEditingLink(null); }} onBlur={(e) => { const url = e.target.value.trim(); handleBlockChange(i, { link: url || undefined }); setEditingLink(null); }} style={{ width: 200, padding: "2px 6px", fontSize: 10, fontFamily: FONT.mono, background: T.bg, color: T.text, border: `1px solid ${T.border}`, borderRadius: 4, outline: "none" }} />
         {b.link && <button onClick={() => { handleBlockChange(i, { link: undefined }); setEditingLink(null); }} style={{ background: "none", border: "none", color: T.red, fontSize: 10, cursor: "pointer", padding: 0 }}>✕</button>}
       </div>}
       {/* Block comment popup */}
-      {commentingBlockIdx === i && !presenting && externalDispatch && <div onClick={(e) => e.stopPropagation()} style={{ position: "absolute", top: -36, right: 0, zIndex: 12, display: "flex", gap: 4, alignItems: "center", background: "rgba(10,15,28,0.95)", border: `1px solid ${T.amber}50`, borderRadius: 8, padding: "4px 8px", boxShadow: `0 4px 16px rgba(0,0,0,0.6), 0 0 0 1px ${T.amber}20`, backdropFilter: "blur(12px)" }}>
+      {commentingBlockIdx === i && !presenting && externalDispatch && <div data-testid="block-comment-popup" onClick={(e) => e.stopPropagation()} style={{ position: "absolute", top: (chromeFlip[i]?.pop ? (chromeFlip[i]?.bar ? 30 : 14) : -36), right: chromeFlip[i]?.shift || 0, zIndex: 12, display: "flex", gap: 4, alignItems: "center", background: "rgba(10,15,28,0.95)", border: `1px solid ${T.amber}50`, borderRadius: 8, padding: "4px 8px", boxShadow: `0 4px 16px rgba(0,0,0,0.6), 0 0 0 1px ${T.amber}20`, backdropFilter: "blur(12px)" }}>
         <span style={{ fontSize: 9, flexShrink: 0 }}>💬</span>
         <input autoFocus value={commentText} onChange={(e) => setCommentText(e.target.value)}
           onKeyDown={(e) => { e.stopPropagation(); if (e.key === "Enter" && commentText.trim()) { e.preventDefault(); externalDispatch({ type: "ADD_COMMENT", itemId, slideIndex: index, text: commentText.trim(), blockIndex: i }); setCommentText(""); setCommentingBlockIdx(null); } if (e.key === "Escape") { setCommentingBlockIdx(null); setCommentText(""); } }}
@@ -4604,8 +4809,8 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
       </div>}
       {/* Comment count badge (edit mode, not review) */}
       {!reviewMode && !presenting && hoveredBlock !== i && externalDispatch && (() => { const cc = slideComments.filter((c) => c.blockIndex === i && c.status === "open"); return cc.length > 0 ? <div style={{ position: "absolute", top: -2, left: -2, minWidth: 14, height: 14, borderRadius: 7, background: T.amber, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 7, fontFamily: FONT.mono, fontWeight: 700, color: "#fff", padding: "0 3px", zIndex: 5, boxShadow: "0 2px 4px rgba(0,0,0,0.3)" }} title={`${cc.length} comment${cc.length > 1 ? "s" : ""}`}>💬{cc.length > 1 ? cc.length : ""}</div> : null; })()}
-      {b.link && hoveredBlock !== i && !presenting && <div onClick={(e) => { e.stopPropagation(); openExternalLink(b.link); }} style={{ position: "absolute", top: -2, right: -2, width: 14, height: 14, borderRadius: "50%", background: T.accent + "80", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 7, zIndex: 5, cursor: "pointer" }} title={b.link}>🔗</div>}
-      {b.link && presenting && <div style={{ position: "absolute", top: -2, right: -2, padding: "2px 5px", borderRadius: 4, background: T.accent, fontSize: 9, color: "#fff", zIndex: 12, pointerEvents: "none", opacity: hoveredBlock === i ? 1 : 0.3, transition: "opacity 0.2s", boxShadow: "0 2px 6px rgba(0,0,0,0.4)" }}>🔗</div>}
+      {b.link && hoveredBlock !== i && !presenting && <LinkBadge fallback={{ top: -2, right: -2 }} label={b.text || b.value || b.title} onClick={(e) => { e.stopPropagation(); openExternalLink(b.link); }} style={{ width: 14, height: 14, borderRadius: "50%", background: T.accent + "80", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 7, zIndex: 5, cursor: "pointer" }} title={b.link}>🔗</LinkBadge>}
+      {b.link && presenting && <LinkBadge fallback={{ top: -2, right: -2 }} label={b.text || b.value || b.title} style={{ padding: "2px 5px", borderRadius: 4, background: T.accent, fontSize: 9, color: "#fff", zIndex: 12, pointerEvents: "none", opacity: hoveredBlock === i ? 1 : 0.3, transition: "opacity 0.2s", boxShadow: "0 2px 6px rgba(0,0,0,0.4)" }}>🔗</LinkBadge>}
       <RenderBlock block={b} staggerIdx={i + 1} slideTheme={st} editable={b.link ? false : editable} slideAlign={align} fontScale={fontScale} presenting={presenting}
         onChange={onEdit ? (patch) => handleBlockChange(i, patch) : undefined} />
     </div>
@@ -4960,6 +5165,8 @@ function innerReducer(state, a) {
     // at `index`, order preserved. Single-slide paste can route through this too.
     case "INSERT_SLIDES": { _dirtyMods.add(a.id); const add = (Array.isArray(a.slides) ? a.slides : []).map(sanitizeSlide).filter(Boolean); if (!add.length) return state; return mapItems((i) => { if (i.id !== a.id) return i; const ns = [...i.slides]; ns.splice(a.index, 0, ...add); return { ...i, slides: ns }; }); }
     case "TOGGLE_SLIDE_HIDDEN": _dirtyMods.add(a.id); return mapItems((i) => i.id === a.id ? { ...i, slides: i.slides.map((s, idx) => idx === a.index ? (s.hidden ? (() => { const c = { ...s }; delete c.hidden; return c; })() : { ...s, hidden: true }) : s) } : i);
+    // CR07: editor review mark. Undoable like hidden; the review-cycle toggle itself is SlidePanel view state.
+    case "TOGGLE_SLIDE_REVIEWED": _dirtyMods.add(a.id); return mapItems((i) => i.id === a.id ? { ...i, slides: i.slides.map((s, idx) => idx === a.index ? (s.reviewed ? (() => { const c = { ...s }; delete c.reviewed; return c; })() : { ...s, reviewed: true }) : s) } : i);
     case "DUPLICATE_SLIDE": _dirtyMods.add(a.id); return mapItems((i) => { if (i.id !== a.id || !i.slides[a.index]) return i; const dup = JSON.parse(JSON.stringify(i.slides[a.index])); const ns = [...i.slides]; ns.splice(a.index + 1, 0, dup); return { ...i, slides: ns }; });
     case "MOVE_SLIDE": _dirtyMods.add(a.id); return mapItems((i) => { if (i.id !== a.id) return i; const ns = [...i.slides]; const t = a.from + a.dir; if (t < 0 || t >= ns.length) return i; [ns[a.from], ns[t]] = [ns[t], ns[a.from]]; return { ...i, slides: ns }; });
     case "REORDER_SLIDE": _dirtyMods.add(a.id); return mapItems((i) => { if (i.id !== a.id) return i; const ns = [...i.slides]; const [moved] = ns.splice(a.from, 1); ns.splice(a.to, 0, moved); return { ...i, slides: ns }; });
@@ -6805,7 +7012,7 @@ function ScopeSelector({ icon, scope, setScope, concept, slideIndex, slides, cur
     </div>
   );
 }
-function BrandingPanel({ branding, guidelines, dispatch, isMobile }) {
+function BrandingPanel({ branding, guidelines, dispatch, isMobile, docked, onClose }) {
   const b = branding || defaultBranding;
   const [guidelinesOpen, setGuidelinesOpen] = useState(!!guidelines?.trim());
   const set = (patch) => {
@@ -6831,19 +7038,25 @@ function BrandingPanel({ branding, guidelines, dispatch, isMobile }) {
   const inp = (extra = {}) => ({ flex: 1, padding: "3px 6px", fontSize: 10, fontFamily: FONT.body, background: T.bgInput, border: `1px solid ${T.border}`, borderRadius: 3, color: T.text, outline: "none", minWidth: 0, ...extra });
 
   return (
-    <div data-testid="branding-panel" style={{ padding: "8px 12px", borderBottom: `1px solid ${T.border}`, background: T.accent + "08" }}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+    // docked: right-side properties pane (CR09) — fixed width, full editor
+    // height, own scroll, sticky header with a close control. Undocked (mobile)
+    // keeps the original full-width strip above the canvas.
+    <div data-testid="branding-panel" data-docked={docked ? "right" : undefined} style={docked
+      ? { width: 300, flexShrink: 0, height: "100%", overflowY: "auto", boxSizing: "border-box", padding: "0 14px 12px", borderLeft: `1px solid ${T.border}`, background: T.bgPanel }
+      : { padding: "8px 12px", borderBottom: `1px solid ${T.border}`, background: T.accent + "08" }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 8, ...(docked ? { position: "sticky", top: 0, zIndex: 1, background: T.bgPanel, padding: "10px 0 8px", borderBottom: `1px solid ${T.border}` } : {}) }}>
         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
           <span style={{ fontSize: 13 }}>🎨</span>
           <span style={{ fontFamily: FONT.mono, fontSize: 10, fontWeight: 700, color: T.accent }}>BRANDING</span>
         </div>
-        <span style={{ fontFamily: FONT.mono, fontSize: 9, color: b.enabled ? T.accent : T.textDim }}>{b.enabled ? "● Active" : "○ Set values to activate"}</span>
+        <span style={{ fontFamily: FONT.mono, fontSize: 9, color: b.enabled ? T.accent : T.textDim, marginLeft: docked ? "auto" : undefined }}>{b.enabled ? "● Active" : "○ Set values to activate"}</span>
+        {onClose && <button data-testid="branding-panel-close" onClick={onClose} title="Close branding" aria-label="Close branding" style={{ background: "none", border: "none", color: T.textDim, cursor: "pointer", fontSize: 13, padding: "0 2px", lineHeight: 1 }}>✕</button>}
       </div>
         <div style={row}>
           <span style={lbl}>Header</span>
           <input type="color" value={b.accentColor || "#3B82F6"} onChange={(e) => set({ accentColor: e.target.value })} style={{ width: 22, height: 18, border: "none", padding: 0, cursor: "pointer", background: "transparent" }} />
-          <input type="range" min="0" max="8" value={b.accentHeight || 4} onChange={(e) => set({ accentHeight: parseInt(e.target.value) })} style={{ width: 50 }} />
-          <span style={{ fontFamily: FONT.mono, fontSize: 9, color: T.textDim }}>{b.accentHeight}px</span>
+          <input data-testid="branding-accent-height" type="range" min="0" max="8" value={b.accentHeight ?? 4} onChange={(e) => set({ accentHeight: parseInt(e.target.value) })} style={{ width: 50 }} />
+          <span style={{ fontFamily: FONT.mono, fontSize: 9, color: T.textDim }}>{b.accentHeight ?? 4}px</span>
         </div>
         <div style={row}>
           <span style={lbl}>Logo</span>
@@ -7304,7 +7517,7 @@ function PresenterView({ current, next, index, total, duration, elapsed, brandin
 }
 
 const GALLERY_MODULE_COLORS = ["#60a5fa","#a78bfa","#f472b6","#34d399","#f59e0b","#38bdf8","#fb7185","#818cf8","#2dd4bf","#e879f9","#fbbf24","#67e8f9"];
-function GalleryView({ lanes, currentConceptId, slideIndex, dispatch, onClose, branding }) {
+function GalleryView({ lanes, currentConceptId, slideIndex, dispatch, onClose, branding, headerExtra }) {
   const gridRef = useRef(null);
   const activeRef = useRef(null);
   const ZOOM_SIZES = [140, 180, 224, 300, 400, 560, 800];
@@ -7453,6 +7666,7 @@ function GalleryView({ lanes, currentConceptId, slideIndex, dispatch, onClose, b
         <span style={{ fontFamily: FONT.mono, fontSize: 14, fontWeight: 700, color: T.accent, letterSpacing: "0.05em" }}>GALLERY</span>
         <span style={{ fontFamily: FONT.mono, fontSize: 13, color: T.textMuted }}>{allSlides.filter((s) => !s.isTitleCard).length} slides</span>
         <span style={{ marginLeft: "auto", fontFamily: FONT.mono, fontSize: 13, color: T.textDim }}>+/− zoom · drag to reorder · G or ESC to close</span>
+        {headerExtra}
         <button data-testid="gallery-close" onClick={onClose} style={{ background: "none", border: "none", color: T.textMuted, cursor: "pointer", fontSize: 18, padding: 4 }}>✕</button>
       </div>
       <div ref={gridRef} onClick={(e) => e.stopPropagation()} onWheel={(e) => e.stopPropagation()} style={{ flex: 1, overflowY: "auto", padding: "20px 32px", userSelect: dragActive ? "none" : "auto" }}>
@@ -7491,12 +7705,15 @@ function GalleryView({ lanes, currentConceptId, slideIndex, dispatch, onClose, b
                 <div style={{ borderRadius: "0 0 8px 8px", border: cardBorder, borderTop: "none", boxShadow: cardShadow, background: T.bgCard, overflow: "hidden" }}
                   onMouseEnter={(e) => { if (!isCurrent && !dragSrc) { e.currentTarget.style.borderColor = T.borderLight; } }}
                   onMouseLeave={(e) => { if (!isCurrent) { e.currentTarget.style.borderColor = T.border; } }}>
-                  <GalleryThumb slide={s.slide} slideIdx={s.slideIdx} total={realSlideTotal} branding={branding} />
+                  {/* CR04: a hidden slide's thumbnail is dimmed, as the TOC strikes it through. */}
+                  <div data-hidden-overlay={s.slide?.hidden ? "1" : undefined} style={{ opacity: s.slide?.hidden ? 0.45 : 1 }}><GalleryThumb slide={s.slide} slideIdx={s.slideIdx} total={realSlideTotal} branding={branding} /></div>
                   <div style={{ padding: "6px 10px", background: isCurrent ? T.accent + "15" : T.isDark ? "rgba(255,255,255,0.04)" : "rgba(0,0,0,0.03)", display: "flex", alignItems: "center", gap: 6 }}>
                     <span title={s.isTitleCard ? "Section title card" : undefined} style={{ fontFamily: FONT.mono, fontSize: 10, color: isCurrent ? T.accent : T.textDim, fontWeight: 700 }}>{s.isTitleCard ? "🎬" : s.slideIdx + 1}</span>
                     {(() => { const oc = (s.slide.comments || []).filter((c) => c.status === "open").length; return oc > 0 ? <span style={{ width: 8, height: 8, borderRadius: 4, background: T.amber, flexShrink: 0 }} title={`${oc} comment${oc > 1 ? "s" : ""}`} /> : null; })()}
                     {s.slide?.studyNotes?.text ? <span title="Has offline study notes" data-study-marker style={{ fontSize: 11, lineHeight: 1, flexShrink: 0, filter: `drop-shadow(0 0 2px ${T.accent}80)` }}>🎓</span> : null}
                     <span style={{ fontSize: 13, color: isCurrent ? T.text : T.textMuted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1, fontFamily: FONT.body }}>{getSlideTitle(s.slide, s.slideIdx)}</span>
+                    {/* CR04: hide/unhide beside delete — same TOGGLE_SLIDE_HIDDEN as the TOC eye. */}
+                    {!s.isTitleCard && <button data-testid="gallery-hide-toggle" data-hidden={s.slide?.hidden ? "1" : "0"} onClick={(e) => { e.stopPropagation(); dispatch({ type: "TOGGLE_SLIDE_HIDDEN", id: s.itemId, index: s.slideIdx }); }} title={s.slide?.hidden ? "Hidden — click to show (excluded from presentation & counts)" : "Hide slide (excludes it from presentation & counts)"} style={{ background: "none", border: "none", cursor: "pointer", padding: "2px 4px", fontSize: 12, lineHeight: 1, borderRadius: 3, opacity: s.slide?.hidden ? 0.9 : 0.4, transition: "opacity 0.15s" }} onMouseEnter={(e) => { e.currentTarget.style.opacity = "1"; }} onMouseLeave={(e) => { e.currentTarget.style.opacity = s.slide?.hidden ? "0.9" : "0.4"; }}>{s.slide?.hidden ? "🙈" : "👁"}</button>}
                     {!s.isTitleCard && <button onClick={(e) => { e.stopPropagation(); dispatch({ type: "REMOVE_SLIDE", id: s.itemId, index: s.slideIdx }); }} title="Delete slide" style={{ background: "none", border: "none", cursor: "pointer", padding: "2px 4px", fontSize: 13, color: T.textDim, borderRadius: 3, opacity: 0.4, transition: "opacity 0.15s, color 0.15s" }} onMouseEnter={(e) => { e.currentTarget.style.opacity = "1"; e.currentTarget.style.color = "#ef4444"; }} onMouseLeave={(e) => { e.currentTarget.style.opacity = "0.4"; e.currentTarget.style.color = T.textDim; }}>✕</button>}
                   </div>
                 </div>
@@ -7957,6 +8174,32 @@ function SectionPicker({ mods, onPick, autoFocus = true, emptyLabel = "No other 
 }
 // © 2025-present Rui Quintino. Vela Slides — licensed under ELv2. See LICENSE.
 // ━━━ Slide Panel — editor slide view, fullscreen/presenter nav, per-slide AI actions ━━━
+// CR13: the one editor | presenter | gallery switch. The top bar (App), the
+// gallery header and the fullscreen top-right controls all render this with
+// SlidePanel's viewMode/setView, so the view state has one source of truth.
+// Glyphs are emoji-presentation (U+FE0F where the code point needs it): a
+// text-presentation glyph draws monochrome in the inherited colour and can
+// vanish on a dark chip (CR10). Editor uses the memo glyph, not a pen: the
+// dark-blue pen emoji is unreadable on the accent-filled active segment.
+const VIEW_SWITCH_SEGMENTS = [["editor", "\u{1F4DD}", "Editor"], ["presenter", "\u{1F5A5}\uFE0F", "Presenter"], ["gallery", "\u{1F5C2}\uFE0F", "Gallery"]];
+// Compact segments keep their label in the DOM at zero width (the top bar
+// measures it to decide when full labels fit); a full segment is 2px wider on
+// each side. VIEW_SWITCH_LABEL_EXTRA is that padding growth for the whole switch.
+const VIEW_SWITCH_PAD = { compact: 7, full: 9 };
+const VIEW_SWITCH_LABEL_EXTRA = VIEW_SWITCH_SEGMENTS.length * 2 * (VIEW_SWITCH_PAD.full - VIEW_SWITCH_PAD.compact);
+function ViewSwitch({ mode, onSet, disabled, compact, onDark, testid = "view-switch", style }) {
+  const idle = onDark ? "#fff" : T.textDim;
+  return <div data-testid={testid} role="group" aria-label="View" onClick={(e) => e.stopPropagation()} style={{ display: "flex", alignItems: "center", border: `1px solid ${onDark ? "rgba(255,255,255,0.3)" : T.border}`, borderRadius: 6, overflow: "hidden", flexShrink: 0, background: onDark ? "rgba(0,0,0,0.55)" : undefined, ...style }}>
+    {VIEW_SWITCH_SEGMENTS.map(([m, icon, label]) => {
+      const on = mode === m;
+      return <button key={m} data-testid={`${testid}-${m}`} onClick={() => onSet?.(m)} disabled={disabled} title={label} aria-label={label} aria-pressed={on}
+        style={{ display: "flex", alignItems: "center", gap: 4, padding: `4px ${compact ? VIEW_SWITCH_PAD.compact : VIEW_SWITCH_PAD.full}px`, background: on ? T.accent : "transparent", color: on ? "#fff" : idle, border: "none", cursor: disabled ? "default" : "pointer", opacity: disabled ? 0.4 : 1, fontFamily: FONT.mono, fontSize: 12, fontWeight: 700, whiteSpace: "nowrap" }}>
+        <span aria-hidden="true" style={{ fontSize: onDark ? 15 : undefined }}>{icon}</span>{compact ? <span data-vs-label="" aria-hidden="true" style={{ display: "inline-block", width: 0, overflow: "hidden", marginLeft: -4, verticalAlign: "top" }}>{label}</span> : <span>{label}</span>}
+      </button>;
+    })}
+  </div>;
+}
+
 function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, branding, guidelines, isMobile, fontScale, actionsRef, onRibbonUpdate }) {
   const deckEpochRef = useRef(state._deckEpoch);
   deckEpochRef.current = state._deckEpoch;
@@ -8152,6 +8395,9 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
   const [quickEditing, setQuickEditing] = useState(false);
   const [quickEditImage, setQuickEditImage] = useState(null); // { base64, preview }
   const [showGallery, setShowGallery] = useState(false);
+  // CR07: editor-only review cycle — arrow keys skip slides marked `reviewed`.
+  // Distinct from state.reviewMode (comments review), which owns that name.
+  const [reviewCycle, setReviewCycle] = useState(false);
   const showGalleryRef = useRef(false);
   const setGallery = (v) => { const val = typeof v === "function" ? v(showGalleryRef.current) : v; showGalleryRef.current = val; setShowGallery(val); };
   // ── Presenter view (CR-08) — single-screen speaker dashboard: current +
@@ -8294,6 +8540,15 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
   const [editingDuration, setEditingDuration] = useState(false);
   const navToastTimer = useRef(null);
 
+  // CR13: live view for every ViewSwitch. An open gallery wins over fullscreen,
+  // so the gallery opened from Present shows "Gallery" as the active segment.
+  const viewMode = showGallery ? "gallery" : (fullscreen ? "presenter" : "editor");
+  const setView = (mode) => {
+    if (mode === "editor") { setGallery(false); if (fullscreen) { stopAll(); dispatch({ type: "SET_FULLSCREEN", value: false }); } }
+    else if (mode === "gallery") { setGallery(true); }
+    else if (mode === "presenter") { setGallery(false); if (!fullscreen) { stopAll(); dispatch({ type: "SET_FULLSCREEN", value: true }); } }
+  };
+
   // Expose slide panel state + actions to app ribbon via ref
   useEffect(() => {
     if (!actionsRef) return;
@@ -8308,9 +8563,11 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       setPreviewRatio,
       present: () => { stopAll(); dispatch({ type: "SET_FULLSCREEN", value: true }); },
       getLayoutStats: () => computeSlideLayoutStats(slideRef.current),
+      // CR13: view state read by the top-bar view switcher (editor|presenter|gallery).
+      viewMode, setView,
     };
     onRibbonUpdate?.();
-  }, [slides.length, moduleTime, previewRatio, showBranding, showTimingScope, estimating, showImproveInput, improving]);
+  }, [slides.length, moduleTime, previewRatio, showBranding, showTimingScope, estimating, showImproveInput, improving, fullscreen, showGallery]);
 
   // Build flat ordered list of modules across all lanes
   const flatModules = useCallback(() => {
@@ -8491,7 +8748,25 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       // (editor nav keeps reaching them so they can be edited/unhidden).
       const nextVisible = (from) => { for (let i = from + 1; i < navSlides.length; i++) if (!fullscreen || !navSlides[i].hidden) return i; return -1; };
       const prevVisible = (from) => { for (let i = from - 1; i >= 0; i--) if (!fullscreen || !navSlides[i].hidden) return i; return -1; };
-      if (e.key === "ArrowRight" || e.key === "ArrowDown" || e.key === " ") {
+      // CR07: editor review cycle — step through unreviewed slides across modules.
+      // The current slide stays in the order (even if reviewed) only to anchor the step.
+      const reviewNav = !fullscreen && reviewCycle;
+      if (reviewNav && ["ArrowRight", "ArrowDown", " ", "ArrowLeft", "ArrowUp"].includes(e.key)) {
+        e.preventDefault();
+        stopAlternatives();
+        const dir = (e.key === "ArrowLeft" || e.key === "ArrowUp") ? -1 : 1;
+        const order = [];
+        for (const lane of (lanes || [])) {
+          if (lane.collapsed) continue;
+          for (const item of lane.items) (item.slides || []).forEach((sl, i) => { if (!sl.reviewed || (item.id === concept.id && i === slideIndex)) order.push({ id: item.id, i, title: item.title }); });
+        }
+        const t = order[order.findIndex((o) => o.id === concept.id && o.i === slideIndex) + dir];
+        if (t) {
+          if (t.id !== concept.id) { dispatch({ type: "SELECT", id: t.id }); showNavToast(t.title, null); }
+          dispatch({ type: "SET_SLIDE_INDEX", index: t.i });
+        }
+      }
+      if (!reviewNav && (e.key === "ArrowRight" || e.key === "ArrowDown" || e.key === " ")) {
         e.preventDefault();
         stopAlternatives(); // keep a running Improve alive across navigation
         const ni = navSlides.length > 0 ? nextVisible(slideIndex) : -1;
@@ -8513,7 +8788,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
           }
         }
       }
-      if (e.key === "ArrowLeft" || e.key === "ArrowUp") {
+      if (!reviewNav && (e.key === "ArrowLeft" || e.key === "ArrowUp")) {
         e.preventDefault();
         stopAlternatives(); // keep a running Improve alive across navigation
         const pi = navSlides.length > 0 ? prevVisible(slideIndex) : -1;
@@ -8604,7 +8879,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       if (e.key === "I" && e.shiftKey && !e.metaKey && !e.ctrlKey && slides.length > 0 && !improving && !altLoading && aiOk) { e.preventDefault(); runImproveRef.current?.(null, "slide"); }
     };
     window.addEventListener("keydown", handler); return () => window.removeEventListener("keydown", handler);
-  }, [slideIndex, slides, presSlides, fullscreen, dispatch, concept.id, flatModules, showNavToast, stopAll, altLoading, alternatives, altOriginal, fontScale, state.selectedSlideIndices]);
+  }, [slideIndex, slides, presSlides, fullscreen, dispatch, concept.id, flatModules, showNavToast, stopAll, altLoading, alternatives, altOriginal, fontScale, state.selectedSlideIndices, reviewCycle, lanes]);
 
   // ── Browser back button → exit fullscreen instead of leaving the page ──
   useEffect(() => {
@@ -9032,14 +9307,16 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
           <div style={{ fontFamily: FONT.mono, fontSize: 10, color: "rgba(255,255,255,0.5)" }}>{improving.current}/{improving.total}</div>
         </div>}
         <div className="slide-nav-btn" onClick={() => dispatch({ type: "SET_FULLSCREEN", value: false })} style={{ position: "absolute", top: isMobile ? 8 : 16, right: isMobile ? 8 : 16, padding: isMobile ? 12 : 8 }}><Minimize2 size={isMobile ? 22 : 18} color="#fff" /></div>
-        {!isMobile && <div data-testid="student-toggle" className="slide-nav-btn" onClick={() => dispatch({ type: "SET_VERA_MODE", mode: isStudent ? "editor" : "student" })} title={isStudent ? "Exit student mode" : "Student mode — Vera teaches"} style={{ position: "absolute", top: 16, right: 52, padding: 8, background: isStudent ? T.accent + "30" : "transparent", borderRadius: 6 }}><span style={{ fontSize: 16 }}>🎓</span></div>}
-        {!isMobile && <div data-testid="gallery-toggle" className="slide-nav-btn" onClick={() => setGallery((v) => !v)} title="Gallery view (G)" style={{ position: "absolute", top: 16, right: 88, padding: 8, background: showGallery ? T.accent + "30" : "transparent", borderRadius: 6 }}><span style={{ fontSize: 16 }}>🗂</span></div>}
-        {!isMobile && <div data-testid="presenter-toggle" className="slide-nav-btn" onClick={() => setPresenterView((v) => !v)} title={showPresenterView ? "Exit presenter view (S)" : "Presenter view — notes, next slide, timer (S)"} style={{ position: "absolute", top: 16, right: 124, padding: 8, background: showPresenterView ? T.accent + "30" : "transparent", borderRadius: 6 }}><span style={{ fontSize: 16 }}>🖥️</span></div>}
+        {!isMobile && <div data-testid="student-toggle" className="slide-nav-btn" onClick={() => dispatch({ type: "SET_VERA_MODE", mode: isStudent ? "editor" : "student" })} title={isStudent ? "Exit student mode" : "Student mode — Vera teaches"} style={{ position: "absolute", top: 16, right: 52, padding: 8, background: isStudent ? T.accent + "30" : undefined, borderRadius: 6 }}><span style={{ fontSize: 16, color: "#fff" }}>🎓</span></div>}
+        {!isMobile && <div data-testid="gallery-toggle" className="slide-nav-btn" onClick={() => setGallery((v) => !v)} title="Gallery view (G)" style={{ position: "absolute", top: 16, right: 88, padding: 8, background: showGallery ? T.accent + "30" : undefined, borderRadius: 6 }}><span style={{ fontSize: 16, color: "#fff" }}>{"\u{1F5C2}\uFE0F"}</span></div>}
+        {!isMobile && <div data-testid="presenter-toggle" className="slide-nav-btn" onClick={() => setPresenterView((v) => !v)} title={showPresenterView ? "Exit presenter view (S)" : "Presenter view — notes, next slide, timer (S)"} style={{ position: "absolute", top: 16, right: 124, padding: 8, background: showPresenterView ? T.accent + "30" : undefined, borderRadius: 6 }}><span style={{ fontSize: 16, color: "#fff" }}>🖥️</span></div>}
         {/* Present Edit toggle (Shift+E): restore inline click-to-edit while
             presenting. Uses the Lucide pencil (SVG), NOT the ✏ emoji, so the
             CR-03 "no edit chrome" test still passes when edit mode is off.
             Hidden in student mode, where editing is disabled by design. */}
-        {!isMobile && !isStudent && <div data-testid="present-edit-toggle" className="slide-nav-btn" onClick={() => setPresentEdit((v) => !v)} title={presentEdit ? "Editing on — click text/icons to edit (Shift+E)" : "Edit mode — click text/icons to edit while presenting (Shift+E)"} style={{ position: "absolute", top: 16, right: 160, padding: 8, background: presentEdit ? T.accent + "30" : "transparent", borderRadius: 6 }}>{getIcon("edit", { size: 18, color: "#fff" })}</div>}
+        {!isMobile && !isStudent && <div data-testid="present-edit-toggle" className="slide-nav-btn" onClick={() => setPresentEdit((v) => !v)} title={presentEdit ? "Editing on — click text/icons to edit (Shift+E)" : "Edit mode — click text/icons to edit while presenting (Shift+E)"} style={{ position: "absolute", top: 16, right: 160, padding: 8, background: presentEdit ? T.accent + "30" : undefined, borderRadius: 6 }}>{getIcon("edit", { size: 18, color: "#fff" })}</div>}
+        {/* CR13: the same view switch as the top bar, left of the icon row. */}
+        {!isMobile && <ViewSwitch testid="fs-view-switch" mode={viewMode} onSet={setView} compact onDark style={{ position: "absolute", top: 16, right: VELA_LOCAL_MODE ? 200 : 236 }} />}
         {/* Browser fullscreen toggle removed — Vela fullscreen (F key / minimize button) is sufficient */}
         {!isMobile && !VELA_LOCAL_MODE && <>
           <div className="slide-nav-btn" onClick={() => setShowCinemaTip((v) => !v)} title="Cinema mode — fullscreen in browser" style={{ position: "absolute", top: 16, right: 196, padding: 8 }}><VelaIcon size={18} /></div>
@@ -9061,7 +9338,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       </div>
       </div>
       {isStudent && <StudentPanel state={state} dispatch={dispatch} lanes={lanes} selectedId={concept.id} slideIndex={slideIndex} />}
-      {showGallery && <GalleryView lanes={lanes} currentConceptId={concept.id} slideIndex={slideIndex} dispatch={dispatch} onClose={() => setGallery(false)} branding={branding} />}
+      {showGallery && <GalleryView lanes={lanes} currentConceptId={concept.id} slideIndex={slideIndex} dispatch={dispatch} onClose={() => setGallery(false)} branding={branding} headerExtra={<ViewSwitch testid="gallery-view-switch" mode={viewMode} onSet={setView} />} />}
       {showPresenterView && (() => {
         let nextIdx = -1;
         for (let i = slideIndex + 1; i < presSlides.length; i++) if (!presSlides[i].hidden) { nextIdx = i; break; }
@@ -9076,7 +9353,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
 
 
       {/* ── TOP PANELS — deck-level dialogs from top bar ──── */}
-      {showBranding && <div style={{ flexShrink: 0 }}><BrandingPanel branding={branding} guidelines={guidelines} dispatch={dispatch} isMobile={isMobile} /></div>}
+      {showBranding && isMobile && <div style={{ flexShrink: 0 }}><BrandingPanel branding={branding} guidelines={guidelines} dispatch={dispatch} isMobile={isMobile} onClose={() => setShowBranding(false)} /></div>}
       {showImproveInput && <div data-testid="batch-edit-panel" style={{ flexShrink: 0, borderBottom: `1px solid ${T.border}`, background: T.accent + "08", padding: "8px 12px" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
           <span style={{ fontFamily: FONT.mono, fontSize: 10, fontWeight: 700, color: T.accent, letterSpacing: "0.05em" }}>🔄 BATCH EDIT</span>
@@ -9095,8 +9372,10 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
         </div>}
       </div>}
 
+      {/* ── MAIN ROW — preview column + right-docked branding pane (CR09) ── */}
+      <div data-testid="editor-main-row" style={{ flex: 1, display: "flex", flexDirection: "row", minHeight: 0, overflow: "hidden" }}>
       {/* ── MAIN PREVIEW ───────────────────────────────────── */}
-      <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+      <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minWidth: 0 }}>
         {slides.length === 0 ? (
           <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 12 }}>
             <div style={{ fontSize: 32, opacity: 0.15 }}>🎬</div>
@@ -9129,7 +9408,12 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
                   {!fullscreen && !state.commentsPanelOpen && !showCommentPopover && (() => {
                     const sc = (slides[slideIndex]?.comments || []).filter((c) => c.status === "open");
                     if (sc.length === 0) return null;
-                    return <div onClick={(e) => { e.stopPropagation(); dispatch({ type: "SET_COMMENTS_PANEL", open: true }); dispatch({ type: "SET_REVIEW_MODE", value: true }); }} style={{ position: "absolute", top: 8, right: 8, zIndex: 10, minWidth: 22, height: 22, borderRadius: 11, background: T.amber, color: "#fff", fontFamily: FONT.mono, fontSize: 10, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", padding: "0 6px", cursor: "pointer", boxShadow: "0 2px 8px rgba(0,0,0,0.3)" }} title={`${sc.length} open comment${sc.length > 1 ? "s" : ""}`}>{sc.length}</div>;
+                    return <div data-editor-overlay="comments" onClick={(e) => { e.stopPropagation(); dispatch({ type: "SET_COMMENTS_PANEL", open: true }); dispatch({ type: "SET_REVIEW_MODE", value: true }); }} style={{ position: "absolute", top: 8, right: 8, zIndex: 10, minWidth: 22, height: 22, borderRadius: 11, background: T.amber, color: "#fff", fontFamily: FONT.mono, fontSize: 10, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", padding: "0 6px", cursor: "pointer", boxShadow: "0 2px 8px rgba(0,0,0,0.3)" }} title={`${sc.length} open comment${sc.length > 1 ? "s" : ""}`}>{sc.length}</div>;
+                  })()}
+                  {/* CR07: reviewed checkmark (editor only; an overlay, so exports never render it) */}
+                  {!fullscreen && slides[slideIndex] && (() => {
+                    const rv = !!slides[slideIndex].reviewed;
+                    return <button data-testid="reviewed-toggle" data-editor-overlay="reviewed" data-reviewed={rv ? "1" : "0"} aria-pressed={rv} onClick={(e) => { e.stopPropagation(); dispatch({ type: "TOGGLE_SLIDE_REVIEWED", id: concept.id, index: slideIndex }); }} title={rv ? "Reviewed — click to mark not reviewed" : "Mark slide reviewed"} style={{ position: "absolute", top: 8, right: 44, zIndex: 10, width: 24, height: 24, borderRadius: 12, border: `1.5px solid ${rv ? T.green : "rgba(255,255,255,0.7)"}`, background: rv ? T.green : "rgba(0,0,0,0.35)", color: "#fff", fontSize: 13, fontWeight: 700, lineHeight: 1, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", padding: 0, opacity: rv ? 1 : 0.75, boxShadow: "0 2px 8px rgba(0,0,0,0.3)" }}>✓</button>;
                   })()}
                   {/* Study notes badge (top-left) — pure indicator in editor mode */}
                   {!fullscreen && slides[slideIndex]?.studyNotes?.text && (
@@ -9152,7 +9436,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
                 </div>
                 <div style={{ fontFamily: FONT.mono, fontSize: 9, color: "rgba(255,255,255,0.5)" }}>{improving.current}/{improving.total}</div>
               </div>}
-              {!improving && beforeSlides && <div style={{ position: "absolute", top: 8, right: 8, display: "flex", gap: 4, zIndex: 10 }}>
+              {!improving && beforeSlides && <div data-editor-overlay="before-after" style={{ position: "absolute", top: 8, right: 8, display: "flex", gap: 4, zIndex: 10 }}>
                 <button onClick={() => setShowBefore((v) => !v)} style={S.btn({ background: showBefore ? T.amber + "30" : "rgba(0,0,0,0.5)", color: showBefore ? T.amber : "#fff", border: `1px solid ${showBefore ? T.amber : "rgba(255,255,255,0.2)"}`, fontSize: 9, padding: "2px 8px" })}>{showBefore ? "◀ Before" : "After ▶"}</button>
                 <button onClick={() => setBeforeSlides(null)} style={S.btn({ background: "rgba(0,0,0,0.5)", color: "rgba(255,255,255,0.6)", border: "1px solid rgba(255,255,255,0.15)", fontSize: 9, padding: "2px 6px" })}>✕</button>
               </div>}
@@ -9270,7 +9554,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
         </div>}
 
         {/* ── SLIDE TOOLBAR — centered strip between preview & notes ── */}
-        {slides.length > 0 && <div data-testid="slide-toolbar" style={{ flexShrink: 0, borderTop: `1px solid ${T.border}`, background: T.bgPanel, padding: "4px 12px", display: "flex", justifyContent: "center", alignItems: "center", gap: 3 }}>
+        {slides.length > 0 && <div data-testid="slide-toolbar" style={{ flexShrink: 0, borderTop: `1px solid ${T.border}`, background: T.bgPanel, padding: "4px 12px", display: "flex", flexWrap: "wrap", justifyContent: "center", alignItems: "center", gap: 3 }}>
           <button data-testid="quick-edit-open" onClick={() => { if (aiOk) setShowQuickEdit((v) => !v); }} disabled={!aiOk} title={aiOk ? "AI Edit slide (E)" : VELA_AI_UNAVAILABLE_MSG} style={S.btn({ padding: "5px 12px", fontSize: 14, color: !aiOk ? T.textDim + "60" : showQuickEdit ? T.accent : T.textDim, background: showQuickEdit ? T.accent + "20" : "transparent", borderRadius: 4, display: "flex", alignItems: "center", gap: 5, cursor: aiOk ? "pointer" : "not-allowed" })}>⚡{!isMobile && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>AI Edit</span>}</button>
           <button onClick={() => improving ? stopAll() : runImproveRef.current?.(null, "slide")} disabled={!aiOk || slides.length === 0 || altLoading} title={aiOk ? "Auto-improve this slide (⇧I)" : VELA_AI_UNAVAILABLE_MSG} style={S.btn({ padding: "5px 12px", fontSize: 14, color: !aiOk ? T.textDim + "60" : improving ? T.red : T.textDim, background: improving ? T.accent + "20" : "transparent", borderRadius: 4, display: "flex", alignItems: "center", gap: 5, opacity: !aiOk || slides.length === 0 ? 0.35 : 1, cursor: aiOk ? "pointer" : "not-allowed" })}>{improving ? "⏹" : "✨"}{!isMobile && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>{improving ? "Stop" : "Improve"}</span>}</button>
           <button onClick={() => altLoading ? stopAlternatives() : runAlternatives()} disabled={!aiOk || slides.length === 0 || improving} title={aiOk ? "Generate design variants — click a tile to apply, ↩ Original to revert, Esc to close" : VELA_AI_UNAVAILABLE_MSG} style={S.btn({ padding: "5px 12px", fontSize: 14, color: !aiOk ? T.textDim + "60" : altLoading ? T.red : (alternatives ? T.accent : T.textDim), background: altLoading || alternatives ? T.accent + "20" : "transparent", borderRadius: 4, display: "flex", alignItems: "center", gap: 5, opacity: !aiOk || slides.length === 0 ? 0.35 : 1, cursor: aiOk ? "pointer" : "not-allowed" })}>{altLoading ? "⏹" : "🎲"}{!isMobile && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>{altLoading ? "Stop" : "Variants"}</span>}</button>
@@ -9279,6 +9563,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
           <button onClick={() => { dispatch({ type: "DUPLICATE_SLIDE", id: concept.id, index: slideIndex }); dispatch({ type: "SET_SLIDE_INDEX", index: slideIndex + 1 }); }} title="Duplicate slide" style={S.btn({ padding: "5px 12px", fontSize: 14, color: T.textDim, borderRadius: 4, display: "flex", alignItems: "center", gap: 5 })}>📋{!isMobile && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>Duplicate</span>}</button>
           <button ref={moveRef} onClick={() => setShowMoveToModule((v) => !v)} title="Move to module" style={S.btn({ padding: "5px 12px", fontSize: 14, color: showMoveToModule ? T.accent : T.textDim, background: showMoveToModule ? T.accent + "20" : "transparent", borderRadius: 4, display: "flex", alignItems: "center", gap: 5 })}>📦{!isMobile && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>Move</span>}</button>
           <button onClick={() => { dispatch({ type: "REMOVE_SLIDE", id: concept.id, index: slideIndex }); dispatch({ type: "SET_SLIDE_INDEX", index: Math.max(0, slideIndex - 1) }); }} title="Delete slide (Del)" style={S.btn({ padding: "5px 12px", fontSize: 14, color: T.red + "90", borderRadius: 4, display: "flex", alignItems: "center", gap: 5 })}>🗑{!isMobile && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>Delete</span>}</button>
+          <button data-testid="review-cycle-toggle" aria-pressed={reviewCycle} onClick={() => setReviewCycle((v) => !v)} title={reviewCycle ? "Review cycle on — arrow keys skip reviewed slides" : "Review cycle — arrow keys skip reviewed slides"} style={S.btn({ padding: "5px 12px", fontSize: 14, color: reviewCycle ? T.green : T.textDim, background: reviewCycle ? T.green + "20" : "transparent", borderRadius: 4, display: "flex", alignItems: "center", gap: 5 })}>✓{!isMobile && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>Review cycle</span>}</button>
           <div style={{ width: 1, height: 22, background: T.border + "60" }} />
           <button data-testid="editor-gallery-toggle" onClick={() => setGallery((v) => !v)} title="Overview — all slides (G)" style={S.btn({ padding: "5px 12px", fontSize: 14, color: showGallery ? T.accent : T.textDim, background: showGallery ? T.accent + "20" : "transparent", borderRadius: 4, display: "flex", alignItems: "center", gap: 5 })}>🗂{!isMobile && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>Overview</span>}</button>
         </div>}
@@ -9308,7 +9593,9 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
         {/* Move-to-module popover */}
         {showMoveToModule && (() => { const allMods = []; for (const l of lanes) for (const it of l.items) if (it.id !== concept.id) allMods.push({ id: it.id, title: it.title, lane: l.title }); const rect = moveRef.current?.getBoundingClientRect(); const popH = Math.min(300, allMods.length * 32 + 72); const flipUp = rect && (rect.bottom + popH + 8 > window.innerHeight); const top = rect ? (flipUp ? Math.max(8, rect.top - popH - 4) : rect.bottom + 4) : 40; const left = rect ? Math.max(8, Math.min(rect.left, window.innerWidth - 220)) : 8; return <><div onClick={() => setShowMoveToModule(false)} style={{ position: "fixed", inset: 0, zIndex: 9998 }} /><div data-testid="move-picker" style={{ position: "fixed", top, left, background: T.bgPanel, border: `1px solid ${T.border}`, borderRadius: 8, padding: 4, zIndex: 9999, boxShadow: "0 4px 20px rgba(0,0,0,0.5)" }}><SectionPicker mods={allMods} emptyLabel="No other modules" onPick={(toId, e) => { dispatch({ type: "MOVE_SLIDE_TO_MODULE", fromId: concept.id, toId, index: slideIndex }); if (e && (e.ctrlKey || e.metaKey)) { const remaining = slides.length - 1; if (slideIndex < remaining) { dispatch({ type: "SELECT", id: concept.id, slideIndex }); } else { const flat = []; for (const l of lanes) for (const it of l.items) flat.push(it); const pos = flat.findIndex((it) => it.id === concept.id); const nextMod = pos >= 0 ? flat[pos + 1] : null; if (nextMod) dispatch({ type: "SELECT", id: nextMod.id, slideIndex: 0 }); else if (remaining > 0) dispatch({ type: "SELECT", id: concept.id, slideIndex: remaining - 1 }); } } setShowMoveToModule(false); }} /></div></>; })()}
       </div>
-      {showGallery && <GalleryView lanes={lanes} currentConceptId={concept.id} slideIndex={slideIndex} dispatch={dispatch} onClose={() => setGallery(false)} branding={branding} />}
+      {showBranding && !isMobile && <BrandingPanel docked branding={branding} guidelines={guidelines} dispatch={dispatch} isMobile={isMobile} onClose={() => setShowBranding(false)} />}
+      </div>
+      {showGallery && <GalleryView lanes={lanes} currentConceptId={concept.id} slideIndex={slideIndex} dispatch={dispatch} onClose={() => setGallery(false)} branding={branding} headerExtra={<ViewSwitch testid="gallery-view-switch" mode={viewMode} onSet={setView} />} />}
     </div>
   );
 }
@@ -9799,6 +10086,12 @@ function SlideListWithAdder({ item, selected, slideIndex, selectedSlideIndices, 
               style={{ flexShrink: 0, marginLeft: 4, fontSize: 11, lineHeight: 1, cursor: "pointer", opacity: s.hidden ? 0.9 : 0.28, transition: "opacity .15s" }}
               onMouseEnter={(e) => e.currentTarget.style.opacity = 1} onMouseLeave={(e) => e.currentTarget.style.opacity = s.hidden ? 0.9 : 0.28}
             >{s.hidden ? "🙈" : "👁"}</span>
+            {/* CR14: inline delete for this one slide (undoable REMOVE_SLIDE), like the section-row ×. */}
+            <span data-testid="toc-slide-delete" onClick={(e) => { e.stopPropagation(); dispatch({ type: "REMOVE_SLIDE", id: item.id, index: si }); if (selected) dispatch({ type: "SET_SLIDE_SELECTION", indices: [], index: si < slideIndex ? slideIndex - 1 : si === slideIndex ? Math.max(0, si - 1) : slideIndex }); }}
+              title="Delete slide"
+              style={{ flexShrink: 0, marginLeft: 4, fontSize: 12, lineHeight: 1, color: T.textDim, cursor: "pointer", padding: "0 2px", opacity: 0.3, transition: "opacity .15s" }}
+              onMouseEnter={(e) => e.currentTarget.style.opacity = 1} onMouseLeave={(e) => e.currentTarget.style.opacity = 0.3}
+            >×</span>
           </div>
           <AddMenu item={item} insertIndex={si + 1} dispatch={dispatch} guidelines={guidelines} variant="row" laneId={laneId} deckEpoch={deckEpoch} />
         </React.Fragment>;
@@ -15360,6 +15653,672 @@ uiSuite("Product Tour", [
   }},
 ], { setup: _productTourSetup });
 
+// ── meridian CR04 / CR14 / CR07 (sprint "meridian") ──────────────────
+const _m1RowTitles = () => _tocRows().map((r) => (Array.from(r.querySelectorAll("span")).find((x) => x.style.textOverflow === "ellipsis")?.textContent || "").trim());
+const _m1Undo = async () => { document.activeElement?.blur?.(); await _wait(80); _key("z", { ctrlKey: true }); await _wait(250); };
+const _m1ClickRow = async (i) => { const r = _tocRows()[i]; if (!r) throw new Error("no TOC row " + i); _click(r); await _waitFor(() => _tocRows()[i]?.getAttribute("aria-selected") === "true", 800).catch(() => {}); await _wait(150); document.activeElement?.blur?.(); };
+
+uiSuite("meridian-CR04 Gallery hide toggle", [
+  { name: "gallery card shows a hide toggle beside delete; click hides, click again unhides", fn: async () => {
+    const btn = _$("[data-testid='editor-gallery-toggle']");
+    if (!btn) throw new Error("editor-gallery-toggle missing");
+    _click(btn);
+    await _waitFor(() => _$("[data-testid='gallery-slide']"), 5000);
+    const card = () => _$$("[data-testid='gallery-slide']")[0];
+    const tog = () => card()?.querySelector("[data-testid='gallery-hide-toggle']");
+    if (!tog()) throw new Error("gallery-hide-toggle missing on the card");
+    const del = Array.from(card().querySelectorAll("button")).find((b) => b.title === "Delete slide");
+    if (!del || tog().nextElementSibling !== del) throw new Error("hide toggle is not next to the delete button");
+    if (tog().getAttribute("data-hidden") !== "0") throw new Error("first slide already hidden");
+    const rowHidden = () => (_tocRows()[0]?.textContent || "").includes("🙈");
+    _click(tog());
+    await _waitFor(() => tog()?.getAttribute("data-hidden") === "1", 1500);
+    if (!card().querySelector("[data-hidden-overlay]")) throw new Error("hidden card thumbnail not dimmed");
+    if (!rowHidden()) throw new Error("TOC row does not show the slide as hidden (not the same effect)");
+    _click(tog());
+    await _waitFor(() => tog()?.getAttribute("data-hidden") === "0", 1500);
+    if (card().querySelector("[data-hidden-overlay]") || rowHidden()) throw new Error("unhide did not restore the slide");
+    _click(_$("[data-testid='editor-gallery-toggle']"));
+    await _waitFor(() => !_$("[data-testid='gallery-slide']"), 3000).catch(() => {});
+  }},
+], { setup: _editorSetup });
+
+uiSuite("meridian-CR14 TOC slide delete", [
+  { name: "each slide row has a delete icon", fn: async () => {
+    const rows = _tocRows();
+    if (rows.length < 2) throw new Error("need >=2 slide rows, got " + rows.length);
+    if (!rows.every((r) => r.querySelector("[data-testid='toc-slide-delete']"))) throw new Error("a slide row has no toc-slide-delete icon");
+  }},
+  { name: "click deletes that slide only; undo restores it", fn: async () => {
+    const before = _m1RowTitles();
+    _click(_tocRows()[1].querySelector("[data-testid='toc-slide-delete']"));
+    await _waitFor(() => _tocRows().length === before.length - 1, 1500);
+    const want = before.filter((_, i) => i !== 1).join("|");
+    if (_m1RowTitles().join("|") !== want) throw new Error("wrong slide removed: " + _m1RowTitles().join("|"));
+    await _m1Undo();
+    await _waitFor(() => _tocRows().length === before.length, 1500);
+    if (_m1RowTitles().join("|") !== before.join("|")) throw new Error("undo did not restore the slide list");
+  }},
+], { setup: _editorSetup });
+
+uiSuite("meridian-CR07 Review cycle", [
+  { name: "reviewed checkmark and review-cycle toggle render in the editor", fn: async () => {
+    await _waitFor(() => _$("[data-testid='reviewed-toggle']") && _$("[data-testid='review-cycle-toggle']"), 2000);
+  }},
+  { name: "cycle on: arrows skip a reviewed slide; cycle off: arrows visit it again", fn: async () => {
+    if (_tocRows().length < 3) throw new Error("need >=3 slide rows");
+    const rt = () => _$("[data-testid='reviewed-toggle']");
+    const cyc = () => _$("[data-testid='review-cycle-toggle']");
+    const selIdx = () => _tocRows().findIndex((r) => r.getAttribute("aria-selected") === "true");
+    try {
+      await _m1ClickRow(1);
+      if (rt().getAttribute("data-reviewed") !== "0") throw new Error("slide 2 already reviewed");
+      _click(rt());
+      await _waitFor(() => rt()?.getAttribute("data-reviewed") === "1", 1500);
+      await _m1ClickRow(0);
+      _click(cyc());
+      await _waitFor(() => cyc()?.getAttribute("aria-pressed") === "true", 1500);
+      document.activeElement?.blur?.();
+      _key("ArrowRight");
+      await _waitFor(() => selIdx() === 2, 1500).catch(() => { throw new Error("ArrowRight did not skip the reviewed slide (at row " + selIdx() + ")"); });
+      _key("ArrowLeft");
+      await _waitFor(() => selIdx() === 0, 1500).catch(() => { throw new Error("ArrowLeft did not skip the reviewed slide (at row " + selIdx() + ")"); });
+      _click(cyc());
+      await _waitFor(() => cyc()?.getAttribute("aria-pressed") === "false", 1500);
+      document.activeElement?.blur?.();
+      _key("ArrowRight");
+      await _waitFor(() => selIdx() === 1, 1500).catch(() => { throw new Error("cycle off: ArrowRight did not visit slide 2 (at row " + selIdx() + ")"); });
+    } finally {
+      if (cyc()?.getAttribute("aria-pressed") === "true") _click(cyc());
+      await _m1ClickRow(1);
+      if (rt()?.getAttribute("data-reviewed") === "1") { _click(rt()); await _waitFor(() => rt()?.getAttribute("data-reviewed") === "0", 1500).catch(() => {}); }
+    }
+  }},
+], { setup: _editorSetup });
+
+// ── meridian-CR10 / meridian-CR11: fullscreen nav icons keep a visible chip
+// on any slide background (light or dark), so they do not fade into the slide. ──
+// Emoji glyphs must carry emoji presentation and a light colour: a text-style
+// glyph draws in the inherited (dark, light-theme) text colour on the dark chip.
+const _mrdIsLightTheme = () => { const h = _$("header"); const m = (h ? getComputedStyle(h).backgroundColor : "").match(/\d+/g); return !!m && (+m[0] + +m[1] + +m[2]) / 3 >= 128; };
+const _mrdCheckNavGlyphs = async () => {
+  for (const id of ["gallery-toggle", "presenter-toggle", "student-toggle"]) {
+    const el = await _waitFor(() => _$(`[data-testid='${id}']`), 2000);
+    const sp = el.querySelector("span");
+    if (!sp) throw new Error(`${id}: no glyph`);
+    if (id !== "student-toggle" && !/️/.test(sp.textContent)) throw new Error(`${id}: glyph lacks emoji presentation (U+FE0F)`);
+    const c = getComputedStyle(sp).color;
+    if (c !== "rgb(255, 255, 255)") throw new Error(`${id}: glyph colour ${c} is not light`);
+    const r = el.getBoundingClientRect();
+    const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+    if (!hit || !el.contains(hit)) throw new Error(`${id}: covered by another element`);
+  }
+};
+uiSuite("meridian-CR10-CR11 Nav Icon Contrast", [
+  { name: "Enter fullscreen (Present)", fn: async () => {
+    document.activeElement?.blur(); await _wait(100);
+    _key("f");
+    await _waitFor(() => !_$("header"));
+  }},
+  { name: "gallery/presenter/edit nav buttons render with a non-transparent chip", fn: async () => {
+    const ids = ["gallery-toggle", "presenter-toggle", "present-edit-toggle"];
+    for (const id of ids) {
+      const el = await _waitFor(() => _$(`[data-testid='${id}']`), 2000);
+      const bg = getComputedStyle(el).backgroundColor;
+      // A transparent/near-transparent chip means the icon has no backing plate
+      // and can vanish against a light slide (CR10/CR11's reported bug).
+      if (!bg || bg === "rgba(0, 0, 0, 0)" || bg === "transparent") {
+        throw new Error(`${id}: no backing chip (background=${bg})`);
+      }
+    }
+  }},
+  { name: "emoji nav glyphs are emoji-presentation and light in this app theme", fn: _mrdCheckNavGlyphs },
+  { name: "edit icon stays visible on toggle (on/off, CR11's 'sometimes shows')", fn: async () => {
+    const btn = await _waitFor(() => _$("[data-testid='present-edit-toggle']"), 2000);
+    const bgOff = getComputedStyle(btn).backgroundColor;
+    if (bgOff === "rgba(0, 0, 0, 0)" || bgOff === "transparent") throw new Error("edit icon has no chip while off");
+    _click(btn);
+    await _wait(120);
+    const bgOn = getComputedStyle(btn).backgroundColor;
+    if (bgOn === "rgba(0, 0, 0, 0)" || bgOn === "transparent") throw new Error("edit icon has no chip while on");
+    _click(btn); // restore
+    await _wait(120);
+  }},
+  { name: "Exit fullscreen", fn: async () => {
+    _key("f");
+    await _waitFor(() => _$("header"));
+  }},
+  { name: "emoji nav glyphs stay light in the other app theme too", fn: async () => {
+    const before = _mrdIsLightTheme();
+    document.activeElement?.blur(); await _wait(50);
+    _key("d");
+    await _waitFor(() => _mrdIsLightTheme() !== before, 2000);
+    try {
+      _key("f");
+      await _waitFor(() => !_$("header"), 2000);
+      await _mrdCheckNavGlyphs();
+    } finally {
+      if (!_$("header")) { _key("f"); await _waitFor(() => _$("header"), 2000); }
+      document.activeElement?.blur(); await _wait(50);
+      _key("d");
+      await _waitFor(() => _mrdIsLightTheme() === before, 2000);
+    }
+  }},
+]);
+
+// ── meridian-CR13: editor|presenter|gallery view switcher next to Present ──
+// One switch in three places — top bar (view-switch), gallery header
+// (gallery-view-switch) and fullscreen controls (fs-view-switch) — all driven by
+// SlidePanel's single view state. Each must be on top (elementFromPoint) where shown.
+const _mrdSeg = (where, mode) => _$(`[data-testid='${where}-${mode}']`);
+const _mrdActive = (where) => _$(`[data-testid='${where}'] button[aria-pressed='true']`)?.getAttribute("aria-label") || null;
+const _mrdOnTop = (el, label) => {
+  const r = el.getBoundingClientRect();
+  const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+  if (!hit || !el.contains(hit)) throw new Error(`${label} is covered (elementFromPoint hit ${hit?.tagName || "nothing"})`);
+};
+const _mrdSwitchTo = async (where, mode) => {
+  const btn = await _waitFor(() => _mrdSeg(where, mode), 2000);
+  _mrdOnTop(btn, `${where}-${mode}`);
+  _click(btn);
+};
+const _mrdGalleryOpen = () => !!_$("[data-testid='gallery-close']");
+uiSuite("meridian-CR13 View Switcher", [
+  { name: "View switcher renders next to Present in the editor", fn: async () => {
+    await _waitFor(() => _$("[data-testid='view-switch']") && _$("[data-testid='present-btn']"), 2000);
+  }},
+  { name: "Editor segment is the active view on load", fn: async () => {
+    const btn = await _waitFor(() => _$("[data-testid='view-switch-editor']"), 2000);
+    if (btn.getAttribute("aria-pressed") !== "true") throw new Error("editor segment not marked active");
+  }},
+  { name: "Switch glyphs use emoji presentation (no text-style glyph)", fn: async () => {
+    const g = await _waitFor(() => _mrdSeg("view-switch", "gallery"), 2000);
+    if (!/️/.test(g.textContent)) throw new Error("gallery glyph lacks U+FE0F");
+  }},
+  { name: "Deck title keeps readable width in the top bar", fn: async () => {
+    const h = await _waitFor(() => _$("header"), 2000);
+    const t = _$$("span", h).find((s) => s.title && s.title === s.textContent);
+    if (!t) throw new Error("deck title not found in header");
+    const w = t.getBoundingClientRect().width;
+    const need = Math.min(100, t.scrollWidth);
+    if (w < need) throw new Error(`deck title squeezed to ${Math.round(w)}px at ${window.innerWidth}px wide`);
+    if (h.scrollWidth > h.clientWidth + 1) throw new Error(`header overflows (${h.scrollWidth} > ${h.clientWidth})`);
+  }},
+  { name: "Top bar fits on one line at every width 1024-1920 (8px sweep)", fn: async () => {
+    // The top bar fits itself to its own measured width, so forcing the header
+    // width stands in for a window resize. Sweeps up, then down (hysteresis).
+    const h = await _waitFor(() => _$("header"), 2000);
+    const frames = () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+    const prev = h.style.width;
+    const bad = [];
+    try {
+      for (const dir of [1, -1]) {
+        for (let i = 0; i <= 112; i++) {
+          const w = dir > 0 ? 1024 + i * 8 : 1920 - i * 8;
+          h.style.width = `${w}px`;
+          for (let f = 0; f < 3; f++) await frames();
+          const btns = _$$("button", h).filter((b) => b.offsetParent && !b.closest("[role='group']"));
+          const minH = Math.min(...btns.map((b) => b.offsetHeight));
+          const wrapped = btns.filter((b) => b.offsetHeight > minH + 8).map((b) => b.title || b.textContent.trim());
+          const t = _$$("span", h).find((s) => s.title && s.title === s.textContent);
+          const vs = _$("[data-testid='view-switch']", h);
+          const hr = h.getBoundingClientRect(), vr = vs ? vs.getBoundingClientRect() : null;
+          const errs = [];
+          if (h.scrollWidth > h.clientWidth + 1) errs.push(`overflow ${h.scrollWidth}>${h.clientWidth}`);
+          if (wrapped.length) errs.push(`wrapped: ${wrapped.join(", ")}`);
+          if (!t || t.getBoundingClientRect().width < Math.min(120, t.scrollWidth) - 1) errs.push(`title ${t ? Math.round(t.getBoundingClientRect().width) : "missing"}px`);
+          if (!vr || vr.width < 60 || vr.left < hr.left || vr.right > hr.right + 1) errs.push("view switch not fully shown");
+          if (errs.length) bad.push(`${w}px: ${errs.join("; ")}`);
+        }
+      }
+    } finally {
+      h.style.width = prev;
+      await frames();
+    }
+    if (bad.length) throw new Error(`${bad.length} widths fail — ${bad.slice(0, 4).join(" | ")}`);
+  }},
+  { name: "Gallery is reachable in one click from the editor", fn: async () => {
+    await _mrdSwitchTo("view-switch", "gallery");
+    await _waitFor(_mrdGalleryOpen, 2000);
+    // The top bar re-reads the view state one render later (ribbon update).
+    await _waitFor(() => _mrdActive("view-switch") === "Gallery", 2000).catch(() => { throw new Error("gallery segment not marked active after switch"); });
+  }},
+  { name: "Gallery header shows the switch on top, Gallery active", fn: async () => {
+    await _waitFor(() => _$("[data-testid='gallery-view-switch']"), 2000);
+    if (_mrdActive("gallery-view-switch") !== "Gallery") throw new Error(`gallery switch active=${_mrdActive("gallery-view-switch")}`);
+    for (const m of ["editor", "presenter", "gallery"]) _mrdOnTop(_mrdSeg("gallery-view-switch", m), `gallery-view-switch-${m}`);
+  }},
+  { name: "Editor segment in the gallery returns to the editor", fn: async () => {
+    await _mrdSwitchTo("gallery-view-switch", "editor");
+    await _waitFor(() => !_mrdGalleryOpen() && _$("header"), 2000);
+    await _waitFor(() => _mrdActive("view-switch") === "Editor", 2000).catch(() => { throw new Error("top switch not back on Editor"); });
+  }},
+  { name: "Presenter segment in the gallery enters fullscreen Present", fn: async () => {
+    await _mrdSwitchTo("view-switch", "gallery");
+    await _waitFor(_mrdGalleryOpen, 2000);
+    await _mrdSwitchTo("gallery-view-switch", "presenter");
+    await _waitFor(() => !_mrdGalleryOpen() && !_$("header"), 2000);
+  }},
+  { name: "Fullscreen shows the switch on top, Presenter active", fn: async () => {
+    await _waitFor(() => _$("[data-testid='fs-view-switch']"), 2000);
+    if (_mrdActive("fs-view-switch") !== "Presenter") throw new Error(`fs switch active=${_mrdActive("fs-view-switch")}`);
+    for (const m of ["editor", "presenter", "gallery"]) _mrdOnTop(_mrdSeg("fs-view-switch", m), `fs-view-switch-${m}`);
+  }},
+  { name: "Gallery segment in fullscreen opens the gallery (Gallery active)", fn: async () => {
+    await _mrdSwitchTo("fs-view-switch", "gallery");
+    await _waitFor(_mrdGalleryOpen, 2000);
+    if (_mrdActive("gallery-view-switch") !== "Gallery") throw new Error("gallery switch not on Gallery");
+    await _mrdSwitchTo("gallery-view-switch", "presenter");
+    await _waitFor(() => !_mrdGalleryOpen() && _mrdActive("fs-view-switch") === "Presenter", 2000);
+  }},
+  { name: "Editor segment in fullscreen exits to the editor", fn: async () => {
+    await _mrdSwitchTo("fs-view-switch", "editor");
+    await _waitFor(() => _$("header") && _mrdActive("view-switch") === "Editor", 2000);
+  }},
+  { name: "Presenter segment enters fullscreen Present", fn: async () => {
+    const btn = await _waitFor(() => _$("[data-testid='view-switch-presenter']"), 2000);
+    _click(btn);
+    await _waitFor(() => !_$("header"), 2000);
+  }},
+  { name: "Exit fullscreen back to the editor (F key)", fn: async () => {
+    document.activeElement?.blur(); await _wait(100);
+    _key("f");
+    await _waitFor(() => _$("header"), 2000);
+  }},
+]);
+// ── Sprint meridian (C3): split image alignment, accent 0, docked branding
+// pane, toolbar room above, link badge placement ──────────────────────
+const _mrdSvg = (w, h, color) =>
+  `data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='${w}'%20height='${h}'%3E%3Crect%20width='${w}'%20height='${h}'%20fill='%23${color}'/%3E%3C/svg%3E`;
+const _mrdViewport = () => _$("[data-testid='slide-viewport']");
+const _mrdFrame = () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+const _mrdInject = async (blocks, extra, ready) => {
+  const hooks = _hooks();
+  if (typeof hooks.injectBlocks !== "function") throw new Error("injectBlocks test hook not exposed");
+  hooks.injectBlocks(blocks, { layout: undefined, verticalAlign: undefined, padding: null, ...(extra || {}) });
+  const el = await _waitFor(() => ready(_mrdViewport()), 3000);
+  await _mrdFrame();
+  return el;
+};
+const _mrdSetRange = (el, value) => {
+  Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set.call(el, String(value));
+  el.dispatchEvent(new Event("input", { bubbles: true }));
+};
+const _mrdOpenBranding = async () => {
+  if (!_$("[data-testid='branding-panel']")) _click("[data-testid='brand-toggle']");
+  return _waitFor(() => _$("[data-testid='branding-panel']"), 2000);
+};
+const _mrdCloseBranding = async () => {
+  const close = _$("[data-testid='branding-panel-close']");
+  if (close) _click(close);
+  await _waitFor(() => !_$("[data-testid='branding-panel']"), 2000).catch(() => {});
+};
+// Undo every history step a test added, so branding edits do not leak.
+const _mrdUndoTo = async (past) => {
+  const hooks = _hooks();
+  document.activeElement?.blur?.();
+  for (let i = 0; i < 20 && hooks.getHistoryCounts && hooks.getHistoryCounts().past > past; i++) {
+    _key("z", { ctrlKey: true });
+    await _wait(60);
+  }
+};
+const _mrdHover = async (el) => {
+  el.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
+  await _mrdFrame();
+};
+const _mrdUnhover = async (el) => {
+  el.dispatchEvent(new MouseEvent("mouseout", { bubbles: true, relatedTarget: document.body }));
+  await _mrdFrame();
+};
+
+uiSuite("meridian-CR03 split image alignment", [
+  { name: "CR03: image-left/right keep the image centred with the content column", fn: async () => {
+    for (const layout of ["image-left", "image-right"]) {
+      const marker = `CR03 ${layout}`;
+      const img = await _mrdInject([
+        { type: "heading", text: marker },
+        { type: "bullets", items: ["One point", "Two point", "Three point"] },
+        { type: "image", src: _mrdSvg(400, 300, "3b82f6") },
+      ], { layout }, (vp) => vp?.textContent.includes(marker) && vp.querySelector("[data-split-image] img")?.naturalWidth > 0 ? vp.querySelector("[data-split-image]") : null);
+      const con = _mrdViewport().querySelector("[data-split-content]");
+      if (getComputedStyle(img).justifyContent !== "center") throw new Error(`${layout}: image column justify is ${getComputedStyle(img).justifyContent}`);
+      if (!/center/.test(getComputedStyle(con).justifyContent)) throw new Error(`${layout}: content column justify is ${getComputedStyle(con).justifyContent}`);
+      // The side image gets a measured height cap after first paint; poll until
+      // the layout settles, then compare the two column centres.
+      let m = null;
+      const measure = () => {
+        const ir = img.querySelector("img").getBoundingClientRect();
+        const kids = Array.from(con.children).map((c) => c.getBoundingClientRect()).filter((r) => r.height > 0);
+        m = { imageMid: (ir.top + ir.bottom) / 2, contentMid: (Math.min(...kids.map((r) => r.top)) + Math.max(...kids.map((r) => r.bottom))) / 2, gapTop: ir.top - img.getBoundingClientRect().top };
+        return Math.abs(m.imageMid - m.contentMid) <= 3 && m.gapTop >= 4;
+      };
+      await _waitFor(measure, 2500).catch(() => {
+        throw new Error(`${layout}: image centre ${m.imageMid.toFixed(1)} vs content centre ${m.contentMid.toFixed(1)}, top gap ${m.gapTop.toFixed(1)}`);
+      });
+    }
+  }},
+], { setup: _selectFirstModule });
+
+uiSuite("meridian-CR08 branding accent zero", [
+  { name: "CR08: accent height 0 removes the top line; the slider keeps 0", fn: async () => {
+    const hooks = _hooks();
+    const past = hooks.getHistoryCounts?.().past ?? 0;
+    await _mrdInject([{ type: "heading", text: "CR08 accent" }], null, (vp) => vp?.textContent.includes("CR08 accent") ? vp : null);
+    try {
+      const panel = await _mrdOpenBranding();
+      const range = panel.querySelector("[data-testid='branding-accent-height']");
+      if (!range) throw new Error("accent height slider missing");
+      _mrdSetRange(range, 6);
+      const bar = await _waitFor(() => _mrdViewport().querySelector("[data-branding-accent]"), 2000).catch(() => null);
+      if (!bar) throw new Error("accent bar not drawn at 6px");
+      _mrdSetRange(range, 0);
+      await _waitFor(() => !_mrdViewport().querySelector("[data-branding-accent]"), 2000)
+        .catch(() => { throw new Error("accent bar still drawn at 0px"); });
+      const live = _$("[data-testid='branding-accent-height']");
+      if (live.value !== "0") throw new Error(`slider jumped to ${live.value} after 0`);
+      if ((live.nextElementSibling?.textContent || "").trim() !== "0px") throw new Error(`label shows ${live.nextElementSibling?.textContent}`);
+    } finally {
+      await _mrdCloseBranding();
+      await _mrdUndoTo(past);
+    }
+  }},
+], { setup: _selectFirstModule });
+
+uiSuite("meridian-CR09 branding side pane", [
+  { name: "CR09: branding opens as a right pane beside the canvas and closes", fn: async () => {
+    await _mrdCloseBranding();
+    const before = _mrdViewport().getBoundingClientRect();
+    const panel = await _mrdOpenBranding();
+    await _mrdFrame();
+    await _wait(150);
+    try {
+      if (window.innerWidth >= 768) {
+        const p = panel.getBoundingClientRect();
+        const c = _mrdViewport().getBoundingClientRect();
+        if (panel.dataset.docked !== "right") throw new Error("panel is not docked right");
+        if (p.left < c.right - 1) throw new Error(`pane left ${p.left.toFixed(0)} overlaps canvas right ${c.right.toFixed(0)}`);
+        if (Math.abs(p.top - c.top) > 60 && p.top > c.top) throw new Error("pane is not beside the canvas");
+        if (c.width >= before.width - 1) throw new Error("canvas did not resize for the pane");
+        if (getComputedStyle(panel).overflowY !== "auto") throw new Error("pane does not scroll");
+        if (document.documentElement.scrollWidth > window.innerWidth + 1) throw new Error("pane caused horizontal page scroll");
+      }
+      for (const sel of ["[data-testid='branding-accent-height']", "input[placeholder='Name / Company']", "input[placeholder='Tagline']"]) {
+        if (!panel.querySelector(sel)) throw new Error(`control missing in pane: ${sel}`);
+      }
+    } finally {
+      await _mrdCloseBranding();
+    }
+    if (_$("[data-testid='branding-panel']")) throw new Error("close control did not close the pane");
+    await _waitFor(() => Math.abs(_mrdViewport().getBoundingClientRect().width - before.width) < 1.5, 2000)
+      .catch(() => { throw new Error("canvas did not return to full width"); });
+  }},
+], { setup: _selectFirstModule });
+
+// F3: every toolbar button and every editor overlay (✓ reviewed toggle,
+// comment count) must be the top element at its own centre.
+const _mrdCr15Clear = (bar, kind) => {
+  const top = (el) => { const r = el.getBoundingClientRect(); const h = document.elementFromPoint((r.left + r.right) / 2, (r.top + r.bottom) / 2); return !!h && el.contains(h); };
+  const where = kind ? kind + ": " : "";
+  for (const b of bar.querySelectorAll("button")) if (!top(b)) throw new Error(`${where}toolbar button "${b.title || b.textContent}" is covered`);
+  for (const o of document.querySelectorAll("[data-editor-overlay]")) if (!top(o)) throw new Error(`${where}editor overlay "${o.dataset.editorOverlay}" is covered`);
+};
+uiSuite("meridian-CR15 toolbar room above", [
+  { name: "CR15: full-bleed image keeps its toolbar and popups inside the slide", fn: async () => {
+    const block = await _mrdInject([{ type: "image", src: _mrdSvg(960, 540, "f59e0b") }], null,
+      (vp) => { const b = vp?.querySelector("[data-block-type='image'] img"); return b?.naturalWidth > 0 ? vp.querySelector("[data-block-type='image']") : null; });
+    await _mrdHover(block);
+    try {
+      const bar = await _waitFor(() => _mrdViewport().querySelector("[data-testid='block-hover-toolbar']"), 1500);
+      const vp = _mrdViewport().getBoundingClientRect();
+      const inView = (el) => { const r = el.getBoundingClientRect(); return r.top >= vp.top - 0.5 && r.bottom <= vp.bottom + 0.5 && r.left >= vp.left - 0.5 && r.right <= vp.right + 0.5; };
+      if (bar.dataset.chromeInside !== "true" || !inView(bar)) throw new Error("toolbar is drawn above the slide edge");
+      const hit = (el) => { const r = el.getBoundingClientRect(); const h = document.elementFromPoint((r.left + r.right) / 2, (r.top + r.bottom) / 2); return !!h && el.contains(h); };
+      if (!hit(bar)) throw new Error("toolbar is not clickable");
+      _mrdCr15Clear(bar);
+      _click(bar.querySelector("button[title='Add link']"));
+      const pop = await _waitFor(() => _$("[data-testid='block-link-popup']"), 1500);
+      if (!inView(pop) || !hit(pop)) throw new Error("link popup is cut off or covered");
+      _key("Escape");
+      pop.querySelector("input")?.blur();
+    } finally {
+      await _mrdUnhover(block);
+    }
+  }},
+  { name: "CR15: a normal slide keeps the toolbar outside the block top edge", fn: async () => {
+    const block = await _mrdInject([{ type: "heading", text: "CR15 normal" }, { type: "text", text: "Body" }], null,
+      (vp) => vp?.textContent.includes("CR15 normal") ? vp.querySelector("[data-block-type='heading']") : null);
+    await _mrdHover(block);
+    try {
+      const bar = await _waitFor(() => _mrdViewport().querySelector("[data-testid='block-hover-toolbar']"), 1500);
+      if (bar.dataset.chromeInside) throw new Error("toolbar moved inside on a block with room above");
+      if (bar.getBoundingClientRect().top >= block.getBoundingClientRect().top) throw new Error("toolbar is not above the block");
+      _mrdCr15Clear(bar);
+    } finally {
+      await _mrdUnhover(block);
+    }
+  }},
+  { name: "F3: toolbar stays clear of the comment badge and reviewed toggle", fn: async () => {
+    const extra = { comments: [{ id: "cr15-f3", text: "F3 badge", status: "open", createdAt: Date.now() }] };
+    for (const [kind, blocks, sel] of [
+      ["full-bleed", [{ type: "image", src: _mrdSvg(960, 540, "10b981") }], "[data-block-type='image']"],
+      ["normal", [{ type: "heading", text: "CR15 F3 normal" }, { type: "text", text: "Body" }], "[data-block-type='heading']"],
+    ]) {
+      const block = await _mrdInject(blocks, extra, (vp) => (vp && _$("[data-editor-overlay='comments']") && vp.querySelector(sel)) || null);
+      await _mrdHover(block);
+      try {
+        const bar = await _waitFor(() => _mrdViewport().querySelector("[data-testid='block-hover-toolbar']"), 1500);
+        await _mrdFrame();
+        _mrdCr15Clear(bar, kind);
+      } finally {
+        await _mrdUnhover(block);
+      }
+    }
+    _hooks().injectBlocks([{ type: "text", text: "F3 done" }], { comments: [] });
+  }},
+], { setup: _selectFirstModule });
+
+uiSuite("meridian-CR17 link badge placement", [
+  { name: "CR17: link badges sit just after the label text on every item kind", fn: async () => {
+    const L = "https://example.com/x";
+    const cases = {
+      "icon-row": [{ type: "icon-row", cols: 2, items: [
+        { icon: "MessageSquare", title: "ChatGPT", text: "chatgpt.com", link: L },
+        { icon: "Box", title: "Docker Sandboxes", text: "docker.com/products/docker-sandboxes", link: L },
+        { icon: "Cpu", title: "A long wrapped title that keeps going across the column width for sure", text: "sub", link: L },
+      ] }],
+      bullets: [{ type: "bullets", items: [{ text: "Short", link: L }, { text: "A much longer bullet line that wraps onto a second visual line so the badge must follow the last word of the text", link: L }, { text: "Iconed", icon: "Star", link: L }] }],
+      grid: [{ type: "grid", cols: 2, items: [{ blocks: [{ type: "text", text: "Wide cell word", link: L }] }, { blocks: [{ type: "heading", text: "Heading in a wide cell", link: L }] }] }],
+      text: [{ type: "text", text: "Block-level link on a plain text block", link: L }],
+    };
+    for (const [name, blocks] of Object.entries(cases)) {
+      const want = blocks[0].items ? blocks[0].items.length : blocks.length;
+      const placed = (vp) => {
+        const all = vp ? Array.from(vp.querySelectorAll("[data-link-badge]")) : [];
+        return all.length === want && all.every((b) => b.dataset.linkBadgePlaced === "text-end") ? all : null;
+      };
+      await _mrdInject(blocks, null, placed).catch(() => { throw new Error(`${name}: badges not placed at the text end`); });
+      await _wait(150);
+      // Re-query: a late re-render can replace the nodes found first.
+      const badges = placed(_mrdViewport());
+      if (!badges) throw new Error(`${name}: badges lost their text-end placement`);
+      for (const b of badges) {
+        const br = b.getBoundingClientRect();
+        const rects = [];
+        const walker = document.createTreeWalker(b.parentElement, NodeFilter.SHOW_TEXT);
+        const range = document.createRange();
+        for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+          if (b.contains(n) || !n.nodeValue.trim()) continue;
+          range.selectNodeContents(n);
+          rects.push(...Array.from(range.getClientRects()));
+        }
+        if (rects.some((r) => r.left < br.right - 0.5 && r.right > br.left + 0.5 && r.top < br.bottom - 0.5 && r.bottom > br.top + 0.5)) throw new Error(`${name}: badge overlaps text`);
+        const sameLine = rects.filter((r) => r.top < br.bottom && r.bottom > br.top && r.right <= br.left + 1);
+        const gap = sameLine.length ? Math.min(...sameLine.map((r) => br.left - r.right)) : Infinity;
+        if (!(gap >= 0 && gap <= 12)) {
+          const fmt = (r) => [r.left, r.top, r.right, r.bottom].map((v) => Math.round(v)).join(",");
+          throw new Error(`${name}: badge ${fmt(br)} is ${gap}px from the text end; text ${rects.map(fmt).join(" | ")}`);
+        }
+      }
+    }
+  }},
+], { setup: _selectFirstModule });
+
+// meridian-F7 (CR13): the top-bar density level is a function of the current
+// width only. The level at a width must not depend on the widths before it.
+uiSuite("meridian-CR13 top bar level has no history", [
+  { name: "Level at each width equals the level after a fresh jump (sweep down, then up)", fn: async () => {
+    const h = await _waitFor(() => _$("header[data-hdr-level]"), 2000);
+    const frames = () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+    // Read the level from what is drawn (hidden labels sit at zero width), and
+    // check that it agrees with the header's own data-hdr-level.
+    const hiddenLabel = (sel) => _$$(sel, h).some((e) => e.style.width === "0px");
+    const drawnLevel = () => {
+      if (!hiddenLabel("[data-testid='view-switch'] [data-vs-label]")) return "4";
+      if (!hiddenLabel("[data-hdr-label='3']")) return "3";
+      if (!hiddenLabel("[data-hdr-label='2']")) return "2";
+      return _$("[data-testid='present-btn']", h)?.parentElement?.style.flexShrink === "1" ? "0" : "1";
+    };
+    const settle = async (w) => {
+      h.style.width = `${w}px`;
+      for (let f = 0; f < 3; f++) await frames();
+      const lvl = drawnLevel();
+      if (h.dataset.hdrLevel !== lvl) throw new Error(`${w}px: data-hdr-level ${h.dataset.hdrLevel} but drawn level ${lvl}`);
+      return lvl;
+    };
+    const widths = [1000];
+    for (let w = 1024; w <= 1920; w += 32) widths.push(w);
+    widths.push(1440);
+    const prev = h.style.width;
+    const bad = [];
+    try {
+      // "Fresh" reference: jump to the width from a narrow bar (the boot level is low).
+      const fresh = {};
+      for (const w of widths) { await settle(700); fresh[w] = await settle(w); }
+      for (const w of widths) { await settle(2400); const got = await settle(w); if (got !== fresh[w]) bad.push(`${w}px from wide: ${got} vs fresh ${fresh[w]}`); }
+      const down = [...widths].sort((a, b) => b - a);
+      for (const w of down) { const got = await settle(w); if (got !== fresh[w]) bad.push(`${w}px sweep down: ${got} vs fresh ${fresh[w]}`); }
+      for (const w of [...down].reverse()) { const got = await settle(w); if (got !== fresh[w]) bad.push(`${w}px sweep up: ${got} vs fresh ${fresh[w]}`); }
+      // The reported case: a narrow bar that grows must get its labels back.
+      await settle(1000);
+      const grown = await settle(1440);
+      if (grown !== fresh[1440]) bad.push(`1000->1440: ${grown} vs fresh ${fresh[1440]}`);
+      // No flapping: the level stays put over many frames at a fixed width.
+      for (const w of [1024, 1440, 1920]) {
+        const first = await settle(w);
+        for (let f = 0; f < 6; f++) { await frames(); if (h.dataset.hdrLevel !== first) { bad.push(`${w}px flaps ${first}->${h.dataset.hdrLevel}`); break; } }
+      }
+      if (fresh[1920] !== "4") bad.push(`1920px level ${fresh[1920]}, want 4`);
+    } finally {
+      h.style.width = prev;
+      await frames();
+    }
+    if (bad.length) throw new Error(`${bad.length} mismatches — ${bad.slice(0, 4).join(" | ")}`);
+  }},
+], { setup: _selectFirstModule });
+
+// meridian-F7 (CR01): the "file already holds this" signature moves only after
+// a confirmed write. A failed or rejected save must be retried by the next
+// identical flush, or the edit is lost.
+uiSuite("meridian-CR01 local save retries after a failed write", [
+  { name: "Failed save is retried; a confirmed save is not repeated", fn: async () => {
+    const hooks = _hooks();
+    if (!hooks.capturePostDemoFlushForTest || !hooks.flushDemoSaveForTest || !hooks.setGuidelinesForTest) throw new Error("save test hooks missing");
+    const originalStorage = window.storage;
+    const originalLocalSend = window.__velaSendDeckUpdate;
+    const writes = [];
+    let outcome = "fail";
+    window.storage = { ...(originalStorage || {}), set: async () => {}, delete: async () => {} };
+    window.__velaSendDeckUpdate = (payload) => {
+      writes.push(payload);
+      if (outcome === "reject") return Promise.reject(new Error("save failed (test)"));
+      return Promise.resolve(outcome === "ok");
+    };
+    const flush = () => hooks.flushDemoSaveForTest(hooks.capturePostDemoFlushForTest(), { local: true, storage: false });
+    try {
+      hooks.setGuidelinesForTest("meridian-F7 unsaved edit");
+      await _wait(50);
+      flush();
+      await _waitFor(() => writes.length === 1, 2000);
+      await _wait(30);
+      flush(); // same payload, previous write failed: must write again
+      await _waitFor(() => writes.length === 2, 2000).catch(() => { throw new Error("identical flush after a failed save was skipped"); });
+      outcome = "reject";
+      await _wait(30);
+      flush();
+      await _waitFor(() => writes.length === 3, 2000).catch(() => { throw new Error("identical flush after a failed save was skipped (2)"); });
+      await _wait(30);
+      flush(); // previous write rejected: must write again
+      await _waitFor(() => writes.length === 4, 2000).catch(() => { throw new Error("identical flush after a rejected save was skipped"); });
+      outcome = "ok";
+      await _wait(30);
+      flush();
+      await _waitFor(() => writes.length === 5, 2000).catch(() => { throw new Error("retry after failures was skipped"); });
+      await _wait(30);
+      flush(); // confirmed on disk now: nothing to write
+      await _wait(200);
+      if (writes.length !== 5) throw new Error(`confirmed payload written again (${writes.length} writes)`);
+      if (writes.some((p) => p.guidelines !== "meridian-F7 unsaved edit")) throw new Error("wrong payload sent");
+    } finally {
+      window.storage = originalStorage;
+      window.__velaSendDeckUpdate = originalLocalSend;
+      hooks.restoreStartupDeck?.();
+      await _wait(100);
+    }
+  }},
+]);
+
+// meridian-F8 (CR01): with a slow backend, the file must end equal to the
+// latest deck state after all writes settle — also when the latest state is
+// the one the file held before the in-flight write (edit, then undo).
+const _meridianF8SlowSave = async (steps, want) => {
+  const hooks = _hooks();
+  if (!hooks.capturePostDemoFlushForTest || !hooks.flushDemoSaveForTest || !hooks.setGuidelinesForTest) throw new Error("save test hooks missing");
+  const originalStorage = window.storage;
+  const originalLocalSend = window.__velaSendDeckUpdate;
+  const calls = [];
+  let pending = 0;
+  let disk = null;
+  let latency = 0;
+  window.storage = { ...(originalStorage || {}), set: async () => {}, delete: async () => {} };
+  // Stub backend: each write lands on "disk" in call order after `latency` ms.
+  window.__velaSendDeckUpdate = (payload) => {
+    calls.push(payload.guidelines);
+    pending++;
+    return new Promise((r) => setTimeout(() => { disk = payload.guidelines; pending--; r(true); }, latency));
+  };
+  const flush = () => hooks.flushDemoSaveForTest(hooks.capturePostDemoFlushForTest(), { local: true, storage: false });
+  const edit = async (g) => {
+    hooks.setGuidelinesForTest(g);
+    await _wait(50);
+    flush();
+    await _wait(30);
+  };
+  try {
+    // Baseline: a confirmed write puts "base" on disk.
+    await edit("meridian-F8 base");
+    await _waitFor(() => pending === 0 && disk === "meridian-F8 base", 2000);
+    latency = 400;
+    for (const g of steps) await edit(g); // later steps run while the first write is in flight
+    await _waitFor(() => pending === 0, 3000);
+    await _wait(100);
+    if (disk !== want) throw new Error(`disk "${disk}", want "${want}"; calls ${JSON.stringify(calls)}`);
+    // Settled and equal: one more flush of the same state writes nothing.
+    const n = calls.length;
+    flush();
+    await _wait(200);
+    if (calls.length !== n) throw new Error(`settled state written again; calls ${JSON.stringify(calls)}`);
+  } finally {
+    window.storage = originalStorage;
+    window.__velaSendDeckUpdate = originalLocalSend;
+    hooks.restoreStartupDeck?.();
+    await _wait(100);
+  }
+};
+uiSuite("meridian-CR01 local save ends at the latest state with a slow backend", [
+  { name: "Edit, then undo during the in-flight write: file ends at the original", fn: () => _meridianF8SlowSave(["meridian-F8 edit", "meridian-F8 base"], "meridian-F8 base") },
+  { name: "Edit, then edit again during the in-flight write: file ends at the last edit", fn: () => _meridianF8SlowSave(["meridian-F8 edit", "meridian-F8 edit 2"], "meridian-F8 edit 2") },
+]);
+
 // ━━━ UI TEST RUNNER COMPONENT ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 // Demo deck guard — UI tests only run against the original demo deck
@@ -18021,6 +18980,32 @@ function buildShadingDict(gradient, coords) {
 // ━━━ PDF Text encoding ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // For standard fonts, PDF uses WinAnsiEncoding (Latin-1 subset)
 // Characters outside this range get replaced with ?
+
+// WinAnsiEncoding bytes 128-159 → Unicode code point (PDF 32000-1, Annex D).
+// The ONE copy of this table: pdfStringEncode (byte emitted), isEmojiCodepoint
+// (these are text glyphs, not emoji images) and the embedded-font width table
+// in part-pdf-vector.jsx (concatenated after this part) all read it. A second
+// copy drifts: a char the width table knows but the encoder does not is sent
+// down the emoji-image path or dropped (the € sizing bug).
+const WIN_ANSI_HIGH = {
+  128: 0x20AC, 130: 0x201A, 131: 0x0192, 132: 0x201E, 133: 0x2026,
+  134: 0x2020, 135: 0x2021, 136: 0x02C6, 137: 0x2030, 138: 0x0160,
+  139: 0x2039, 140: 0x0152, 142: 0x017D, 145: 0x2018, 146: 0x2019,
+  147: 0x201C, 148: 0x201D, 149: 0x2022, 150: 0x2013, 151: 0x2014,
+  152: 0x02DC, 153: 0x2122, 154: 0x0161, 155: 0x203A, 156: 0x0153,
+  158: 0x017E, 159: 0x0178
+};
+const WIN_ANSI_FROM_UNICODE = new Map(Object.keys(WIN_ANSI_HIGH).map((b) => [WIN_ANSI_HIGH[b], Number(b)]));
+
+// The single-byte code a PDF string uses for code point `cp`, or -1 when
+// WinAnsiEncoding has no slot for it. 32-126 and 128-255 pass through (the
+// encoder has always emitted 128-255 as their own byte).
+function pdfWinAnsiByte(cp) {
+  if ((cp >= 32 && cp <= 126) || (cp >= 128 && cp <= 255)) return cp;
+  const b = WIN_ANSI_FROM_UNICODE.get(cp);
+  return b === undefined ? -1 : b;
+}
+
 function pdfStringEncode(str) {
   let out = "(";
   for (let i = 0; i < str.length; i++) {
@@ -18039,19 +19024,13 @@ function pdfStringEncode(str) {
       // Latin-1 chars (©, ·, ×, etc.) — must use octal escape to avoid
       // UTF-8 double-encoding when TextEncoder converts to bytes
       out += "\\" + c.toString(8).padStart(3, "0");
+    } else if (WIN_ANSI_FROM_UNICODE.has(c)) {
+      // WinAnsi 128-159 glyphs (€ – — “ ” ‘ ’ • … ™ ‰ …) — emit their real
+      // byte as an octal escape (avoids UTF-8 double-encoding via TextEncoder)
+      out += "\\" + WIN_ANSI_FROM_UNICODE.get(c).toString(8).padStart(3, "0");
     } else {
-      // Typographic Unicode → WinAnsiEncoding substitutions
-      // Values use PDF octal escapes to avoid UTF-8 double-encoding via TextEncoder
+      // No WinAnsi slot: ASCII substitutions for a few common symbols
       const typoMap = {
-        0x2014: "\\227", // em dash (WinAnsi 0x97)
-        0x2013: "\\226", // en dash (WinAnsi 0x96)
-        0x201C: "\\223", // left double quote (WinAnsi 0x93)
-        0x201D: "\\224", // right double quote (WinAnsi 0x94)
-        0x2018: "\\221", // left single quote (WinAnsi 0x91)
-        0x2019: "\\222", // right single quote (WinAnsi 0x92)
-        0x2022: "\\267", // bullet → middle dot (WinAnsi 0xB7)
-        0x2026: "...",   // ellipsis
-        0x2122: "TM",    // trademark
         0x2192: "->",    // right arrow
         0x2190: "<-",    // left arrow
         0x21D2: "=>",    // double right arrow
@@ -18075,8 +19054,12 @@ function isEmojiCodepoint(cp) {
   if (cp === 0xFE0F || cp === 0xFE0E || cp === 0x200D) return false;
   // Skin tone modifiers — not standalone visual
   if (cp >= 0x1F3FB && cp <= 0x1F3FF) return false;
-  // Common typographic characters we handle as text substitutions
-  const textSubs = [0x2014,0x2013,0x201C,0x201D,0x2018,0x2019,0x2022,0x2026,0x2122,0x2192,0x2190,0x2191,0x2193,0x21D2];
+  // Every WinAnsi-representable glyph (€, –, “, …, ™, •) is real text: the
+  // embedded fonts draw it at text size. Sending it down the emoji-image path
+  // drew a square bitmap squeezed into the glyph box (wrong size / stretched).
+  if (WIN_ANSI_FROM_UNICODE.has(cp)) return false;
+  // Arrows we handle as ASCII text substitutions
+  const textSubs = [0x2192,0x2190,0x2191,0x2193,0x21D2];
   if (textSubs.includes(cp)) return false;
   return cp > 0xFF;
 }
@@ -19410,7 +20393,8 @@ function buildVectorPdf(pages, pageW, pageH, fonts, showBranding) {
         if (n > 1 && run.w > 0 && fd && fd.widths) {
           let rawW = 0;
           for (let ci = 0; ci < n; ci++) {
-            const code = run.text.charCodeAt(ci);
+            // Width of the byte pdfStringEncode emits for this char
+            const code = pdfWinAnsiByte(run.text.charCodeAt(ci));
             rawW += (code >= 32 && code <= 255) ? (fd.widths[code - 32] || 0) : 500;
           }
           const rawPdfW = rawW * run.fontSize / 1000;
@@ -19715,14 +20699,8 @@ function parseTTF(buf) {
 
   // Build WinAnsi char widths (chars 32-255)
   // WinAnsi maps chars 128-159 to special Unicode code points
-  const winAnsiMap = {
-    128: 0x20AC, 130: 0x201A, 131: 0x0192, 132: 0x201E, 133: 0x2026,
-    134: 0x2020, 135: 0x2021, 136: 0x02C6, 137: 0x2030, 138: 0x0160,
-    139: 0x2039, 140: 0x0152, 142: 0x017D, 145: 0x2018, 146: 0x2019,
-    147: 0x201C, 148: 0x201D, 149: 0x2022, 150: 0x2013, 151: 0x2014,
-    152: 0x02DC, 153: 0x2122, 154: 0x0161, 155: 0x203A, 156: 0x0153,
-    158: 0x017E, 159: 0x0178
-  };
+  // (WIN_ANSI_HIGH — the shared table in part-pdf-extract.jsx)
+  const winAnsiMap = WIN_ANSI_HIGH;
 
   const widths = new Array(224); // chars 32-255
   for (let i = 0; i < 224; i++) {
@@ -20705,6 +21683,18 @@ function stripEsmImportsForStandalone(jsx) {
     .replace(/^export\s+default\s+function\s+/m, "function ");
 }
 
+// Neutralino serves a vela.jsx that sync-vela.py already prefixed with its own
+// UMD shim (the same React/lucide destructure buildStandaloneHtml adds). Keeping
+// both declares useState twice and Babel rejects the script (CR12). Strip the
+// sync-vela.py block ONLY when it is at offset 0 of the trusted template, before
+// any deck is spliced in, so deck content can never forge or move this anchor.
+// `\r?\n` (not a bare `\n`) so a CRLF-written file (e.g. a Windows-side
+// sync-vela.py run) still matches — see D1 in the meridian sprint notes.
+const NEUTRALINO_UMD_SHIM_RE = /^\/\/ --- Neutralino UMD shim \(generated by sync-vela\.py\) -*\r?\n[^]*?\r?\n\/\/ -{10,}\r?\n\r?\n?/;
+function stripNeutralinoUmdShim(jsx) {
+  return typeof jsx === "string" ? jsx.replace(NEUTRALINO_UMD_SHIM_RE, "") : jsx;
+}
+
 // Replace the value bound to `const STARTUP_PATCH = ...;` with the current
 // deck, whether the source holds the pristine `null` sentinel (Neutralino:
 // freshly fetched vela.jsx) or an already-embedded deck object (artifact/
@@ -20763,7 +21753,7 @@ function escapeHtmlText(s) {
 function buildStandaloneHtml(jsxSource, deckObj, opts = {}) {
   const { footer = false, babel } = opts;
   if (!babel || typeof babel.transform !== "function") throw new Error("buildStandaloneHtml requires a Babel-standalone instance");
-  let jsx = stripEsmImportsForStandalone(jsxSource);
+  let jsx = stripEsmImportsForStandalone(stripNeutralinoUmdShim(jsxSource));
   jsx = spliceStartupPatch(jsx, deckObj);
   jsx = flipPresentationMode(jsx);
   const shim =
@@ -23262,6 +24252,20 @@ export default function App() {
   const postDemoFlushRequest = useRef(null);
   const postDemoFlushModes = useRef({ local: false, storage: false });
   const flushLocalStateRef = useRef(null);
+  // No-edit guard (CR01): JSON of the deck payload the file is known to hold —
+  // the state right after a load from disk, then each payload we send. A flush
+  // whose payload equals it is skipped, so opening a deck the user did not
+  // change never rewrites the file (sanitize can normalize values on load).
+  const _localDiskSig = useRef(null);
+  // Save ordering for the guard above: `sent` numbers each send, `done` is the
+  // newest send whose result is known. _localDiskSig moves only on a CONFIRMED
+  // write — a failed or unconfirmed send must not mark the payload as on disk,
+  // or a later identical flush would skip it and the edit is lost.
+  const _localSaveSeq = useRef({ sent: 0, done: 0 });
+  const _localSentSig = useRef(null); // payload JSON of the newest send
+  // lanes object of the last LOAD from disk (startup patch / incoming update);
+  // the lanes effect adopts that state as the baseline instead of saving it.
+  const _localBaselineLanes = useRef(null);
   const flushStorageStateRef = useRef(null);
   const requestPostDemoFlushRef = useRef(null);
   _localSyncState.current = state; // always up-to-date
@@ -23282,11 +24286,33 @@ export default function App() {
     if (!save.lanes?.length || !totalSlides) return false;
     delete save.chatMessages; delete save.chatLoading; delete save.fullscreen;
     delete save.lastDebug; delete save._bootstrap; delete save._version;
+    const payload = localDeckPayload(source);
+    const sig = JSON.stringify(payload);
+    // Unchanged vs file: nothing to write — but only when no send of a
+    // different payload is still in flight. That send can land after this
+    // flush and overwrite the file (edit, then undo during a slow save).
+    const inFlight = _localSaveSeq.current.sent > _localSaveSeq.current.done;
+    if (sig === _localDiskSig.current && (!inFlight || sig === _localSentSig.current)) return false;
+    const seq = ++_localSaveSeq.current.sent;
+    _localSentSig.current = sig;
+    // Backend contract: a Promise that resolves true only after the write is
+    // confirmed (false or a rejection = not written / superseded). A plain
+    // return is a synchronous backend: false = failed, anything else = written.
+    const settle = (okWrite) => {
+      const q = _localSaveSeq.current;
+      if (seq <= q.done) return; // a newer result or a disk load already decided
+      if (okWrite) { q.done = seq; _localDiskSig.current = sig; }
+      else if (seq === q.sent) { q.done = seq; _localDiskSig.current = null; } // file state unknown: next flush retries
+    };
     try {
-      window.__velaSendDeckUpdate({ deckTitle: source.deckTitle, lanes: save.lanes, branding: save.branding, guidelines: save.guidelines });
+      const res = window.__velaSendDeckUpdate(payload);
+      if (res && typeof res.then === "function") {
+        res.then((v) => settle(v === true), (error) => { dbg("Local save error:", error); settle(false); });
+      } else settle(res !== false);
       return true;
     } catch (error) {
       dbg("Local save error:", error);
+      settle(false);
       return false;
     }
   };
@@ -23587,6 +24613,14 @@ export default function App() {
     // a deck switch (the _localSyncIncoming guard skips setting a new timer
     // but must still kill the old one).
     clearTimeout(localSyncTimer.current);
+    // First render of a deck just loaded from disk: record it as the file's
+    // content instead of scheduling a save (CR01 no-edit guard).
+    if (VELA_LOCAL_MODE && loaded.current && _localBaselineLanes.current && state.lanes === _localBaselineLanes.current) {
+      _localBaselineLanes.current = null;
+      _localDiskSig.current = JSON.stringify(localDeckPayload(_localSyncState.current));
+      _localSaveSeq.current.done = _localSaveSeq.current.sent; // older in-flight results must not replace this
+      return;
+    }
     if (!VELA_LOCAL_MODE || !loaded.current || _localSyncIncoming.current ||
         document.documentElement.dataset.velaDemoRunning === "true") return;
     localSyncTimer.current = setTimeout(() => flushLocalStateRef.current?.(null), 600);
@@ -23601,18 +24635,12 @@ export default function App() {
       _localSyncIncoming.current = true;
       try {
         const cur = _localSyncState.current;
-        const sanitized = validateAndSanitizeDeck(deck);
-        // Preserve lane/item IDs so selection stays valid
+        // Keep the file's own valid, unique ids (deck open/switch must not churn
+        // ids — CR01); only minted ids fall back to the current id at that
+        // position, so selection stays valid after an editor drops ids.
+        const sanitized = validateAndSanitizeDeck(deck, { keepIds: true });
         if (cur.lanes && sanitized.lanes && cur.lanes.length === sanitized.lanes.length) {
-          for (let li = 0; li < sanitized.lanes.length; li++) {
-            sanitized.lanes[li].id = cur.lanes[li].id;
-            if (sanitized.lanes[li].items && cur.lanes[li].items) {
-              const minItems = Math.min(sanitized.lanes[li].items.length, cur.lanes[li].items.length);
-              for (let ii = 0; ii < minItems; ii++) {
-                sanitized.lanes[li].items[ii].id = cur.lanes[li].items[ii].id;
-              }
-            }
-          }
+          adoptPriorDeckIds(sanitized, deck, cur);
         }
         // Check if this is a different deck (picker switch) vs same-deck external edit
         const isDifferentDeck = !cur.lanes?.length || cur.lanes.length !== sanitized.lanes.length ||
@@ -23627,6 +24655,7 @@ export default function App() {
           // Reset selection when switching to a different deck so auto-select picks the first module
           ...(isDifferentDeck ? { selectedId: null, slideIndex: 0 } : {}),
         };
+        _localBaselineLanes.current = payload.lanes;
         dispatch({ type: "LOAD", payload });
       } catch (e) {
         // Fail closed: a malicious .vela edited on disk is pushed here over the serve.py
@@ -23695,6 +24724,72 @@ export default function App() {
 
   // ━━━ Mobile ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   const isMobile = useIsMobile();
+  // CR13: top-bar density level, measured from the real free space (no fixed
+  // breakpoints). 4 = all labels + labelled view switch; 3 = all labels,
+  // icon-only switch; 2 = six action buttons hide their label visually; 1 = the
+  // Present label hides too; 0 = as 1, but the action group may shrink (labels
+  // can wrap), the last resort for narrow windows. A hidden label stays in the
+  // DOM at zero width (so it can be measured; the title attr names the button).
+  // A level shows only while it fits on one line with the deck title >=
+  // HDR_TITLE_MIN; the switch labels also need the whole title to fit.
+  // The level is a function of the current space only (meridian-F7): each
+  // level's natural width is computed from measured widths, and the widest level
+  // that fits wins. No memory of past widths, so a window that grows gets its
+  // labels back at once, and the same width always gives the same level.
+  const HDR_TITLE_MIN = 120, HDR_TOP = 4, HDR_LABEL_GAP = 4;
+  const hdrGap = (lvl) => (lvl < 3 ? 8 : 10);
+  const [hdrSize, setHdrSize] = useState(1);
+  const hdrSizeRef = useRef(1);
+  hdrSizeRef.current = hdrSize;
+  const hdrRef = useRef(null), hdrBoxRef = useRef(null), hdrSpacerRef = useRef(null), hdrTitleRef = useRef(null);
+  const hdrSigRef = useRef(null);
+  const fitHeader = useCallback(() => {
+    const h = hdrRef.current, box = hdrBoxRef.current, sp = hdrSpacerRef.current;
+    if (!h || !box || !sp) return;
+    const ti = hdrTitleRef.current, lvl = hdrSizeRef.current;
+    // Skip the measurement when nothing that decides the level has changed.
+    const sig = [h.clientWidth, h.scrollWidth, box.scrollWidth, sp.offsetWidth, ti ? ti.scrollWidth : -1, ti ? ti.offsetWidth : -1, lvl].join("|");
+    if (hdrSigRef.current === sig) return;
+    hdrSigRef.current = sig;
+    const avail = h.getBoundingClientRect().width;
+    // Natural width at the current level: lay the bar out at max-content for one
+    // synchronous read (title and action group at full size), then restore.
+    const prevW = h.style.width;
+    h.style.width = "max-content";
+    const nat = h.getBoundingClientRect().width;
+    const tiNat = ti ? ti.getBoundingClientRect().width : 0;
+    h.style.width = prevW;
+    // A label's text width is the same shown or hidden (a hidden label stays in
+    // the DOM at zero width). A top-bar label cancels its button's 4px flex gap
+    // (margin -4, the space is in the text); a view-switch label adds the gap.
+    const range = document.createRange();
+    const textW = (sel, gap) => Array.from(h.querySelectorAll(sel)).reduce((sum, e) => { range.selectNodeContents(e); return sum + range.getBoundingClientRect().width + gap; }, 0);
+    const lab2 = textW("[data-hdr-label='2']", 0), lab3 = textW("[data-hdr-label='3']", 0);
+    // View-switch labels: the second span of each segment (shown or zero-width).
+    const lab4 = textW("[data-testid='view-switch'] button > span:nth-child(2)", HDR_LABEL_GAP) + VIEW_SWITCH_LABEL_EXTRA;
+    const inFlow = (e) => { const cs = getComputedStyle(e); return cs.display !== "none" && cs.position !== "absolute" && cs.position !== "fixed"; };
+    const gaps = Array.from(h.children).filter(inFlow).length - 1 + Array.from(box.children).filter(inFlow).length - 1;
+    const extra = (L) => (L >= 2 ? lab2 : 0) + (L >= 3 ? lab3 : 0) + (L >= 4 ? lab4 : 0) + hdrGap(L) * gaps;
+    const titleSlack = ti ? Math.max(0, tiNat - HDR_TITLE_MIN) : 0;
+    const base = nat - extra(lvl);
+    // Level 4 needs the whole title; levels 1-3 may shrink it to HDR_TITLE_MIN.
+    const need = (L) => base + extra(L) - (L < HDR_TOP ? titleSlack : 0);
+    let next = 0; // level 0: nothing fits unshrunk, so the action group may shrink
+    for (let L = HDR_TOP; L >= 1; L--) if (need(L) <= avail + 0.5) { next = L; break; }
+    if (next !== lvl) { hdrSizeRef.current = next; setHdrSize(next); }
+  }, []);
+  useLayoutEffect(() => { fitHeader(); });
+  useEffect(() => {
+    if (typeof ResizeObserver === "undefined") return;
+    // Web fonts change label widths without resizing the bar: measure again.
+    try { document.fonts?.ready.then(() => { hdrSigRef.current = null; fitHeader(); }); } catch (_) {}
+    const ro = new ResizeObserver(() => fitHeader());
+    [hdrRef.current, hdrBoxRef.current, hdrTitleRef.current].forEach((el) => el && ro.observe(el));
+    return () => ro.disconnect();
+  }, [fitHeader, isMobile, state.fullscreen, editingTitle]);
+  // Shown or hidden, a label is the same span text ("pre": the leading space is
+  // the icon gap, margin -4 cancels the flex gap), so fitHeader can measure it.
+  const hdrLabel = (txt, need = 3) => (hdrSize < need ? <span data-hdr-label={need} style={{ display: "inline-block", width: 0, overflow: "hidden", whiteSpace: "pre", marginLeft: -4, verticalAlign: "top" }}>{txt}</span> : <span data-hdr-label={need} style={{ whiteSpace: "pre", marginLeft: -4 }}>{txt}</span>);
   const [mobileTab, setMobileTab] = useState("list"); // "list" | "slides" | "chat"
   const [mobileMenu, setMobileMenu] = useState(false);
   const [viewMenu, setViewMenu] = useState(false);
@@ -23860,7 +24955,12 @@ export default function App() {
         if (VELA_LOCAL_MODE) {
           // Local/folder mode: file on disk is always authoritative — apply directly
           // (localStorage may contain a different deck from the same origin)
-          try { applyStartupPatch(loadedDeck || { lanes: [] }, dispatch); } catch (err) { dbg("[PATCH] Error:", err); }
+          try {
+            applyStartupPatch(loadedDeck || { lanes: [] }, (a) => {
+              if (a && a.type === "LOAD" && a.payload) _localBaselineLanes.current = a.payload.lanes;
+              dispatch(a);
+            });
+          } catch (err) { dbg("[PATCH] Error:", err); }
         } else if (!loadedDeck) {
           // First run — no saved data, apply patch directly
           try { applyStartupPatch({ lanes: [] }, dispatch); } catch (err) { dbg("[PATCH] Error:", err); }
@@ -23975,6 +25075,8 @@ export default function App() {
   React.useEffect(() => {
     const name = state.deckTitle || "Untitled";
     document.title = name === "Untitled" ? "Vela Slides" : `${name} — Vela Slides`;
+    // Desktop shell hook (nl-boot.js): mirror the sanitized title to the native window.
+    if (typeof window.__velaOnDeckTitle === "function") { try { window.__velaOnDeckTitle(state.deckTitle || ""); } catch (_) {} }
   }, [state.deckTitle]);
 
   // Export
@@ -24122,7 +25224,7 @@ export default function App() {
       </div>}
 
       {/* ── TOP BAR — title left, actions right, dropdown buttons ── */}
-      {!state.fullscreen && <header style={{ padding: isMobile ? "6px 10px" : "0 14px", borderBottom: `1px solid ${T.border}`, display: "flex", alignItems: "center", gap: isMobile ? 8 : 10, background: T.bgPanel, flexShrink: 0, height: isMobile ? 40 : 44 }}>
+      {!state.fullscreen && <header ref={hdrRef} data-hdr-level={isMobile ? undefined : hdrSize} style={{ padding: isMobile ? "6px 10px" : "0 14px", borderBottom: `1px solid ${T.border}`, display: "flex", alignItems: "center", gap: isMobile ? 8 : hdrGap(hdrSize), background: T.bgPanel, flexShrink: 0, height: isMobile ? 40 : 44 }}>
         {/* Left: icon + title + time */}
         {isMobile && mobileTab !== "list" && <button onClick={() => { setMobileTab("list"); if (mobileTab === "slides") dispatch({ type: "DESELECT" }); }} style={S.btn({ padding: "2px 4px", color: T.accent, fontSize: 16 })}>{"←"}</button>}
         <span onClick={() => { if (typeof window !== "undefined" && typeof window.__velaOpenDeckPicker === "function") { window.__velaOpenDeckPicker(); } else { setShowChangelog(true); } }} style={{ cursor: "pointer", display: "flex", alignItems: "center" }} title={typeof window !== "undefined" && typeof window.__velaOpenDeckPicker === "function" ? "Open deck (Ctrl+O)" : "About"}><VelaIcon size={20} /></span>
@@ -24151,13 +25253,14 @@ export default function App() {
             onBlur={commitTitle}
             style={S.input({ padding: "3px 8px", fontSize: 14, fontWeight: 700, width: 200, minWidth: 60, flexShrink: 1, border: `1px solid ${T.accent}`, fontFamily: FONT.display })} />
         ) : (
-          <span onClick={startEditTitle} style={{ fontSize: 14, fontWeight: 700, color: T.text, fontFamily: FONT.display, cursor: "pointer", padding: "2px 4px", borderRadius: 4, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flexShrink: 1, minWidth: 0, maxWidth: isMobile ? "40vw" : undefined }} title={state.deckTitle || "Untitled"}>{state.deckTitle || "Untitled"}</span>
+          <span ref={hdrTitleRef} onClick={startEditTitle} style={{ fontSize: 14, fontWeight: 700, color: T.text, fontFamily: FONT.display, cursor: "pointer", padding: "2px 4px", borderRadius: 4, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flexShrink: 1, minWidth: isMobile ? 0 : HDR_TITLE_MIN, maxWidth: isMobile ? "40vw" : undefined }} title={state.deckTitle || "Untitled"}>{state.deckTitle || "Untitled"}</span>
         )}
         {!isMobile && (deckTime > 0 || total > 0) && <span onClick={() => setShowStats(true)} title={`${deckTimeAll > 0 ? fmtTime(deckTimeAll) + " total · " : ""}${slideCountVisible} slides · ${total} sections${hiddenSlideCount > 0 ? ` · ${hiddenSlideCount} hidden` : ""} — click for stats`} style={{ fontFamily: FONT.mono, fontSize: 13, fontWeight: 700, color: T.text, whiteSpace: "nowrap", flexShrink: 0, background: T.accent + "12", padding: "2px 8px", borderRadius: 4, cursor: "pointer" }}>{deckTime > 0 ? `⏱${fmtTimeMin(deckTime)} · ` : ""}{slideCountVisible}sl · {total}§{hiddenSlideCount > 0 ? <span style={{ opacity: 0.6 }}> · {hiddenSlideCount}⊘</span> : ""}</span>}
         {/* Spacer — pushes actions right */}
-        <div style={{ flex: 1, minWidth: isMobile ? 4 : 0 }} />
-        {/* Right: deck-level actions with dropdowns */}
-        {!isMobile && <>
+        <div ref={hdrSpacerRef} style={{ flex: 1, minWidth: isMobile ? 4 : 0 }} />
+        {/* Right: deck-level actions with dropdowns. Level >= 1 never shrinks (so no
+            label wraps; fitHeader drops a level instead); level 0 may shrink. */}
+        {!isMobile && <div ref={hdrBoxRef} style={{ display: "flex", alignItems: "center", gap: hdrGap(hdrSize), flexShrink: hdrSize === 0 ? 1 : 0 }}>
           {/* View dropdown — shows current ratio */}
           {(() => {
             const sa = slideActionsRef.current;
@@ -24179,19 +25282,24 @@ export default function App() {
             const sa = slideActionsRef.current;
             const has = !!selectedConcept;
             return <>
-              <button data-testid="batch-edit-toggle" onClick={() => sa?.toggleBatchEdit?.()} disabled={!aiOk || !has || !sa?.slidesCount} title={aiOk ? "Batch edit across slides" : VELA_AI_UNAVAILABLE_MSG} style={S.btn({ padding: "4px 10px", fontSize: 14, color: !aiOk ? T.textDim + "60" : sa?.showBatchEdit ? T.accent : (sa?.improving ? T.red : T.textDim), background: sa?.showBatchEdit || sa?.improving ? T.accent + "20" : "transparent", borderRadius: 4, opacity: aiOk && has && sa?.slidesCount ? 1 : 0.4, display: "flex", alignItems: "center", gap: 4, cursor: aiOk ? "pointer" : "not-allowed" })}>{sa?.improving ? "⏹" : "🔄"} Batch</button>
-              <button data-testid="brand-toggle" onClick={() => sa?.toggleBranding?.()} disabled={!has} title="Branding & guidelines" style={S.btn({ padding: "4px 10px", fontSize: 14, color: sa?.showBranding ? T.accent : (sa?.hasBranding ? T.accent : T.textDim), background: sa?.showBranding ? T.accent + "20" : "transparent", borderRadius: 4, opacity: has ? 1 : 0.4, display: "flex", alignItems: "center", gap: 4 })}>{"🎨"} Brand</button>
-              <button onClick={() => sa?.present?.()} disabled={!has} style={{ display: "flex", alignItems: "center", gap: 5, padding: "5px 14px", background: has ? T.green : T.border, color: has ? "#fff" : T.textDim, border: "none", borderRadius: 6, cursor: has ? "pointer" : "default", opacity: has ? 1 : 0.5, fontFamily: FONT.mono, fontSize: 14, fontWeight: 700 }}>{"▶"} Present</button>
+              <button data-testid="batch-edit-toggle" onClick={() => sa?.toggleBatchEdit?.()} disabled={!aiOk || !has || !sa?.slidesCount} title={aiOk ? "Batch edit across slides" : VELA_AI_UNAVAILABLE_MSG} style={S.btn({ padding: "4px 10px", fontSize: 14, color: !aiOk ? T.textDim + "60" : sa?.showBatchEdit ? T.accent : (sa?.improving ? T.red : T.textDim), background: sa?.showBatchEdit || sa?.improving ? T.accent + "20" : "transparent", borderRadius: 4, opacity: aiOk && has && sa?.slidesCount ? 1 : 0.4, display: "flex", alignItems: "center", gap: 4, cursor: aiOk ? "pointer" : "not-allowed" })}>{sa?.improving ? "⏹" : "🔄"}{hdrLabel(" Batch")}</button>
+              <button data-testid="brand-toggle" onClick={() => sa?.toggleBranding?.()} disabled={!has} title="Branding & guidelines" style={S.btn({ padding: "4px 10px", fontSize: 14, color: sa?.showBranding ? T.accent : (sa?.hasBranding ? T.accent : T.textDim), background: sa?.showBranding ? T.accent + "20" : "transparent", borderRadius: 4, opacity: has ? 1 : 0.4, display: "flex", alignItems: "center", gap: 4 })}>{"🎨"}{hdrLabel(" Brand")}</button>
+              {/* CR13: view switcher (editor | presenter | gallery), placed next to
+                  Present. Shows the live view and switches to it in one click — the
+                  gallery is no longer reachable only from the Overview button below
+                  the slide. */}
+              <ViewSwitch mode={sa?.viewMode || "editor"} onSet={(m) => sa?.setView?.(m)} disabled={!has} compact={hdrSize < HDR_TOP} />
+              <button data-testid="present-btn" onClick={() => sa?.present?.()} disabled={!has} style={{ display: "flex", alignItems: "center", gap: 5, padding: "5px 14px", background: has ? T.green : T.border, color: has ? "#fff" : T.textDim, border: "none", borderRadius: 6, cursor: has ? "pointer" : "default", opacity: has ? 1 : 0.5, fontFamily: FONT.mono, fontSize: 14, fontWeight: 700 }} title="Present">{"▶"}{hdrLabel(" Present", 2)}</button>
             </>;
           })()}
           <div style={{ width: 1, height: 22, background: T.border, flexShrink: 0 }} />
           {/* New Deck */}
-          <button onClick={() => setNewDeckDialog(true)} style={S.btn({ padding: "4px 10px", fontSize: 14, color: T.accent, display: "flex", alignItems: "center", gap: 4, borderRadius: 4 })}>{"+"} New</button>
+          <button onClick={() => setNewDeckDialog(true)} style={S.btn({ padding: "4px 10px", fontSize: 14, color: T.accent, display: "flex", alignItems: "center", gap: 4, borderRadius: 4 })} title="New deck">{"+"}{hdrLabel(" New")}</button>
           {/* Import */}
-          <button onClick={() => fileInputRef.current?.click()} style={S.btn({ padding: "4px 10px", fontSize: 14, color: T.textMuted, display: "flex", alignItems: "center", gap: 4, borderRadius: 4 })}>{"📥"} Import</button>
+          <button onClick={() => fileInputRef.current?.click()} style={S.btn({ padding: "4px 10px", fontSize: 14, color: T.textMuted, display: "flex", alignItems: "center", gap: 4, borderRadius: 4 })} title="Import deck">{"📥"}{hdrLabel(" Import")}</button>
           {/* Export dropdown */}
           <div style={{ position: "relative" }}>
-            <button data-testid="export-menu-toggle" onClick={() => { setExportMenu((v) => !v); setViewMenu(false); }} style={S.btn({ padding: "4px 10px", fontSize: 14, color: exportMenu ? T.accent : T.textMuted, display: "flex", alignItems: "center", gap: 4, background: exportMenu ? T.accent + "15" : "transparent", borderRadius: 4 })}>{"📤"} Export <span style={{ fontSize: 9, opacity: 0.5 }}>▾</span></button>
+            <button data-testid="export-menu-toggle" onClick={() => { setExportMenu((v) => !v); setViewMenu(false); }} style={S.btn({ padding: "4px 10px", fontSize: 14, color: exportMenu ? T.accent : T.textMuted, display: "flex", alignItems: "center", gap: 4, background: exportMenu ? T.accent + "15" : "transparent", borderRadius: 4 })} title="Export">{"📤"}{hdrLabel(" Export")}<span style={{ fontSize: 9, opacity: 0.5 }}>▾</span></button>
             {exportMenu && <>
               <div onClick={() => setExportMenu(false)} style={{ position: "fixed", inset: 0, zIndex: 9998 }} />
               <div style={{ position: "absolute", top: "100%", right: 0, zIndex: 9999, marginTop: 4, background: T.bgPanel, border: `1px solid ${T.border}`, borderRadius: 8, boxShadow: "0 8px 32px rgba(0,0,0,0.4)", padding: "4px 0", minWidth: 180 }}>
@@ -24210,9 +25318,9 @@ export default function App() {
           <CostBadge /></>}
           <button data-testid="run-demo" onClick={() => window.dispatchEvent(new CustomEvent("vela-run-demo"))} disabled={!!demoUnavailableReason} style={S.btn({ padding: "4px 10px", fontSize: 14, color: T.textMuted, borderRadius: 4, display: "flex", alignItems: "center", gap: 4, opacity: demoUnavailableReason ? 0.4 : 1, cursor: demoUnavailableReason ? "not-allowed" : "pointer" })} title={demoUnavailableReason || "Run product tour"}>{"🎬"}</button>
           <div style={{ width: 1, height: 22, background: T.border, flexShrink: 0 }} />
-          <button data-testid="comments-toggle" onClick={() => { const entering = !state.reviewMode; dispatch({ type: "SET_REVIEW_MODE", value: entering }); if (entering) { dispatch({ type: "SET_COMMENTS_PANEL", open: true }); dispatch({ type: "SET_CHAT", open: false }); } else { dispatch({ type: "SET_COMMENTS_PANEL", open: false }); } }} style={S.btn({ padding: "4px 10px", fontSize: 14, background: state.reviewMode ? T.amber : "transparent", color: state.reviewMode ? "#fff" : T.amber, borderRadius: 4, display: "flex", alignItems: "center", gap: 4 })}>{"💬"} Comments</button>
+          <button data-testid="comments-toggle" onClick={() => { const entering = !state.reviewMode; dispatch({ type: "SET_REVIEW_MODE", value: entering }); if (entering) { dispatch({ type: "SET_COMMENTS_PANEL", open: true }); dispatch({ type: "SET_CHAT", open: false }); } else { dispatch({ type: "SET_COMMENTS_PANEL", open: false }); } }} style={S.btn({ padding: "4px 10px", fontSize: 14, background: state.reviewMode ? T.amber : "transparent", color: state.reviewMode ? "#fff" : T.amber, borderRadius: 4, display: "flex", alignItems: "center", gap: 4 })} title="Comments">{"💬"}{hdrLabel(" Comments")}</button>
           <button onClick={() => { dispatch({ type: "SET_CHAT", open: !state.chatOpen }); if (!state.chatOpen) { dispatch({ type: "SET_COMMENTS_PANEL", open: false }); dispatch({ type: "SET_REVIEW_MODE", value: false }); } }} style={S.btn({ padding: "4px 10px", fontSize: 14, background: state.chatOpen ? T.accent : "transparent", color: state.chatOpen ? "#fff" : T.accent, borderRadius: 4, display: "flex", alignItems: "center", gap: 4 })}>{"🤖"} Vera</button>
-        </>}
+        </div>}
         {isMobile && <>
           <button onClick={() => setNewDeckDialog(true)} style={{ padding: "4px 10px", fontSize: 14, color: T.accent, background: "transparent", border: `1px solid ${T.accent}40`, borderRadius: 4, cursor: "pointer", flexShrink: 0, fontWeight: 700 }} title="New Deck">{"+"}</button>
           {total > 0 && <button onClick={() => { const sa = slideActionsRef.current; if (sa?.present) sa.present(); }} style={{ padding: "4px 10px", background: T.green, color: "#fff", border: "none", borderRadius: 4, fontFamily: FONT.mono, fontSize: 11, fontWeight: 700, cursor: "pointer", flexShrink: 0 }} title="Present">{"▶"}</button>}

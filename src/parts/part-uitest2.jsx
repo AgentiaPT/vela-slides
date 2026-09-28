@@ -1985,6 +1985,672 @@ uiSuite("Product Tour", [
   }},
 ], { setup: _productTourSetup });
 
+// ── meridian CR04 / CR14 / CR07 (sprint "meridian") ──────────────────
+const _m1RowTitles = () => _tocRows().map((r) => (Array.from(r.querySelectorAll("span")).find((x) => x.style.textOverflow === "ellipsis")?.textContent || "").trim());
+const _m1Undo = async () => { document.activeElement?.blur?.(); await _wait(80); _key("z", { ctrlKey: true }); await _wait(250); };
+const _m1ClickRow = async (i) => { const r = _tocRows()[i]; if (!r) throw new Error("no TOC row " + i); _click(r); await _waitFor(() => _tocRows()[i]?.getAttribute("aria-selected") === "true", 800).catch(() => {}); await _wait(150); document.activeElement?.blur?.(); };
+
+uiSuite("meridian-CR04 Gallery hide toggle", [
+  { name: "gallery card shows a hide toggle beside delete; click hides, click again unhides", fn: async () => {
+    const btn = _$("[data-testid='editor-gallery-toggle']");
+    if (!btn) throw new Error("editor-gallery-toggle missing");
+    _click(btn);
+    await _waitFor(() => _$("[data-testid='gallery-slide']"), 5000);
+    const card = () => _$$("[data-testid='gallery-slide']")[0];
+    const tog = () => card()?.querySelector("[data-testid='gallery-hide-toggle']");
+    if (!tog()) throw new Error("gallery-hide-toggle missing on the card");
+    const del = Array.from(card().querySelectorAll("button")).find((b) => b.title === "Delete slide");
+    if (!del || tog().nextElementSibling !== del) throw new Error("hide toggle is not next to the delete button");
+    if (tog().getAttribute("data-hidden") !== "0") throw new Error("first slide already hidden");
+    const rowHidden = () => (_tocRows()[0]?.textContent || "").includes("🙈");
+    _click(tog());
+    await _waitFor(() => tog()?.getAttribute("data-hidden") === "1", 1500);
+    if (!card().querySelector("[data-hidden-overlay]")) throw new Error("hidden card thumbnail not dimmed");
+    if (!rowHidden()) throw new Error("TOC row does not show the slide as hidden (not the same effect)");
+    _click(tog());
+    await _waitFor(() => tog()?.getAttribute("data-hidden") === "0", 1500);
+    if (card().querySelector("[data-hidden-overlay]") || rowHidden()) throw new Error("unhide did not restore the slide");
+    _click(_$("[data-testid='editor-gallery-toggle']"));
+    await _waitFor(() => !_$("[data-testid='gallery-slide']"), 3000).catch(() => {});
+  }},
+], { setup: _editorSetup });
+
+uiSuite("meridian-CR14 TOC slide delete", [
+  { name: "each slide row has a delete icon", fn: async () => {
+    const rows = _tocRows();
+    if (rows.length < 2) throw new Error("need >=2 slide rows, got " + rows.length);
+    if (!rows.every((r) => r.querySelector("[data-testid='toc-slide-delete']"))) throw new Error("a slide row has no toc-slide-delete icon");
+  }},
+  { name: "click deletes that slide only; undo restores it", fn: async () => {
+    const before = _m1RowTitles();
+    _click(_tocRows()[1].querySelector("[data-testid='toc-slide-delete']"));
+    await _waitFor(() => _tocRows().length === before.length - 1, 1500);
+    const want = before.filter((_, i) => i !== 1).join("|");
+    if (_m1RowTitles().join("|") !== want) throw new Error("wrong slide removed: " + _m1RowTitles().join("|"));
+    await _m1Undo();
+    await _waitFor(() => _tocRows().length === before.length, 1500);
+    if (_m1RowTitles().join("|") !== before.join("|")) throw new Error("undo did not restore the slide list");
+  }},
+], { setup: _editorSetup });
+
+uiSuite("meridian-CR07 Review cycle", [
+  { name: "reviewed checkmark and review-cycle toggle render in the editor", fn: async () => {
+    await _waitFor(() => _$("[data-testid='reviewed-toggle']") && _$("[data-testid='review-cycle-toggle']"), 2000);
+  }},
+  { name: "cycle on: arrows skip a reviewed slide; cycle off: arrows visit it again", fn: async () => {
+    if (_tocRows().length < 3) throw new Error("need >=3 slide rows");
+    const rt = () => _$("[data-testid='reviewed-toggle']");
+    const cyc = () => _$("[data-testid='review-cycle-toggle']");
+    const selIdx = () => _tocRows().findIndex((r) => r.getAttribute("aria-selected") === "true");
+    try {
+      await _m1ClickRow(1);
+      if (rt().getAttribute("data-reviewed") !== "0") throw new Error("slide 2 already reviewed");
+      _click(rt());
+      await _waitFor(() => rt()?.getAttribute("data-reviewed") === "1", 1500);
+      await _m1ClickRow(0);
+      _click(cyc());
+      await _waitFor(() => cyc()?.getAttribute("aria-pressed") === "true", 1500);
+      document.activeElement?.blur?.();
+      _key("ArrowRight");
+      await _waitFor(() => selIdx() === 2, 1500).catch(() => { throw new Error("ArrowRight did not skip the reviewed slide (at row " + selIdx() + ")"); });
+      _key("ArrowLeft");
+      await _waitFor(() => selIdx() === 0, 1500).catch(() => { throw new Error("ArrowLeft did not skip the reviewed slide (at row " + selIdx() + ")"); });
+      _click(cyc());
+      await _waitFor(() => cyc()?.getAttribute("aria-pressed") === "false", 1500);
+      document.activeElement?.blur?.();
+      _key("ArrowRight");
+      await _waitFor(() => selIdx() === 1, 1500).catch(() => { throw new Error("cycle off: ArrowRight did not visit slide 2 (at row " + selIdx() + ")"); });
+    } finally {
+      if (cyc()?.getAttribute("aria-pressed") === "true") _click(cyc());
+      await _m1ClickRow(1);
+      if (rt()?.getAttribute("data-reviewed") === "1") { _click(rt()); await _waitFor(() => rt()?.getAttribute("data-reviewed") === "0", 1500).catch(() => {}); }
+    }
+  }},
+], { setup: _editorSetup });
+
+// ── meridian-CR10 / meridian-CR11: fullscreen nav icons keep a visible chip
+// on any slide background (light or dark), so they do not fade into the slide. ──
+// Emoji glyphs must carry emoji presentation and a light colour: a text-style
+// glyph draws in the inherited (dark, light-theme) text colour on the dark chip.
+const _mrdIsLightTheme = () => { const h = _$("header"); const m = (h ? getComputedStyle(h).backgroundColor : "").match(/\d+/g); return !!m && (+m[0] + +m[1] + +m[2]) / 3 >= 128; };
+const _mrdCheckNavGlyphs = async () => {
+  for (const id of ["gallery-toggle", "presenter-toggle", "student-toggle"]) {
+    const el = await _waitFor(() => _$(`[data-testid='${id}']`), 2000);
+    const sp = el.querySelector("span");
+    if (!sp) throw new Error(`${id}: no glyph`);
+    if (id !== "student-toggle" && !/️/.test(sp.textContent)) throw new Error(`${id}: glyph lacks emoji presentation (U+FE0F)`);
+    const c = getComputedStyle(sp).color;
+    if (c !== "rgb(255, 255, 255)") throw new Error(`${id}: glyph colour ${c} is not light`);
+    const r = el.getBoundingClientRect();
+    const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+    if (!hit || !el.contains(hit)) throw new Error(`${id}: covered by another element`);
+  }
+};
+uiSuite("meridian-CR10-CR11 Nav Icon Contrast", [
+  { name: "Enter fullscreen (Present)", fn: async () => {
+    document.activeElement?.blur(); await _wait(100);
+    _key("f");
+    await _waitFor(() => !_$("header"));
+  }},
+  { name: "gallery/presenter/edit nav buttons render with a non-transparent chip", fn: async () => {
+    const ids = ["gallery-toggle", "presenter-toggle", "present-edit-toggle"];
+    for (const id of ids) {
+      const el = await _waitFor(() => _$(`[data-testid='${id}']`), 2000);
+      const bg = getComputedStyle(el).backgroundColor;
+      // A transparent/near-transparent chip means the icon has no backing plate
+      // and can vanish against a light slide (CR10/CR11's reported bug).
+      if (!bg || bg === "rgba(0, 0, 0, 0)" || bg === "transparent") {
+        throw new Error(`${id}: no backing chip (background=${bg})`);
+      }
+    }
+  }},
+  { name: "emoji nav glyphs are emoji-presentation and light in this app theme", fn: _mrdCheckNavGlyphs },
+  { name: "edit icon stays visible on toggle (on/off, CR11's 'sometimes shows')", fn: async () => {
+    const btn = await _waitFor(() => _$("[data-testid='present-edit-toggle']"), 2000);
+    const bgOff = getComputedStyle(btn).backgroundColor;
+    if (bgOff === "rgba(0, 0, 0, 0)" || bgOff === "transparent") throw new Error("edit icon has no chip while off");
+    _click(btn);
+    await _wait(120);
+    const bgOn = getComputedStyle(btn).backgroundColor;
+    if (bgOn === "rgba(0, 0, 0, 0)" || bgOn === "transparent") throw new Error("edit icon has no chip while on");
+    _click(btn); // restore
+    await _wait(120);
+  }},
+  { name: "Exit fullscreen", fn: async () => {
+    _key("f");
+    await _waitFor(() => _$("header"));
+  }},
+  { name: "emoji nav glyphs stay light in the other app theme too", fn: async () => {
+    const before = _mrdIsLightTheme();
+    document.activeElement?.blur(); await _wait(50);
+    _key("d");
+    await _waitFor(() => _mrdIsLightTheme() !== before, 2000);
+    try {
+      _key("f");
+      await _waitFor(() => !_$("header"), 2000);
+      await _mrdCheckNavGlyphs();
+    } finally {
+      if (!_$("header")) { _key("f"); await _waitFor(() => _$("header"), 2000); }
+      document.activeElement?.blur(); await _wait(50);
+      _key("d");
+      await _waitFor(() => _mrdIsLightTheme() === before, 2000);
+    }
+  }},
+]);
+
+// ── meridian-CR13: editor|presenter|gallery view switcher next to Present ──
+// One switch in three places — top bar (view-switch), gallery header
+// (gallery-view-switch) and fullscreen controls (fs-view-switch) — all driven by
+// SlidePanel's single view state. Each must be on top (elementFromPoint) where shown.
+const _mrdSeg = (where, mode) => _$(`[data-testid='${where}-${mode}']`);
+const _mrdActive = (where) => _$(`[data-testid='${where}'] button[aria-pressed='true']`)?.getAttribute("aria-label") || null;
+const _mrdOnTop = (el, label) => {
+  const r = el.getBoundingClientRect();
+  const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+  if (!hit || !el.contains(hit)) throw new Error(`${label} is covered (elementFromPoint hit ${hit?.tagName || "nothing"})`);
+};
+const _mrdSwitchTo = async (where, mode) => {
+  const btn = await _waitFor(() => _mrdSeg(where, mode), 2000);
+  _mrdOnTop(btn, `${where}-${mode}`);
+  _click(btn);
+};
+const _mrdGalleryOpen = () => !!_$("[data-testid='gallery-close']");
+uiSuite("meridian-CR13 View Switcher", [
+  { name: "View switcher renders next to Present in the editor", fn: async () => {
+    await _waitFor(() => _$("[data-testid='view-switch']") && _$("[data-testid='present-btn']"), 2000);
+  }},
+  { name: "Editor segment is the active view on load", fn: async () => {
+    const btn = await _waitFor(() => _$("[data-testid='view-switch-editor']"), 2000);
+    if (btn.getAttribute("aria-pressed") !== "true") throw new Error("editor segment not marked active");
+  }},
+  { name: "Switch glyphs use emoji presentation (no text-style glyph)", fn: async () => {
+    const g = await _waitFor(() => _mrdSeg("view-switch", "gallery"), 2000);
+    if (!/️/.test(g.textContent)) throw new Error("gallery glyph lacks U+FE0F");
+  }},
+  { name: "Deck title keeps readable width in the top bar", fn: async () => {
+    const h = await _waitFor(() => _$("header"), 2000);
+    const t = _$$("span", h).find((s) => s.title && s.title === s.textContent);
+    if (!t) throw new Error("deck title not found in header");
+    const w = t.getBoundingClientRect().width;
+    const need = Math.min(100, t.scrollWidth);
+    if (w < need) throw new Error(`deck title squeezed to ${Math.round(w)}px at ${window.innerWidth}px wide`);
+    if (h.scrollWidth > h.clientWidth + 1) throw new Error(`header overflows (${h.scrollWidth} > ${h.clientWidth})`);
+  }},
+  { name: "Top bar fits on one line at every width 1024-1920 (8px sweep)", fn: async () => {
+    // The top bar fits itself to its own measured width, so forcing the header
+    // width stands in for a window resize. Sweeps up, then down (hysteresis).
+    const h = await _waitFor(() => _$("header"), 2000);
+    const frames = () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+    const prev = h.style.width;
+    const bad = [];
+    try {
+      for (const dir of [1, -1]) {
+        for (let i = 0; i <= 112; i++) {
+          const w = dir > 0 ? 1024 + i * 8 : 1920 - i * 8;
+          h.style.width = `${w}px`;
+          for (let f = 0; f < 3; f++) await frames();
+          const btns = _$$("button", h).filter((b) => b.offsetParent && !b.closest("[role='group']"));
+          const minH = Math.min(...btns.map((b) => b.offsetHeight));
+          const wrapped = btns.filter((b) => b.offsetHeight > minH + 8).map((b) => b.title || b.textContent.trim());
+          const t = _$$("span", h).find((s) => s.title && s.title === s.textContent);
+          const vs = _$("[data-testid='view-switch']", h);
+          const hr = h.getBoundingClientRect(), vr = vs ? vs.getBoundingClientRect() : null;
+          const errs = [];
+          if (h.scrollWidth > h.clientWidth + 1) errs.push(`overflow ${h.scrollWidth}>${h.clientWidth}`);
+          if (wrapped.length) errs.push(`wrapped: ${wrapped.join(", ")}`);
+          if (!t || t.getBoundingClientRect().width < Math.min(120, t.scrollWidth) - 1) errs.push(`title ${t ? Math.round(t.getBoundingClientRect().width) : "missing"}px`);
+          if (!vr || vr.width < 60 || vr.left < hr.left || vr.right > hr.right + 1) errs.push("view switch not fully shown");
+          if (errs.length) bad.push(`${w}px: ${errs.join("; ")}`);
+        }
+      }
+    } finally {
+      h.style.width = prev;
+      await frames();
+    }
+    if (bad.length) throw new Error(`${bad.length} widths fail — ${bad.slice(0, 4).join(" | ")}`);
+  }},
+  { name: "Gallery is reachable in one click from the editor", fn: async () => {
+    await _mrdSwitchTo("view-switch", "gallery");
+    await _waitFor(_mrdGalleryOpen, 2000);
+    // The top bar re-reads the view state one render later (ribbon update).
+    await _waitFor(() => _mrdActive("view-switch") === "Gallery", 2000).catch(() => { throw new Error("gallery segment not marked active after switch"); });
+  }},
+  { name: "Gallery header shows the switch on top, Gallery active", fn: async () => {
+    await _waitFor(() => _$("[data-testid='gallery-view-switch']"), 2000);
+    if (_mrdActive("gallery-view-switch") !== "Gallery") throw new Error(`gallery switch active=${_mrdActive("gallery-view-switch")}`);
+    for (const m of ["editor", "presenter", "gallery"]) _mrdOnTop(_mrdSeg("gallery-view-switch", m), `gallery-view-switch-${m}`);
+  }},
+  { name: "Editor segment in the gallery returns to the editor", fn: async () => {
+    await _mrdSwitchTo("gallery-view-switch", "editor");
+    await _waitFor(() => !_mrdGalleryOpen() && _$("header"), 2000);
+    await _waitFor(() => _mrdActive("view-switch") === "Editor", 2000).catch(() => { throw new Error("top switch not back on Editor"); });
+  }},
+  { name: "Presenter segment in the gallery enters fullscreen Present", fn: async () => {
+    await _mrdSwitchTo("view-switch", "gallery");
+    await _waitFor(_mrdGalleryOpen, 2000);
+    await _mrdSwitchTo("gallery-view-switch", "presenter");
+    await _waitFor(() => !_mrdGalleryOpen() && !_$("header"), 2000);
+  }},
+  { name: "Fullscreen shows the switch on top, Presenter active", fn: async () => {
+    await _waitFor(() => _$("[data-testid='fs-view-switch']"), 2000);
+    if (_mrdActive("fs-view-switch") !== "Presenter") throw new Error(`fs switch active=${_mrdActive("fs-view-switch")}`);
+    for (const m of ["editor", "presenter", "gallery"]) _mrdOnTop(_mrdSeg("fs-view-switch", m), `fs-view-switch-${m}`);
+  }},
+  { name: "Gallery segment in fullscreen opens the gallery (Gallery active)", fn: async () => {
+    await _mrdSwitchTo("fs-view-switch", "gallery");
+    await _waitFor(_mrdGalleryOpen, 2000);
+    if (_mrdActive("gallery-view-switch") !== "Gallery") throw new Error("gallery switch not on Gallery");
+    await _mrdSwitchTo("gallery-view-switch", "presenter");
+    await _waitFor(() => !_mrdGalleryOpen() && _mrdActive("fs-view-switch") === "Presenter", 2000);
+  }},
+  { name: "Editor segment in fullscreen exits to the editor", fn: async () => {
+    await _mrdSwitchTo("fs-view-switch", "editor");
+    await _waitFor(() => _$("header") && _mrdActive("view-switch") === "Editor", 2000);
+  }},
+  { name: "Presenter segment enters fullscreen Present", fn: async () => {
+    const btn = await _waitFor(() => _$("[data-testid='view-switch-presenter']"), 2000);
+    _click(btn);
+    await _waitFor(() => !_$("header"), 2000);
+  }},
+  { name: "Exit fullscreen back to the editor (F key)", fn: async () => {
+    document.activeElement?.blur(); await _wait(100);
+    _key("f");
+    await _waitFor(() => _$("header"), 2000);
+  }},
+]);
+// ── Sprint meridian (C3): split image alignment, accent 0, docked branding
+// pane, toolbar room above, link badge placement ──────────────────────
+const _mrdSvg = (w, h, color) =>
+  `data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='${w}'%20height='${h}'%3E%3Crect%20width='${w}'%20height='${h}'%20fill='%23${color}'/%3E%3C/svg%3E`;
+const _mrdViewport = () => _$("[data-testid='slide-viewport']");
+const _mrdFrame = () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+const _mrdInject = async (blocks, extra, ready) => {
+  const hooks = _hooks();
+  if (typeof hooks.injectBlocks !== "function") throw new Error("injectBlocks test hook not exposed");
+  hooks.injectBlocks(blocks, { layout: undefined, verticalAlign: undefined, padding: null, ...(extra || {}) });
+  const el = await _waitFor(() => ready(_mrdViewport()), 3000);
+  await _mrdFrame();
+  return el;
+};
+const _mrdSetRange = (el, value) => {
+  Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set.call(el, String(value));
+  el.dispatchEvent(new Event("input", { bubbles: true }));
+};
+const _mrdOpenBranding = async () => {
+  if (!_$("[data-testid='branding-panel']")) _click("[data-testid='brand-toggle']");
+  return _waitFor(() => _$("[data-testid='branding-panel']"), 2000);
+};
+const _mrdCloseBranding = async () => {
+  const close = _$("[data-testid='branding-panel-close']");
+  if (close) _click(close);
+  await _waitFor(() => !_$("[data-testid='branding-panel']"), 2000).catch(() => {});
+};
+// Undo every history step a test added, so branding edits do not leak.
+const _mrdUndoTo = async (past) => {
+  const hooks = _hooks();
+  document.activeElement?.blur?.();
+  for (let i = 0; i < 20 && hooks.getHistoryCounts && hooks.getHistoryCounts().past > past; i++) {
+    _key("z", { ctrlKey: true });
+    await _wait(60);
+  }
+};
+const _mrdHover = async (el) => {
+  el.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
+  await _mrdFrame();
+};
+const _mrdUnhover = async (el) => {
+  el.dispatchEvent(new MouseEvent("mouseout", { bubbles: true, relatedTarget: document.body }));
+  await _mrdFrame();
+};
+
+uiSuite("meridian-CR03 split image alignment", [
+  { name: "CR03: image-left/right keep the image centred with the content column", fn: async () => {
+    for (const layout of ["image-left", "image-right"]) {
+      const marker = `CR03 ${layout}`;
+      const img = await _mrdInject([
+        { type: "heading", text: marker },
+        { type: "bullets", items: ["One point", "Two point", "Three point"] },
+        { type: "image", src: _mrdSvg(400, 300, "3b82f6") },
+      ], { layout }, (vp) => vp?.textContent.includes(marker) && vp.querySelector("[data-split-image] img")?.naturalWidth > 0 ? vp.querySelector("[data-split-image]") : null);
+      const con = _mrdViewport().querySelector("[data-split-content]");
+      if (getComputedStyle(img).justifyContent !== "center") throw new Error(`${layout}: image column justify is ${getComputedStyle(img).justifyContent}`);
+      if (!/center/.test(getComputedStyle(con).justifyContent)) throw new Error(`${layout}: content column justify is ${getComputedStyle(con).justifyContent}`);
+      // The side image gets a measured height cap after first paint; poll until
+      // the layout settles, then compare the two column centres.
+      let m = null;
+      const measure = () => {
+        const ir = img.querySelector("img").getBoundingClientRect();
+        const kids = Array.from(con.children).map((c) => c.getBoundingClientRect()).filter((r) => r.height > 0);
+        m = { imageMid: (ir.top + ir.bottom) / 2, contentMid: (Math.min(...kids.map((r) => r.top)) + Math.max(...kids.map((r) => r.bottom))) / 2, gapTop: ir.top - img.getBoundingClientRect().top };
+        return Math.abs(m.imageMid - m.contentMid) <= 3 && m.gapTop >= 4;
+      };
+      await _waitFor(measure, 2500).catch(() => {
+        throw new Error(`${layout}: image centre ${m.imageMid.toFixed(1)} vs content centre ${m.contentMid.toFixed(1)}, top gap ${m.gapTop.toFixed(1)}`);
+      });
+    }
+  }},
+], { setup: _selectFirstModule });
+
+uiSuite("meridian-CR08 branding accent zero", [
+  { name: "CR08: accent height 0 removes the top line; the slider keeps 0", fn: async () => {
+    const hooks = _hooks();
+    const past = hooks.getHistoryCounts?.().past ?? 0;
+    await _mrdInject([{ type: "heading", text: "CR08 accent" }], null, (vp) => vp?.textContent.includes("CR08 accent") ? vp : null);
+    try {
+      const panel = await _mrdOpenBranding();
+      const range = panel.querySelector("[data-testid='branding-accent-height']");
+      if (!range) throw new Error("accent height slider missing");
+      _mrdSetRange(range, 6);
+      const bar = await _waitFor(() => _mrdViewport().querySelector("[data-branding-accent]"), 2000).catch(() => null);
+      if (!bar) throw new Error("accent bar not drawn at 6px");
+      _mrdSetRange(range, 0);
+      await _waitFor(() => !_mrdViewport().querySelector("[data-branding-accent]"), 2000)
+        .catch(() => { throw new Error("accent bar still drawn at 0px"); });
+      const live = _$("[data-testid='branding-accent-height']");
+      if (live.value !== "0") throw new Error(`slider jumped to ${live.value} after 0`);
+      if ((live.nextElementSibling?.textContent || "").trim() !== "0px") throw new Error(`label shows ${live.nextElementSibling?.textContent}`);
+    } finally {
+      await _mrdCloseBranding();
+      await _mrdUndoTo(past);
+    }
+  }},
+], { setup: _selectFirstModule });
+
+uiSuite("meridian-CR09 branding side pane", [
+  { name: "CR09: branding opens as a right pane beside the canvas and closes", fn: async () => {
+    await _mrdCloseBranding();
+    const before = _mrdViewport().getBoundingClientRect();
+    const panel = await _mrdOpenBranding();
+    await _mrdFrame();
+    await _wait(150);
+    try {
+      if (window.innerWidth >= 768) {
+        const p = panel.getBoundingClientRect();
+        const c = _mrdViewport().getBoundingClientRect();
+        if (panel.dataset.docked !== "right") throw new Error("panel is not docked right");
+        if (p.left < c.right - 1) throw new Error(`pane left ${p.left.toFixed(0)} overlaps canvas right ${c.right.toFixed(0)}`);
+        if (Math.abs(p.top - c.top) > 60 && p.top > c.top) throw new Error("pane is not beside the canvas");
+        if (c.width >= before.width - 1) throw new Error("canvas did not resize for the pane");
+        if (getComputedStyle(panel).overflowY !== "auto") throw new Error("pane does not scroll");
+        if (document.documentElement.scrollWidth > window.innerWidth + 1) throw new Error("pane caused horizontal page scroll");
+      }
+      for (const sel of ["[data-testid='branding-accent-height']", "input[placeholder='Name / Company']", "input[placeholder='Tagline']"]) {
+        if (!panel.querySelector(sel)) throw new Error(`control missing in pane: ${sel}`);
+      }
+    } finally {
+      await _mrdCloseBranding();
+    }
+    if (_$("[data-testid='branding-panel']")) throw new Error("close control did not close the pane");
+    await _waitFor(() => Math.abs(_mrdViewport().getBoundingClientRect().width - before.width) < 1.5, 2000)
+      .catch(() => { throw new Error("canvas did not return to full width"); });
+  }},
+], { setup: _selectFirstModule });
+
+// F3: every toolbar button and every editor overlay (✓ reviewed toggle,
+// comment count) must be the top element at its own centre.
+const _mrdCr15Clear = (bar, kind) => {
+  const top = (el) => { const r = el.getBoundingClientRect(); const h = document.elementFromPoint((r.left + r.right) / 2, (r.top + r.bottom) / 2); return !!h && el.contains(h); };
+  const where = kind ? kind + ": " : "";
+  for (const b of bar.querySelectorAll("button")) if (!top(b)) throw new Error(`${where}toolbar button "${b.title || b.textContent}" is covered`);
+  for (const o of document.querySelectorAll("[data-editor-overlay]")) if (!top(o)) throw new Error(`${where}editor overlay "${o.dataset.editorOverlay}" is covered`);
+};
+uiSuite("meridian-CR15 toolbar room above", [
+  { name: "CR15: full-bleed image keeps its toolbar and popups inside the slide", fn: async () => {
+    const block = await _mrdInject([{ type: "image", src: _mrdSvg(960, 540, "f59e0b") }], null,
+      (vp) => { const b = vp?.querySelector("[data-block-type='image'] img"); return b?.naturalWidth > 0 ? vp.querySelector("[data-block-type='image']") : null; });
+    await _mrdHover(block);
+    try {
+      const bar = await _waitFor(() => _mrdViewport().querySelector("[data-testid='block-hover-toolbar']"), 1500);
+      const vp = _mrdViewport().getBoundingClientRect();
+      const inView = (el) => { const r = el.getBoundingClientRect(); return r.top >= vp.top - 0.5 && r.bottom <= vp.bottom + 0.5 && r.left >= vp.left - 0.5 && r.right <= vp.right + 0.5; };
+      if (bar.dataset.chromeInside !== "true" || !inView(bar)) throw new Error("toolbar is drawn above the slide edge");
+      const hit = (el) => { const r = el.getBoundingClientRect(); const h = document.elementFromPoint((r.left + r.right) / 2, (r.top + r.bottom) / 2); return !!h && el.contains(h); };
+      if (!hit(bar)) throw new Error("toolbar is not clickable");
+      _mrdCr15Clear(bar);
+      _click(bar.querySelector("button[title='Add link']"));
+      const pop = await _waitFor(() => _$("[data-testid='block-link-popup']"), 1500);
+      if (!inView(pop) || !hit(pop)) throw new Error("link popup is cut off or covered");
+      _key("Escape");
+      pop.querySelector("input")?.blur();
+    } finally {
+      await _mrdUnhover(block);
+    }
+  }},
+  { name: "CR15: a normal slide keeps the toolbar outside the block top edge", fn: async () => {
+    const block = await _mrdInject([{ type: "heading", text: "CR15 normal" }, { type: "text", text: "Body" }], null,
+      (vp) => vp?.textContent.includes("CR15 normal") ? vp.querySelector("[data-block-type='heading']") : null);
+    await _mrdHover(block);
+    try {
+      const bar = await _waitFor(() => _mrdViewport().querySelector("[data-testid='block-hover-toolbar']"), 1500);
+      if (bar.dataset.chromeInside) throw new Error("toolbar moved inside on a block with room above");
+      if (bar.getBoundingClientRect().top >= block.getBoundingClientRect().top) throw new Error("toolbar is not above the block");
+      _mrdCr15Clear(bar);
+    } finally {
+      await _mrdUnhover(block);
+    }
+  }},
+  { name: "F3: toolbar stays clear of the comment badge and reviewed toggle", fn: async () => {
+    const extra = { comments: [{ id: "cr15-f3", text: "F3 badge", status: "open", createdAt: Date.now() }] };
+    for (const [kind, blocks, sel] of [
+      ["full-bleed", [{ type: "image", src: _mrdSvg(960, 540, "10b981") }], "[data-block-type='image']"],
+      ["normal", [{ type: "heading", text: "CR15 F3 normal" }, { type: "text", text: "Body" }], "[data-block-type='heading']"],
+    ]) {
+      const block = await _mrdInject(blocks, extra, (vp) => (vp && _$("[data-editor-overlay='comments']") && vp.querySelector(sel)) || null);
+      await _mrdHover(block);
+      try {
+        const bar = await _waitFor(() => _mrdViewport().querySelector("[data-testid='block-hover-toolbar']"), 1500);
+        await _mrdFrame();
+        _mrdCr15Clear(bar, kind);
+      } finally {
+        await _mrdUnhover(block);
+      }
+    }
+    _hooks().injectBlocks([{ type: "text", text: "F3 done" }], { comments: [] });
+  }},
+], { setup: _selectFirstModule });
+
+uiSuite("meridian-CR17 link badge placement", [
+  { name: "CR17: link badges sit just after the label text on every item kind", fn: async () => {
+    const L = "https://example.com/x";
+    const cases = {
+      "icon-row": [{ type: "icon-row", cols: 2, items: [
+        { icon: "MessageSquare", title: "ChatGPT", text: "chatgpt.com", link: L },
+        { icon: "Box", title: "Docker Sandboxes", text: "docker.com/products/docker-sandboxes", link: L },
+        { icon: "Cpu", title: "A long wrapped title that keeps going across the column width for sure", text: "sub", link: L },
+      ] }],
+      bullets: [{ type: "bullets", items: [{ text: "Short", link: L }, { text: "A much longer bullet line that wraps onto a second visual line so the badge must follow the last word of the text", link: L }, { text: "Iconed", icon: "Star", link: L }] }],
+      grid: [{ type: "grid", cols: 2, items: [{ blocks: [{ type: "text", text: "Wide cell word", link: L }] }, { blocks: [{ type: "heading", text: "Heading in a wide cell", link: L }] }] }],
+      text: [{ type: "text", text: "Block-level link on a plain text block", link: L }],
+    };
+    for (const [name, blocks] of Object.entries(cases)) {
+      const want = blocks[0].items ? blocks[0].items.length : blocks.length;
+      const placed = (vp) => {
+        const all = vp ? Array.from(vp.querySelectorAll("[data-link-badge]")) : [];
+        return all.length === want && all.every((b) => b.dataset.linkBadgePlaced === "text-end") ? all : null;
+      };
+      await _mrdInject(blocks, null, placed).catch(() => { throw new Error(`${name}: badges not placed at the text end`); });
+      await _wait(150);
+      // Re-query: a late re-render can replace the nodes found first.
+      const badges = placed(_mrdViewport());
+      if (!badges) throw new Error(`${name}: badges lost their text-end placement`);
+      for (const b of badges) {
+        const br = b.getBoundingClientRect();
+        const rects = [];
+        const walker = document.createTreeWalker(b.parentElement, NodeFilter.SHOW_TEXT);
+        const range = document.createRange();
+        for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+          if (b.contains(n) || !n.nodeValue.trim()) continue;
+          range.selectNodeContents(n);
+          rects.push(...Array.from(range.getClientRects()));
+        }
+        if (rects.some((r) => r.left < br.right - 0.5 && r.right > br.left + 0.5 && r.top < br.bottom - 0.5 && r.bottom > br.top + 0.5)) throw new Error(`${name}: badge overlaps text`);
+        const sameLine = rects.filter((r) => r.top < br.bottom && r.bottom > br.top && r.right <= br.left + 1);
+        const gap = sameLine.length ? Math.min(...sameLine.map((r) => br.left - r.right)) : Infinity;
+        if (!(gap >= 0 && gap <= 12)) {
+          const fmt = (r) => [r.left, r.top, r.right, r.bottom].map((v) => Math.round(v)).join(",");
+          throw new Error(`${name}: badge ${fmt(br)} is ${gap}px from the text end; text ${rects.map(fmt).join(" | ")}`);
+        }
+      }
+    }
+  }},
+], { setup: _selectFirstModule });
+
+// meridian-F7 (CR13): the top-bar density level is a function of the current
+// width only. The level at a width must not depend on the widths before it.
+uiSuite("meridian-CR13 top bar level has no history", [
+  { name: "Level at each width equals the level after a fresh jump (sweep down, then up)", fn: async () => {
+    const h = await _waitFor(() => _$("header[data-hdr-level]"), 2000);
+    const frames = () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+    // Read the level from what is drawn (hidden labels sit at zero width), and
+    // check that it agrees with the header's own data-hdr-level.
+    const hiddenLabel = (sel) => _$$(sel, h).some((e) => e.style.width === "0px");
+    const drawnLevel = () => {
+      if (!hiddenLabel("[data-testid='view-switch'] [data-vs-label]")) return "4";
+      if (!hiddenLabel("[data-hdr-label='3']")) return "3";
+      if (!hiddenLabel("[data-hdr-label='2']")) return "2";
+      return _$("[data-testid='present-btn']", h)?.parentElement?.style.flexShrink === "1" ? "0" : "1";
+    };
+    const settle = async (w) => {
+      h.style.width = `${w}px`;
+      for (let f = 0; f < 3; f++) await frames();
+      const lvl = drawnLevel();
+      if (h.dataset.hdrLevel !== lvl) throw new Error(`${w}px: data-hdr-level ${h.dataset.hdrLevel} but drawn level ${lvl}`);
+      return lvl;
+    };
+    const widths = [1000];
+    for (let w = 1024; w <= 1920; w += 32) widths.push(w);
+    widths.push(1440);
+    const prev = h.style.width;
+    const bad = [];
+    try {
+      // "Fresh" reference: jump to the width from a narrow bar (the boot level is low).
+      const fresh = {};
+      for (const w of widths) { await settle(700); fresh[w] = await settle(w); }
+      for (const w of widths) { await settle(2400); const got = await settle(w); if (got !== fresh[w]) bad.push(`${w}px from wide: ${got} vs fresh ${fresh[w]}`); }
+      const down = [...widths].sort((a, b) => b - a);
+      for (const w of down) { const got = await settle(w); if (got !== fresh[w]) bad.push(`${w}px sweep down: ${got} vs fresh ${fresh[w]}`); }
+      for (const w of [...down].reverse()) { const got = await settle(w); if (got !== fresh[w]) bad.push(`${w}px sweep up: ${got} vs fresh ${fresh[w]}`); }
+      // The reported case: a narrow bar that grows must get its labels back.
+      await settle(1000);
+      const grown = await settle(1440);
+      if (grown !== fresh[1440]) bad.push(`1000->1440: ${grown} vs fresh ${fresh[1440]}`);
+      // No flapping: the level stays put over many frames at a fixed width.
+      for (const w of [1024, 1440, 1920]) {
+        const first = await settle(w);
+        for (let f = 0; f < 6; f++) { await frames(); if (h.dataset.hdrLevel !== first) { bad.push(`${w}px flaps ${first}->${h.dataset.hdrLevel}`); break; } }
+      }
+      if (fresh[1920] !== "4") bad.push(`1920px level ${fresh[1920]}, want 4`);
+    } finally {
+      h.style.width = prev;
+      await frames();
+    }
+    if (bad.length) throw new Error(`${bad.length} mismatches — ${bad.slice(0, 4).join(" | ")}`);
+  }},
+], { setup: _selectFirstModule });
+
+// meridian-F7 (CR01): the "file already holds this" signature moves only after
+// a confirmed write. A failed or rejected save must be retried by the next
+// identical flush, or the edit is lost.
+uiSuite("meridian-CR01 local save retries after a failed write", [
+  { name: "Failed save is retried; a confirmed save is not repeated", fn: async () => {
+    const hooks = _hooks();
+    if (!hooks.capturePostDemoFlushForTest || !hooks.flushDemoSaveForTest || !hooks.setGuidelinesForTest) throw new Error("save test hooks missing");
+    const originalStorage = window.storage;
+    const originalLocalSend = window.__velaSendDeckUpdate;
+    const writes = [];
+    let outcome = "fail";
+    window.storage = { ...(originalStorage || {}), set: async () => {}, delete: async () => {} };
+    window.__velaSendDeckUpdate = (payload) => {
+      writes.push(payload);
+      if (outcome === "reject") return Promise.reject(new Error("save failed (test)"));
+      return Promise.resolve(outcome === "ok");
+    };
+    const flush = () => hooks.flushDemoSaveForTest(hooks.capturePostDemoFlushForTest(), { local: true, storage: false });
+    try {
+      hooks.setGuidelinesForTest("meridian-F7 unsaved edit");
+      await _wait(50);
+      flush();
+      await _waitFor(() => writes.length === 1, 2000);
+      await _wait(30);
+      flush(); // same payload, previous write failed: must write again
+      await _waitFor(() => writes.length === 2, 2000).catch(() => { throw new Error("identical flush after a failed save was skipped"); });
+      outcome = "reject";
+      await _wait(30);
+      flush();
+      await _waitFor(() => writes.length === 3, 2000).catch(() => { throw new Error("identical flush after a failed save was skipped (2)"); });
+      await _wait(30);
+      flush(); // previous write rejected: must write again
+      await _waitFor(() => writes.length === 4, 2000).catch(() => { throw new Error("identical flush after a rejected save was skipped"); });
+      outcome = "ok";
+      await _wait(30);
+      flush();
+      await _waitFor(() => writes.length === 5, 2000).catch(() => { throw new Error("retry after failures was skipped"); });
+      await _wait(30);
+      flush(); // confirmed on disk now: nothing to write
+      await _wait(200);
+      if (writes.length !== 5) throw new Error(`confirmed payload written again (${writes.length} writes)`);
+      if (writes.some((p) => p.guidelines !== "meridian-F7 unsaved edit")) throw new Error("wrong payload sent");
+    } finally {
+      window.storage = originalStorage;
+      window.__velaSendDeckUpdate = originalLocalSend;
+      hooks.restoreStartupDeck?.();
+      await _wait(100);
+    }
+  }},
+]);
+
+// meridian-F8 (CR01): with a slow backend, the file must end equal to the
+// latest deck state after all writes settle — also when the latest state is
+// the one the file held before the in-flight write (edit, then undo).
+const _meridianF8SlowSave = async (steps, want) => {
+  const hooks = _hooks();
+  if (!hooks.capturePostDemoFlushForTest || !hooks.flushDemoSaveForTest || !hooks.setGuidelinesForTest) throw new Error("save test hooks missing");
+  const originalStorage = window.storage;
+  const originalLocalSend = window.__velaSendDeckUpdate;
+  const calls = [];
+  let pending = 0;
+  let disk = null;
+  let latency = 0;
+  window.storage = { ...(originalStorage || {}), set: async () => {}, delete: async () => {} };
+  // Stub backend: each write lands on "disk" in call order after `latency` ms.
+  window.__velaSendDeckUpdate = (payload) => {
+    calls.push(payload.guidelines);
+    pending++;
+    return new Promise((r) => setTimeout(() => { disk = payload.guidelines; pending--; r(true); }, latency));
+  };
+  const flush = () => hooks.flushDemoSaveForTest(hooks.capturePostDemoFlushForTest(), { local: true, storage: false });
+  const edit = async (g) => {
+    hooks.setGuidelinesForTest(g);
+    await _wait(50);
+    flush();
+    await _wait(30);
+  };
+  try {
+    // Baseline: a confirmed write puts "base" on disk.
+    await edit("meridian-F8 base");
+    await _waitFor(() => pending === 0 && disk === "meridian-F8 base", 2000);
+    latency = 400;
+    for (const g of steps) await edit(g); // later steps run while the first write is in flight
+    await _waitFor(() => pending === 0, 3000);
+    await _wait(100);
+    if (disk !== want) throw new Error(`disk "${disk}", want "${want}"; calls ${JSON.stringify(calls)}`);
+    // Settled and equal: one more flush of the same state writes nothing.
+    const n = calls.length;
+    flush();
+    await _wait(200);
+    if (calls.length !== n) throw new Error(`settled state written again; calls ${JSON.stringify(calls)}`);
+  } finally {
+    window.storage = originalStorage;
+    window.__velaSendDeckUpdate = originalLocalSend;
+    hooks.restoreStartupDeck?.();
+    await _wait(100);
+  }
+};
+uiSuite("meridian-CR01 local save ends at the latest state with a slow backend", [
+  { name: "Edit, then undo during the in-flight write: file ends at the original", fn: () => _meridianF8SlowSave(["meridian-F8 edit", "meridian-F8 base"], "meridian-F8 base") },
+  { name: "Edit, then edit again during the in-flight write: file ends at the last edit", fn: () => _meridianF8SlowSave(["meridian-F8 edit", "meridian-F8 edit 2"], "meridian-F8 edit 2") },
+]);
+
 // ━━━ UI TEST RUNNER COMPONENT ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 // Demo deck guard — UI tests only run against the original demo deck

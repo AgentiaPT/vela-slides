@@ -649,5 +649,27 @@ const clearTrackers = () => { _dirtyMods.clear(); _deletedMods.clear(); _loadedM
   assert("MOVE_SLIDES reversed by ONE undo (target restored)", marks(findItem(undo3.present, "dst").slides).join() === "9", marks(findItem(undo3.present, "dst").slides).join());
 }
 
+{
+  // meridian-CR07: TOGGLE_SLIDE_REVIEWED sets then clears `reviewed`, one undo step each.
+  clearTrackers();
+  const hist = H(present([lane("l1", [item("m1", [slide(1), slide(2)])])], "m1", 0));
+  const on = reducer(hist, { type: "TOGGLE_SLIDE_REVIEWED", id: "m1", index: 1 });
+  assert("TOGGLE_SLIDE_REVIEWED sets reviewed=true on that slide only", findItem(on.present, "m1").slides[1].reviewed === true && !("reviewed" in findItem(on.present, "m1").slides[0]));
+  assert("TOGGLE_SLIDE_REVIEWED pushes ONE history entry", on.past.length === 1, "past=" + on.past.length);
+  const off = reducer(on, { type: "TOGGLE_SLIDE_REVIEWED", id: "m1", index: 1 });
+  assert("TOGGLE_SLIDE_REVIEWED removes reviewed key on re-toggle", !("reviewed" in findItem(off.present, "m1").slides[1]));
+  const undo = reducer(on, { type: "UNDO" });
+  assert("TOGGLE_SLIDE_REVIEWED reversed by UNDO", !("reviewed" in findItem(undo.present, "m1").slides[1]));
+}
+{
+  // meridian-CR14: inline TOC delete uses REMOVE_SLIDE — one undo step restores it.
+  clearTrackers();
+  const hist = H(present([lane("l1", [item("m1", [slide(1), slide(2), slide(3)])])], "m1", 0));
+  const out = reducer(hist, { type: "REMOVE_SLIDE", id: "m1", index: 1 });
+  assert("REMOVE_SLIDE pushes ONE history entry", out.past.length === 1, "past=" + out.past.length);
+  const undo = reducer(out, { type: "UNDO" });
+  assert("REMOVE_SLIDE reversed by ONE undo", marks(findItem(undo.present, "m1").slides).join() === "1,2,3", marks(findItem(undo.present, "m1").slides).join());
+}
+
 console.log(`\n  ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

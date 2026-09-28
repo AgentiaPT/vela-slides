@@ -16,7 +16,7 @@ that symbol in the named part for the line. No line numbers here — they rot.
 - Validation Constants: MAX_IMPORT_SIZE VALID_STATUSES VALID_IMPORTANCES SAFE_BLOCK_TYPES defaultBranding linkPreview
 - Sanitizers: sanitizeString sanitizeDeckTitle sanitizeUrl openExternalLink SVG_ALLOWED_TAGS SVG_URL_REF_ATTRS CSS_FETCH_SCHEME SVG_VALUE_FNS SVG_STYLE_PROPS SVG_ROOT_BLOCKED isSvgStyleSafe isSvgInlineStyleSafe sanitizeSvgMarkup SAFE_RASTER_DATA_IMAGE sanitizeImageDataUri SAFE_STYLE_KEYS STYLE_VALUE_REJECT sanitizeStyle CSS_COLOR_KEY scrubCssFields scrubColorFields CSS_LAYOUT_KEY scrubLayoutFields CSS_PAINT_KEY cssKeyStem scrubPaintFields velaTestSurfaceEnabled MAX_SUBOBJECT_DEPTH scrubSubObject cssUrl CSS_COLOR_OK cssColor CSS_GRADIENT_OK cssGradient
 - Deck-ingress key allowlists: SAFE_SLIDE_KEYS SAFE_BLOCK_KEYS SLIDE_NUMERIC_BOUNDS clampDeckNumber MAX_BLOCK_DEPTH sanitizeBlock VALID_COMMENT_STATUSES MAX_COMMENTS sanitizeComment
-- Offline Study Notes sanitizer: sanitizeStudyNotes sanitizeSlide sanitizeItem resanitizeLoadedLanes resanitizeLoadedBranding validateAndSanitizeDeck
+- Offline Study Notes sanitizer: sanitizeStudyNotes sanitizeSlide stableIdFrom sanitizeItem resanitizeLoadedLanes resanitizeLoadedBranding KEEPABLE_DECK_ID isKeepableDeckId adoptPriorDeckIds localDeckPayload validateAndSanitizeDeck
 - Image Compression: compressImage IMG_SETTINGS compressSlideImage imageAspect PASTE_TITLE_BLOCKS pasteImageLayout gridColsFor
 - Status & Importance Meta: STATUSES STATUS_META IMP
 - Themes: themes T statusColor FONT buildTitleCardSlide
@@ -36,6 +36,7 @@ that symbol in the named part for the line. No line numbers here — they rot.
 - X-Ray Glossary Link — inline popover for [term](#key) refs: GlossaryLink EditableText
 - Block Helpers: stg COL_TOOLBAR_PAD patchItemAt removeItemAt setItemLink itemLinkOf addItemAt moveItemAt _noPin reorderCtl itemReorder blankItemFor PLACEHOLDER_FIELDS cloneGridCell clonePoint newItemFor
 - Add-Item Affordance — "+ add" button shown only in edit mode: AddItem ItemText IconBubble
+- Link Badge — one placement rule for every link badge (CR17): linkBadgeTextEnd LinkBadge
 - Per-Item Chrome — hover toolbar (🔗 link + ✕ delete) for one item of a multi-item block: ItemHoverContext itemChromeBtn reorderArrowBtn ItemChrome
 - Icon Row Item (per-item link + delete): IconRowItem
 - Bullet Item (per-item link + delete): BulletItem
@@ -82,7 +83,7 @@ that symbol in the named part for the line. No line numbers here — they rot.
 - StudentPanel — dispatcher: static studyNotes first, else live Vera: StudentPanel TeacherPanel SectionPicker
 
 ### part-slidepanel.jsx
-- Slide Panel — editor slide view, fullscreen/presenter nav, per-slide AI actions: SlidePanel
+- Slide Panel — editor slide view, fullscreen/presenter nav, per-slide AI actions: VIEW_SWITCH_SEGMENTS VIEW_SWITCH_PAD VIEW_SWITCH_LABEL_EXTRA ViewSwitch SlidePanel
 
 ### part-list.jsx
 - (file preamble): _velaDrag _setDrag _clearDrag
@@ -119,6 +120,10 @@ that symbol in the named part for the line. No line numbers here — they rot.
 - CR5: Consistent AI-working animation: _fxWrap _normColor _settleFx _cr5Setup _allCssText
 - AI editor request ownership: _editorOwnershipSetup _openQuickEditor _openAiSlideAdder
 - Product Tour Suite: _productTourSetup
+- meridian CR04 / CR14 / CR07 (sprint "meridian"): _m1RowTitles _m1Undo _m1ClickRow
+- meridian-CR10 / meridian-CR11: fullscreen nav icons keep a visible chip: _mrdIsLightTheme _mrdCheckNavGlyphs
+- meridian-CR13: editor|presenter|gallery view switcher next to Present: _mrdSeg _mrdActive _mrdOnTop _mrdSwitchTo _mrdGalleryOpen
+- Sprint meridian (C3): split image alignment, accent 0, docked branding: _mrdSvg _mrdViewport _mrdFrame _mrdInject _mrdSetRange _mrdOpenBranding _mrdCloseBranding _mrdUndoTo _mrdHover _mrdUnhover _mrdCr15Clear _meridianF8SlowSave
 - UI TEST RUNNER COMPONENT: computeDeckFingerprint DEMO_DECK_FP_TITLE VelaUITestRunner
 
 ### part-demo.jsx
@@ -146,7 +151,7 @@ that symbol in the named part for the line. No line numbers here — they rot.
 - Check if slide has image blocks: slideHasImages
 - Color parsing: _compositeBg compositeColor _isExportHidden parseColor
 - CSS linear-gradient parsing: parseLinearGradient gradientLineCoords buildShadingDict
-- PDF Text encoding: pdfStringEncode
+- PDF Text encoding: WIN_ANSI_HIGH WIN_ANSI_FROM_UNICODE pdfWinAnsiByte pdfStringEncode
 - Emoji detection and rendering: isEmojiCodepoint emojiCanvasCache renderEmojiToImage extractEmojiImages extractLogoImages
 - Font metrics for standard PDF fonts: CHAR_WIDTHS measureText
 - DOM Element Extraction: extractBoxes getTextLines getVisualScale extractTextRuns extractLinks
@@ -165,7 +170,7 @@ that symbol in the named part for the line. No line numbers here — they rot.
 
 ### part-export-md.jsx
 - Markdown Export: deckToMarkdown exportMarkdown
-- Standalone HTML Export: VELA_STANDALONE_LIBS escapeForScriptContext stripEsmImportsForStandalone spliceStartupPatch flipPresentationMode MADE_WITH_VELA_FOOTER_HTML escapeHtmlText buildStandaloneHtml getStandaloneJsxSource velaStandaloneExportGateReason
+- Standalone HTML Export: VELA_STANDALONE_LIBS escapeForScriptContext stripEsmImportsForStandalone NEUTRALINO_UMD_SHIM_RE stripNeutralinoUmdShim spliceStartupPatch flipPresentationMode MADE_WITH_VELA_FOOTER_HTML escapeHtmlText buildStandaloneHtml getStandaloneJsxSource velaStandaloneExportGateReason
 - Standalone HTML Export Modal: StandaloneHtmlModal
 
 ### part-pptx.jsx
@@ -232,7 +237,7 @@ keyboard ternaries) or are currently unused — check before assuming a UI exist
 - REMOVE_COMMENT: part-app-modals.jsx part-canvas.jsx part-list.jsx part-slides.jsx
 - REMOVE_ITEM: part-list.jsx
 - REMOVE_LANE: (no direct dispatch site)
-- REMOVE_SLIDE: part-slidepanel.jsx part-slides.jsx
+- REMOVE_SLIDE: part-list.jsx part-slidepanel.jsx part-slides.jsx
 - REMOVE_SLIDES: part-list.jsx
 - RENAME_ITEM: part-list.jsx
 - RENAME_LANE: (no direct dispatch site)
@@ -273,7 +278,8 @@ keyboard ternaries) or are currently unused — check before assuming a UI exist
 - TOGGLE_LANE: (no direct dispatch site)
 - TOGGLE_PRESENT_CARD: part-list.jsx
 - TOGGLE_SECTION_COLLAPSE: part-list.jsx
-- TOGGLE_SLIDE_HIDDEN: part-list.jsx
+- TOGGLE_SLIDE_HIDDEN: part-list.jsx part-slides.jsx
+- TOGGLE_SLIDE_REVIEWED: part-slidepanel.jsx
 - UNDO: (no direct dispatch site)
 - UPDATE_COMMENT: (no direct dispatch site)
 - UPDATE_SLIDE: part-app.jsx part-imports.jsx part-list.jsx part-slidepanel.jsx
@@ -313,18 +319,19 @@ add_lane add_item batch_add_items remove_item remove_lane rename_item rename_lan
 
 ## Navigability debt (WARN — candidates for banners or splits)
 
-- part-imports.jsx: 860-line unbannered stretch after line 509
-- part-blocks.jsx: 764-line unbannered stretch after line 769
-- part-canvas.jsx: 414-line unbannered stretch after line 24
-- part-slidepanel.jsx: 446-line unbannered stretch after line 206
-- part-slidepanel.jsx: 394-line unbannered stretch after line 964
+- part-imports.jsx: 860-line unbannered stretch after line 513
+- part-blocks.jsx: 764-line unbannered stretch after line 843
+- part-canvas.jsx: 453-line unbannered stretch after line 24
+- part-slidepanel.jsx: 475-line unbannered stretch after line 235
+- part-slidepanel.jsx: 406-line unbannered stretch after line 1022
 - part-uitest.jsx: 616-line unbannered stretch after line 1230
 - part-uitest2.jsx: 448-line unbannered stretch after line 2
 - part-uitest2.jsx: 593-line unbannered stretch after line 1395
+- part-uitest2.jsx: 393-line unbannered stretch after line 2261
 - part-demo.jsx: 407-line unbannered stretch after line 510
 - part-demo.jsx: 373-line unbannered stretch after line 917
 - part-pdf.jsx: 389-line unbannered stretch after line 582
 - part-pdf-vector.jsx: 441-line unbannered stretch after line 2
-- part-pdf-vector.jsx: 479-line unbannered stretch after line 459
-- part-pdf-vector.jsx: 524-line unbannered stretch after line 1209
+- part-pdf-vector.jsx: 480-line unbannered stretch after line 459
+- part-pdf-vector.jsx: 524-line unbannered stretch after line 1204
 - part-pptx.jsx: no level-1 banners (1188 lines)

@@ -489,6 +489,70 @@ const PATH = "/decks/a.vela";
       "flushSave still clears pending before the write (data-loss regression)");
   });
 
+  // meridian-F6 (CR01): opening a deck never writes the file. The only writer
+  // is saveCurrent(), which the app calls only for a changed deck (no-edit
+  // guard in part-app.jsx flushLocalStateRef, tested in test_deck_id_stable.cjs).
+  await test("meridian-F6 openDeck reads the file and never writes it", async () => {
+    const text = JSON.stringify({ deckTitle: "A", lanes: [{ title: "Main", items: [{ title: "M", slides: [{ blocks: [] }] }] }] });
+    const N = makeNeu({ files: { [PATH]: text } });
+    const m = buildModule(N);
+    m.state.folder = "/decks";
+    let loaded = null;
+    m.deckIO.onDeckLoaded((d) => { loaded = d; });
+    await m.deckIO.openDeck(PATH);
+    await tick(300); // longer than SAVE_DEBOUNCE_MS (200)
+    assert(loaded && loaded.deckTitle === "A", "deck not handed to the app");
+    assert(N.writeCount() === 0, "open wrote the file: " + N.writeCount());
+    assert(N.files[PATH] === text, "file bytes changed on open");
+  });
+  await test("meridian-F6 a real edit after open still saves", async () => {
+    const text = JSON.stringify({ deckTitle: "A", lanes: [] });
+    const N = makeNeu({ files: { [PATH]: text } });
+    const m = buildModule(N);
+    m.state.folder = "/decks";
+    await m.deckIO.openDeck(PATH);
+    const edited = DECK(); edited.deckTitle = "A edited";
+    m.saveCurrent(edited);
+    await m.flushNow();
+    assert(N.writeCount() === 1, "edit not written: " + N.writeCount());
+    assert(JSON.parse(N.files[PATH]).deckTitle === "A edited", "wrong bytes on disk");
+  });
+
+  // meridian-F7: saveCurrent returns a promise that is true only after a
+  // confirmed write. The app moves its "file holds this" signature only on
+  // true, so a failed save is retried by the next identical flush.
+  await test("meridian-F7 saveCurrent resolves true only after a confirmed write", async () => {
+    const N = makeNeu({});
+    const m = buildModule(N);
+    m.state.folder = "/decks"; m.state.currentPath = PATH;
+    const p = m.saveCurrent(DECK());
+    assert(p && typeof p.then === "function", "saveCurrent did not return a promise");
+    let settled = null;
+    p.then((v) => { settled = v; });
+    await tick(5);
+    assert(settled === null, "resolved before the write ran");
+    await m.flushNow();
+    await tick(5);
+    assert(settled === true, "not true after a confirmed write: " + settled);
+  });
+  await test("meridian-F7 failed write resolves false; a superseded save resolves false", async () => {
+    const cfg = { write: () => new Error("EACCES denied") };
+    const N = makeNeu(cfg);
+    const m = buildModule(N);
+    m.state.folder = "/decks"; m.state.currentPath = PATH;
+    const first = m.saveCurrent(DECK());
+    const second = m.saveCurrent(DECK());
+    assert((await first) === false, "superseded save did not resolve false");
+    await m.flushNow();
+    assert((await second) === false, "failed write did not resolve false");
+    cfg.write = () => "ok";
+    const third = m.saveCurrent(DECK());
+    await m.flushNow();
+    assert((await third) === true, "retry after failure did not resolve true");
+    m.state.currentPath = null;
+    assert((await m.saveCurrent(DECK())) === false, "no-target save did not resolve false");
+  });
+
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail === 0 ? 0 : 1);
 })();

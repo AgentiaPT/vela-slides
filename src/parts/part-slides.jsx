@@ -219,7 +219,7 @@ function ScopeSelector({ icon, scope, setScope, concept, slideIndex, slides, cur
     </div>
   );
 }
-function BrandingPanel({ branding, guidelines, dispatch, isMobile }) {
+function BrandingPanel({ branding, guidelines, dispatch, isMobile, docked, onClose }) {
   const b = branding || defaultBranding;
   const [guidelinesOpen, setGuidelinesOpen] = useState(!!guidelines?.trim());
   const set = (patch) => {
@@ -245,19 +245,25 @@ function BrandingPanel({ branding, guidelines, dispatch, isMobile }) {
   const inp = (extra = {}) => ({ flex: 1, padding: "3px 6px", fontSize: 10, fontFamily: FONT.body, background: T.bgInput, border: `1px solid ${T.border}`, borderRadius: 3, color: T.text, outline: "none", minWidth: 0, ...extra });
 
   return (
-    <div data-testid="branding-panel" style={{ padding: "8px 12px", borderBottom: `1px solid ${T.border}`, background: T.accent + "08" }}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+    // docked: right-side properties pane (CR09) — fixed width, full editor
+    // height, own scroll, sticky header with a close control. Undocked (mobile)
+    // keeps the original full-width strip above the canvas.
+    <div data-testid="branding-panel" data-docked={docked ? "right" : undefined} style={docked
+      ? { width: 300, flexShrink: 0, height: "100%", overflowY: "auto", boxSizing: "border-box", padding: "0 14px 12px", borderLeft: `1px solid ${T.border}`, background: T.bgPanel }
+      : { padding: "8px 12px", borderBottom: `1px solid ${T.border}`, background: T.accent + "08" }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 8, ...(docked ? { position: "sticky", top: 0, zIndex: 1, background: T.bgPanel, padding: "10px 0 8px", borderBottom: `1px solid ${T.border}` } : {}) }}>
         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
           <span style={{ fontSize: 13 }}>🎨</span>
           <span style={{ fontFamily: FONT.mono, fontSize: 10, fontWeight: 700, color: T.accent }}>BRANDING</span>
         </div>
-        <span style={{ fontFamily: FONT.mono, fontSize: 9, color: b.enabled ? T.accent : T.textDim }}>{b.enabled ? "● Active" : "○ Set values to activate"}</span>
+        <span style={{ fontFamily: FONT.mono, fontSize: 9, color: b.enabled ? T.accent : T.textDim, marginLeft: docked ? "auto" : undefined }}>{b.enabled ? "● Active" : "○ Set values to activate"}</span>
+        {onClose && <button data-testid="branding-panel-close" onClick={onClose} title="Close branding" aria-label="Close branding" style={{ background: "none", border: "none", color: T.textDim, cursor: "pointer", fontSize: 13, padding: "0 2px", lineHeight: 1 }}>✕</button>}
       </div>
         <div style={row}>
           <span style={lbl}>Header</span>
           <input type="color" value={b.accentColor || "#3B82F6"} onChange={(e) => set({ accentColor: e.target.value })} style={{ width: 22, height: 18, border: "none", padding: 0, cursor: "pointer", background: "transparent" }} />
-          <input type="range" min="0" max="8" value={b.accentHeight || 4} onChange={(e) => set({ accentHeight: parseInt(e.target.value) })} style={{ width: 50 }} />
-          <span style={{ fontFamily: FONT.mono, fontSize: 9, color: T.textDim }}>{b.accentHeight}px</span>
+          <input data-testid="branding-accent-height" type="range" min="0" max="8" value={b.accentHeight ?? 4} onChange={(e) => set({ accentHeight: parseInt(e.target.value) })} style={{ width: 50 }} />
+          <span style={{ fontFamily: FONT.mono, fontSize: 9, color: T.textDim }}>{b.accentHeight ?? 4}px</span>
         </div>
         <div style={row}>
           <span style={lbl}>Logo</span>
@@ -718,7 +724,7 @@ function PresenterView({ current, next, index, total, duration, elapsed, brandin
 }
 
 const GALLERY_MODULE_COLORS = ["#60a5fa","#a78bfa","#f472b6","#34d399","#f59e0b","#38bdf8","#fb7185","#818cf8","#2dd4bf","#e879f9","#fbbf24","#67e8f9"];
-function GalleryView({ lanes, currentConceptId, slideIndex, dispatch, onClose, branding }) {
+function GalleryView({ lanes, currentConceptId, slideIndex, dispatch, onClose, branding, headerExtra }) {
   const gridRef = useRef(null);
   const activeRef = useRef(null);
   const ZOOM_SIZES = [140, 180, 224, 300, 400, 560, 800];
@@ -867,6 +873,7 @@ function GalleryView({ lanes, currentConceptId, slideIndex, dispatch, onClose, b
         <span style={{ fontFamily: FONT.mono, fontSize: 14, fontWeight: 700, color: T.accent, letterSpacing: "0.05em" }}>GALLERY</span>
         <span style={{ fontFamily: FONT.mono, fontSize: 13, color: T.textMuted }}>{allSlides.filter((s) => !s.isTitleCard).length} slides</span>
         <span style={{ marginLeft: "auto", fontFamily: FONT.mono, fontSize: 13, color: T.textDim }}>+/− zoom · drag to reorder · G or ESC to close</span>
+        {headerExtra}
         <button data-testid="gallery-close" onClick={onClose} style={{ background: "none", border: "none", color: T.textMuted, cursor: "pointer", fontSize: 18, padding: 4 }}>✕</button>
       </div>
       <div ref={gridRef} onClick={(e) => e.stopPropagation()} onWheel={(e) => e.stopPropagation()} style={{ flex: 1, overflowY: "auto", padding: "20px 32px", userSelect: dragActive ? "none" : "auto" }}>
@@ -905,12 +912,15 @@ function GalleryView({ lanes, currentConceptId, slideIndex, dispatch, onClose, b
                 <div style={{ borderRadius: "0 0 8px 8px", border: cardBorder, borderTop: "none", boxShadow: cardShadow, background: T.bgCard, overflow: "hidden" }}
                   onMouseEnter={(e) => { if (!isCurrent && !dragSrc) { e.currentTarget.style.borderColor = T.borderLight; } }}
                   onMouseLeave={(e) => { if (!isCurrent) { e.currentTarget.style.borderColor = T.border; } }}>
-                  <GalleryThumb slide={s.slide} slideIdx={s.slideIdx} total={realSlideTotal} branding={branding} />
+                  {/* CR04: a hidden slide's thumbnail is dimmed, as the TOC strikes it through. */}
+                  <div data-hidden-overlay={s.slide?.hidden ? "1" : undefined} style={{ opacity: s.slide?.hidden ? 0.45 : 1 }}><GalleryThumb slide={s.slide} slideIdx={s.slideIdx} total={realSlideTotal} branding={branding} /></div>
                   <div style={{ padding: "6px 10px", background: isCurrent ? T.accent + "15" : T.isDark ? "rgba(255,255,255,0.04)" : "rgba(0,0,0,0.03)", display: "flex", alignItems: "center", gap: 6 }}>
                     <span title={s.isTitleCard ? "Section title card" : undefined} style={{ fontFamily: FONT.mono, fontSize: 10, color: isCurrent ? T.accent : T.textDim, fontWeight: 700 }}>{s.isTitleCard ? "🎬" : s.slideIdx + 1}</span>
                     {(() => { const oc = (s.slide.comments || []).filter((c) => c.status === "open").length; return oc > 0 ? <span style={{ width: 8, height: 8, borderRadius: 4, background: T.amber, flexShrink: 0 }} title={`${oc} comment${oc > 1 ? "s" : ""}`} /> : null; })()}
                     {s.slide?.studyNotes?.text ? <span title="Has offline study notes" data-study-marker style={{ fontSize: 11, lineHeight: 1, flexShrink: 0, filter: `drop-shadow(0 0 2px ${T.accent}80)` }}>🎓</span> : null}
                     <span style={{ fontSize: 13, color: isCurrent ? T.text : T.textMuted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1, fontFamily: FONT.body }}>{getSlideTitle(s.slide, s.slideIdx)}</span>
+                    {/* CR04: hide/unhide beside delete — same TOGGLE_SLIDE_HIDDEN as the TOC eye. */}
+                    {!s.isTitleCard && <button data-testid="gallery-hide-toggle" data-hidden={s.slide?.hidden ? "1" : "0"} onClick={(e) => { e.stopPropagation(); dispatch({ type: "TOGGLE_SLIDE_HIDDEN", id: s.itemId, index: s.slideIdx }); }} title={s.slide?.hidden ? "Hidden — click to show (excluded from presentation & counts)" : "Hide slide (excludes it from presentation & counts)"} style={{ background: "none", border: "none", cursor: "pointer", padding: "2px 4px", fontSize: 12, lineHeight: 1, borderRadius: 3, opacity: s.slide?.hidden ? 0.9 : 0.4, transition: "opacity 0.15s" }} onMouseEnter={(e) => { e.currentTarget.style.opacity = "1"; }} onMouseLeave={(e) => { e.currentTarget.style.opacity = s.slide?.hidden ? "0.9" : "0.4"; }}>{s.slide?.hidden ? "🙈" : "👁"}</button>}
                     {!s.isTitleCard && <button onClick={(e) => { e.stopPropagation(); dispatch({ type: "REMOVE_SLIDE", id: s.itemId, index: s.slideIdx }); }} title="Delete slide" style={{ background: "none", border: "none", cursor: "pointer", padding: "2px 4px", fontSize: 13, color: T.textDim, borderRadius: 3, opacity: 0.4, transition: "opacity 0.15s, color 0.15s" }} onMouseEnter={(e) => { e.currentTarget.style.opacity = "1"; e.currentTarget.style.color = "#ef4444"; }} onMouseLeave={(e) => { e.currentTarget.style.opacity = "0.4"; e.currentTarget.style.color = T.textDim; }}>✕</button>}
                   </div>
                 </div>

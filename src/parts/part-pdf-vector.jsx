@@ -771,7 +771,8 @@ function buildVectorPdf(pages, pageW, pageH, fonts, showBranding) {
         if (n > 1 && run.w > 0 && fd && fd.widths) {
           let rawW = 0;
           for (let ci = 0; ci < n; ci++) {
-            const code = run.text.charCodeAt(ci);
+            // Width of the byte pdfStringEncode emits for this char
+            const code = pdfWinAnsiByte(run.text.charCodeAt(ci));
             rawW += (code >= 32 && code <= 255) ? (fd.widths[code - 32] || 0) : 500;
           }
           const rawPdfW = rawW * run.fontSize / 1000;
@@ -1076,14 +1077,8 @@ function parseTTF(buf) {
 
   // Build WinAnsi char widths (chars 32-255)
   // WinAnsi maps chars 128-159 to special Unicode code points
-  const winAnsiMap = {
-    128: 0x20AC, 130: 0x201A, 131: 0x0192, 132: 0x201E, 133: 0x2026,
-    134: 0x2020, 135: 0x2021, 136: 0x02C6, 137: 0x2030, 138: 0x0160,
-    139: 0x2039, 140: 0x0152, 142: 0x017D, 145: 0x2018, 146: 0x2019,
-    147: 0x201C, 148: 0x201D, 149: 0x2022, 150: 0x2013, 151: 0x2014,
-    152: 0x02DC, 153: 0x2122, 154: 0x0161, 155: 0x203A, 156: 0x0153,
-    158: 0x017E, 159: 0x0178
-  };
+  // (WIN_ANSI_HIGH — the shared table in part-pdf-extract.jsx)
+  const winAnsiMap = WIN_ANSI_HIGH;
 
   const widths = new Array(224); // chars 32-255
   for (let i = 0; i < 224; i++) {
