@@ -1982,7 +1982,7 @@ const imageAspect = (dataUrl) => new Promise((resolve) => {
 // the image below ("stack"); otherwise the slide is promoted to "image-right" so
 // the image sits beside the existing body content. aspect = image width / height.
 const PASTE_TITLE_BLOCKS = new Set(["heading", "text", "subtitle", "badge", "quote"]);
-function pasteImageLayout(slide, aspect, n) {
+function pasteImageLayout(slide, aspect, n, aspects) {
   const layout = slide && slide.layout;
   if (layout && layout !== "stack") return layout; // respect explicit author layout
   const body = ((slide && slide.blocks) || []).filter((b) => b.type !== "image" && b.type !== "spacer" && b.type !== "divider");
@@ -1991,9 +1991,74 @@ function pasteImageLayout(slide, aspect, n) {
   // Heavy body text + a grid of images (>=3): don't cram the grid into a half.
   // Keep the slide stacked so the text reads as a full-width header and the
   // image run grids full-width below it (the renderer auto-grids the run).
-  if (hasContent && n >= 3) return "stack";
   const wide = aspect >= 1.6;
-  return (!mostlyTitle && !wide) ? "image-right" : "stack";
+  const rule = (hasContent && n >= 3) ? "stack" : (!mostlyTitle && !wide) ? "image-right" : "stack";
+  // CR23: with every image aspect known, compare the two candidates and keep the
+  // one that shows the most image area (see pasteLayoutArea). The count rule
+  // above is the fallback when the estimate cannot be made.
+  if (!hasContent || !Array.isArray(aspects) || aspects.length !== n) return rule;
+  const split = pasteLayoutArea(slide, aspects, "image-right"), stack = pasteLayoutArea(slide, aspects, "stack");
+  if (split == null || stack == null) return rule;
+  return split > stack ? "image-right" : "stack";
+}
+
+// Split-column flex the paste handler gives a split slide it lays out itself: a
+// lone square/portrait image gives the text the larger share; a grid splits 1:1.
+function pasteSplitFlex(n, aspect) {
+  return n === 1 && aspect <= 1.2 ? [1.4, 1] : [1, 1];
+}
+
+// CR23: estimated image area (slide px^2) for `aspects` on `slide` in layout
+// "stack" (body text on top, image grid full width below) or "image-right" (body
+// text beside an image column), at the default 960x540 geometry. Text heights
+// come from the block font sizes and a mean glyph width; if the text overflows,
+// the renderer scales the whole slide down, so the area shrinks by scale^2.
+// Returns null when a body block has no estimate (the caller then keeps its rule).
+const PASTE_TEXT_METRICS = { heading: ["2xl", 1.2, 0.56], text: ["md", 1.6, 0.5], bullets: ["md", 1.6, 0.5], quote: ["xl", 1.4, 0.52] };
+function pasteLayoutArea(slide, aspects, layout) {
+  if (!slide || slide.padding != null || !Array.isArray(aspects) || !aspects.length) return null;
+  if (!aspects.every((a) => typeof a === "number" && a > 0 && Number.isFinite(a))) return null;
+  const body = (slide.blocks || []).filter((b) => b && b.type !== "image" && b.type !== "spacer" && b.type !== "divider");
+  const gap = Number(slide.gap) || 12, W = 864, H = 468;
+  const textH = (w) => {
+    let total = 0;
+    for (const b of body) {
+      if (b.type === "badge") { total += 28 + gap; continue; }
+      const m = PASTE_TEXT_METRICS[b.type];
+      if (!m) return null;
+      const px = parseFloat(BASE_SIZES[b.size] || BASE_SIZES[m[0]]) * 16, lineH = px * m[1];
+      const lines = (str, width) => String(str == null ? "" : str).split("\n").reduce((k, seg) => k + Math.max(1, Math.ceil(seg.length * px * m[2] / Math.max(40, width))), 0);
+      if (b.type === "bullets") {
+        const items = Array.isArray(b.items) ? b.items : [];
+        total += items.reduce((h, it) => h + lines(typeof it === "string" ? it : it && it.text, w - 28) * lineH, 0) + Math.max(0, items.length - 1) * (Number(b.gap) || 8);
+      } else total += lines(b.text, b.type === "quote" ? w * 0.85 : w) * lineH;
+      total += gap;
+    }
+    return Math.max(0, total - gap);
+  };
+  const n = aspects.length;
+  const areaIn = (bw, bh, region) => {
+    if (!(bw > 0 && bh > 0)) return 0;
+    const cols = n === 1 ? 1 : bestImageGridCols(aspects, bw, bh, gap, gridColsFor(n, region));
+    const rows = Math.ceil(n / cols);
+    const cw = (bw - gap * (cols - 1)) / cols, ch = (bh - gap * (rows - 1)) / rows;
+    if (cw <= 0 || ch <= 0) return 0;
+    return aspects.reduce((sum, a) => { const w = Math.min(cw, ch * a); return sum + w * (w / a); }, 0);
+  };
+  if (layout === "stack") {
+    const t = textH(W);
+    if (t == null) return null;
+    const rows = Math.ceil(n / gridColsFor(n, "full"));
+    const gridH = Math.max(H - t - gap, rows * 72);
+    const s = Math.min(1, H / (t + gap + gridH));
+    return areaIn(W, gridH, "full") * s * s;
+  }
+  const [cf, imf] = pasteSplitFlex(n, aspects[n - 1]);
+  const colW = (W - (Number(slide.splitGap) || 32)) / (cf + imf);
+  const t = textH(colW * cf);
+  if (t == null) return null;
+  const s = Math.min(1, H / Math.max(t, 1));
+  return areaIn(colW * imf, H, "half") * s * s;
 }
 
 // Columns for a run of `n` images, by region. "full" = image-only slide or a
@@ -2041,6 +2106,19 @@ function rememberImageAspect(src, aspect) {
   if (typeof src !== "string" || !(aspect > 0)) return;
   if (IMAGE_ASPECT_CACHE.size >= 256) IMAGE_ASPECT_CACHE.delete(IMAGE_ASPECT_CACHE.keys().next().value);
   IMAGE_ASPECT_CACHE.set(src, aspect);
+}
+
+// CR23: which split layouts the paste handler set itself. Keyed by the pasted
+// image src; the value is the slide's layout signature right after that paste.
+// A later paste re-evaluates the layout only when the slide still carries that
+// exact signature (the user did not change it). Session memory only: after a
+// reload a split is treated as the author's choice.
+const PASTE_LAYOUT_OWNED = new Map();
+const pasteLayoutSig = (s) => `${(s && s.layout) || "stack"}|${s && s.contentFlex != null ? s.contentFlex : ""}|${s && s.imageFlex != null ? s.imageFlex : ""}`;
+function rememberPasteLayout(src, slide) {
+  if (typeof src !== "string") return;
+  if (PASTE_LAYOUT_OWNED.size >= 256) PASTE_LAYOUT_OWNED.delete(PASTE_LAYOUT_OWNED.keys().next().value);
+  PASTE_LAYOUT_OWNED.set(src, pasteLayoutSig(slide));
 }
 
 // ━━━ Status & Importance Meta ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -8819,8 +8897,17 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
           // images to a full-width header + full-width image grid, and otherwise returns
           // "image-right" so the image column grids beside the content.
           const aspect = await imageAspect(compressed);
-          const layout = pasteImageLayout(cur, aspect, n);
-          if (layout !== "stack" && layout !== cur.layout) {
+          rememberImageAspect(compressed, aspect);
+          // CR23: a split that an earlier paste set (the slide still carries the exact
+          // layout signature that paste left) is re-evaluated for the new image count
+          // and aspects. A split the author set is kept.
+          const curImgBlocks = (cur.blocks || []).filter((b) => b.type === "image");
+          const pasteOwned = !!cur.layout && cur.layout !== "stack" && curImgBlocks.some((b) => PASTE_LAYOUT_OWNED.get(b.src) === pasteLayoutSig(cur));
+          const basis = pasteOwned ? { ...cur, layout: undefined, contentFlex: undefined, imageFlex: undefined } : cur;
+          const aspects = [...await Promise.all(curImgBlocks.map((b) => IMAGE_ASPECT_CACHE.get(b.src) || imageAspect(b.src))), aspect];
+          const layout = pasteImageLayout(basis, aspect, n, aspects);
+          if (pasteOwned && layout === "stack") { patch.layout = undefined; patch.contentFlex = undefined; patch.imageFlex = undefined; }
+          else if (layout !== "stack" && (pasteOwned || layout !== cur.layout)) {
             patch.layout = layout;
             // Balance the split. A single square/portrait side image is tall; at the
             // default 1:1 split it squeezes the body text into a half-width column
@@ -8828,10 +8915,10 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
             // the content column the larger share. Two or more images grid inside their
             // half, so an even 1:1 split gives that grid the room it needs. Only when
             // the author hasn't pinned a ratio.
-            if (cur.contentFlex == null && cur.imageFlex == null) {
-              if (n === 1 && aspect <= 1.2) { patch.contentFlex = 1.4; patch.imageFlex = 1; }
-              else if (n >= 2) { patch.contentFlex = 1; patch.imageFlex = 1; }
+            if (basis.contentFlex == null && basis.imageFlex == null) {
+              [patch.contentFlex, patch.imageFlex] = pasteSplitFlex(n, aspect);
             }
+            rememberPasteLayout(compressed, { ...cur, ...patch });
           }
           dispatch({ type: "UPDATE_SLIDE", id: concept.id, index: slideIndex, patch, merge: true });
         };
@@ -11134,6 +11221,17 @@ const VELA_TESTS = [
   { name: "pasteImageLayout: content + 5 images → stack (header + grid below)", fn: () => pasteImageLayout({ blocks: [{ type: "heading", text: "H" }, { type: "bullets", items: ["a"] }] }, 1, 5) === "stack" },
   { name: "pasteImageLayout: explicit image-left preserved even with 3 images", fn: () => pasteImageLayout({ layout: "image-left", blocks: [{ type: "bullets", items: ["a"] }] }, 1, 3) === "image-left" },
   { name: "pasteImageLayout: title-only + 3 images still stacks", fn: () => pasteImageLayout({ blocks: [{ type: "heading", text: "Hi" }] }, 1, 3) === "stack" },
+  // CR23: with known aspects the layout with the larger estimated image area wins.
+  { name: "pasteImageLayout CR23: heading+text+credit + 2 or 3 squares → stack", fn: () => {
+    const s = { blocks: [{ type: "heading", text: "Heading here" }, { type: "text", text: "Body text paragraph line that should stay visible on the slide." }, { type: "text", text: "Credit", size: "xs" }] };
+    return pasteImageLayout(s, 1, 2, [1, 1]) === "stack" && pasteImageLayout(s, 1, 3, [1, 1, 1]) === "stack" && pasteLayoutArea(s, [1, 1, 1], "stack") > pasteLayoutArea(s, [1, 1, 1], "image-right");
+  } },
+  { name: "pasteImageLayout CR23: long bullets + 2 tall images → image-right", fn: () => {
+    const s = { blocks: [{ type: "heading", text: "H" }, { type: "bullets", items: Array.from({ length: 8 }, (_, i) => `Bullet number ${i} with some words to fill a line of text`) }] };
+    return pasteImageLayout(s, 0.5625, 2, [0.5625, 0.5625]) === "image-right";
+  } },
+  { name: "pasteImageLayout CR23: unknown block type → count rule", fn: () => pasteImageLayout({ blocks: [{ type: "heading", text: "H" }, { type: "table", rows: [] }] }, 1, 2, [1, 1]) === "image-right" },
+  { name: "pasteImageLayout CR23: explicit split kept with aspects", fn: () => pasteImageLayout({ layout: "image-left", blocks: [{ type: "text", text: "a" }, { type: "text", text: "b" }, { type: "text", text: "c" }] }, 1, 3, [1, 1, 1]) === "image-left" },
 
   // ── Editing UX Batch (v12.75): imageAspect ──
   { name: "imageAspect is function", fn: () => typeof imageAspect === "function" },
@@ -16711,7 +16809,7 @@ const _tlMeasure = () => {
   const grid = vp.querySelector("[data-testid='image-grid']");
   return { outside: outside.length, imgs, area: imgs.reduce((a, i) => a + i.w * i.h, 0) / (960 * 540), cols: grid ? Number(grid.getAttribute("data-image-cols")) : null };
 };
-const _tlCase = async (base, kinds, extra) => {
+const _tlCase = async (base, kinds, extra, probe) => {
   const past = _hooks().getHistoryCounts ? _hooks().getHistoryCounts().past : 0;
   await _mrdInject(_tlBases[base], { layout: undefined, contentFlex: undefined, imageFlex: undefined, imageCols: undefined, ...(extra || {}) }, (vp) => vp);
   for (let k = 0; k < kinds.length; k++) {
@@ -16725,6 +16823,7 @@ const _tlCase = async (base, kinds, extra) => {
   if (m.outside) throw new Error(`${label}: ${m.outside} non-image block(s) outside the 960x540 canvas`);
   if (m.imgs.length !== kinds.length) throw new Error(`${label}: ${m.imgs.length}/${kinds.length} images rendered`);
   if (m.imgs.some((i) => !(i.h > 20 && i.w > 20))) throw new Error(`${label}: an image is collapsed (${m.imgs.map((i) => `${i.w.toFixed(0)}x${i.h.toFixed(0)}`).join(" ")})`);
+  if (probe) m.probe = await probe(m, label);
   await _mrdUndoTo(past);
   return m;
 };
@@ -16798,6 +16897,32 @@ uiSuite("tideline-CR22-CR25 image placement", [
       if (label === "icon alone" && Math.abs(m.imgs[0].cx - 480) > 4) throw new Error(`icon alone is not centered (cx ${m.imgs[0].cx.toFixed(0)})`);
       await _mrdUndoTo(past);
     }
+  }},
+  { name: "CR23: sequential pastes pick the layout with the larger image area", fn: async () => {
+    // After each paste, render the same images in the other layout (split <->
+    // stacked) and measure it. The chosen layout must show at least as much
+    // image area (3% measurement tolerance) and keep all text on the slide.
+    const alt = async (m, label) => {
+      const vp = _mrdViewport();
+      const split = !!vp.querySelector("[data-split-image]");
+      const srcs = Array.from(vp.querySelectorAll("img")).map((im) => im.getAttribute("src"));
+      const n = srcs.length, last = m.imgs[n - 1];
+      const [cf, imf] = pasteSplitFlex(n, last.w / last.h);
+      await _mrdInject([..._tlBases.c, ...srcs.map((src) => ({ type: "image", src }))], split ? { layout: undefined, contentFlex: undefined, imageFlex: undefined, imageCols: undefined } : { layout: "image-right", contentFlex: cf, imageFlex: imf, imageCols: undefined },
+        (v) => (!!v?.querySelector("[data-split-image]")) !== split && Array.from(v.querySelectorAll("img")).filter((im) => im.complete && im.naturalWidth > 0).length === n ? v : null);
+      await _wait(400); await _mrdFrame();
+      const a = _tlMeasure();
+      if (m.area < a.area * 0.97) throw new Error(`${label}: ${split ? "split" : "stack"} shows ${(m.area * 100).toFixed(1)}% but ${split ? "stack" : "split"} would show ${(a.area * 100).toFixed(1)}%`);
+      return split;
+    };
+    for (const [kind, max] of [["sq", 4], ["wide", 3], ["tall", 3]]) for (let n = 1; n <= max; n++) await _tlCase("c", Array(n).fill(kind), undefined, alt);
+    // The reported case: 3 squares on heading+text+credit must not stay in a split.
+    const three = await _tlCase("c", ["sq", "sq", "sq"], undefined, async () => !!_mrdViewport().querySelector("[data-split-image]"));
+    if (three.probe) throw new Error("3 squares stayed in a side split");
+  }},
+  { name: "CR23: a split the author set stays a split on later pastes", fn: async () => {
+    const m = await _tlCase("c", ["sq", "sq", "sq"], { layout: "image-left" }, async () => !!_mrdViewport().querySelector("[data-split-image]"));
+    if (!m.probe) throw new Error("author image-left split was replaced");
   }},
   { name: "CR24: a large 1600x900 image alone still fills the slide width", fn: async () => {
     const cv = document.createElement("canvas"); cv.width = 1600; cv.height = 900; cv.getContext("2d").fillRect(0, 0, 1600, 900);

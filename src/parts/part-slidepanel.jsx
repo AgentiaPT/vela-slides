@@ -519,8 +519,17 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
           // images to a full-width header + full-width image grid, and otherwise returns
           // "image-right" so the image column grids beside the content.
           const aspect = await imageAspect(compressed);
-          const layout = pasteImageLayout(cur, aspect, n);
-          if (layout !== "stack" && layout !== cur.layout) {
+          rememberImageAspect(compressed, aspect);
+          // CR23: a split that an earlier paste set (the slide still carries the exact
+          // layout signature that paste left) is re-evaluated for the new image count
+          // and aspects. A split the author set is kept.
+          const curImgBlocks = (cur.blocks || []).filter((b) => b.type === "image");
+          const pasteOwned = !!cur.layout && cur.layout !== "stack" && curImgBlocks.some((b) => PASTE_LAYOUT_OWNED.get(b.src) === pasteLayoutSig(cur));
+          const basis = pasteOwned ? { ...cur, layout: undefined, contentFlex: undefined, imageFlex: undefined } : cur;
+          const aspects = [...await Promise.all(curImgBlocks.map((b) => IMAGE_ASPECT_CACHE.get(b.src) || imageAspect(b.src))), aspect];
+          const layout = pasteImageLayout(basis, aspect, n, aspects);
+          if (pasteOwned && layout === "stack") { patch.layout = undefined; patch.contentFlex = undefined; patch.imageFlex = undefined; }
+          else if (layout !== "stack" && (pasteOwned || layout !== cur.layout)) {
             patch.layout = layout;
             // Balance the split. A single square/portrait side image is tall; at the
             // default 1:1 split it squeezes the body text into a half-width column
@@ -528,10 +537,10 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
             // the content column the larger share. Two or more images grid inside their
             // half, so an even 1:1 split gives that grid the room it needs. Only when
             // the author hasn't pinned a ratio.
-            if (cur.contentFlex == null && cur.imageFlex == null) {
-              if (n === 1 && aspect <= 1.2) { patch.contentFlex = 1.4; patch.imageFlex = 1; }
-              else if (n >= 2) { patch.contentFlex = 1; patch.imageFlex = 1; }
+            if (basis.contentFlex == null && basis.imageFlex == null) {
+              [patch.contentFlex, patch.imageFlex] = pasteSplitFlex(n, aspect);
             }
+            rememberPasteLayout(compressed, { ...cur, ...patch });
           }
           dispatch({ type: "UPDATE_SLIDE", id: concept.id, index: slideIndex, patch, merge: true });
         };

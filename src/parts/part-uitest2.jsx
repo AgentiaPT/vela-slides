@@ -2840,7 +2840,7 @@ const _tlMeasure = () => {
   const grid = vp.querySelector("[data-testid='image-grid']");
   return { outside: outside.length, imgs, area: imgs.reduce((a, i) => a + i.w * i.h, 0) / (960 * 540), cols: grid ? Number(grid.getAttribute("data-image-cols")) : null };
 };
-const _tlCase = async (base, kinds, extra) => {
+const _tlCase = async (base, kinds, extra, probe) => {
   const past = _hooks().getHistoryCounts ? _hooks().getHistoryCounts().past : 0;
   await _mrdInject(_tlBases[base], { layout: undefined, contentFlex: undefined, imageFlex: undefined, imageCols: undefined, ...(extra || {}) }, (vp) => vp);
   for (let k = 0; k < kinds.length; k++) {
@@ -2854,6 +2854,7 @@ const _tlCase = async (base, kinds, extra) => {
   if (m.outside) throw new Error(`${label}: ${m.outside} non-image block(s) outside the 960x540 canvas`);
   if (m.imgs.length !== kinds.length) throw new Error(`${label}: ${m.imgs.length}/${kinds.length} images rendered`);
   if (m.imgs.some((i) => !(i.h > 20 && i.w > 20))) throw new Error(`${label}: an image is collapsed (${m.imgs.map((i) => `${i.w.toFixed(0)}x${i.h.toFixed(0)}`).join(" ")})`);
+  if (probe) m.probe = await probe(m, label);
   await _mrdUndoTo(past);
   return m;
 };
@@ -2927,6 +2928,32 @@ uiSuite("tideline-CR22-CR25 image placement", [
       if (label === "icon alone" && Math.abs(m.imgs[0].cx - 480) > 4) throw new Error(`icon alone is not centered (cx ${m.imgs[0].cx.toFixed(0)})`);
       await _mrdUndoTo(past);
     }
+  }},
+  { name: "CR23: sequential pastes pick the layout with the larger image area", fn: async () => {
+    // After each paste, render the same images in the other layout (split <->
+    // stacked) and measure it. The chosen layout must show at least as much
+    // image area (3% measurement tolerance) and keep all text on the slide.
+    const alt = async (m, label) => {
+      const vp = _mrdViewport();
+      const split = !!vp.querySelector("[data-split-image]");
+      const srcs = Array.from(vp.querySelectorAll("img")).map((im) => im.getAttribute("src"));
+      const n = srcs.length, last = m.imgs[n - 1];
+      const [cf, imf] = pasteSplitFlex(n, last.w / last.h);
+      await _mrdInject([..._tlBases.c, ...srcs.map((src) => ({ type: "image", src }))], split ? { layout: undefined, contentFlex: undefined, imageFlex: undefined, imageCols: undefined } : { layout: "image-right", contentFlex: cf, imageFlex: imf, imageCols: undefined },
+        (v) => (!!v?.querySelector("[data-split-image]")) !== split && Array.from(v.querySelectorAll("img")).filter((im) => im.complete && im.naturalWidth > 0).length === n ? v : null);
+      await _wait(400); await _mrdFrame();
+      const a = _tlMeasure();
+      if (m.area < a.area * 0.97) throw new Error(`${label}: ${split ? "split" : "stack"} shows ${(m.area * 100).toFixed(1)}% but ${split ? "stack" : "split"} would show ${(a.area * 100).toFixed(1)}%`);
+      return split;
+    };
+    for (const [kind, max] of [["sq", 4], ["wide", 3], ["tall", 3]]) for (let n = 1; n <= max; n++) await _tlCase("c", Array(n).fill(kind), undefined, alt);
+    // The reported case: 3 squares on heading+text+credit must not stay in a split.
+    const three = await _tlCase("c", ["sq", "sq", "sq"], undefined, async () => !!_mrdViewport().querySelector("[data-split-image]"));
+    if (three.probe) throw new Error("3 squares stayed in a side split");
+  }},
+  { name: "CR23: a split the author set stays a split on later pastes", fn: async () => {
+    const m = await _tlCase("c", ["sq", "sq", "sq"], { layout: "image-left" }, async () => !!_mrdViewport().querySelector("[data-split-image]"));
+    if (!m.probe) throw new Error("author image-left split was replaced");
   }},
   { name: "CR24: a large 1600x900 image alone still fills the slide width", fn: async () => {
     const cv = document.createElement("canvas"); cv.width = 1600; cv.height = 900; cv.getContext("2d").fillRect(0, 0, 1600, 900);
