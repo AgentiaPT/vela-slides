@@ -138,8 +138,9 @@ const velaClipboardReadSlides = async () => {
   return [];
 };
 
-const VELA_VERSION = "13.75";
+const VELA_VERSION = "13.76";
 const VELA_CHANGELOG = [
+  { v: "13.76", d: ["TOC: dragging a slide or section near the list edge auto-scrolls the list.", "TOC: moving a slide to a section in an earlier lane no longer loses the slide.", "Images: a pasted image on an empty slide fills the slide, not one half.", "Images: grids pick rows and columns by image aspect ratio.", "Images: solo and wide images fill the free slide area.", "Images: images shrink to fit, so text below an image stays on the slide.", "Editing: all text in checklist, comparison, matrix, number-row, progress and flow blocks is editable inline.", "Checklist: type a status name to change the status; custom status labels survive compact/turbo formats."] },
   { v: "13.75", d: ["Editor: mark slides reviewed (✓); Review cycle makes arrow keys skip reviewed slides.", "View switch (editor | presenter | gallery) next to Present.", "Gallery: hide/unhide a slide beside delete; TOC: delete icon on slide rows (undoable).", "Fullscreen nav icons stay visible on any slide background.", "Branding: right-side settings pane; accent line removable at 0px.", "Block toolbar stays visible on full-bleed images; link badges sit right after the text.", "Vector PDF: € and other WinAnsi symbols render as text at correct size.", "validate: reports a gradient in solid-color bg fields (use bgGradient).", "Opening or switching a deck keeps lane/module ids.", "Desktop: window title shows the deck title; keyboard works after alt-tab; AI agents detected on first start; HTML export fixed."] },
   { v: "13.74", d: ["Security: CLI output now neutralizes terminal control sequences in deck text (CWE-150 class), closing a display-spoofing channel.", "Security: the machine-readable --json output is fully escaped for the same class.", "Added one canonical output encoder, a CI gate keeping every CLI output path routed through it, and regression tests."] },
   { v: "13.73", d: ["Security (High): hardened the deck-injection build path — trusted app source is now transformed before untrusted deck data is injected.", "Security: added a fail-closed integrity check that refuses to write an artifact whose trusted bytes changed.", "Local preview server: same injection-last ordering applied to its HTML build path.", "Tests: added build-pipeline trust-boundary regression coverage."] },
@@ -2007,6 +2008,41 @@ function gridColsFor(n, region) {
   return ({ 1: 1, 2: 2, 3: 3, 4: 2, 5: 3 })[n] || 3;
 }
 
+// CR23: aspect-aware column choice for an image run. gridColsFor() only knows the
+// count, so three wide images always became one thin row. When every aspect ratio
+// (width / height) and the measured grid box are known, try each column count and
+// keep the one that shows the most image area (objectFit:contain in uniform cells).
+// The count-driven default wins unless another choice is at least 5% better, so
+// the arrangement is stable. Unknown aspects or box → the count-driven default.
+function bestImageGridCols(aspects, boxW, boxH, gap, fallback) {
+  const n = Array.isArray(aspects) ? aspects.length : 0;
+  const base = Math.max(1, fallback | 0);
+  if (n <= 1) return 1;
+  if (!(boxW > 0 && boxH > 0) || !aspects.every((a) => typeof a === "number" && a > 0 && Number.isFinite(a))) return base;
+  const g = Math.max(0, Number(gap) || 0);
+  const areaFor = (cols) => {
+    const rows = Math.ceil(n / cols);
+    const cw = (boxW - g * (cols - 1)) / cols, ch = (boxH - g * (rows - 1)) / rows;
+    if (cw <= 0 || ch <= 0) return 0;
+    return aspects.reduce((sum, a) => { const w = Math.min(cw, ch * a); return sum + w * (w / a); }, 0);
+  };
+  let best = Math.min(base, n), bestArea = areaFor(best);
+  for (let cols = 1; cols <= Math.min(n, 6); cols++) {
+    const area = areaFor(cols);
+    if (area > bestArea * 1.05) { best = cols; bestArea = area; }
+  }
+  return best;
+}
+
+// Bounded cache of image aspect ratios keyed by the (data:) src, filled by the
+// slide renderer via imageAspect() so bestImageGridCols() has aspects to work with.
+const IMAGE_ASPECT_CACHE = new Map();
+function rememberImageAspect(src, aspect) {
+  if (typeof src !== "string" || !(aspect > 0)) return;
+  if (IMAGE_ASPECT_CACHE.size >= 256) IMAGE_ASPECT_CACHE.delete(IMAGE_ASPECT_CACHE.keys().next().value);
+  IMAGE_ASPECT_CACHE.set(src, aspect);
+}
+
 // ━━━ Status & Importance Meta ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 const STATUSES = ["todo", "done", "signed-off"];
 const STATUS_META = {
@@ -3703,7 +3739,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
                 <div style={{ width: 22, height: 22, borderRadius: "50%", border: `2px dashed ${gc}`, display: "flex", alignItems: "center", justifyContent: "center" }}>
                   {getIcon(block.gateIcon || "UserCheck", { size: 10, color: gc })}
                 </div>
-                {block.gateLabel && <span style={{ position: "absolute", top: 24, fontSize: 7, color: gc, fontWeight: 600, lineHeight: 1, whiteSpace: "nowrap" }}>{block.gateLabel}</span>}
+                {block.gateLabel && <div style={{ position: "absolute", top: 24, width: "max-content", fontSize: 7, color: gc, fontWeight: 600, lineHeight: 1, whiteSpace: "nowrap" }}><EditableText text={block.gateLabel} editable={textEditable} onSave={(v) => onChange?.({ gateLabel: v || undefined })} /></div>}
               </div>}
               {renderArrowSvg()}
             </div>
@@ -3774,10 +3810,10 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: -6 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
               <EditableIcon editable={editable && !presenting} value={block.leftIcon} size={14} onPick={(name) => onChange?.({ leftIcon: name || undefined })}>{block.leftIcon ? getIcon(block.leftIcon, { size: 14, color: labelColor }) : null}</EditableIcon>
-              {block.leftLabel && <span style={{ fontSize: 11, fontWeight: 600, color: labelColor }}>{block.leftLabel}</span>}
+              {block.leftLabel && <EditableText text={block.leftLabel} editable={textEditable} onSave={(v) => onChange?.({ leftLabel: v || undefined })} style={{ fontSize: 11, fontWeight: 600, color: labelColor }} />}
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-              {block.rightLabel && <span style={{ fontSize: 11, fontWeight: 600, color: labelColor }}>{block.rightLabel}</span>}
+              {block.rightLabel && <EditableText text={block.rightLabel} editable={textEditable} onSave={(v) => onChange?.({ rightLabel: v || undefined })} style={{ fontSize: 11, fontWeight: 600, color: labelColor }} />}
               <EditableIcon editable={editable && !presenting} value={block.rightIcon} size={14} onPick={(name) => onChange?.({ rightIcon: name || undefined })}>{block.rightIcon ? getIcon(block.rightIcon, { size: 14, color: labelColor }) : null}</EditableIcon>
             </div>
           </div>
@@ -3802,9 +3838,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
         })}
         {canEdit && hasItems && <AddItem label="Add bar" accent={st.accent} onAdd={() => addItemAt(block, onChange, newItemFor(block,"progress"))} />}
         {block.annotation && (
-          <div style={{ textAlign: "center", marginTop: -4, fontSize: 11, fontStyle: "italic", color: block.annotationColor || "#94a3b8" }}>
-            {block.annotation}
-          </div>
+          <EditableText text={block.annotation} editable={textEditable} onSave={(v) => onChange?.({ annotation: v || undefined })} style={{ textAlign: "center", marginTop: -4, fontSize: 11, fontStyle: "italic", color: block.annotationColor || "#94a3b8" }} />
         )}
       </div>;
     }
@@ -3945,6 +3979,8 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
         [pts[pi], pts[t]] = [pts[t], pts[pi]];
         return { ...col, items: pts };
       }) });
+      const setColField = (side, patch) => { const cols = [...items]; while (cols.length < 2) cols.push({}); cols[side] = { ...cols[side], ...patch }; onChange?.({ items: cols }); };
+      const setPointText = (side, pi, v) => onChange?.({ items: items.map((col, k) => k !== side ? col : { ...col, items: (col.items || []).map((p, j) => j !== pi ? p : (typeof p === "string" ? v : { ...p, text: v })) }) });
       const pointReorder = (side, pts, pi) => (onChange && (pts || []).length > 1)
         ? reorderCtl(pts.length, pi, (dir) => movePoint(side, pi, dir), (k) => `c${side}_${k}`, _pin) : undefined;
       return <div className={cls} style={{ display: "flex", gap: 0, flex: 1, alignItems: "stretch", ...block.style }}>
@@ -3954,7 +3990,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
               <EditableIcon editable={editable && !presenting} value={left.icon} size={18} onPick={onChange ? (name) => onChange({ items: items.map((c, k) => k === 0 ? { ...c, icon: name || undefined } : c) }) : undefined}>
                 {left.icon ? <IconBubble icon={left.icon} size={18} color={leftColor} bg={`${leftColor}15`} /> : null}
               </EditableIcon>
-              <span style={{ fontFamily: FONT.display, fontSize: SIZES[block.titleSize || "md"], fontWeight: 700, color: `${leftColor}cc` }}>{left.title || "A"}</span>
+              <EditableText text={left.title || "A"} editable={textEditable} onSave={(v) => setColField(0, { title: v })} style={{ fontFamily: FONT.display, fontSize: SIZES[block.titleSize || "md"], fontWeight: 700, color: `${leftColor}cc` }} />
             </div>
             {(left.items || []).map((pt, pi) => (
               <ItemChrome key={pi} editable={editable} presenting={presenting}
@@ -3964,14 +4000,14 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
                 onSetLink={onChange ? (url) => linkPoint(0, pi, url) : undefined}
                 onDelete={onChange ? () => deletePoint(0, pi) : undefined}>
                 <span style={{ width: 6, height: 6, borderRadius: "50%", background: leftColor, flexShrink: 0, marginTop: 7 }} />
-                <span>{typeof pt === "string" ? pt : pt.text || ""}</span>
+                <EditableText text={typeof pt === "string" ? pt : pt.text || ""} editable={textEditable} onSave={(v) => setPointText(0, pi, v)} />
               </ItemChrome>
             ))}
             {canEdit && <AddItem variant="chip" label="Add point" accent={leftColor} onAdd={() => addPoint(0)} />}
           </div>
         </div>
         {block.hideDivider ? null : <div style={{ display: "flex", alignItems: "center", justifyContent: "center", zIndex: 2, margin: "0 -18px" }}>
-          <div style={{ width: 36, height: 36, borderRadius: "50%", background: st.bg || "#1e293b", border: `2px solid ${st.border || "#475569"}`, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: FONT.mono, fontSize: 11, fontWeight: 700, color: st.muted }}>{dividerLabel}</div>
+          <div style={{ width: 36, height: 36, borderRadius: "50%", background: st.bg || "#1e293b", border: `2px solid ${st.border || "#475569"}`, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: FONT.mono, fontSize: 11, fontWeight: 700, color: st.muted }}><EditableText text={dividerLabel} editable={textEditable} onSave={(v) => onChange?.({ dividerLabel: v || undefined })} /></div>
         </div>}
         <div style={{ flex: 1, background: `${rightColor}08`, border: `1px solid ${rightColor}30`, borderRadius: "0 12px 12px 0", padding: "20px 22px", display: "flex", flexDirection: "column", alignItems: "center" }}>
           <div style={{ display: "flex", flexDirection: "column", gap: 10, maxWidth: "100%" }}>
@@ -3979,7 +4015,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
               <EditableIcon editable={editable && !presenting} value={right.icon} size={18} onPick={onChange ? (name) => onChange({ items: items.map((c, k) => k === 1 ? { ...c, icon: name || undefined } : c) }) : undefined}>
                 {right.icon ? <IconBubble icon={right.icon} size={18} color={rightColor} bg={`${rightColor}15`} /> : null}
               </EditableIcon>
-              <span style={{ fontFamily: FONT.display, fontSize: SIZES[block.titleSize || "md"], fontWeight: 700, color: `${rightColor}cc` }}>{right.title || "B"}</span>
+              <EditableText text={right.title || "B"} editable={textEditable} onSave={(v) => setColField(1, { title: v })} style={{ fontFamily: FONT.display, fontSize: SIZES[block.titleSize || "md"], fontWeight: 700, color: `${rightColor}cc` }} />
             </div>
             {(right.items || []).map((pt, pi) => (
               <ItemChrome key={pi} editable={editable} presenting={presenting}
@@ -3989,7 +4025,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
                 onSetLink={onChange ? (url) => linkPoint(1, pi, url) : undefined}
                 onDelete={onChange ? () => deletePoint(1, pi) : undefined}>
                 <span style={{ width: 6, height: 6, borderRadius: "50%", background: rightColor, flexShrink: 0, marginTop: 7 }} />
-                <span>{typeof pt === "string" ? pt : pt.text || ""}</span>
+                <EditableText text={typeof pt === "string" ? pt : pt.text || ""} editable={textEditable} onSave={(v) => setPointText(1, pi, v)} />
               </ItemChrome>
             ))}
             {canEdit && <AddItem variant="chip" label="Add point" accent={rightColor} onAdd={() => addPoint(1)} />}
@@ -4102,8 +4138,8 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
                   {getIcon(item.icon, { size: 20, color: col, strokeWidth: 2 })}
                 </div> : null}
               </EditableIcon>}
-              <div style={{ fontFamily: FONT.display, fontSize: SIZES[block.size || (block.compact ? "2xl" : "3xl")], fontWeight: 800, color: col, lineHeight: 1 }}>{item.value || ""}</div>
-              {item.label && <div style={{ fontFamily: FONT.mono, fontSize: SIZES.xs, fontWeight: 600, letterSpacing: "0.1em", textTransform: "uppercase", color: st.muted }}>{item.label}</div>}
+              <EditableText text={String(item.value || "")} editable={textEditable} onSave={(v) => patchItemAt(block, onChange, i, { value: v })} style={{ fontFamily: FONT.display, fontSize: SIZES[block.size || (block.compact ? "2xl" : "3xl")], fontWeight: 800, color: col, lineHeight: 1 }} />
+              {item.label && <ItemText block={block} onChange={onChange} editable={textEditable} idx={i} prop="label" style={{ fontFamily: FONT.mono, fontSize: SIZES.xs, fontWeight: 600, letterSpacing: "0.1em", textTransform: "uppercase", color: st.muted }} />}
             </ItemChrome>
           </React.Fragment>;
         })}
@@ -4145,12 +4181,15 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
         [pts[pi], pts[t]] = [pts[t], pts[pi]];
         return { ...qq, items: pts };
       }) });
+      const setQField = (qi, patch) => onChange?.({ [qKey]: [0, 1, 2, 3].map((k) => k === qi ? { ...(quadrants[k] || {}), ...patch } : (quadrants[k] || {})) });
+      const setQPointText = (qi, pi, v) => onChange?.({ [qKey]: quadrants.map((qq, k) => k !== qi ? qq : { ...qq, items: (qq.items || []).map((p, j) => j !== pi ? p : (typeof p === "string" ? v : { ...p, text: v })) }) });
+      const axisText = (key, text, style) => <EditableText text={text} editable={textEditable} onSave={(v) => onChange?.({ [key]: v || undefined })} style={style} />;
       const qPointReorder = (qi, pts, pi) => (onChange && (pts || []).length > 1)
         ? reorderCtl(pts.length, pi, (dir) => moveQPoint(qi, pi, dir), (k) => `q${qi}_${k}`, _pin) : undefined;
-      const renderRow = (indices, radii, yLabel) => (
+      const renderRow = (indices, radii, yLabel, yKey) => (
         <div style={{ display: "flex", gap: 0, alignItems: "stretch" }}>
           {hasY && <div style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 24, flexShrink: 0 }}>
-            {yLabel && <span style={yLabelStyle}>{yLabel}</span>}
+            {yLabel && <div style={{ ...yLabelStyle, width: "max-content", flexShrink: 0 }}>{axisText(yKey, yLabel)}</div>}
           </div>}
           <div style={{ display: "flex", gap: 6, flex: 1 }}>
             {indices.map((qi) => {
@@ -4161,7 +4200,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
                   <EditableIcon editable={editable && !presenting} value={qd.icon} size={16} onPick={onChange ? (name) => onChange({ [qKey]: quadrants.map((qq, k) => k === qi ? { ...qq, icon: name || undefined } : qq) }) : undefined}>
                     {qd.icon ? <span style={{ display: "flex" }}>{getIcon(qd.icon, { size: 16, color: qc, strokeWidth: 2 })}</span> : null}
                   </EditableIcon>
-                  <span style={{ fontFamily: FONT.display, fontSize: SIZES.sm, fontWeight: 700, color: `${qc}cc` }}>{qd.title || ""}</span>
+                  <EditableText text={qd.title || ""} editable={textEditable} onSave={(v) => setQField(qi, { title: v })} style={{ fontFamily: FONT.display, fontSize: SIZES.sm, fontWeight: 700, color: `${qc}cc` }} />
                 </div>
                 {(qd.items || []).map((pt, pi) => (
                   <ItemChrome key={pi} editable={editable} presenting={presenting}
@@ -4170,7 +4209,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
                     reorder={qPointReorder(qi, qd.items, pi)}
                     onSetLink={onChange ? (url) => linkQPoint(qi, pi, url) : undefined}
                     onDelete={onChange ? () => deleteQPoint(qi, pi) : undefined}>
-                    <span style={{ color: qc }}>•</span> {typeof pt === "string" ? pt : pt.text || ""}
+                    <span style={{ color: qc }}>•</span> <EditableText text={typeof pt === "string" ? pt : pt.text || ""} editable={textEditable} onSave={(v) => setQPointText(qi, pi, v)} />
                   </ItemChrome>
                 ))}
                 {canEdit && <AddItem variant="chip" label="Add point" accent={qc} style={{ marginTop: 4 }} onAdd={() => addQPoint(qi)} />}
@@ -4181,12 +4220,12 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
       );
       return <div className={cls} style={{ flex: 1, display: "flex", flexDirection: "column", justifyContent: "center", width: "100%", ...block.style }}>
           {(xLeft || xRight) && <div style={{ display: "flex", justifyContent: "space-around", marginBottom: 8, paddingLeft: hasY ? 24 : 0, padding: "0 20px" }}>
-            <span style={{ fontFamily: FONT.mono, fontSize: SIZES.xs, fontWeight: 600, color: st.muted, letterSpacing: "0.08em" }}>{xLeft}</span>
-            <span style={{ fontFamily: FONT.mono, fontSize: SIZES.xs, fontWeight: 600, color: st.muted, letterSpacing: "0.08em" }}>{xRight}</span>
+            {axisText("xLeft", xLeft, { fontFamily: FONT.mono, fontSize: SIZES.xs, fontWeight: 600, color: st.muted, letterSpacing: "0.08em" })}
+            {axisText("xRight", xRight, { fontFamily: FONT.mono, fontSize: SIZES.xs, fontWeight: 600, color: st.muted, letterSpacing: "0.08em" })}
           </div>}
-          {renderRow([0, 1], ["10px 4px 4px 4px", "4px 10px 4px 4px"], yTop)}
+          {renderRow([0, 1], ["10px 4px 4px 4px", "4px 10px 4px 4px"], yTop, "yTop")}
           <div style={{ height: 6 }} />
-          {renderRow([2, 3], ["4px 4px 4px 10px", "4px 4px 10px 4px"], yBottom)}
+          {renderRow([2, 3], ["4px 4px 4px 10px", "4px 4px 10px 4px"], yBottom, "yBottom")}
       </div>;
     }
 
@@ -4213,8 +4252,18 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
               {status === "partial" && <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, height: "50%", background: "#f59e0b" }} />}
               {cfg.icon && <span style={{ display: "flex", zIndex: 1 }}>{getIcon(cfg.icon, { size: 12, color: status === "done" ? "#fff" : "#ef4444", strokeWidth: 3 })}</span>}
             </div>
-            <span style={{ fontFamily: FONT.body, fontSize: SIZES[block.size || "sm"], color: cfg.textColor, flex: 1 }}>{typeof item === "string" ? item : item.text || ""}</span>
-            {block.showLabels !== false && <span style={{ marginLeft: "auto", fontFamily: FONT.mono, fontSize: SIZES.xs, fontWeight: 600, color: labelColor }}>{cfg.label}</span>}
+            {typeof item === "string"
+              ? <span style={{ fontFamily: FONT.body, fontSize: SIZES[block.size || "sm"], color: cfg.textColor, flex: 1 }}>{item}</span>
+              : <ItemText block={block} onChange={onChange} editable={textEditable} idx={i} prop="text" style={{ fontFamily: FONT.body, fontSize: SIZES[block.size || "sm"], color: cfg.textColor, flex: 1 }} />}
+            {block.showLabels !== false && (typeof item === "string"
+              ? <span style={{ marginLeft: "auto", fontFamily: FONT.mono, fontSize: SIZES.xs, fontWeight: 600, color: labelColor }}>{cfg.label}</span>
+              : <EditableText text={item.label || cfg.label} editable={textEditable} onSave={(v) => {
+                  // A typed status name (key or default label) switches the status;
+                  // any other text is a custom label; empty text restores the default.
+                  const key = v.trim().toLowerCase();
+                  const hit = Object.keys(statusConfig).find((k) => k === key || statusConfig[k].label.toLowerCase() === key);
+                  patchItemAt(block, onChange, i, hit ? { status: hit, label: undefined } : { label: v || undefined });
+                }} style={{ marginLeft: "auto", fontFamily: FONT.mono, fontSize: SIZES.xs, fontWeight: 600, color: labelColor, textTransform: "uppercase" }} />)}
           </ItemChrome>;
         })}
         {canEdit && <AddItem label="Add item" accent={st.accent} onAdd={() => addItemAt(block, onChange, newItemFor(block,"checklist"))} />}
@@ -4329,7 +4378,11 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
   const align = slide.align || "left";
   const layout = slide.layout || "stack";
   const isCols = layout === "cols" && (Array.isArray(slide.L) || Array.isArray(slide.R));
-  const isSplit = layout === "image-right" || layout === "image-left";
+  // CR22: a split needs content beside the image. A slide can keep image-left/right
+  // with no body (a blank slide inherits the previous slide's layout), and then a
+  // pasted image sat in one half next to an empty half. Without content, stack.
+  const isSplit = (layout === "image-right" || layout === "image-left")
+    && blocks.some((b) => b && b.type !== "image" && b.type !== "spacer" && b.type !== "divider");
   const colsL = isCols ? _vis(slide.L) : [];
   const colsR = isCols ? _vis(slide.R) : [];
   const isMediaOnlyColumn = (column) =>
@@ -4389,6 +4442,10 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
   const [fitJustify, setFitJustify] = useState(requestedJustify);
   const [splitImgMaxH, setSplitImgMaxH] = useState(null); // px cap so a side image conforms to the content column's height
   const [colsImageFit, setColsImageFit] = useState(null);
+  // CR23: measured image-grid boxes (keyed by the run's first block index) and a
+  // tick that re-renders when image aspect ratios arrive in IMAGE_ASPECT_CACHE.
+  const [gridBoxes, setGridBoxes] = useState({});
+  const [, setAspectTick] = useState(0);
   const [hoveredBlock, setHoveredBlock] = useState(null);
   const [itemHovered, setItemHovered] = useState(false); // an inner item's chrome is hovered → hide block toolbar
   const [editingLink, setEditingLink] = useState(null);
@@ -4472,6 +4529,11 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
       inner.style.height = scaled && (isSplit || isCols)
         ? `${100 / scale}%`
         : (isSplit || (isCols && hasDirectColumnImage) ? "100%" : "auto");
+      // Unscaled, the inner box fills the slide (the same flex:1 the render gives
+      // it). Set it here too: a render still scaled from an earlier state has no
+      // flex yet, and then a flex-sized image grid would measure at its floor.
+      // (The shorthand resets flex-shrink, so it goes first.)
+      inner.style.flex = scaled ? "" : "1";
       inner.style.flexShrink = scaled && (isSplit || isCols) ? "0" : "";
       void inner.offsetHeight;
     };
@@ -4684,8 +4746,22 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
       // cap is computed only after the reciprocal final height is active.
       const contentEl = isSplit ? inner.querySelector("[data-split-content]") : null;
       const contentH = contentEl ? contentEl.scrollHeight : 0;
-      const ih = isSplit ? contentH : inner.scrollHeight;
+      // CR25: a stack with an image grid fills the slide exactly (the grid takes
+      // the free height). Measure its layout boxes, not scrollHeight: a block's
+      // entrance-animation offset would read as overflow and shrink the slide,
+      // and a shrunk slide collapses the grid to its floor.
+      const stackKids = isSplit ? [] : Array.from(inner.children);
+      const ih = isSplit ? contentH
+        : stackKids.some((c) => c.hasAttribute("data-image-grid-key"))
+          ? Math.max(0, ...stackKids.map((c) => c.offsetTop + c.offsetHeight))
+          : inner.scrollHeight;
       const finalScale = ih > availH && ih > 0 ? Math.max(availH / ih, SCALE_FLOOR) : 1;
+      // CR23: record each image grid's free box at the natural (unscaled) size.
+      // The box is flex-driven (it does not depend on the grid's column count),
+      // so it is a stable input for bestImageGridCols().
+      const boxes = {};
+      inner.querySelectorAll("[data-image-grid-key]").forEach((g) => { boxes[g.getAttribute("data-image-grid-key")] = [g.clientWidth, g.clientHeight]; });
+      setGridBoxes((prev) => JSON.stringify(prev) === JSON.stringify(boxes) ? prev : boxes);
       applyGeometry(inner, finalScale);
       let splitCap = null;
       if (isSplit && contentEl) {
@@ -4751,6 +4827,15 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
       });
     };
   }, [layoutGeneration, requestedJustify]);
+
+  // CR23: learn the aspect ratio of each image once (cached by src), so a run of
+  // images can pick the column count that shows them largest.
+  useEffect(() => {
+    let live = true;
+    const pending = new Set(blocks.filter((b) => b && b.type === "image" && typeof b.src === "string" && b.src && !IMAGE_ASPECT_CACHE.has(b.src)).map((b) => b.src));
+    pending.forEach((src) => imageAspect(src).then((a) => { rememberImageAspect(src, a); if (live) setAspectTick((t) => t + 1); }));
+    return () => { live = false; };
+  }, [layoutGeneration]);
 
   if (!blocks.length && !(slide.layout === "cols" && (Array.isArray(slide.L) || Array.isArray(slide.R)))) return null;
 
@@ -4856,24 +4941,32 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
     // Belt-and-braces: ingress already clamps imageCols to an integer 1..6
     // (SLIDE_NUMERIC_BOUNDS), but this value drives a CSS grid track count, so
     // re-clamp at the sink for any slide object that reached here unsanitized.
-    const cols = slide.imageCols ? Math.min(6, Math.max(1, slide.imageCols | 0)) : gridColsFor(runLen, region);
+    const gap = slide.gap || 12;
+    const gridKey = String(idxs[0]);
+    const box = alignWithinColumn ? null : gridBoxes[gridKey];
+    const cols = slide.imageCols
+      ? Math.min(6, Math.max(1, slide.imageCols | 0))
+      : bestImageGridCols(idxs.map((bi) => IMAGE_ASPECT_CACHE.get(blocks[bi].src)), box?.[0], box?.[1], gap, gridColsFor(runLen, region));
     const rows = Math.ceil(runLen / cols);
     const lastRowCount = runLen - (rows - 1) * cols;
     const incomplete = lastRowCount < cols;
-    const gap = slide.gap || 12;
+    // CR25: a full-width run yields height to the other blocks (flex basis 0), but
+    // it keeps a small floor so the fit measurement still reserves room for it
+    // and it never collapses to nothing.
+    const minGridH = region === "full" ? rows * 72 : 0;
     // Grid images are absolute-fill cells, so they have no intrinsic grid
     // height. Use one balanced 140px row per grid row only when the author
     // requests alignment. The default path still fills all available height.
     const gridHeight = alignWithinColumn ? Math.min(splitImgMaxH || rows * 140, rows * 140) : null;
     return (
-      <div key={`__imgrid-${idxs[0]}`} data-testid="image-grid" data-image-grid={region} data-image-count={runLen}
-        style={{ display: "grid", gridTemplateColumns: `repeat(${cols * 2}, minmax(0, 1fr))`, gridAutoRows: "minmax(0, 1fr)", gap, flex: gridHeight == null ? 1 : "0 0 auto", height: gridHeight == null ? undefined : gridHeight, maxHeight: "100%", minHeight: 0, minWidth: 0, width: "100%", alignItems: "stretch" }}>
+      <div key={`__imgrid-${idxs[0]}`} data-testid="image-grid" data-image-grid={region} data-image-count={runLen} data-image-grid-key={gridKey} data-image-cols={cols}
+        style={{ display: "grid", gridTemplateColumns: `repeat(${cols * 2}, minmax(0, 1fr))`, gridAutoRows: "minmax(0, 1fr)", gap, flex: gridHeight == null ? "1 1 0" : "0 0 auto", height: gridHeight == null ? undefined : gridHeight, maxHeight: "100%", minHeight: minGridH, minWidth: 0, width: "100%", alignItems: "stretch" }}>
         {idxs.map((bi, k) => {
           const firstOfLastRow = k === (rows - 1) * cols;
           const gridColumn = (incomplete && firstOfLastRow)
             ? `${cols - lastRowCount + 1} / span 2`
             : "span 2";
-          const rendered = renderBlockWithComments({ ...blocks[bi], _gridCell: true }, bi);
+          const rendered = renderBlockWithComments({ ...blocks[bi], _gridCell: true, ...(isSoloImage && blocks[bi].rounded == null ? { rounded: 0 } : {}) }, bi);
           const [blockEl, ...rest] = rendered;
           // Make the block wrapper fill its cell height so the image (height:100%)
           // and objectFit:contain letterbox uniformly across mixed aspect ratios.
@@ -4899,7 +4992,10 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
       if (blocks[i].type === "image") {
         let j = i;
         while (j < blocks.length && blocks[j].type === "image") j++;
-        if (j - i >= 2) {
+        // CR24/CR25: a lone stacked image also takes the grid path (unless the
+        // author pinned its width), so it fills the free height below/above the
+        // text and shrinks, instead of pushing the other blocks off the slide.
+        if (j - i >= 2 || blocks[i].maxWidth == null) {
           const idxs = [];
           for (let k = i; k < j; k++) idxs.push(k);
           out.push(renderImageGrid(idxs, "full"));
@@ -4969,6 +5065,10 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
         : <div key="__images" data-split-image style={{ flex: slide.imageFlex || 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: splitImageJustify, gap: slide.gap || 12, minWidth: 0, height: "100%" }}>{imageIdxs.flatMap((i) => renderBlockWithComments(splitImgMaxH != null && blocks[i].maxHeight == null ? { ...blocks[i], maxHeight: splitImgMaxH } : blocks[i], i))}</div>;
       return imageOnRight ? [contentCol, imageCol] : [imageCol, contentCol];
     }
+    // CR24: a solo image goes through the one-image grid path (absolute fill of a
+    // flex-sized cell), or it keeps its natural height and a wide image sits at
+    // the top of an otherwise empty slide. It stays full-bleed (pad 0, square).
+    if (isSoloImage && blocks[0].maxWidth == null) return [renderImageGrid([0], "full")];
     if (isSoloImage) return renderBlockWithComments({ ...blocks[0], _solo: true }, 0);
     return renderStackWithImageGrids();
   };
@@ -5170,7 +5270,9 @@ function innerReducer(state, a) {
     case "DUPLICATE_SLIDE": _dirtyMods.add(a.id); return mapItems((i) => { if (i.id !== a.id || !i.slides[a.index]) return i; const dup = JSON.parse(JSON.stringify(i.slides[a.index])); const ns = [...i.slides]; ns.splice(a.index + 1, 0, dup); return { ...i, slides: ns }; });
     case "MOVE_SLIDE": _dirtyMods.add(a.id); return mapItems((i) => { if (i.id !== a.id) return i; const ns = [...i.slides]; const t = a.from + a.dir; if (t < 0 || t >= ns.length) return i; [ns[a.from], ns[t]] = [ns[t], ns[a.from]]; return { ...i, slides: ns }; });
     case "REORDER_SLIDE": _dirtyMods.add(a.id); return mapItems((i) => { if (i.id !== a.id) return i; const ns = [...i.slides]; const [moved] = ns.splice(a.from, 1); ns.splice(a.to, 0, moved); return { ...i, slides: ns }; });
-    case "MOVE_SLIDE_TO_MODULE": { let slide = null; _dirtyMods.add(a.fromId); _dirtyMods.add(a.toId); return { ...state, lanes: state.lanes.map((l) => ({ ...l, items: l.items.map((i) => { if (i.id === a.fromId) { slide = i.slides[a.index]; return { ...i, slides: i.slides.filter((_, idx) => idx !== a.index) }; } return i; }).map((i) => { if (i.id === a.toId && slide) { if (a.toIndex != null) { const _ns = [...i.slides]; _ns.splice(a.toIndex, 0, slide); return { ...i, slides: _ns }; } return { ...i, slides: [...i.slides, slide] }; } return i; }) })), selectedId: a.toId, slideIndex: a.toIndex != null ? a.toIndex : (() => { for (const l of state.lanes) { const it = l.items.find((i) => i.id === a.toId); if (it) return it.slides?.length || 0; } return 0; })() }; }
+    // Remove from ALL lanes first, then insert: a one-pass map lost the slide when
+    // the target section sat in an earlier lane than the source (CR21).
+    case "MOVE_SLIDE_TO_MODULE": { let slide = null; _dirtyMods.add(a.fromId); _dirtyMods.add(a.toId); return { ...state, lanes: state.lanes.map((l) => ({ ...l, items: l.items.map((i) => { if (i.id === a.fromId) { slide = i.slides[a.index]; return { ...i, slides: i.slides.filter((_, idx) => idx !== a.index) }; } return i; }) })).map((l) => ({ ...l, items: l.items.map((i) => { if (i.id === a.toId && slide) { if (a.toIndex != null) { const _ns = [...i.slides]; _ns.splice(a.toIndex, 0, slide); return { ...i, slides: _ns }; } return { ...i, slides: [...i.slides, slide] }; } return i; }) })), selectedId: a.toId, slideIndex: a.toIndex != null ? a.toIndex : (() => { for (const l of state.lanes) { const it = l.items.find((i) => i.id === a.toId); if (it) return it.slides?.length || 0; } return 0; })() }; }
     // Multi-slide move to another module as a SINGLE reduce (one undo). Gathers the
     // slides at `indices` (ascending, order preserved) from fromId, drops them all,
     // then inserts them into toId at `toIndex` (or appends). Undo reverses the whole
@@ -5184,7 +5286,7 @@ function innerReducer(state, a) {
       return { ...state, lanes: state.lanes.map((l) => ({ ...l, items: l.items.map((i) => {
         if (i.id === a.fromId) { movedSlides = idxs.map((ix) => i.slides[ix]).filter(Boolean); return { ...i, slides: i.slides.filter((_, ix) => !drop.has(ix)) }; }
         return i;
-      }).map((i) => {
+      }) })).map((l) => ({ ...l, items: l.items.map((i) => {
         if (i.id === a.toId && movedSlides.length) {
           if (a.toIndex != null) { const _ns = [...i.slides]; _ns.splice(a.toIndex, 0, ...movedSlides); return { ...i, slides: _ns }; }
           return { ...i, slides: [...i.slides, ...movedSlides] };
@@ -9610,6 +9712,71 @@ let _velaDrag = null; // { kind: "slide", fromItemId, slideIndex } | { kind: "se
 const _setDrag = (p) => { _velaDrag = p; };
 const _clearDrag = () => { _velaDrag = null; };
 
+// ━━━ TOC drag auto-scroll ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Native drag does not scroll the TOC pane near its edges, so a dragged slide or
+// section could not reach sections outside the view. While a TOC drag is active,
+// a pointer in the edge zone of the scroll container scrolls it. The speed grows
+// nearer the edge. The container is the nearest scrollable ancestor of the tree,
+// or the page when no ancestor scrolls.
+const TOC_AUTOSCROLL_ZONE = 56; // px from the visible top / bottom edge
+const TOC_AUTOSCROLL_MAX = 22; // px per animation frame at the edge
+// Signed speed (px/frame) for pointer y and visible bounds [top, bottom]; < 0 = up.
+// A pointer just outside the bounds (within one zone) scrolls at full speed.
+function tocAutoScrollSpeed(y, top, bottom, zone = TOC_AUTOSCROLL_ZONE, max = TOC_AUTOSCROLL_MAX) {
+  if (!Number.isFinite(y) || !(bottom > top)) return 0;
+  const z = Math.max(8, Math.min(zone, (bottom - top) / 4));
+  if (y < top - z || y > bottom + z) return 0;
+  if (y < top + z) return -Math.ceil(max * Math.min(1, (top + z - y) / z));
+  if (y > bottom - z) return Math.ceil(max * Math.min(1, (y - (bottom - z)) / z));
+  return 0;
+}
+function tocScrollParent(el) {
+  for (let p = el && el.parentElement; p && p !== document.body && p !== document.documentElement; p = p.parentElement) {
+    const oy = getComputedStyle(p).overflowY;
+    if ((oy === "auto" || oy === "scroll") && p.scrollHeight > p.clientHeight + 1) return p;
+  }
+  return document.scrollingElement || document.documentElement;
+}
+// Attaches the auto-scroll to the tree element in treeRef for the life of the list.
+// Stops on drop, on dragend (includes Escape cancel), when the pointer leaves the
+// zone or the window, when no dragover arrives for a short time, and at the ends.
+function useTocDragAutoScroll(treeRef) {
+  useEffect(() => {
+    let raf = 0, speed = 0, scroller = null, last = 0;
+    const stop = () => { speed = 0; scroller = null; if (raf) { cancelAnimationFrame(raf); raf = 0; } };
+    const tick = () => {
+      raf = 0;
+      if (!_velaDrag || !scroller || !speed || performance.now() - last > 600) { stop(); return; }
+      const before = scroller.scrollTop;
+      scroller.scrollTop = before + speed;
+      if (scroller.scrollTop === before) { stop(); return; } // at the end
+      raf = requestAnimationFrame(tick);
+    };
+    const onOver = (e) => {
+      if (!_velaDrag || !treeRef.current) { if (speed || raf) stop(); return; }
+      if (!scroller) scroller = tocScrollParent(treeRef.current);
+      const page = scroller === document.scrollingElement || scroller === document.documentElement;
+      const r = page ? { left: 0, right: window.innerWidth, top: 0, bottom: window.innerHeight } : scroller.getBoundingClientRect();
+      const inX = e.clientX >= r.left && e.clientX <= r.right;
+      speed = inX ? tocAutoScrollSpeed(e.clientY, Math.max(0, r.top), Math.min(window.innerHeight, r.bottom)) : 0;
+      last = performance.now();
+      if (speed && !raf) raf = requestAnimationFrame(tick);
+    };
+    const onLeave = (e) => { if (!e.relatedTarget) speed = 0; }; // pointer left the window
+    document.addEventListener("dragover", onOver, true);
+    document.addEventListener("dragleave", onLeave, true);
+    document.addEventListener("drop", stop, true);
+    document.addEventListener("dragend", stop, true);
+    return () => {
+      document.removeEventListener("dragover", onOver, true);
+      document.removeEventListener("dragleave", onLeave, true);
+      document.removeEventListener("drop", stop, true);
+      document.removeEventListener("dragend", stop, true);
+      stop();
+    };
+  }, []);
+}
+
 // ━━━ Reusable right-click context menu ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Positioned at the cursor, clamped to the viewport, and closes on outside-click
 // or Escape. `children` is [menuFn, submenuFn]; each is called with a `move`
@@ -10350,6 +10517,8 @@ function ModuleList({ lanes, selectedId, slideIndex, selectedSlideIndices, colla
   const collapsedSet = React.useMemo(() => new Set(Array.isArray(collapsedSections) ? collapsedSections : []), [collapsedSections]);
   const allIds = allItems.map((i) => i.id);
   const toggleCollapse = (id, all) => dispatch({ type: "TOGGLE_SECTION_COLLAPSE", id, all, ids: allIds });
+  const treeRef = useRef(null);
+  useTocDragAutoScroll(treeRef);
 
   // ── Roving-tabindex tree focus (WAI-ARIA disclosure pattern) ──
   // A single tab stop for the whole rail; arrow keys move DOM focus between the
@@ -10397,7 +10566,7 @@ function ModuleList({ lanes, selectedId, slideIndex, selectedSlideIndices, colla
   const handleDrop = (e) => { if (!_velaDrag || _velaDrag.kind !== "section" || !laneId) return; e.preventDefault(); dispatch({ type: "DRAG_REORDER", id: _velaDrag.itemId, targetLaneId: laneId, beforeId: null, afterId: null }); };
 
   return (
-    <div role="tree" aria-label="Slide outline" data-testid="toc-tree" onDragOver={(e) => { if (_velaDrag && _velaDrag.kind === "section") { e.preventDefault(); e.dataTransfer.dropEffect = "move"; } }} onDrop={handleDrop}>
+    <div ref={treeRef} role="tree" aria-label="Slide outline" data-testid="toc-tree" onDragOver={(e) => { if (_velaDrag && _velaDrag.kind === "section") { e.preventDefault(); e.dataTransfer.dropEffect = "move"; } }} onDrop={handleDrop}>
       {(() => { let offset = 0; let timeOffset = 0; return allItems.map((item, idx) => {
         const itemLaneId = lanes.find((l) => l.items.some((i) => i.id === item.id))?.id || laneId;
         const slideOffset = offset;
@@ -10923,6 +11092,16 @@ const VELA_TESTS = [
   { name: "gridColsFor full: N=4 makes 2 rows (2x2)", fn: () => Math.ceil(4 / gridColsFor(4, "full")) === 2 },
   { name: "gridColsFor full: N=5 makes 2 rows (3 then 2)", fn: () => Math.ceil(5 / gridColsFor(5, "full")) === 2 },
   { name: "gridColsFor full: N=2 stays one row", fn: () => Math.ceil(2 / gridColsFor(2, "full")) === 1 },
+  // ── tideline CR23: aspect-aware grid columns (bestImageGridCols) ──
+  { name: "bestImageGridCols: 3 tall images stay one row", fn: () => bestImageGridCols([0.5625, 0.5625, 0.5625], 864, 418, 12, 3) === 3 },
+  { name: "bestImageGridCols: 3 wide images leave one row", fn: () => bestImageGridCols([3, 3, 3], 864, 418, 12, 3) < 3 },
+  { name: "bestImageGridCols: 2 wide images stack in a tall box", fn: () => bestImageGridCols([3, 3], 864, 468, 12, 2) === 1 },
+  { name: "bestImageGridCols: 4 mixed images keep 2x2", fn: () => bestImageGridCols([3, 1.78, 1, 0.5625], 864, 468, 12, 2) === 2 },
+  { name: "bestImageGridCols: unknown aspect → count default", fn: () => bestImageGridCols([3, undefined, 3], 864, 418, 12, 3) === 3 },
+  { name: "bestImageGridCols: no box → count default", fn: () => bestImageGridCols([3, 3, 3], 0, 0, 12, 3) === 3 },
+  { name: "bestImageGridCols: bad aspect values → count default", fn: () => bestImageGridCols([3, NaN, -1], 864, 418, 12, 3) === 3 && bestImageGridCols([3, "3", 3], 864, 418, 12, 3) === 3 },
+  { name: "bestImageGridCols: one image → 1", fn: () => bestImageGridCols([3], 864, 418, 12, 1) === 1 },
+  { name: "bestImageGridCols: result is always 1..n", fn: () => [[1, 1], [2, 0.5, 4, 1, 1]].every((a) => { const c = bestImageGridCols(a, 864, 418, 12, 3); return c >= 1 && c <= a.length; }) },
 
   // pasteImageLayout with image-count n: heavy text + >=3 images → full-width header (stack)
   { name: "pasteImageLayout: image-only slice N=2 stacks (auto-grids)", fn: () => pasteImageLayout({ blocks: [] }, 1, 2) === "stack" },
@@ -16318,6 +16497,266 @@ uiSuite("meridian-CR01 local save ends at the latest state with a slow backend",
   { name: "Edit, then undo during the in-flight write: file ends at the original", fn: () => _meridianF8SlowSave(["meridian-F8 edit", "meridian-F8 base"], "meridian-F8 base") },
   { name: "Edit, then edit again during the in-flight write: file ends at the last edit", fn: () => _meridianF8SlowSave(["meridian-F8 edit", "meridian-F8 edit 2"], "meridian-F8 edit 2") },
 ]);
+
+// tideline-CR26: every rendered block text is inline-editable in the editor.
+// Find the click-to-edit display node for an exact text inside the slide.
+const _tlEditNode = (text) => _$$("div", _mrdViewport() || document).find((el) =>
+  el.style.cursor === "pointer" && el.textContent.trim() === text && !_$$("div", el).some((c) => c.style.cursor === "pointer"));
+// Click the text, type the new value, commit with Enter, wait for the new text.
+const _tlEdit = async (from, to, shown = to) => {
+  const node = await _waitFor(() => _tlEditNode(from), 2000).catch(() => { throw new Error(`"${from}" is not inline-editable`); });
+  _click(node);
+  const ed = await _waitFor(() => _$("[contenteditable='true']", _mrdViewport()), 1500);
+  ed.textContent = to;
+  ed.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+  await _waitFor(() => !_$("[contenteditable='true']") && _tlEditNode(shown), 2000).catch(() => { throw new Error(`"${from}" -> "${to}" did not commit`); });
+};
+uiSuite("tideline-CR26 edit every block text", [
+  { name: "CR26: checklist item text and status label edit inline, with undo and redo", fn: async () => {
+    const hooks = _hooks();
+    await _mrdInject([{ type: "checklist", items: [{ text: "Task one", status: "pending" }, { text: "Task two", status: "done" }] }], null,
+      (vp) => vp?.textContent.includes("Task one") ? vp : null);
+    const past0 = hooks.getHistoryCounts ? hooks.getHistoryCounts().past : 0;
+    try {
+      await _tlEdit("Task one", "Task edited");
+      await _tlEdit("PENDING", "blocked", "BLOCKED");
+      const blockedCol = _tlEditNode("BLOCKED")?.style.color;
+      if (!/239, 68, 68|#ef4444/i.test(blockedCol || "")) throw new Error(`typed status did not switch the status (color ${blockedCol})`);
+      await _tlEdit("DONE", "Shipped");
+      _key("z", { ctrlKey: true });
+      await _waitFor(() => _tlEditNode("DONE"), 2000).catch(() => { throw new Error("undo did not restore the label"); });
+      _key("y", { ctrlKey: true });
+      await _waitFor(() => _tlEditNode("Shipped"), 2000).catch(() => { throw new Error("redo did not restore the custom label"); });
+      await _tlEdit("Shipped", "", "DONE");
+    } finally {
+      await _mrdUndoTo(past0);
+    }
+  }},
+  { name: "CR26: comparison, matrix, number-row, progress and flow texts edit inline", fn: async () => {
+    const cases = [
+      [[{ type: "comparison", dividerLabel: "OR", items: [{ title: "Left col", items: ["Left point"] }, { title: "Right col", items: [{ text: "Right point" }] }] }],
+        [["Left col", "Left new"], ["Right col", "Right new"], ["Left point", "LP new"], ["Right point", "RP new"], ["OR", "VERSUS"]]],
+      [[{ type: "matrix", xLeft: "Low X", xRight: "High X", yTop: "High Y", yBottom: "Low Y", quadrants: [{ title: "Q one", items: ["Q point"] }, { title: "Q two" }, { title: "Q three" }, { title: "Q four" }] }],
+        [["Q one", "Q1 new"], ["Q point", "QP new"], ["Low X", "LX new"], ["High Y", "HY new"]]],
+      [[{ type: "number-row", items: [{ value: "42", label: "Answers" }, { value: "7", label: "Days" }] }],
+        [["42", "43"], ["Answers", "Replies"]]],
+      [[{ type: "progress", leftLabel: "Start", rightLabel: "End", annotation: "Note here", items: [{ label: "Bar", value: 40 }] }],
+        [["Start", "Begin"], ["End", "Finish"], ["Note here", "Note new"]]],
+      [[{ type: "flow", gateLabel: "Gate", items: [{ label: "A", gate: true }, { label: "B" }] }],
+        [["Gate", "Check"]]],
+    ];
+    for (const [blocks, edits] of cases) {
+      await _mrdInject(blocks, null, (vp) => vp?.textContent.includes(edits[0][0]) ? vp : null);
+      // Undo one step per edit (history counts stop growing at MAX_HISTORY).
+      let done = 0;
+      try {
+        for (const [from, to] of edits) { await _tlEdit(from, to); done++; }
+      } catch (e) { throw new Error(`${blocks[0].type}: ${e.message}`); }
+      finally { document.activeElement?.blur?.(); for (let k = 0; k < done; k++) { _key("z", { ctrlKey: true }); await _wait(60); } }
+      await _waitFor(() => _tlEditNode(edits[0][0]), 2000).catch(() => { throw new Error(`${blocks[0].type}: undo did not restore the text`); });
+    }
+  }},
+], { setup: _selectFirstModule });
+
+// CR21: while a slide or section is dragged in the TOC, the pointer near the top /
+// bottom edge of the scroll pane scrolls it, so a drop can reach the first / last
+// section. The pane is made short here so it overflows with any deck.
+async function _tidelineTocDrag(fn) {
+  const tree = await _waitFor(() => document.querySelector('[data-testid="toc-tree"]'), 3000);
+  const pane = tree.parentElement; const old = pane.style.maxHeight;
+  pane.style.maxHeight = Math.max(90, Math.min(220, Math.floor(tree.offsetHeight / 2))) + "px";
+  try {
+    await _wait(60);
+    const sc = tocScrollParent(tree);
+    if (sc !== pane) throw new Error("TOC pane does not overflow");
+    return await fn(sc, tree);
+  } finally { pane.style.maxHeight = old; }
+}
+function _tidelineFire(dt) { return (el, type, extra) => el.dispatchEvent(new DragEvent(type, Object.assign({ bubbles: true, cancelable: true, dataTransfer: dt }, extra))); }
+// Fire dragover at (x, y) every 40ms until cond() or timeout; return cond().
+async function _tidelineHold(el, fire, x, y, cond, ms) {
+  const t0 = performance.now();
+  while (performance.now() - t0 < ms) { fire(el, "dragover", { clientX: x, clientY: y }); await _wait(40); if (cond()) return true; }
+  return cond();
+}
+const _tidelineRows = () => _$$('[data-testid="toc-slide-row"]');
+// The title span has flex:1 (the number / time spans before it change on a move).
+const _tidelineTitle = (r) => { const t = _$$("span", r).find((x) => x.style.flex && x.style.flex.startsWith("1")); return ((t || r).textContent || "").trim(); };
+
+uiSuite("tideline-CR21 TOC drag auto-scroll", [
+  { name: "Speed is 0 in the middle, grows toward each edge, and is 0 far outside", fn: async () => {
+    const v = (y) => tocAutoScrollSpeed(y, 100, 500);
+    if (v(300) !== 0) throw new Error("middle scrolls: " + v(300));
+    if (!(v(150) < 0 && v(110) < v(150) && v(101) <= v(110))) throw new Error("top zone speed: " + [v(150), v(110), v(101)]);
+    if (!(v(450) > 0 && v(490) > v(450) && v(499) >= v(490))) throw new Error("bottom zone speed: " + [v(450), v(490), v(499)]);
+    if (v(90) !== -TOC_AUTOSCROLL_MAX || v(510) !== TOC_AUTOSCROLL_MAX) throw new Error("just outside is not full speed");
+    if (v(0) !== 0 || v(700) !== 0 || tocAutoScrollSpeed(NaN, 0, 10) !== 0 || tocAutoScrollSpeed(5, 10, 10) !== 0) throw new Error("far outside / bad input scrolls");
+  }},
+  { name: "Drag near the top scrolls up to the start; drop lands in the first section", fn: () => _tidelineTocDrag(async (sc) => {
+    sc.scrollTop = sc.scrollHeight; await _wait(60);
+    const before = _tidelineRows().map(_tidelineTitle);
+    if (before.length < 3) throw new Error("need >=3 slide rows");
+    const src = _tidelineRows()[before.length - 1];
+    const r = sc.getBoundingClientRect(); const x = r.left + r.width / 2;
+    const fire = _tidelineFire(new DataTransfer());
+    fire(src, "dragstart");
+    try {
+      if (!(await _tidelineHold(sc, fire, x, r.top + 3, () => sc.scrollTop === 0, 6000))) throw new Error("did not reach the top: " + sc.scrollTop);
+      const dst = _tidelineRows()[0]; const b = dst.getBoundingClientRect();
+      if (b.bottom < r.top || b.top > r.bottom) throw new Error("first row not visible after scroll");
+      fire(dst, "dragover", { clientX: b.left + 5, clientY: b.top + 2 });
+      fire(dst, "drop", { clientX: b.left + 5, clientY: b.top + 2 });
+    } finally { fire(src, "dragend"); }
+    await _waitFor(() => _tidelineTitle(_tidelineRows()[0]) === before[before.length - 1], 2000).catch(() => { throw new Error("drop did not land first: " + _tidelineRows().slice(0, 2).map(_tidelineTitle) + " | want " + before[before.length - 1]); });
+    // Restore: drag it back below the row that is now last.
+    const f2 = _tidelineFire(new DataTransfer()); const s2 = _tidelineRows()[0]; const rows = _tidelineRows(); const d2 = rows[rows.length - 1];
+    d2.scrollIntoView({ block: "nearest" }); await _wait(40);
+    const b2 = d2.getBoundingClientRect();
+    f2(s2, "dragstart"); f2(d2, "dragover", { clientX: b2.left + 5, clientY: b2.bottom - 2 }); f2(d2, "drop", { clientX: b2.left + 5, clientY: b2.bottom - 2 }); f2(s2, "dragend");
+    await _waitFor(() => JSON.stringify(_tidelineRows().map(_tidelineTitle)) === JSON.stringify(before), 2000).catch(() => { throw new Error("restore failed: " + _tidelineRows().map(_tidelineTitle).slice(-3)); });
+  })},
+  { name: "Drag near the bottom scrolls down to the end and stops there", fn: () => _tidelineTocDrag(async (sc) => {
+    sc.scrollTop = 0; await _wait(60);
+    const src = _tidelineRows()[0]; const r = sc.getBoundingClientRect(); const x = r.left + r.width / 2;
+    const end = () => sc.scrollTop >= sc.scrollHeight - sc.clientHeight - 1;
+    const fire = _tidelineFire(new DataTransfer());
+    fire(src, "dragstart");
+    try {
+      if (!(await _tidelineHold(sc, fire, x, r.bottom - 3, end, 6000))) throw new Error("did not reach the end: " + sc.scrollTop);
+      const at = sc.scrollTop; await _wait(120);
+      if (sc.scrollTop !== at) throw new Error("scrolled past the end");
+    } finally { fire(src, "dragend"); }
+  })},
+  { name: "Scroll stops on dragend (Escape), on drop, in the middle and without a drag", fn: () => _tidelineTocDrag(async (sc) => {
+    const r = sc.getBoundingClientRect(); const x = r.left + r.width / 2;
+    const mid = Math.floor((sc.scrollHeight - sc.clientHeight) / 2);
+    const still = async () => { const a = sc.scrollTop; await _wait(150); return sc.scrollTop === a; };
+    // No drag active: an edge dragover does nothing.
+    sc.scrollTop = mid; await _wait(40);
+    const fire0 = _tidelineFire(new DataTransfer());
+    fire0(sc, "dragover", { clientX: x, clientY: r.bottom - 3 });
+    if (!(await still()) || sc.scrollTop !== mid) throw new Error("scrolled without a drag");
+    const src = _tidelineRows()[0];
+    for (const endType of ["dragend", "drop"]) {
+      sc.scrollTop = mid; await _wait(40);
+      const fire = _tidelineFire(new DataTransfer());
+      fire(src, "dragstart");
+      try {
+        fire(sc, "dragover", { clientX: x, clientY: r.bottom - 3 });
+        await _wait(80);
+        if (sc.scrollTop === mid) throw new Error("edge did not scroll");
+        fire(endType === "drop" ? document.body : src, endType);
+        if (!(await still())) throw new Error("still scrolls after " + endType);
+        // Pointer back in the middle: no scroll.
+        if (endType === "dragend") {
+          fire(src, "dragstart"); sc.scrollTop = mid; await _wait(40);
+          fire(sc, "dragover", { clientX: x, clientY: r.top + r.height / 2 });
+          if (!(await still()) || sc.scrollTop !== mid) throw new Error("middle scrolls");
+        }
+      } finally { fire(src, "dragend"); }
+    }
+  })},
+]);
+
+// ── Sprint tideline (CR22-CR25): image paste placement stress test ──────
+// Pastes 1-4 images of mixed aspect (wide 3:1, 16:9, square, tall 9:16) through
+// the real paste handler onto (a) an empty slide, (b) a heading slide and (c) a
+// heading + text + credit slide, then measures the rendered boxes.
+const _tlAspects = { wide: [900, 300, "#3b82f6"], hd: [1280, 720, "#10b981"], sq: [600, 600, "#f59e0b"], tall: [450, 800, "#ef4444"] };
+const _tlBases = {
+  a: [],
+  b: [{ type: "heading", text: "TL heading only" }],
+  c: [{ type: "heading", text: "TL heading text credit" }, { type: "text", text: "Short body text that explains the pictures." }, { type: "text", text: "Credit: Example Author, 16 Jun 2025", size: "sm" }],
+};
+const _tlPaste = async (kind) => {
+  const [w, h, color] = _tlAspects[kind];
+  const cv = document.createElement("canvas"); cv.width = w; cv.height = h;
+  const g = cv.getContext("2d"); g.fillStyle = color; g.fillRect(0, 0, w, h);
+  const blob = await new Promise((r) => cv.toBlob(r, "image/png"));
+  const dt = new DataTransfer(); dt.items.add(new File([blob], `${kind}.png`, { type: "image/png" }));
+  _mrdViewport().dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true }));
+};
+const _tlMeasure = () => {
+  const vp = _mrdViewport(); const v = vp.getBoundingClientRect(); const s = v.width / 960;
+  const outside = Array.from(vp.querySelectorAll("[data-block-type]")).filter((el) => el.dataset.blockType !== "image").map((el) => el.getBoundingClientRect())
+    .filter((r) => r.left < v.left - 1 || r.top < v.top - 1 || r.right > v.right + 1 || r.bottom > v.bottom + 1);
+  const imgs = Array.from(vp.querySelectorAll("img")).map((im) => {
+    const r = im.getBoundingClientRect(); const k = Math.min(r.width / im.naturalWidth, r.height / im.naturalHeight);
+    return { w: im.naturalWidth * k / s, h: im.naturalHeight * k / s, cx: (r.left + r.width / 2 - v.left) / s };
+  });
+  const grid = vp.querySelector("[data-testid='image-grid']");
+  return { outside: outside.length, imgs, area: imgs.reduce((a, i) => a + i.w * i.h, 0) / (960 * 540), cols: grid ? Number(grid.getAttribute("data-image-cols")) : null };
+};
+const _tlCase = async (base, kinds, extra) => {
+  const past = _hooks().getHistoryCounts ? _hooks().getHistoryCounts().past : 0;
+  await _mrdInject(_tlBases[base], { layout: undefined, contentFlex: undefined, imageFlex: undefined, imageCols: undefined, ...(extra || {}) }, (vp) => vp);
+  for (let k = 0; k < kinds.length; k++) {
+    await _tlPaste(kinds[k]);
+    await _waitFor(() => Array.from(_mrdViewport().querySelectorAll("img")).filter((im) => im.complete && im.naturalWidth > 0).length >= k + 1, 4000);
+  }
+  // Let the fit pass, the aspect cache and the grid box settle.
+  await _wait(500); await _mrdFrame();
+  const m = _tlMeasure();
+  const label = `${base}:${kinds.join("+")}`;
+  if (m.outside) throw new Error(`${label}: ${m.outside} non-image block(s) outside the 960x540 canvas`);
+  if (m.imgs.length !== kinds.length) throw new Error(`${label}: ${m.imgs.length}/${kinds.length} images rendered`);
+  if (m.imgs.some((i) => !(i.h > 20 && i.w > 20))) throw new Error(`${label}: an image is collapsed (${m.imgs.map((i) => `${i.w.toFixed(0)}x${i.h.toFixed(0)}`).join(" ")})`);
+  await _mrdUndoTo(past);
+  return m;
+};
+
+uiSuite("tideline-CR22-CR25 image placement", [
+  { name: "CR22: one image on an empty slide that kept a split layout fills the slide, not one half", fn: async () => {
+    for (const layout of ["image-right", "image-left"]) {
+      const m = await _tlCase("a", ["tall"], { layout });
+      const cx = m.imgs[0].cx;
+      if (Math.abs(cx - 480) > 24) throw new Error(`${layout}: image centre x=${cx.toFixed(0)} (expected near 480)`);
+      if (m.imgs[0].h < 500) throw new Error(`${layout}: tall image height ${m.imgs[0].h.toFixed(0)} does not fill the slide`);
+    }
+  }},
+  { name: "CR24: a wide image fills the free width (solo and under a heading)", fn: async () => {
+    for (const base of ["a", "b", "c"]) {
+      const m = await _tlCase(base, ["wide"]);
+      if (m.imgs[0].w < 800) throw new Error(`${base}: wide image is only ${m.imgs[0].w.toFixed(0)}px wide`);
+    }
+  }},
+  { name: "CR22/CR24: single images of every aspect use the free area well", fn: async () => {
+    const minArea = { a: 0.3, b: 0.18, c: 0.15 };
+    for (const base of ["a", "b", "c"]) for (const kind of ["wide", "hd", "sq", "tall"]) {
+      const m = await _tlCase(base, [kind]);
+      if (m.area < minArea[base]) throw new Error(`${base}:${kind}: image covers ${(m.area * 100).toFixed(0)}% of the slide`);
+    }
+  }},
+  { name: "CR23: three images pick their grid by aspect ratio", fn: async () => {
+    for (const base of ["a", "b"]) {
+      const tall = await _tlCase(base, ["tall", "tall", "tall"]);
+      if (tall.cols !== 3) throw new Error(`${base}: 3 tall images use ${tall.cols} columns (expected one row of 3)`);
+      const wide = await _tlCase(base, ["wide", "wide", "wide"]);
+      if (!(wide.cols < 3)) throw new Error(`${base}: 3 wide images still use ${wide.cols} columns`);
+    }
+    const c = await _tlCase("c", ["wide", "wide", "wide"]);
+    if (!(c.cols < 3)) throw new Error(`c: 3 wide images still use ${c.cols} columns`);
+  }},
+  { name: "CR25: 2-4 mixed images never push text off the slide", fn: async () => {
+    for (const base of ["a", "b", "c"]) for (const kinds of [["wide", "tall"], ["hd", "hd"], ["wide", "sq", "tall"], ["wide", "hd", "sq", "tall"]]) {
+      await _tlCase(base, kinds);
+    }
+  }},
+  { name: "CR25: a tall image between a heading and a credit line yields its height", fn: async () => {
+    const marker = "TL CR25 credit";
+    const src = _mrdSvg(338, 600, "ef4444");
+    for (const body of [[], [{ type: "text", text: "A long paragraph of body text. ".repeat(14) }]]) {
+      await _mrdInject([{ type: "heading", text: "TL CR25" }, ...body, { type: "image", src }, { type: "text", text: marker }], { layout: undefined }, (vp) => vp?.textContent.includes(marker) && vp.querySelector("img")?.naturalWidth > 0 ? vp : null);
+      await _wait(400);
+      const m = _tlMeasure();
+      if (m.outside) throw new Error(`${body.length ? "heavy" : "plain"}: ${m.outside} text block(s) outside the canvas`);
+      const credit = Array.from(_mrdViewport().querySelectorAll("[data-block-type='text']")).find((el) => el.textContent.includes(marker));
+      const vr = _mrdViewport().getBoundingClientRect(), cr = credit.getBoundingClientRect();
+      if (cr.bottom > vr.bottom - 4) throw new Error(`credit line is clipped (bottom ${(cr.bottom - vr.bottom).toFixed(1)}px past the slide)`);
+      if (m.imgs[0].h < 100) throw new Error(`image collapsed to ${m.imgs[0].h.toFixed(0)}px`);
+    }
+  }},
+], { setup: _selectFirstModule });
 
 // ━━━ UI TEST RUNNER COMPONENT ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
