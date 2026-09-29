@@ -2207,6 +2207,29 @@ function rememberPasteLayout(src, slide) {
   PASTE_LAYOUT_OWNED.set(src, pasteLayoutSig(slide));
 }
 
+// Rapid image pastes. Slides carry no id, so an async paste finds its target by
+// object identity. Each applied paste records the slide object it produced as
+// the successor of the slide it changed (or spilled over from), so a paste
+// queued behind it follows the chain to the live slide instead of being dropped.
+// An undo that restores the older object ends the chain there. WeakMap: session
+// memory only, nothing is kept for slides that are gone.
+const PASTE_SLIDE_SUCC = new WeakMap();
+// The newest member of the target's successor chain that is still in `list`, or null.
+function pasteResolveTarget(target, list) {
+  if (!target || !Array.isArray(list)) return null;
+  let best = list.includes(target) ? target : null;
+  for (let x = target, k = 0; k < 512 && (x = PASTE_SLIDE_SUCC.get(x)); k++) if (list.includes(x)) best = x;
+  return best;
+}
+// After a paste renders: link `from` to the new slide object whose last block is
+// the pasted image (the one slide in `after` that was not in `before`).
+function pasteRecordSuccessor(from, before, after, src) {
+  if (!from || typeof from !== "object" || !Array.isArray(after)) return;
+  const seen = new Set(before || []);
+  const next = after.find((s) => s && !seen.has(s) && Array.isArray(s.blocks) && s.blocks.length && s.blocks[s.blocks.length - 1].src === src);
+  if (next) PASTE_SLIDE_SUCC.set(from, next);
+}
+
 // ━━━ Status & Importance Meta ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 const STATUSES = ["todo", "done", "signed-off"];
 const STATUS_META = {
@@ -8611,6 +8634,12 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
   const slides = concept.slides || [];
   const slidesRef = useRef(slides);
   slidesRef.current = slides;
+  // Image paste: the view the paste sees now, the queue that keeps pastes in
+  // order, and a stand-in target per empty module (see handlePaste).
+  const pasteLiveRef = useRef(null);
+  pasteLiveRef.current = { moduleId: concept.id, index: slideIndex };
+  const pasteQueueRef = useRef(Promise.resolve());
+  const emptyPasteKeyRef = useRef(new Map());
   const aiOk = useAIAvailable();
 
   // Virtual title card for presentation mode
@@ -9073,37 +9102,62 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       if (item.type.startsWith("image/")) {
         e.preventDefault(); const blob = item.getAsFile(); const reader = new FileReader();
         // Capture the target now. The image work below is async: the user can
-        // undo, delete or edit slides before it ends. The change goes to this
-        // exact slide object only (found again by identity just before the
-        // dispatch); if it is gone or changed, the paste is dropped. Never write
-        // back a stale copy of the slide list or of the slide.
-        const moduleId = concept.id, epoch = deckEpochRef.current;
-        const target = slides.length ? slides[slideIndex] : null;
-        const bodyProbe = target ? pasteBodyProbe(containerRef.current, target) : null;
-        reader.onload = async () => {
-          const compressed = await compressSlideImage(reader.result);
-          if (deckEpochRef.current !== epoch) return;
-          // Empty module → brand-new full-bleed solo-image slide (additive).
-          if (!target) { dispatch({ type: "ADD_SLIDE", id: moduleId, slide: { blocks: [{ type: "image", src: compressed }] } }); return; }
-          const curImgBlocks = (target.blocks || []).filter((b) => b.type === "image");
-          // Natural sizes give the aspects and the upscale caps for the layout choice.
-          const sizes = await Promise.all([...curImgBlocks.map((b) => b.src), compressed].map((src) => imageNaturalSize(src)));
+        // undo, delete or edit slides, or paste again, before it ends. Pastes
+        // apply one at a time, in paste order (pasteQueueRef). Each one finds its
+        // target again just before its dispatch: the same slide object, or the
+        // slide an earlier queued paste made from it (pasteResolveTarget). It then
+        // builds the change from that CURRENT slide. If the target is gone, or the
+        // user changed it, the paste is dropped. Never write back a stale copy.
+        const moduleId = concept.id, epoch = deckEpochRef.current, empty = !slides.length;
+        let target = empty ? null : slides[slideIndex];
+        if (empty) { const keys = emptyPasteKeyRef.current; target = keys.get(moduleId) || {}; keys.set(moduleId, target); }
+        else emptyPasteKeyRef.current.delete(moduleId);
+        const bodyProbe = empty ? null : pasteBodyProbe(containerRef.current, target);
+        const data = new Promise((res) => { reader.onload = () => res(compressSlideImage(reader.result)); reader.onerror = () => res(null); });
+        reader.readAsDataURL(blob);
+        const live = () => deckEpochRef.current === epoch && pasteLiveRef.current.moduleId === moduleId;
+        // Wait until a dispatch below has rendered, then link the new slide object.
+        const settle = async (from, before, src) => {
+          for (let k = 0; k < 60 && slidesRef.current === before; k++) await new Promise((r) => setTimeout(r, 16));
+          if (live()) pasteRecordSuccessor(from, before, slidesRef.current, src);
+        };
+        const apply = async () => {
+          const compressed = await data;
+          if (!compressed || deckEpochRef.current !== epoch) return;
+          // Empty module → brand-new full-bleed solo-image slide (additive). Later
+          // pastes of the same burst go onto that slide.
+          if (empty && !pasteResolveTarget(target, slidesRef.current)) {
+            const before = slidesRef.current;
+            dispatch({ type: "ADD_SLIDE", id: moduleId, slide: { blocks: [{ type: "image", src: compressed }] } });
+            await settle(target, before, compressed); return;
+          }
+          let cur = null, sizes = null;
+          for (let tries = 0; tries < 4 && !cur; tries++) {
+            const c = live() ? pasteResolveTarget(target, slidesRef.current) : null;
+            if (!c) return;
+            // Natural sizes give the aspects and the upscale caps for the layout choice.
+            sizes = await Promise.all([...(c.blocks || []).filter((b) => b.type === "image").map((b) => b.src), compressed].map((src) => imageNaturalSize(src)));
+            // Resolve again, in the same task as the dispatch below; start over if it moved on.
+            if (live() && pasteResolveTarget(target, slidesRef.current) === c) cur = c;
+          }
+          if (!cur) return;
           const aspects = sizes.map((z) => (z.w > 0 && z.h > 0 ? z.w / z.h : 1)), aspect = aspects[aspects.length - 1];
           rememberImageAspect(compressed, aspect);
-          // Resolve the target again, in the same task as the dispatch below.
-          const at = deckEpochRef.current === epoch ? slidesRef.current.indexOf(target) : -1;
-          if (at < 0) return;
-          const cur = target;
+          const before = slidesRef.current, at = before.indexOf(cur);
+          const curImgBlocks = (cur.blocks || []).filter((b) => b.type === "image");
           const curImgs = curImgBlocks.length;
           // Overflow cap: at most 5 images per slide. A 6th image spills onto a new
           // image-only slide inserted after this one rather than over-packing the grid.
           if (curImgs >= 5) {
             dispatch({ type: "INSERT_SLIDES", id: moduleId, index: at + 1, slides: [{ blocks: [{ type: "image", src: compressed }] }] });
             dispatch({ type: "SET_SLIDE_INDEX", index: at + 1 });
-            return;
+            await settle(cur, before, compressed); return;
           }
           const patch = { blocks: [...(cur.blocks || []), { type: "image", src: compressed }] };
           const n = curImgs + 1; // image count after this paste
+          // The body height is measured on screen. Measure again while the slide is
+          // on screen (an earlier paste of the burst can have changed its layout).
+          const probe = (pasteLiveRef.current.index === at && pasteBodyProbe(containerRef.current, cur)) || bodyProbe;
           // Layout-aware paste: place the image beside existing body content rather
           // than always stacking it below. pasteImageLayout() respects an explicit
           // author layout and otherwise keeps the layout (stack or image-right) that
@@ -9113,7 +9167,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
           // and aspects. A split the author set is kept.
           const pasteOwned = !!cur.layout && cur.layout !== "stack" && curImgBlocks.some((b) => PASTE_LAYOUT_OWNED.get(b.src) === pasteLayoutSig(cur));
           const basis = pasteOwned ? { ...cur, layout: undefined, contentFlex: undefined, imageFlex: undefined } : cur;
-          const layout = pasteImageLayout(basis, aspect, n, aspects, bodyProbe, sizes.map((z) => z.w));
+          const layout = pasteImageLayout(basis, aspect, n, aspects, probe, sizes.map((z) => z.w));
           if (pasteOwned && layout === "stack") { patch.layout = undefined; patch.contentFlex = undefined; patch.imageFlex = undefined; }
           else if (layout !== "stack" && (pasteOwned || layout !== cur.layout)) {
             patch.layout = layout;
@@ -9129,8 +9183,10 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
             rememberPasteLayout(compressed, { ...cur, ...patch });
           }
           dispatch({ type: "UPDATE_SLIDE", id: moduleId, index: at, patch, merge: true });
+          await settle(cur, before, compressed);
         };
-        reader.readAsDataURL(blob); break;
+        pasteQueueRef.current = pasteQueueRef.current.then(apply).catch(() => {});
+        break;
       }
     }
   }, [concept.id, slideIndex, slides, dispatch]);
@@ -17446,12 +17502,51 @@ uiSuite("tideline-CR22-CR25 image placement", [
     await _mrdUndoTo(past);
     if (m.imgs[0].w < 960 * 0.9) throw new Error(`1600x900 image is only ${m.imgs[0].w.toFixed(0)}px wide`);
   }},
-  { name: "CR23 stress matrix: the pasted layout and grid show >= 85% of the best alternative (65 seeded cases)", fn: async () => {
+  { name: "paste burst: 3 and 5 rapid image pastes (0/50/150 ms apart) all land in order, one undo step each", fn: async () => {
+    const counts = () => _hooks().getHistoryCounts().past;
+    for (const n of [3, 5]) for (const gap of [0, 50, 150]) {
+      const label = `${n} pastes ${gap}ms apart`, mark = `TL-BURST-${n}-${gap}`;
+      const past = counts();
+      await _mrdInject([{ type: "heading", text: mark }], { layout: undefined, contentFlex: undefined, imageFlex: undefined, imageCols: undefined }, (vp) => vp?.textContent.includes(mark) && !vp.querySelector("img") ? vp : null);
+      const rows = _m1RowTitles().length;
+      // Distinct widths (natural size is kept) mark the paste order.
+      const widths = Array.from({ length: n }, (_, k) => 120 + 60 * k);
+      const blobs = await Promise.all(widths.map((w, k) => { const cv = document.createElement("canvas"); cv.width = w; cv.height = 90; const g = cv.getContext("2d"); g.fillStyle = _tlColors[k % 5]; g.fillRect(0, 0, w, 90); return new Promise((r) => cv.toBlob(r, "image/png")); }));
+      for (let k = 0; k < n; k++) {
+        const dt = new DataTransfer(); dt.items.add(new File([blobs[k]], `b${k}.png`, { type: "image/png" }));
+        _mrdViewport().dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true }));
+        if (gap) await _wait(gap);
+      }
+      let got = [];
+      try { await _waitFor(() => { const vp = _mrdViewport(); got = Array.from(vp?.querySelectorAll("img") || []).filter((im) => im.complete && im.naturalWidth > 0).map((im) => im.naturalWidth); return got.length >= n && vp.textContent.includes(mark) ? vp : null; }, 8000); } catch { /* reported below */ }
+      await _wait(200);
+      const rowsAfter = _m1RowTitles().length;
+      // One undo step per paste: each Ctrl+Z removes exactly the last image.
+      // (Counted from the rendered slide: the history counter stops at its cap
+      // in a long battery run.)
+      let undoErr = null;
+      if (got.length === n) {
+        document.activeElement?.blur?.();
+        for (let k = n - 1; k >= 0 && !undoErr; k--) {
+          _key("z", { ctrlKey: true });
+          const left = await _waitFor(() => { const w = Array.from(_mrdViewport()?.querySelectorAll("img") || []).map((im) => im.naturalWidth); return w.length === k ? w : null; }, 1500).catch(() => null);
+          if (!left) undoErr = `undo ${n - k} did not remove exactly one image`;
+          else if (left.join(",") !== widths.slice(0, k).join(",")) undoErr = `undo ${n - k} left ${left.join(",")}`;
+        }
+      }
+      await _mrdUndoTo(past);
+      if (got.length !== n) throw new Error(`${label}: ${got.length}/${n} images on the target slide`);
+      if (got.join(",") !== widths.join(",")) throw new Error(`${label}: images out of paste order (${got.join(",")})`);
+      if (undoErr) throw new Error(`${label}: ${undoErr}`);
+      if (rowsAfter !== rows) throw new Error(`${label}: slide count changed ${rows} -> ${rowsAfter}`);
+    }
+  }},
+  { name: "CR23 stress matrix: the pasted layout and grid show >= 85% of the best alternative (5 gate repros + 12 seeded cases; the unit matrix has all 66)", fn: async () => {
     // The last image goes through the real paste handler; the chosen result is
     // then compared, by real rendering, with the other layout (split <-> stack)
     // and with the uniform count-driven grid in the same layout.
     const fixed = [{ body: "table", aspects: [16 / 9] }, { body: "table", aspects: [16 / 9, 16 / 9] }, { body: "bullets8", aspects: [16 / 9, 16 / 9, 16 / 9, 16 / 9] }, { body: "none", aspects: [1 / 3, 16 / 9] }, { body: "none", aspects: [1 / 3, 16 / 9, 1 / 3] }];
-    const cases = [...fixed, ...tidelineStressCases(60)];
+    const cases = [...fixed, ...tidelineStressCases().filter((_, k) => k % 5 === 2).slice(0, 12)];
     let min = Infinity, worst = "";
     for (const c of cases) {
       const r = await _tlStressCase(c);

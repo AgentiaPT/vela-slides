@@ -2207,6 +2207,29 @@ function rememberPasteLayout(src, slide) {
   PASTE_LAYOUT_OWNED.set(src, pasteLayoutSig(slide));
 }
 
+// Rapid image pastes. Slides carry no id, so an async paste finds its target by
+// object identity. Each applied paste records the slide object it produced as
+// the successor of the slide it changed (or spilled over from), so a paste
+// queued behind it follows the chain to the live slide instead of being dropped.
+// An undo that restores the older object ends the chain there. WeakMap: session
+// memory only, nothing is kept for slides that are gone.
+const PASTE_SLIDE_SUCC = new WeakMap();
+// The newest member of the target's successor chain that is still in `list`, or null.
+function pasteResolveTarget(target, list) {
+  if (!target || !Array.isArray(list)) return null;
+  let best = list.includes(target) ? target : null;
+  for (let x = target, k = 0; k < 512 && (x = PASTE_SLIDE_SUCC.get(x)); k++) if (list.includes(x)) best = x;
+  return best;
+}
+// After a paste renders: link `from` to the new slide object whose last block is
+// the pasted image (the one slide in `after` that was not in `before`).
+function pasteRecordSuccessor(from, before, after, src) {
+  if (!from || typeof from !== "object" || !Array.isArray(after)) return;
+  const seen = new Set(before || []);
+  const next = after.find((s) => s && !seen.has(s) && Array.isArray(s.blocks) && s.blocks.length && s.blocks[s.blocks.length - 1].src === src);
+  if (next) PASTE_SLIDE_SUCC.set(from, next);
+}
+
 // ━━━ Status & Importance Meta ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 const STATUSES = ["todo", "done", "signed-off"];
 const STATUS_META = {
