@@ -63,6 +63,17 @@ const VELA_TESTS = [
   { name: "pasteImageLayout: content + 5 images → stack (header + grid below)", fn: () => pasteImageLayout({ blocks: [{ type: "heading", text: "H" }, { type: "bullets", items: ["a"] }] }, 1, 5) === "stack" },
   { name: "pasteImageLayout: explicit image-left preserved even with 3 images", fn: () => pasteImageLayout({ layout: "image-left", blocks: [{ type: "bullets", items: ["a"] }] }, 1, 3) === "image-left" },
   { name: "pasteImageLayout: title-only + 3 images still stacks", fn: () => pasteImageLayout({ blocks: [{ type: "heading", text: "Hi" }] }, 1, 3) === "stack" },
+  // CR23: with known aspects the layout with the larger estimated image area wins.
+  { name: "pasteImageLayout CR23: heading+text+credit + 2 or 3 squares → stack", fn: () => {
+    const s = { blocks: [{ type: "heading", text: "Heading here" }, { type: "text", text: "Body text paragraph line that should stay visible on the slide." }, { type: "text", text: "Credit", size: "xs" }] };
+    return pasteImageLayout(s, 1, 2, [1, 1]) === "stack" && pasteImageLayout(s, 1, 3, [1, 1, 1]) === "stack" && pasteLayoutArea(s, [1, 1, 1], "stack") > pasteLayoutArea(s, [1, 1, 1], "image-right");
+  } },
+  { name: "pasteImageLayout CR23: long bullets + 2 tall images → image-right", fn: () => {
+    const s = { blocks: [{ type: "heading", text: "H" }, { type: "bullets", items: Array.from({ length: 8 }, (_, i) => `Bullet number ${i} with some words to fill a line of text`) }] };
+    return pasteImageLayout(s, 0.5625, 2, [0.5625, 0.5625]) === "image-right";
+  } },
+  { name: "pasteImageLayout CR23: unknown block type → count rule", fn: () => pasteImageLayout({ blocks: [{ type: "heading", text: "H" }, { type: "table", rows: [] }] }, 1, 2, [1, 1]) === "image-right" },
+  { name: "pasteImageLayout CR23: explicit split kept with aspects", fn: () => pasteImageLayout({ layout: "image-left", blocks: [{ type: "text", text: "a" }, { type: "text", text: "b" }, { type: "text", text: "c" }] }, 1, 3, [1, 1, 1]) === "image-left" },
 
   // ── Editing UX Batch (v12.75): imageAspect ──
   { name: "imageAspect is function", fn: () => typeof imageAspect === "function" },

@@ -1982,7 +1982,7 @@ const imageAspect = (dataUrl) => new Promise((resolve) => {
 // the image below ("stack"); otherwise the slide is promoted to "image-right" so
 // the image sits beside the existing body content. aspect = image width / height.
 const PASTE_TITLE_BLOCKS = new Set(["heading", "text", "subtitle", "badge", "quote"]);
-function pasteImageLayout(slide, aspect, n) {
+function pasteImageLayout(slide, aspect, n, aspects) {
   const layout = slide && slide.layout;
   if (layout && layout !== "stack") return layout; // respect explicit author layout
   const body = ((slide && slide.blocks) || []).filter((b) => b.type !== "image" && b.type !== "spacer" && b.type !== "divider");
@@ -1991,9 +1991,74 @@ function pasteImageLayout(slide, aspect, n) {
   // Heavy body text + a grid of images (>=3): don't cram the grid into a half.
   // Keep the slide stacked so the text reads as a full-width header and the
   // image run grids full-width below it (the renderer auto-grids the run).
-  if (hasContent && n >= 3) return "stack";
   const wide = aspect >= 1.6;
-  return (!mostlyTitle && !wide) ? "image-right" : "stack";
+  const rule = (hasContent && n >= 3) ? "stack" : (!mostlyTitle && !wide) ? "image-right" : "stack";
+  // CR23: with every image aspect known, compare the two candidates and keep the
+  // one that shows the most image area (see pasteLayoutArea). The count rule
+  // above is the fallback when the estimate cannot be made.
+  if (!hasContent || !Array.isArray(aspects) || aspects.length !== n) return rule;
+  const split = pasteLayoutArea(slide, aspects, "image-right"), stack = pasteLayoutArea(slide, aspects, "stack");
+  if (split == null || stack == null) return rule;
+  return split > stack ? "image-right" : "stack";
+}
+
+// Split-column flex the paste handler gives a split slide it lays out itself: a
+// lone square/portrait image gives the text the larger share; a grid splits 1:1.
+function pasteSplitFlex(n, aspect) {
+  return n === 1 && aspect <= 1.2 ? [1.4, 1] : [1, 1];
+}
+
+// CR23: estimated image area (slide px^2) for `aspects` on `slide` in layout
+// "stack" (body text on top, image grid full width below) or "image-right" (body
+// text beside an image column), at the default 960x540 geometry. Text heights
+// come from the block font sizes and a mean glyph width; if the text overflows,
+// the renderer scales the whole slide down, so the area shrinks by scale^2.
+// Returns null when a body block has no estimate (the caller then keeps its rule).
+const PASTE_TEXT_METRICS = { heading: ["2xl", 1.2, 0.56], text: ["md", 1.6, 0.5], bullets: ["md", 1.6, 0.5], quote: ["xl", 1.4, 0.52] };
+function pasteLayoutArea(slide, aspects, layout) {
+  if (!slide || slide.padding != null || !Array.isArray(aspects) || !aspects.length) return null;
+  if (!aspects.every((a) => typeof a === "number" && a > 0 && Number.isFinite(a))) return null;
+  const body = (slide.blocks || []).filter((b) => b && b.type !== "image" && b.type !== "spacer" && b.type !== "divider");
+  const gap = Number(slide.gap) || 12, W = 864, H = 468;
+  const textH = (w) => {
+    let total = 0;
+    for (const b of body) {
+      if (b.type === "badge") { total += 28 + gap; continue; }
+      const m = PASTE_TEXT_METRICS[b.type];
+      if (!m) return null;
+      const px = parseFloat(BASE_SIZES[b.size] || BASE_SIZES[m[0]]) * 16, lineH = px * m[1];
+      const lines = (str, width) => String(str == null ? "" : str).split("\n").reduce((k, seg) => k + Math.max(1, Math.ceil(seg.length * px * m[2] / Math.max(40, width))), 0);
+      if (b.type === "bullets") {
+        const items = Array.isArray(b.items) ? b.items : [];
+        total += items.reduce((h, it) => h + lines(typeof it === "string" ? it : it && it.text, w - 28) * lineH, 0) + Math.max(0, items.length - 1) * (Number(b.gap) || 8);
+      } else total += lines(b.text, b.type === "quote" ? w * 0.85 : w) * lineH;
+      total += gap;
+    }
+    return Math.max(0, total - gap);
+  };
+  const n = aspects.length;
+  const areaIn = (bw, bh, region) => {
+    if (!(bw > 0 && bh > 0)) return 0;
+    const cols = n === 1 ? 1 : bestImageGridCols(aspects, bw, bh, gap, gridColsFor(n, region));
+    const rows = Math.ceil(n / cols);
+    const cw = (bw - gap * (cols - 1)) / cols, ch = (bh - gap * (rows - 1)) / rows;
+    if (cw <= 0 || ch <= 0) return 0;
+    return aspects.reduce((sum, a) => { const w = Math.min(cw, ch * a); return sum + w * (w / a); }, 0);
+  };
+  if (layout === "stack") {
+    const t = textH(W);
+    if (t == null) return null;
+    const rows = Math.ceil(n / gridColsFor(n, "full"));
+    const gridH = Math.max(H - t - gap, rows * 72);
+    const s = Math.min(1, H / (t + gap + gridH));
+    return areaIn(W, gridH, "full") * s * s;
+  }
+  const [cf, imf] = pasteSplitFlex(n, aspects[n - 1]);
+  const colW = (W - (Number(slide.splitGap) || 32)) / (cf + imf);
+  const t = textH(colW * cf);
+  if (t == null) return null;
+  const s = Math.min(1, H / Math.max(t, 1));
+  return areaIn(colW * imf, H, "half") * s * s;
 }
 
 // Columns for a run of `n` images, by region. "full" = image-only slide or a
@@ -2041,6 +2106,19 @@ function rememberImageAspect(src, aspect) {
   if (typeof src !== "string" || !(aspect > 0)) return;
   if (IMAGE_ASPECT_CACHE.size >= 256) IMAGE_ASPECT_CACHE.delete(IMAGE_ASPECT_CACHE.keys().next().value);
   IMAGE_ASPECT_CACHE.set(src, aspect);
+}
+
+// CR23: which split layouts the paste handler set itself. Keyed by the pasted
+// image src; the value is the slide's layout signature right after that paste.
+// A later paste re-evaluates the layout only when the slide still carries that
+// exact signature (the user did not change it). Session memory only: after a
+// reload a split is treated as the author's choice.
+const PASTE_LAYOUT_OWNED = new Map();
+const pasteLayoutSig = (s) => `${(s && s.layout) || "stack"}|${s && s.contentFlex != null ? s.contentFlex : ""}|${s && s.imageFlex != null ? s.imageFlex : ""}`;
+function rememberPasteLayout(src, slide) {
+  if (typeof src !== "string") return;
+  if (PASTE_LAYOUT_OWNED.size >= 256) PASTE_LAYOUT_OWNED.delete(PASTE_LAYOUT_OWNED.keys().next().value);
+  PASTE_LAYOUT_OWNED.set(src, pasteLayoutSig(slide));
 }
 
 // ━━━ Status & Importance Meta ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
