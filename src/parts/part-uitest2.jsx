@@ -2651,6 +2651,66 @@ uiSuite("meridian-CR01 local save ends at the latest state with a slow backend",
   { name: "Edit, then edit again during the in-flight write: file ends at the last edit", fn: () => _meridianF8SlowSave(["meridian-F8 edit", "meridian-F8 edit 2"], "meridian-F8 edit 2") },
 ]);
 
+// tideline-CR26: every rendered block text is inline-editable in the editor.
+// Find the click-to-edit display node for an exact text inside the slide.
+const _tlEditNode = (text) => _$$("div", _mrdViewport() || document).find((el) =>
+  el.style.cursor === "pointer" && el.textContent.trim() === text && !_$$("div", el).some((c) => c.style.cursor === "pointer"));
+// Click the text, type the new value, commit with Enter, wait for the new text.
+const _tlEdit = async (from, to, shown = to) => {
+  const node = await _waitFor(() => _tlEditNode(from), 2000).catch(() => { throw new Error(`"${from}" is not inline-editable`); });
+  _click(node);
+  const ed = await _waitFor(() => _$("[contenteditable='true']", _mrdViewport()), 1500);
+  ed.textContent = to;
+  ed.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+  await _waitFor(() => !_$("[contenteditable='true']") && _tlEditNode(shown), 2000).catch(() => { throw new Error(`"${from}" -> "${to}" did not commit`); });
+};
+uiSuite("tideline-CR26 edit every block text", [
+  { name: "CR26: checklist item text and status label edit inline, with undo and redo", fn: async () => {
+    const hooks = _hooks();
+    await _mrdInject([{ type: "checklist", items: [{ text: "Task one", status: "pending" }, { text: "Task two", status: "done" }] }], null,
+      (vp) => vp?.textContent.includes("Task one") ? vp : null);
+    const past0 = hooks.getHistoryCounts ? hooks.getHistoryCounts().past : 0;
+    try {
+      await _tlEdit("Task one", "Task edited");
+      await _tlEdit("PENDING", "blocked", "BLOCKED");
+      const blockedCol = _tlEditNode("BLOCKED")?.style.color;
+      if (!/239, 68, 68|#ef4444/i.test(blockedCol || "")) throw new Error(`typed status did not switch the status (color ${blockedCol})`);
+      await _tlEdit("DONE", "Shipped");
+      _key("z", { ctrlKey: true });
+      await _waitFor(() => _tlEditNode("DONE"), 2000).catch(() => { throw new Error("undo did not restore the label"); });
+      _key("y", { ctrlKey: true });
+      await _waitFor(() => _tlEditNode("Shipped"), 2000).catch(() => { throw new Error("redo did not restore the custom label"); });
+      await _tlEdit("Shipped", "", "DONE");
+    } finally {
+      await _mrdUndoTo(past0);
+    }
+  }},
+  { name: "CR26: comparison, matrix, number-row, progress and flow texts edit inline", fn: async () => {
+    const cases = [
+      [[{ type: "comparison", dividerLabel: "OR", items: [{ title: "Left col", items: ["Left point"] }, { title: "Right col", items: [{ text: "Right point" }] }] }],
+        [["Left col", "Left new"], ["Right col", "Right new"], ["Left point", "LP new"], ["Right point", "RP new"], ["OR", "VERSUS"]]],
+      [[{ type: "matrix", xLeft: "Low X", xRight: "High X", yTop: "High Y", yBottom: "Low Y", quadrants: [{ title: "Q one", items: ["Q point"] }, { title: "Q two" }, { title: "Q three" }, { title: "Q four" }] }],
+        [["Q one", "Q1 new"], ["Q point", "QP new"], ["Low X", "LX new"], ["High Y", "HY new"]]],
+      [[{ type: "number-row", items: [{ value: "42", label: "Answers" }, { value: "7", label: "Days" }] }],
+        [["42", "43"], ["Answers", "Replies"]]],
+      [[{ type: "progress", leftLabel: "Start", rightLabel: "End", annotation: "Note here", items: [{ label: "Bar", value: 40 }] }],
+        [["Start", "Begin"], ["End", "Finish"], ["Note here", "Note new"]]],
+      [[{ type: "flow", gateLabel: "Gate", items: [{ label: "A", gate: true }, { label: "B" }] }],
+        [["Gate", "Check"]]],
+    ];
+    for (const [blocks, edits] of cases) {
+      await _mrdInject(blocks, null, (vp) => vp?.textContent.includes(edits[0][0]) ? vp : null);
+      // Undo one step per edit (history counts stop growing at MAX_HISTORY).
+      let done = 0;
+      try {
+        for (const [from, to] of edits) { await _tlEdit(from, to); done++; }
+      } catch (e) { throw new Error(`${blocks[0].type}: ${e.message}`); }
+      finally { document.activeElement?.blur?.(); for (let k = 0; k < done; k++) { _key("z", { ctrlKey: true }); await _wait(60); } }
+      await _waitFor(() => _tlEditNode(edits[0][0]), 2000).catch(() => { throw new Error(`${blocks[0].type}: undo did not restore the text`); });
+    }
+  }},
+], { setup: _selectFirstModule });
+
 // ━━━ UI TEST RUNNER COMPONENT ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 // Demo deck guard — UI tests only run against the original demo deck
