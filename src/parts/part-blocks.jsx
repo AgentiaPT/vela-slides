@@ -199,6 +199,9 @@ function GlossaryLink({ label, term, entry }) {
   );
 }
 
+// Faint editor-only text shown in an empty inline-editable text (CR26).
+const EDIT_PLACEHOLDER = "Text";
+
 function EditableText({ text, onSave, editable, style, multiline, className, prefix, suffix }) {
   const [editing, setEditing] = useState(false);
   const [hovered, setHovered] = useState(false);
@@ -277,21 +280,88 @@ function EditableText({ text, onSave, editable, style, multiline, className, pre
       onClick={(e) => e.stopPropagation()}
       onMouseDown={(e) => e.stopPropagation()}
       className={className}
-      style={{ ...baseStyle, outline: `2px solid ${T.accent}`, outlineOffset: 2, borderRadius: 2, cursor: "text", minHeight: "1em", whiteSpace: "pre-wrap" }}
+      style={{ ...baseStyle, outline: `2px solid ${T.accent}`, outlineOffset: 2, borderRadius: 2, cursor: "text", minHeight: "1em", minWidth: "2em", whiteSpace: "pre-wrap" }}
     />
   );
 
+  // CR26: an empty text keeps a clickable target (min size + a faint editor-only
+  // placeholder), so a cleared text can be edited again. The placeholder sits at
+  // the left and the right padding is room for the item's hover toolbar
+  // (top-right, ~80px), so the toolbar never covers it. Present/export render
+  // with editable=false and never see the placeholder.
+  const empty = !String(localText || "").trim();
   return (
     <div key="display" className={className}
       onClick={begin}
       onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}
       style={{ ...baseStyle, cursor: "pointer", borderRadius: 2,
+        ...(empty ? { minWidth: "2em", minHeight: "1em", paddingRight: 100, textAlign: "left" } : {}),
         outline: hovered ? `1px dashed ${T.accent}60` : "1px dashed transparent",
         outlineOffset: 2, transition: "outline 0.15s ease" }}
-    >{prefix}{parseInline(localText)}{suffix}</div>
+    >{prefix}{empty ? <span data-vela-placeholder="" style={{ opacity: 0.35, fontStyle: "italic" }}>{EDIT_PLACEHOLDER}</span> : parseInline(localText)}{suffix}</div>
   );
 }
 
+
+// CR26: inline edit for an SVG <text> label (cycle, funnel, flow loop). SVG text
+// cannot be contentEditable, so a click opens an HTML input in a <foreignObject>
+// over the text. The click stops here, so ZoomWrap does not zoom. Enter or blur
+// commits through the same onSave -> onChange path as EditableText; Escape
+// cancels. Read-only (present/export) renders the plain <text>.
+function SvgEditText({ text, editable, onSave, suffix, ...textProps }) {
+  const [box, setBox] = useState(null);
+  const ref = useRef(null);
+  const inRef = useRef(null);
+  const doneRef = useRef(false);
+  useEffect(() => {
+    if (!box || !inRef.current) return;
+    inRef.current.focus();
+    try { inRef.current.select(); } catch (_) {}
+  }, [box]);
+  const val = text == null ? "" : String(text);
+  if (!editable || !onSave) return <text {...textProps}>{val}{suffix}</text>;
+  const fs = parseFloat(textProps.fontSize) || 12;
+  const begin = (e) => {
+    e.stopPropagation(); e.preventDefault();
+    const el = ref.current; const m = el?.ownerSVGElement?.getScreenCTM?.();
+    if (!el || !m) return;
+    const r = el.getBoundingClientRect(); const inv = m.inverse();
+    const a = new DOMPoint(r.left, r.top).matrixTransform(inv);
+    const b = new DOMPoint(r.right, r.bottom).matrixTransform(inv);
+    const w = Math.max(Math.abs(b.x - a.x), Math.abs(b.y - a.y), fs * 6) + fs * 2;
+    const h = fs * 2;
+    doneRef.current = false;
+    setBox({ x: (a.x + b.x) / 2 - w / 2, y: (a.y + b.y) / 2 - h / 2, w, h, v: val });
+  };
+  const finish = (save) => {
+    if (doneRef.current) return;
+    doneRef.current = true;
+    const v = (inRef.current?.value || "").trim();
+    setBox(null);
+    if (save && v !== val) onSave(v);
+  };
+  const empty = !val.trim();
+  const stop = (e) => e.stopPropagation();
+  return <>
+    <text ref={ref} data-svg-edit="" {...textProps} onClick={begin}
+      style={{ ...(textProps.style || {}), cursor: "pointer", visibility: box ? "hidden" : undefined }}>
+      {empty ? <tspan data-vela-placeholder="" opacity="0.35" fontStyle="italic">{EDIT_PLACEHOLDER}</tspan> : val}{suffix}
+    </text>
+    {box && <foreignObject x={box.x} y={box.y} width={box.w} height={box.h} style={{ overflow: "visible" }}>
+      <input ref={inRef} data-testid="svg-text-edit" defaultValue={box.v}
+        onClick={stop} onMouseDown={stop} onBlur={() => finish(true)}
+        onKeyDown={(e) => {
+          e.stopPropagation();
+          if (e.key === "Enter") { e.preventDefault(); finish(true); }
+          else if (e.key === "Escape") { e.preventDefault(); finish(false); }
+        }}
+        style={{ width: "100%", height: "100%", boxSizing: "border-box", margin: 0, padding: `0 ${fs * 0.3}px`,
+          fontSize: fs, fontWeight: textProps.fontWeight, fontFamily: textProps.fontFamily,
+          textAlign: "center", color: T.text, background: T.bgInput, border: "none",
+          outline: `2px solid ${T.accent}`, borderRadius: 2 }} />
+    </foreignObject>}
+  </>;
+}
 
 // ━━━ Block Helpers ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 const stg = (base, offset = 0) => `stg-${Math.min(base + offset, 7)}`;
@@ -1126,7 +1196,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
             <line x1={`${x2}%`} y1="4" x2={`${x2}%`} y2="20" stroke={loopCol} strokeWidth="1.5" strokeDasharray={loopDash} strokeLinecap="round" />
             <line x1={`${x2}%`} y1="20" x2={`${x1}%`} y2="20" stroke={loopCol} strokeWidth="1.5" strokeDasharray={loopDash} strokeLinecap="round" />
             <line x1={`${x1}%`} y1="20" x2={`${x1}%`} y2="4" stroke={loopCol} strokeWidth="1.5" strokeDasharray={loopDash} strokeLinecap="round" markerEnd={`url(#loopArr-${staggerIdx})`} />
-            {block.loopLabel && <text x="50%" y="32" textAnchor="middle" fill={loopCol} fontSize="10" fontFamily="monospace" style={{ fontStyle: "italic" }}>{block.loopLabel}</text>}
+            {block.loopLabel && <SvgEditText text={block.loopLabel} editable={textEditable} onSave={(v) => onChange?.({ loopLabel: v })} x="50%" y="32" textAnchor="middle" fill={loopCol} fontSize="10" fontFamily="monospace" style={{ fontStyle: "italic" }} />}
           </>; })()}
         </svg>}
         {block.loop && isVert && <svg style={{ position: "absolute", top: 0, bottom: 0, right: 0, width: 36, height: "100%", overflow: "visible" }}>
@@ -1135,7 +1205,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
             <line x1="4" y1={`${y2}%`} x2="20" y2={`${y2}%`} stroke={loopCol} strokeWidth="1.5" strokeDasharray={loopDash} strokeLinecap="round" />
             <line x1="20" y1={`${y2}%`} x2="20" y2={`${y1}%`} stroke={loopCol} strokeWidth="1.5" strokeDasharray={loopDash} strokeLinecap="round" />
             <line x1="20" y1={`${y1}%`} x2="4" y2={`${y1}%`} stroke={loopCol} strokeWidth="1.5" strokeDasharray={loopDash} strokeLinecap="round" markerEnd={`url(#loopArrV-${staggerIdx})`} />
-            {block.loopLabel && <text x="28" y="50%" textAnchor="middle" fill={loopCol} fontSize="10" fontFamily="monospace" style={{ fontStyle: "italic" }} transform={`rotate(90, 28, 50%)`} dominantBaseline="middle">{block.loopLabel}</text>}
+            {block.loopLabel && <SvgEditText text={block.loopLabel} editable={textEditable} onSave={(v) => onChange?.({ loopLabel: v })} x="28" y="50%" textAnchor="middle" fill={loopCol} fontSize="10" fontFamily="monospace" style={{ fontStyle: "italic" }} transform={`rotate(90, 28, 50%)`} dominantBaseline="middle" />}
           </>; })()}
         </svg>}
       </div></ZoomWrap>
@@ -1421,12 +1491,12 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
               <polygon points={`${x1},${y} ${x2},${y} ${x4},${y + stageH} ${x3},${y + stageH}`}
                 fill={`${col}${isHighlight ? "22" : "18"}`} stroke={`${col}80`} strokeWidth={isHighlight ? 2 : 1.5}
                 strokeDasharray={isHighlight ? "8,4" : "none"} />
-              <text x="350" y={y + stageH * 0.38} textAnchor="middle" fill={`${col}dd`}
-                fontSize="14" fontWeight="600" fontFamily="Inter, sans-serif">{item.label || ""}{isHighlight ? " \u26A0" : ""}</text>
-              {item.value && <text x="350" y={y + stageH * 0.72} textAnchor="middle" fill={col}
-                fontSize="20" fontWeight="800" fontFamily="Inter, sans-serif">{item.value}</text>}
-              {item.drop && <text x={x4 + 16} y={y + stageH * 0.55} textAnchor="start" fill={isHighlight ? col : st.muted}
-                fontSize="12" fontWeight={isHighlight ? 700 : 400} fontFamily="Inter, sans-serif">{item.drop}</text>}
+              <SvgEditText text={item.label} editable={textEditable} onSave={(v) => patchItemAt(block, onChange, i, { label: v })} suffix={isHighlight ? " \u26A0" : ""} x="350" y={y + stageH * 0.38} textAnchor="middle" fill={`${col}dd`}
+                fontSize="14" fontWeight="600" fontFamily="Inter, sans-serif" />
+              {item.value && <SvgEditText text={item.value} editable={textEditable} onSave={(v) => patchItemAt(block, onChange, i, { value: v })} x="350" y={y + stageH * 0.72} textAnchor="middle" fill={col}
+                fontSize="20" fontWeight="800" fontFamily="Inter, sans-serif" />}
+              {item.drop && <SvgEditText text={item.drop} editable={textEditable} onSave={(v) => patchItemAt(block, onChange, i, { drop: v })} x={x4 + 16} y={y + stageH * 0.55} textAnchor="start" fill={isHighlight ? col : st.muted}
+                fontSize="12" fontWeight={isHighlight ? 700 : 400} fontFamily="Inter, sans-serif" />}
             </g>;
           })}
         </svg>
@@ -1452,8 +1522,8 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
             })}
           </defs>
           {block.centerLabel && <>
-            <text x={cx} y={cy - 8} textAnchor="middle" fill={st.border || "#475569"} fontSize="16" fontWeight="700" fontFamily="Inter, sans-serif" letterSpacing="3">{block.centerLabel}</text>
-            {block.centerSub && <text x={cx} y={cy + 14} textAnchor="middle" fill={st.muted} fontSize="13" fontFamily="Inter, sans-serif">{block.centerSub}</text>}
+            <SvgEditText text={block.centerLabel} editable={textEditable} onSave={(v) => onChange?.({ centerLabel: v })} x={cx} y={cy - 8} textAnchor="middle" fill={st.border || "#475569"} fontSize="16" fontWeight="700" fontFamily="Inter, sans-serif" letterSpacing="3" />
+            {block.centerSub && <SvgEditText text={block.centerSub} editable={textEditable} onSave={(v) => onChange?.({ centerSub: v })} x={cx} y={cy + 14} textAnchor="middle" fill={st.muted} fontSize="13" fontFamily="Inter, sans-serif" />}
           </>}
           {items.map((item, i) => {
             const angle = (2 * Math.PI * i / n) - Math.PI / 2;
@@ -1477,8 +1547,8 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
                 markerEnd={`url(#cyc-arr-${staggerIdx}-${i})`} />
               <circle cx={nx} cy={ny} r={nodeR} fill={`${col}15`} stroke={col} strokeWidth="2.5" />
               {item.icon && <text x={nx} y={ny - 6} textAnchor="middle" fontSize="18" fontFamily="Inter, sans-serif">{item.icon}</text>}
-              <text x={nx} y={ny + (item.icon ? 14 : 5)} textAnchor="middle" fill={`${col}dd`}
-                fontSize="12" fontWeight="700" fontFamily="Inter, sans-serif">{item.label || ""}</text>
+              <SvgEditText text={item.label} editable={textEditable} onSave={(v) => patchItemAt(block, onChange, i, { label: v })} x={nx} y={ny + (item.icon ? 14 : 5)} textAnchor="middle" fill={`${col}dd`}
+                fontSize="12" fontWeight="700" fontFamily="Inter, sans-serif" />
             </g>;
           })}
         </svg>
