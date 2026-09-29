@@ -679,6 +679,7 @@ Status-aware item list with semantic icons and colors for each state: done, part
 | items | array | `[]` | Checklist items |
 | items[].text | string | | Item text |
 | items[].status | enum | `"pending"` | `"done"`, `"partial"`, `"pending"`, `"blocked"` |
+| items[].label | string | | Custom status label shown instead of the default for the status (max 200 chars) |
 | size | size | `"sm"` | Text font size |
 | showLabels | boolean | `true` | Show status label on right side |
 

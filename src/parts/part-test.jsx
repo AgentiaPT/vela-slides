@@ -2,6 +2,54 @@
 // ━━━ Vela Battery Test ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Auto-runs on mount, shows toast notification, copy details button
 
+// ── tideline CR23: seeded image-placement stress matrix ──
+// Shared by the unit battery below and the "tideline-CR22-CR25 image placement"
+// UI suite (part-uitest2.jsx). Each case = a slide body + 1-5 image aspects.
+const TL_STRESS_ASPECTS = [4, 16 / 9, 4 / 3, 1, 3 / 4, 9 / 16];
+const TL_STRESS_BODIES = (() => {
+  const h = { type: "heading", text: "Stress heading" };
+  return {
+    none: [],
+    heading: [h],
+    htc: [h, { type: "text", text: "Short body text that explains the pictures." }, { type: "text", text: "Credit: Example Author, 16 Jun 2025", size: "sm" }],
+    bullets8: [h, { type: "bullets", items: Array.from({ length: 8 }, (_, i) => `Bullet point ${i + 1} with a few words`) }],
+    table: [h, { type: "table", headers: ["Item", "Q1", "Q2", "Q3"], rows: Array.from({ length: 5 }, (_, r) => [`Row ${r + 1}`, `${r}1`, `${r}2`, `${r}3`]) }],
+    chart: [h, { type: "progress", items: Array.from({ length: 5 }, (_, i) => ({ label: `Metric ${i + 1}`, value: 20 + i * 15 })) }],
+  };
+})();
+function tidelineStressCases(count = 66, seed = 23) {
+  let s = seed >>> 0;
+  const rnd = () => { s = (Math.imul(s, 1664525) + 1013904223) >>> 0; return s / 4294967296; };
+  const bodies = Object.keys(TL_STRESS_BODIES), out = [];
+  for (let k = 0; k < count; k++) {
+    const n = 1 + (Math.floor(k / bodies.length) % 5);
+    out.push({ body: bodies[k % bodies.length], aspects: Array.from({ length: n }, () => TL_STRESS_ASPECTS[Math.floor(rnd() * TL_STRESS_ASPECTS.length)]) });
+  }
+  return out;
+}
+// Model-level check: for each case the chosen layout's image area (estimate) is
+// >= 85% of the other layout's, and the grid plan's area is >= 85% of the best
+// uniform grid in the same box. Returns the minimum ratio seen.
+function tidelineStressUnit() {
+  let min = Infinity;
+  const cases = tidelineStressCases();
+  for (const c of cases) {
+    const n = c.aspects.length, slide = { blocks: TL_STRESS_BODIES[c.body] };
+    if (slide.blocks.length) {
+      const pick = pasteImageLayout(slide, c.aspects[n - 1], n, c.aspects);
+      const split = pasteLayoutArea(slide, c.aspects, "image-right"), stack = pasteLayoutArea(slide, c.aspects, "stack");
+      min = Math.min(min, (pick === "stack" ? stack : split) / Math.max(split, stack));
+    }
+    for (const [w, h] of [[864, 468], [864, 360], [416, 468]]) {
+      const plan = imageGridPlan(c.aspects, w, h, 12, gridColsFor(n, "full"));
+      let eq = 0;
+      for (let k = 1; k <= n; k++) eq = Math.max(eq, imageGridPlan(c.aspects, w, h, 12, 1, k).area);
+      min = Math.min(min, plan.area / eq);
+    }
+  }
+  return { cases: cases.length, min };
+}
+
 const VELA_TESTS = [
   // ── Config & Utilities ──
   { name: "VELA_VERSION defined", fn: () => typeof VELA_VERSION === "string" && VELA_VERSION.length > 0 },
@@ -45,6 +93,23 @@ const VELA_TESTS = [
   { name: "gridColsFor full: N=4 makes 2 rows (2x2)", fn: () => Math.ceil(4 / gridColsFor(4, "full")) === 2 },
   { name: "gridColsFor full: N=5 makes 2 rows (3 then 2)", fn: () => Math.ceil(5 / gridColsFor(5, "full")) === 2 },
   { name: "gridColsFor full: N=2 stays one row", fn: () => Math.ceil(2 / gridColsFor(2, "full")) === 1 },
+  // ── tideline CR23: aspect-aware grid columns (bestImageGridCols) ──
+  { name: "bestImageGridCols: 3 tall images stay one row", fn: () => bestImageGridCols([0.5625, 0.5625, 0.5625], 864, 418, 12, 3) === 3 },
+  { name: "bestImageGridCols: 3 wide images leave one row", fn: () => bestImageGridCols([3, 3, 3], 864, 418, 12, 3) < 3 },
+  { name: "bestImageGridCols: 2 wide images stack in a tall box", fn: () => bestImageGridCols([3, 3], 864, 468, 12, 2) === 1 },
+  { name: "imageGridPlan CR23: 4 mixed images beat the uniform 2x2", fn: () => imageGridPlan([3, 1.78, 1, 0.5625], 864, 468, 12, 2).area >= imageGridPlan([3, 1.78, 1, 0.5625], 864, 468, 12, 2, 2).area },
+  { name: "imageGridPlan CR23: tall+wide gets aspect-sized cells (not equal halves)", fn: () => {
+    const p = imageGridPlan([1 / 3, 16 / 9], 864, 468, 12, 2), eq = imageGridPlan([1 / 3, 16 / 9], 864, 468, 12, 2, 2);
+    return p.rows.length === 1 && p.rows[0].cells[1].f > 0.7 && p.area > eq.area * 1.6;
+  } },
+  { name: "imageGridPlan CR23: equal aspects keep uniform cells", fn: () => imageGridPlan([1.78, 1.78, 1.78, 1.78, 1.78], 864, 400, 12, 3).rows.every((r) => r.cells.every((c) => Math.abs(c.f - 1 / 3) < 1e-9 || Math.abs(c.f - 1 / 2) < 1e-9 || c.f === 1)) },
+  { name: "imageGridPlan CR23: pinned imageCols forces a uniform grid", fn: () => { const p = imageGridPlan([4, 0.5], 864, 468, 12, 2, 3); return p.cols === 3 && p.rows[0].cells.every((c) => c.f === 1 / 3); } },
+  { name: "imageGridPlan CR23: no box → count default, area 0", fn: () => { const p = imageGridPlan([1, 2, 3], 0, 0, 12, 3); return p.cols === 3 && p.area === 0; } },
+  { name: "bestImageGridCols: unknown aspect → count default", fn: () => bestImageGridCols([3, undefined, 3], 864, 418, 12, 3) === 3 },
+  { name: "bestImageGridCols: no box → count default", fn: () => bestImageGridCols([3, 3, 3], 0, 0, 12, 3) === 3 },
+  { name: "bestImageGridCols: bad aspect values → count default", fn: () => bestImageGridCols([3, NaN, -1], 864, 418, 12, 3) === 3 && bestImageGridCols([3, "3", 3], 864, 418, 12, 3) === 3 },
+  { name: "bestImageGridCols: one image → 1", fn: () => bestImageGridCols([3], 864, 418, 12, 1) === 1 },
+  { name: "bestImageGridCols: result is always 1..n", fn: () => [[1, 1], [2, 0.5, 4, 1, 1]].every((a) => { const c = bestImageGridCols(a, 864, 418, 12, 3); return c >= 1 && c <= a.length; }) },
 
   // pasteImageLayout with image-count n: heavy text + >=3 images → full-width header (stack)
   { name: "pasteImageLayout: image-only slice N=2 stacks (auto-grids)", fn: () => pasteImageLayout({ blocks: [] }, 1, 2) === "stack" },
@@ -53,6 +118,27 @@ const VELA_TESTS = [
   { name: "pasteImageLayout: content + 5 images → stack (header + grid below)", fn: () => pasteImageLayout({ blocks: [{ type: "heading", text: "H" }, { type: "bullets", items: ["a"] }] }, 1, 5) === "stack" },
   { name: "pasteImageLayout: explicit image-left preserved even with 3 images", fn: () => pasteImageLayout({ layout: "image-left", blocks: [{ type: "bullets", items: ["a"] }] }, 1, 3) === "image-left" },
   { name: "pasteImageLayout: title-only + 3 images still stacks", fn: () => pasteImageLayout({ blocks: [{ type: "heading", text: "Hi" }] }, 1, 3) === "stack" },
+  // CR23: with known aspects the layout with the larger estimated image area wins.
+  { name: "pasteImageLayout CR23: heading+text+credit + 2 or 3 squares → stack", fn: () => {
+    const s = { blocks: [{ type: "heading", text: "Heading here" }, { type: "text", text: "Body text paragraph line that should stay visible on the slide." }, { type: "text", text: "Credit", size: "xs" }] };
+    return pasteImageLayout(s, 1, 2, [1, 1]) === "stack" && pasteImageLayout(s, 1, 3, [1, 1, 1]) === "stack" && pasteLayoutArea(s, [1, 1, 1], "stack") > pasteLayoutArea(s, [1, 1, 1], "image-right");
+  } },
+  { name: "pasteImageLayout CR23: long bullets + 2 tall images → image-right", fn: () => {
+    const s = { blocks: [{ type: "heading", text: "H" }, { type: "bullets", items: Array.from({ length: 8 }, (_, i) => `Bullet number ${i} with some words to fill a line of text`) }] };
+    return pasteImageLayout(s, 0.5625, 2, [0.5625, 0.5625]) === "image-right";
+  } },
+  { name: "pasteImageLayout CR23: every block type gets an area estimate", fn: () => ["table", "progress", "code", "flow", "metric"].every((t) => pasteLayoutArea({ blocks: [{ type: "heading", text: "H" }, { type: t, rows: [["a"]], items: [] }] }, [1], "stack") > 0) },
+  { name: "pasteImageLayout CR23: table + 16:9 uses the split column (D1)", fn: () => {
+    const s = { blocks: TL_STRESS_BODIES.table.concat([{ type: "text", text: "Credit", size: "sm" }]) };
+    return pasteImageLayout(s, 16 / 9, 1, [16 / 9], () => 229 + 12 + 43) === "image-right";
+  } },
+  { name: "pasteImageLayout CR23: measured body height overrides the estimate", fn: () => {
+    const s = { blocks: [{ type: "heading", text: "H" }, { type: "table", rows: [] }] };
+    return pasteLayoutArea(s, [1, 1], "stack", () => 400) < pasteLayoutArea(s, [1, 1], "stack", () => 40);
+  } },
+  { name: "pasteImageLayout CR23: 8 bullets + 4x 16:9 stays split (D2)", fn: () => pasteImageLayout(TL_STRESS_BODIES.bullets8 && { blocks: TL_STRESS_BODIES.bullets8 }, 16 / 9, 4, [16 / 9, 16 / 9, 16 / 9, 16 / 9], () => 380) === "image-right" },
+  { name: "tideline CR23 stress matrix (unit): >= 60 seeded cases, chosen >= 85% of best", fn: () => { const r = tidelineStressUnit(); return r.cases >= 60 && r.min >= 0.85; } },
+  { name: "pasteImageLayout CR23: explicit split kept with aspects", fn: () => pasteImageLayout({ layout: "image-left", blocks: [{ type: "text", text: "a" }, { type: "text", text: "b" }, { type: "text", text: "c" }] }, 1, 3, [1, 1, 1]) === "image-left" },
 
   // ── Editing UX Batch (v12.75): imageAspect ──
   { name: "imageAspect is function", fn: () => typeof imageAspect === "function" },

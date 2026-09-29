@@ -4226,6 +4226,51 @@ def test_pdf_title_cards():
 
 
 # ━━━ New Block Primitives Tests ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+def test_checklist_label_roundtrip():
+    print("\n── Checklist item.label round-trip (tideline C2) ──")
+    sys.path.insert(0, SCRIPTS)
+    try:
+        from vela import expand_deck, compact_deck, turbo_deck, unturbo_deck
+        import importlib
+        vmod = importlib.import_module("validate")
+    except Exception as e:
+        fail("C2: import helpers", str(e))
+        return
+    def chk(cond, name, detail):
+        ok(name) if cond else fail(name, detail)
+    items = [{"text": "A", "status": "done", "label": "Shipped"},
+             {"text": "B", "status": "blocked"}]
+    deck = {"v": 1, "title": "T", "lanes": [{"id": "l1", "title": "L", "items": [
+        {"id": "m1", "title": "M", "slides": [{"id": "s1", "title": "S", "blocks": [
+            {"type": "checklist", "items": copy.deepcopy(items)}]}]}]}]}
+    def cl(d):
+        return d["lanes"][0]["items"][0]["slides"][0]["blocks"][0]["items"]
+    got = cl(expand_deck(compact_deck(copy.deepcopy(deck))))
+    chk(got == items, "C2: compact round-trip keeps checklist label", str(got))
+    turbo = turbo_deck(copy.deepcopy(deck))
+    got = cl(unturbo_deck(json.loads(json.dumps(turbo))))
+    chk(got == items, "C2: turbo round-trip keeps checklist label", str(got))
+    # Old turbo item layout (no label slot) still loads
+    txt = json.dumps(turbo)
+    old_txt = txt.replace(', "Shipped"]', ']')
+    got = cl(unturbo_deck(json.loads(old_txt)))
+    chk(got[0] == {"text": "A", "status": "done"}, "C2: old turbo checklist items load", str(got))
+    # validate.py
+    with tempfile.TemporaryDirectory() as td:
+        def run(label):
+            d = copy.deepcopy(deck)
+            cl(d)[0]["label"] = label
+            pth = os.path.join(td, "d.vela")
+            open(pth, "w").write(json.dumps(d))
+            return vmod.validate(pth)[0]
+        errs = run("Shipped")
+        chk(not any("checklist label" in e for e in errs), "C2: validate accepts string label", str(errs))
+        errs = run(5)
+        chk(any("checklist label must be a string" in e for e in errs), "C2: validate rejects non-string label", str(errs))
+        errs = run("x" * 201)
+        chk(any("exceeds 200" in e for e in errs), "C2: validate rejects over-long label", str(errs))
+
+
 def test_block_primitives():
     print("\n── Block Primitives Tests ──")
 
@@ -4933,6 +4978,7 @@ if __name__ == "__main__":
         test_channel_local()
         test_server_hardening()
         test_block_primitives()
+        test_checklist_label_roundtrip()
         test_study_notes()
         test_slide_numeric_fields()
         test_bg_gradient_validation()

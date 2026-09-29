@@ -138,8 +138,9 @@ const velaClipboardReadSlides = async () => {
   return [];
 };
 
-const VELA_VERSION = "13.75";
+const VELA_VERSION = "13.76";
 const VELA_CHANGELOG = [
+  { v: "13.76", d: ["TOC: dragging a slide or section near the list edge auto-scrolls the list.", "TOC: moving a slide to a section in an earlier lane no longer loses the slide.", "Images: a pasted image on an empty slide fills the slide, not one half.", "Images: grids pick rows and columns by image aspect ratio.", "Images: solo and wide images fill the free slide area.", "Images: images shrink to fit, so text below an image stays on the slide.", "Editing: all text in checklist, comparison, matrix, number-row, progress and flow blocks is editable inline.", "Checklist: type a status name to change the status; custom status labels survive compact/turbo formats."] },
   { v: "13.75", d: ["Editor: mark slides reviewed (✓); Review cycle makes arrow keys skip reviewed slides.", "View switch (editor | presenter | gallery) next to Present.", "Gallery: hide/unhide a slide beside delete; TOC: delete icon on slide rows (undoable).", "Fullscreen nav icons stay visible on any slide background.", "Branding: right-side settings pane; accent line removable at 0px.", "Block toolbar stays visible on full-bleed images; link badges sit right after the text.", "Vector PDF: € and other WinAnsi symbols render as text at correct size.", "validate: reports a gradient in solid-color bg fields (use bgGradient).", "Opening or switching a deck keeps lane/module ids.", "Desktop: window title shows the deck title; keyboard works after alt-tab; AI agents detected on first start; HTML export fixed."] },
   { v: "13.74", d: ["Security: CLI output now neutralizes terminal control sequences in deck text (CWE-150 class), closing a display-spoofing channel.", "Security: the machine-readable --json output is fully escaped for the same class.", "Added one canonical output encoder, a CI gate keeping every CLI output path routed through it, and regression tests."] },
   { v: "13.73", d: ["Security (High): hardened the deck-injection build path — trusted app source is now transformed before untrusted deck data is injected.", "Security: added a fail-closed integrity check that refuses to write an artifact whose trusted bytes changed.", "Local preview server: same injection-last ordering applied to its HTML build path.", "Tests: added build-pipeline trust-boundary regression coverage."] },
@@ -1974,6 +1975,13 @@ const imageAspect = (dataUrl) => new Promise((resolve) => {
   img.onerror = () => resolve(1);
   img.src = dataUrl;
 });
+// Natural size {w, h} of a data URL image; {w: 0, h: 0} on error (CR23 paste caps).
+const imageNaturalSize = (dataUrl) => new Promise((resolve) => {
+  const img = new Image();
+  img.onload = () => resolve({ w: img.naturalWidth || 0, h: img.naturalHeight || 0 });
+  img.onerror = () => resolve({ w: 0, h: 0 });
+  img.src = dataUrl;
+});
 
 // Decide the layout for a slide an image is being pasted onto. Returns the layout
 // the slide should carry: an explicit author layout is preserved; an empty/mostly-
@@ -1981,7 +1989,7 @@ const imageAspect = (dataUrl) => new Promise((resolve) => {
 // the image below ("stack"); otherwise the slide is promoted to "image-right" so
 // the image sits beside the existing body content. aspect = image width / height.
 const PASTE_TITLE_BLOCKS = new Set(["heading", "text", "subtitle", "badge", "quote"]);
-function pasteImageLayout(slide, aspect, n) {
+function pasteImageLayout(slide, aspect, n, aspects, measure, naturalW) {
   const layout = slide && slide.layout;
   if (layout && layout !== "stack") return layout; // respect explicit author layout
   const body = ((slide && slide.blocks) || []).filter((b) => b.type !== "image" && b.type !== "spacer" && b.type !== "divider");
@@ -1990,9 +1998,110 @@ function pasteImageLayout(slide, aspect, n) {
   // Heavy body text + a grid of images (>=3): don't cram the grid into a half.
   // Keep the slide stacked so the text reads as a full-width header and the
   // image run grids full-width below it (the renderer auto-grids the run).
-  if (hasContent && n >= 3) return "stack";
   const wide = aspect >= 1.6;
-  return (!mostlyTitle && !wide) ? "image-right" : "stack";
+  const rule = (hasContent && n >= 3) ? "stack" : (!mostlyTitle && !wide) ? "image-right" : "stack";
+  // CR23: with every image aspect known, compare the two candidates and keep the
+  // one that shows the most image area (see pasteLayoutArea). The count rule
+  // above is the fallback when the estimate cannot be made.
+  if (!body.length || !Array.isArray(aspects) || aspects.length !== n) return rule;
+  const split = pasteLayoutArea(slide, aspects, "image-right", measure, naturalW), stack = pasteLayoutArea(slide, aspects, "stack", measure, naturalW);
+  if (split == null || stack == null) return rule;
+  return split > stack ? "image-right" : "stack";
+}
+
+// Split-column flex the paste handler gives a split slide it lays out itself: a
+// lone square/portrait image gives the text the larger share; a grid splits 1:1.
+function pasteSplitFlex(n, aspect) {
+  return n === 1 && aspect <= 1.2 ? [1.4, 1] : [1, 1];
+}
+
+// CR23: estimated image area (slide px^2) for `aspects` on `slide` in layout
+// "stack" (body text on top, image grid full width below) or "image-right" (body
+// text beside an image column), at the default 960x540 geometry. The image area
+// comes from imageGridPlan(), the same packing the renderer draws, so the two
+// cannot disagree. The body height comes from `measure(width)` (the paste handler
+// measures the rendered blocks); without it, from a per-block estimate that
+// covers every block type. A stacked slide whose text overflows is scaled down as
+// a whole (area x scale^2). A split slide widens its columns when it scales, so
+// its image column keeps its visual size. Null only for a custom slide padding.
+const PASTE_TEXT_METRICS = { heading: ["2xl", 1.2, 0.56], text: ["md", 1.6, 0.5], bullets: ["md", 1.6, 0.5], quote: ["xl", 1.4, 0.52] };
+function pasteBodyEstimate(body, w, gap) {
+  let total = 0;
+  for (const b of body) {
+    const m = PASTE_TEXT_METRICS[b.type];
+    if (b.type === "badge") total += 28;
+    else if (m) {
+      const px = parseFloat(BASE_SIZES[b.size] || BASE_SIZES[m[0]]) * 16, lineH = px * m[1];
+      const lines = (str, width) => String(str == null ? "" : str).split("\n").reduce((k, seg) => k + Math.max(1, Math.ceil(seg.length * px * m[2] / Math.max(40, width))), 0);
+      if (b.type === "bullets") {
+        const items = Array.isArray(b.items) ? b.items : [];
+        total += items.reduce((h, it) => h + lines(typeof it === "string" ? it : it && it.text, w - 28) * lineH, 0) + Math.max(0, items.length - 1) * (Number(b.gap) || 8);
+      } else total += lines(b.text, b.type === "quote" ? w * 0.85 : w) * lineH;
+    }
+    // Conservative, width-free estimates for every other block type.
+    else if (Array.isArray(b.rows)) total += 44 + b.rows.length * 38;
+    else if (b.type === "code") total += 36 + String(b.text || "").split("\n").length * 20;
+    else if (b.type === "chart") total += 240;
+    else if (Array.isArray(b.items)) total += 24 + b.items.length * 44;
+    else total += 90;
+    total += gap;
+  }
+  return Math.max(0, total - gap);
+}
+function pasteLayoutArea(slide, aspects, layout, measure, naturalW) {
+  if (!slide || slide.padding != null || !Array.isArray(aspects) || !aspects.length) return null;
+  if (!aspects.every((a) => typeof a === "number" && a > 0 && Number.isFinite(a))) return null;
+  const body = (slide.blocks || []).filter((b) => b && b.type !== "image" && b.type !== "spacer" && b.type !== "divider");
+  const gap = Number(slide.gap) || 12, W = 864, H = 468;
+  const textH = (w) => {
+    const m = typeof measure === "function" ? measure(w) : null;
+    return typeof m === "number" && Number.isFinite(m) && m >= 0 ? m : pasteBodyEstimate(body, w, gap);
+  };
+  const n = aspects.length;
+  // Upscale caps (natural widths, optional): a grid cell draws an image at most
+  // GRID_IMG_MAX_UPSCALE x natural size; a lone side image at most 1x.
+  const known = Array.isArray(naturalW) && naturalW.length === n;
+  const capGrid = known ? naturalW.map((w) => w * GRID_IMG_MAX_UPSCALE) : undefined;
+  if (layout === "stack") {
+    const head = body.length ? textH(W) + gap : 0;
+    const floorRows = imageGridPlan(aspects, 0, 0, gap, gridColsFor(n, "full")).rows.length;
+    const gridH = Math.max(H - head, floorRows * 72);
+    const s = Math.min(1, H / (head + gridH));
+    return imageGridPlan(aspects, W, gridH, gap, gridColsFor(n, "full"), 0, capGrid).area * s * s;
+  }
+  const [cf, imf] = pasteSplitFlex(n, aspects[n - 1]);
+  const colW = (W - (Number(slide.splitGap) || 32)) / (cf + imf);
+  return imageGridPlan(aspects, colW * imf, H, gap, gridColsFor(n, "half"), 0, n === 1 && known ? naturalW : capGrid).area;
+}
+
+// CR23: body-height probe for pasteLayoutArea(). When a paste starts, it copies
+// (cloneNode) the rendered non-image blocks of the on-screen slide. measure(w)
+// lays the copies out at width w in a hidden box inside the slide and returns
+// their stacked height in slide px, so every block type (table, chart, code...)
+// is measured, not guessed. Null when the viewport does not show `slide`.
+function pasteBodyProbe(root, slide) {
+  const vp = root && root.querySelector ? root.querySelector("[data-testid='slide-viewport']") : null;
+  if (!vp || !slide) return null;
+  const els = Array.from(vp.querySelectorAll("[data-block-type]")).filter((el) => el.getAttribute("data-block-type") !== "image" && !el.parentElement.closest("[data-block-type]"));
+  if (els.length !== (slide.blocks || []).filter((b) => b && b.type !== "image").length) return null;
+  if (!els.length) return () => 0;
+  const host = els[0].parentElement, copies = els.map((el) => el.cloneNode(true));
+  const gap = Number(slide.gap) || 12, cache = new Map();
+  return (w) => {
+    if (cache.has(w)) return cache.get(w);
+    let h = null;
+    if (host && host.isConnected) {
+      const probe = document.createElement("div");
+      probe.setAttribute("aria-hidden", "true");
+      probe.style.cssText = `position:absolute;left:0;top:0;visibility:hidden;pointer-events:none;display:flex;flex-direction:column;gap:${gap}px;width:${Math.max(1, Math.round(w))}px`;
+      copies.forEach((c) => probe.appendChild(c));
+      host.appendChild(probe);
+      h = probe.offsetHeight;
+      probe.remove();
+    }
+    cache.set(w, h);
+    return h;
+  };
 }
 
 // Columns for a run of `n` images, by region. "full" = image-only slide or a
@@ -2005,6 +2114,120 @@ function gridColsFor(n, region) {
   n = Math.max(1, n | 0);
   if (region === "half") return n <= 1 ? 1 : 2;
   return ({ 1: 1, 2: 2, 3: 3, 4: 2, 5: 3 })[n] || 3;
+}
+
+// CR23: the image-grid packing. The renderer (renderImageGrid) and the paste
+// layout chooser (pasteLayoutArea) both use it, so they cannot disagree.
+// A plan is a list of rows; each row is { cells: [{ i, f }], gc, hw }:
+//   cell width = (boxW - gap * gc) * f     (f = share of the row width)
+//   row height = (boxH - gap * (rows - 1)) * hw / sum(hw)
+// Each image is drawn with objectFit:contain in its cell. Candidates:
+//   - uniform grids of 1..6 columns (equal cells; a short last row is centered);
+//   - for mixed aspect ratios, "justified" rows: consecutive images share one
+//     row height and get widths in proportion to their aspect (every row split).
+// The count-driven uniform grid (`fallback` columns) wins unless another plan
+// shows at least 5% more image area, so the arrangement is stable. `pinned`
+// (the author's imageCols) forces a uniform grid. Unknown aspects or box → the
+// fallback grid with area 0. aspects = width / height of each image, in order;
+// maxW (optional) = the widest each image may be drawn (the upscale cap).
+function imageGridPlan(aspects, boxW, boxH, gap, fallback, pinned, maxW) {
+  const n = Array.isArray(aspects) ? aspects.length : 0;
+  const g = Math.max(0, Number(gap) || 0);
+  const valid = n > 0 && boxW > 0 && boxH > 0 && aspects.every((a) => typeof a === "number" && a > 0 && Number.isFinite(a));
+  const uniform = (c) => {
+    const rows = [];
+    for (let s = 0; s < n; s += c) rows.push({ cells: aspects.slice(s, s + c).map((_, k) => ({ i: s + k, f: 1 / c })), gc: c - 1, hw: 1 });
+    return { rows, cols: c };
+  };
+  const areaOf = (rows) => {
+    const avail = boxH - g * (rows.length - 1), sumHw = rows.reduce((t, r) => t + r.hw, 0);
+    if (!(avail > 0 && sumHw > 0)) return 0;
+    let area = 0;
+    for (const r of rows) {
+      const h = avail * r.hw / sumHw;
+      for (const c of r.cells) {
+        const w = (boxW - g * r.gc) * c.f, a = aspects[c.i];
+        if (!(w > 0)) return 0;
+        const cap = maxW && maxW[c.i] > 0 ? maxW[c.i] : Infinity;
+        const iw = Math.min(w, h * a, cap);
+        area += iw * iw / a;
+      }
+    }
+    return area;
+  };
+  const pack = (p) => ({ ...p, area: valid ? areaOf(p.rows) : 0 });
+  if (pinned) return pack(uniform(Math.min(6, Math.max(1, pinned | 0))));
+  if (n <= 1) return pack(uniform(1));
+  const base = pack(uniform(Math.min(n, Math.max(1, fallback | 0))));
+  if (!valid) return base;
+  let best = base;
+  const consider = (p) => { const q = pack(p); if (q.area > base.area * 1.05 && q.area > best.area) best = q; };
+  for (let c = 1; c <= Math.min(n, 6); c++) consider(uniform(c));
+  // Justified rows only help a mixed set; equal aspects keep uniform cells.
+  if (n <= 8 && Math.max(...aspects) > Math.min(...aspects) * 1.15) {
+    for (let mask = 0; mask < (1 << (n - 1)); mask++) {
+      const rows = [];
+      let run = [0];
+      for (let i = 1; i <= n; i++) {
+        if (i === n || (mask >> (i - 1)) & 1) {
+          const S = run.reduce((t, k) => t + aspects[k], 0);
+          rows.push({ cells: run.map((k) => ({ i: k, f: aspects[k] / S })), gc: run.length - 1, hw: 1 / S });
+          run = [i];
+        } else run.push(i);
+      }
+      consider({ rows, cols: Math.max(...rows.map((r) => r.cells.length)) });
+    }
+  }
+  return best;
+}
+// Column count of the chosen plan (the longest row).
+function bestImageGridCols(aspects, boxW, boxH, gap, fallback) {
+  return imageGridPlan(aspects, boxW, boxH, gap, fallback).cols;
+}
+
+// Bounded cache of image aspect ratios keyed by the (data:) src, filled by the
+// slide renderer via imageAspect() so bestImageGridCols() has aspects to work with.
+const IMAGE_ASPECT_CACHE = new Map();
+function rememberImageAspect(src, aspect) {
+  if (typeof src !== "string" || !(aspect > 0)) return;
+  if (IMAGE_ASPECT_CACHE.size >= 256) IMAGE_ASPECT_CACHE.delete(IMAGE_ASPECT_CACHE.keys().next().value);
+  IMAGE_ASPECT_CACHE.set(src, aspect);
+}
+
+// CR23: which split layouts the paste handler set itself. Keyed by the pasted
+// image src; the value is the slide's layout signature right after that paste.
+// A later paste re-evaluates the layout only when the slide still carries that
+// exact signature (the user did not change it). Session memory only: after a
+// reload a split is treated as the author's choice.
+const PASTE_LAYOUT_OWNED = new Map();
+const pasteLayoutSig = (s) => `${(s && s.layout) || "stack"}|${s && s.contentFlex != null ? s.contentFlex : ""}|${s && s.imageFlex != null ? s.imageFlex : ""}`;
+function rememberPasteLayout(src, slide) {
+  if (typeof src !== "string") return;
+  if (PASTE_LAYOUT_OWNED.size >= 256) PASTE_LAYOUT_OWNED.delete(PASTE_LAYOUT_OWNED.keys().next().value);
+  PASTE_LAYOUT_OWNED.set(src, pasteLayoutSig(slide));
+}
+
+// Rapid image pastes. Slides carry no id, so an async paste finds its target by
+// object identity. Each applied paste records the slide object it produced as
+// the successor of the slide it changed (or spilled over from), so a paste
+// queued behind it follows the chain to the live slide instead of being dropped.
+// An undo that restores the older object ends the chain there. WeakMap: session
+// memory only, nothing is kept for slides that are gone.
+const PASTE_SLIDE_SUCC = new WeakMap();
+// The newest member of the target's successor chain that is still in `list`, or null.
+function pasteResolveTarget(target, list) {
+  if (!target || !Array.isArray(list)) return null;
+  let best = list.includes(target) ? target : null;
+  for (let x = target, k = 0; k < 512 && (x = PASTE_SLIDE_SUCC.get(x)); k++) if (list.includes(x)) best = x;
+  return best;
+}
+// After a paste renders: link `from` to the new slide object whose last block is
+// the pasted image (the one slide in `after` that was not in `before`).
+function pasteRecordSuccessor(from, before, after, src) {
+  if (!from || typeof from !== "object" || !Array.isArray(after)) return;
+  const seen = new Set(before || []);
+  const next = after.find((s) => s && !seen.has(s) && Array.isArray(s.blocks) && s.blocks.length && s.blocks[s.blocks.length - 1].src === src);
+  if (next) PASTE_SLIDE_SUCC.set(from, next);
 }
 
 // ━━━ Status & Importance Meta ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

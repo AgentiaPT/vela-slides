@@ -243,6 +243,15 @@ def validate(path):
                             if not gitem.get("blocks"):
                                 errors.append(f"{loc}/B{bi+1}/Grid{gi+1}: Grid cell missing 'blocks'")
 
+                    # Check checklist item labels (custom status text)
+                    if bt == "checklist":
+                        for ci, citem in enumerate(block.get("items", [])):
+                            lb = citem.get("label") if isinstance(citem, dict) else None
+                            if lb is not None and not isinstance(lb, str):
+                                errors.append(f"{loc}/B{bi+1}/Item{ci+1}: checklist label must be a string")
+                            elif isinstance(lb, str) and len(lb) > 200:
+                                errors.append(f"{loc}/B{bi+1}/Item{ci+1}: checklist label exceeds 200 chars ({len(lb)})")
+
                     # Check flow items
                     if bt == "flow":
                         items = block.get("items", [])

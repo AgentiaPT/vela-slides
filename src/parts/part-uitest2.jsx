@@ -2651,6 +2651,724 @@ uiSuite("meridian-CR01 local save ends at the latest state with a slow backend",
   { name: "Edit, then edit again during the in-flight write: file ends at the last edit", fn: () => _meridianF8SlowSave(["meridian-F8 edit", "meridian-F8 edit 2"], "meridian-F8 edit 2") },
 ]);
 
+// tideline-CR26: every rendered block text is inline-editable in the editor.
+// Find the click-to-edit display node for an exact text inside the slide.
+const _tlEditNode = (text) => _$$("div", _mrdViewport() || document).find((el) =>
+  el.style.cursor === "pointer" && el.textContent.trim() === text && !_$$("div", el).some((c) => c.style.cursor === "pointer"));
+// Click the text, type the new value, commit with Enter, wait for the new text.
+const _tlEdit = async (from, to, shown = to) => {
+  const node = await _waitFor(() => _tlEditNode(from), 2000).catch(() => { throw new Error(`"${from}" is not inline-editable`); });
+  _click(node);
+  const ed = await _waitFor(() => _$("[contenteditable='true']", _mrdViewport()), 1500);
+  ed.textContent = to;
+  ed.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+  await _waitFor(() => !_$("[contenteditable='true']") && _tlEditNode(shown), 2000).catch(() => { throw new Error(`"${from}" -> "${to}" did not commit`); });
+};
+uiSuite("tideline-CR26 edit every block text", [
+  { name: "CR26: checklist item text and status label edit inline, with undo and redo", fn: async () => {
+    const hooks = _hooks();
+    await _mrdInject([{ type: "checklist", items: [{ text: "Task one", status: "pending" }, { text: "Task two", status: "done" }] }], null,
+      (vp) => vp?.textContent.includes("Task one") ? vp : null);
+    const past0 = hooks.getHistoryCounts ? hooks.getHistoryCounts().past : 0;
+    try {
+      await _tlEdit("Task one", "Task edited");
+      await _tlEdit("PENDING", "blocked", "BLOCKED");
+      const blockedCol = _tlEditNode("BLOCKED")?.style.color;
+      if (!/239, 68, 68|#ef4444/i.test(blockedCol || "")) throw new Error(`typed status did not switch the status (color ${blockedCol})`);
+      await _tlEdit("DONE", "Shipped");
+      _key("z", { ctrlKey: true });
+      await _waitFor(() => _tlEditNode("DONE"), 2000).catch(() => { throw new Error("undo did not restore the label"); });
+      _key("y", { ctrlKey: true });
+      await _waitFor(() => _tlEditNode("Shipped"), 2000).catch(() => { throw new Error("redo did not restore the custom label"); });
+      await _tlEdit("Shipped", "", "DONE");
+    } finally {
+      await _mrdUndoTo(past0);
+    }
+  }},
+  { name: "CR26: comparison, matrix, number-row, progress and flow texts edit inline", fn: async () => {
+    const cases = [
+      [[{ type: "comparison", dividerLabel: "OR", items: [{ title: "Left col", items: ["Left point"] }, { title: "Right col", items: [{ text: "Right point" }] }] }],
+        [["Left col", "Left new"], ["Right col", "Right new"], ["Left point", "LP new"], ["Right point", "RP new"], ["OR", "VERSUS"]]],
+      [[{ type: "matrix", xLeft: "Low X", xRight: "High X", yTop: "High Y", yBottom: "Low Y", quadrants: [{ title: "Q one", items: ["Q point"] }, { title: "Q two" }, { title: "Q three" }, { title: "Q four" }] }],
+        [["Q one", "Q1 new"], ["Q point", "QP new"], ["Low X", "LX new"], ["High Y", "HY new"]]],
+      [[{ type: "number-row", items: [{ value: "42", label: "Answers" }, { value: "7", label: "Days" }] }],
+        [["42", "43"], ["Answers", "Replies"]]],
+      [[{ type: "progress", leftLabel: "Start", rightLabel: "End", annotation: "Note here", items: [{ label: "Bar", value: 40 }] }],
+        [["Start", "Begin"], ["End", "Finish"], ["Note here", "Note new"]]],
+      [[{ type: "flow", gateLabel: "Gate", items: [{ label: "A", gate: true }, { label: "B" }] }],
+        [["Gate", "Check"]]],
+    ];
+    for (const [blocks, edits] of cases) {
+      await _mrdInject(blocks, null, (vp) => vp?.textContent.includes(edits[0][0]) ? vp : null);
+      // Undo one step per edit (history counts stop growing at MAX_HISTORY).
+      let done = 0;
+      try {
+        for (const [from, to] of edits) { await _tlEdit(from, to); done++; }
+      } catch (e) { throw new Error(`${blocks[0].type}: ${e.message}`); }
+      finally { document.activeElement?.blur?.(); for (let k = 0; k < done; k++) { _key("z", { ctrlKey: true }); await _wait(60); } }
+      await _waitFor(() => _tlEditNode(edits[0][0]), 2000).catch(() => { throw new Error(`${blocks[0].type}: undo did not restore the text`); });
+    }
+  }},
+  { name: "CR26: a cleared text keeps a clickable target and can be typed again", fn: async () => {
+    const cases = [
+      [{ type: "checklist", items: [{ text: "Task one", status: "pending" }] }, "Task one"],
+      [{ type: "comparison", items: [{ title: "L", items: ["Left point"] }, { title: "R", items: ["Right point"] }] }, "Left point"],
+      [{ type: "matrix", quadrants: [{ title: "Q1", items: ["Q point"] }, { title: "Q2" }, { title: "Q3" }, { title: "Q4" }] }, "Q point"],
+      [{ type: "number-row", items: [{ value: "42", label: "Answers" }] }, "42"],
+      [{ type: "bullets", items: ["Bullet one", "Bullet two"] }, "Bullet one"],
+    ];
+    for (const [block, from] of cases) {
+      await _mrdInject([block], null, (vp) => vp?.textContent.includes(from) ? vp : null);
+      let done = 0;
+      try {
+        await _tlEdit(from, "", EDIT_PLACEHOLDER); done++;
+        const node = _tlEditNode(EDIT_PLACEHOLDER);
+        const r = node.getBoundingClientRect();
+        if (!(r.width > 4 && r.height > 4)) throw new Error(`empty target is ${r.width}x${r.height}`);
+        // With the pointer on it, the item's hover toolbar must not cover the placeholder.
+        const ph = _$("[data-vela-placeholder]", node);
+        ph.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
+        await _wait(80);
+        const pr = ph.getBoundingClientRect();
+        const hit = document.elementFromPoint(pr.left + pr.width / 2, pr.top + pr.height / 2);
+        if (!node.contains(hit)) throw new Error(`placeholder is covered by ${hit?.tagName} "${(hit?.textContent || "").slice(0, 20)}"`);
+        await _tlEdit(EDIT_PLACEHOLDER, "Typed again"); done++;
+      } catch (e) { throw new Error(`${block.type}: ${e.message}`); }
+      finally { document.activeElement?.blur?.(); for (let k = 0; k < done; k++) { _key("z", { ctrlKey: true }); await _wait(60); } }
+      await _waitFor(() => _tlEditNode(from), 2000).catch(() => { throw new Error(`${block.type}: undo did not restore the text`); });
+    }
+  }},
+  { name: "CR26: SVG labels (cycle, funnel, flow loop) edit inline, with undo and redo, and do not zoom", fn: async () => {
+    const svgText = (t) => _$$("text[data-svg-edit]", _mrdViewport() || document).find((el) => el.textContent.trim() === t);
+    const zoomed = () => document.body.textContent.includes("ESC or click to close");
+    const svgEdit = async (from, to, key = "Enter") => {
+      const node = await _waitFor(() => svgText(from), 2000).catch(() => { throw new Error(`"${from}" is not an editable SVG label`); });
+      _clickMod(node);
+      const inp = await _waitFor(() => _$("[data-testid='svg-text-edit']", _mrdViewport()), 1500).catch(() => { throw new Error(`"${from}": no edit input`); });
+      if (zoomed()) throw new Error(`"${from}": click opened the zoom overlay`);
+      if (document.activeElement !== inp) throw new Error(`"${from}": input has no focus`);
+      inp.value = to;
+      inp.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }));
+      const shown = key === "Escape" ? from : to;
+      await _waitFor(() => !_$("[data-testid='svg-text-edit']") && svgText(shown), 2000).catch(() => { throw new Error(`"${from}" -> "${to}" (${key}) did not show "${shown}"`); });
+    };
+    const cases = [
+      [{ type: "cycle", centerLabel: "Center L", centerSub: "Center S", items: [{ label: "CyA" }, { label: "CyB" }, { label: "CyC" }] }, [["CyA", "CyA2"], ["Center L", "CL2"], ["Center S", "CS2"]]],
+      [{ type: "funnel", items: [{ label: "FunA", value: "100", drop: "-40%" }, { label: "FunB", value: "60" }] }, [["FunA", "FunA2"], ["100", "101"], ["-40%", "-41%"]]],
+      [{ type: "flow", loop: true, loopLabel: "LoopH", items: [{ label: "A" }, { label: "B" }] }, [["LoopH", "LoopH2"]]],
+      [{ type: "flow", loop: true, direction: "vertical", loopLabel: "LoopV", items: [{ label: "A" }, { label: "B" }] }, [["LoopV", "LoopV2"]]],
+    ];
+    for (const [block, edits] of cases) {
+      await _mrdInject([block], null, (vp) => vp && svgText(edits[0][0]) ? vp : null);
+      let done = 0;
+      try {
+        await svgEdit(edits[0][0], "Cancelled", "Escape");
+        for (const [from, to] of edits) {
+          await svgEdit(from, to); done++;
+          _key("z", { ctrlKey: true });
+          await _waitFor(() => svgText(from), 2000).catch(() => { throw new Error(`undo did not restore "${from}"`); });
+          _key("y", { ctrlKey: true });
+          await _waitFor(() => svgText(to), 2000).catch(() => { throw new Error(`redo did not restore "${to}"`); });
+        }
+      } catch (e) { throw new Error(`${block.type}: ${e.message}`); }
+      finally { document.activeElement?.blur?.(); for (let k = 0; k < done; k++) { _key("z", { ctrlKey: true }); await _wait(60); } }
+      await _waitFor(() => svgText(edits[0][0]), 2000).catch(() => { throw new Error(`${block.type}: undo did not restore the text`); });
+    }
+  }},
+  { name: "CR26: a cleared optional SVG label shows a placeholder and can be typed again", fn: async () => {
+    const texts = () => _$$("text[data-svg-edit]", _mrdViewport() || document);
+    const svgText = (t) => texts().find((el) => el.textContent.trim() === t);
+    const open = async (node, what) => {
+      _clickMod(node);
+      return _waitFor(() => _$("[data-testid='svg-text-edit']", _mrdViewport()), 1500).catch(() => { throw new Error(`${what}: no edit input`); });
+    };
+    const commit = (inp, v) => { inp.value = v; inp.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true })); };
+    const cases = [
+      [{ type: "cycle", centerLabel: "CtrL", centerSub: "CtrS", items: [{ label: "CyA" }, { label: "CyB" }] }, ["CtrL", "CtrS"]],
+      [{ type: "funnel", items: [{ label: "FunA", value: "100", drop: "-40%" }] }, ["100", "-40%"]],
+      [{ type: "flow", loop: true, loopLabel: "LoopH", items: [{ label: "A" }, { label: "B" }] }, ["LoopH"]],
+      [{ type: "flow", loop: true, direction: "vertical", loopLabel: "LoopV", items: [{ label: "A" }, { label: "B" }] }, ["LoopV"]],
+    ];
+    for (const [block, labels] of cases) {
+      await _mrdInject([block], null, (vp) => vp && svgText(labels[0]) ? vp : null);
+      for (const from of labels) {
+        let done = 0;
+        try {
+          const before = new Set(texts().filter((el) => el.textContent.trim() === EDIT_PLACEHOLDER));
+          commit(await open(svgText(from), from), ""); done++;
+          const ph = await _waitFor(() => !_$("[data-testid='svg-text-edit']") && texts().find((el) => el.textContent.trim() === EDIT_PLACEHOLDER && !before.has(el)), 2000)
+            .catch(() => { throw new Error(`"${from}": cleared label shows no placeholder`); });
+          if (!_$("[data-vela-placeholder]", ph)) throw new Error(`"${from}": placeholder is not marked`);
+          const r = ph.getBoundingClientRect();
+          if (!(r.width > 4 && r.height > 4)) throw new Error(`"${from}": placeholder target is ${r.width}x${r.height}`);
+          commit(await open(ph, `"${from}" placeholder`), "Back " + from); done++;
+          await _waitFor(() => !_$("[data-testid='svg-text-edit']") && svgText("Back " + from), 2000).catch(() => { throw new Error(`"${from}": re-typed text not shown`); });
+        } catch (e) { throw new Error(`${block.type}: ${e.message}`); }
+        finally { document.activeElement?.blur?.(); for (let k = 0; k < done; k++) { _key("z", { ctrlKey: true }); await _wait(60); } }
+        await _waitFor(() => svgText(from), 2000).catch(() => { throw new Error(`${block.type}: undo did not restore "${from}"`); });
+      }
+    }
+  }},
+  { name: "CR26: empty optional SVG labels show no placeholder in Present mode", fn: async () => {
+    await _mrdInject([{ type: "cycle", items: [{ label: "PcA" }, { label: "PcB" }] }, { type: "funnel", items: [{ label: "PfA" }] }], null,
+      (vp) => vp && _$$("text[data-svg-edit]", vp).some((el) => el.textContent.trim() === "PcA") ? vp : null);
+    const n = _$$("[data-vela-placeholder]", _mrdViewport()).length;
+    if (n < 4) throw new Error(`editor shows ${n} placeholders, want >= 4 (center label, sub, value, drop)`);
+    document.activeElement?.blur(); await _wait(100);
+    _key("f");
+    try {
+      await _waitFor(() => !_$("header") && document.body.textContent.includes("PcA"), 2000);
+      await _wait(150);
+      const ph = _$$("[data-vela-placeholder]").length, ed = _$$("[data-svg-edit]").length;
+      if (ph || ed) throw new Error(`Present mode shows ${ph} placeholders and ${ed} editable SVG labels`);
+    } finally {
+      _key("f");
+      await _waitFor(() => _$("header"), 2000);
+    }
+  }},
+  { name: "CR26: opening an SVG label input does not move or cover the other labels", fn: async () => {
+    await _mrdInject([{ type: "funnel", items: [{ label: "LsA", value: "10K", drop: "-40%" }, { label: "LsB", value: "4K" }, { label: "LsC", value: "1K" }] }], null,
+      (vp) => vp && _$$("text[data-svg-edit]", vp).some((el) => el.textContent.trim() === "LsA") ? vp : null);
+    await _wait(1000); // let the entrance (stagger) animation settle before measuring
+    const texts = () => _$$("text[data-svg-edit]", _mrdViewport());
+    const others = () => texts().filter((el) => el.textContent.trim() !== "LsA");
+    const r0 = others().map((el) => el.getBoundingClientRect());
+    _clickMod(texts().find((el) => el.textContent.trim() === "LsA"));
+    const inp = await _waitFor(() => _$("[data-testid='svg-text-edit']", _mrdViewport()), 1500);
+    try {
+      await _mrdFrame();
+      const r1 = others().map((el) => el.getBoundingClientRect());
+      r0.forEach((a, i) => {
+        const b = r1[i];
+        if (Math.abs(a.left - b.left) > 1 || Math.abs(a.top - b.top) > 1) throw new Error(`label ${i} moved ${b.left - a.left},${b.top - a.top}px`);
+      });
+      const ir = inp.getBoundingClientRect();
+      const cover = r1.find((b) => ir.left < b.right - 1 && ir.right > b.left + 1 && ir.top < b.bottom - 1 && ir.bottom > b.top + 1);
+      if (cover) throw new Error("input covers an adjacent label");
+    } finally {
+      inp.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+      await _waitFor(() => !_$("[data-testid='svg-text-edit']"), 1500);
+    }
+  }},
+  { name: "CR26: typed status names ignore case, underscore and hyphen", fn: async () => {
+    const hooks = _hooks();
+    await _mrdInject([{ type: "checklist", items: [{ text: "St one", status: "pending" }, { text: "St two", status: "done" }] }], null,
+      (vp) => vp?.textContent.includes("St one") ? vp : null);
+    const past0 = hooks.getHistoryCounts ? hooks.getHistoryCounts().past : 0;
+    try {
+      await _tlEdit("PENDING", "in_progress", "IN PROGRESS");
+      await _tlEdit("DONE", "In-Progress", "IN PROGRESS");
+      // A save that normalizes to the current state shows the default label at once.
+      await _tlEdit("IN PROGRESS", "in_progress", "IN PROGRESS");
+      await _tlEdit("IN PROGRESS", "", "IN PROGRESS");
+      const cols = _$$("div", _mrdViewport()).filter((el) => el.style.cursor === "pointer" && el.textContent.trim() === "IN PROGRESS").map((el) => el.style.color);
+      if (cols.length !== 2 || !cols.every((c) => /245, 158, 11|#f59e0b/i.test(c))) throw new Error(`status not switched to in-progress (${cols})`);
+    } finally {
+      await _mrdUndoTo(past0);
+    }
+  }},
+  { name: "CR26: empty-text placeholder is invisible until its block is hovered, and keeps its size", fn: async () => {
+    await _mrdInject([{ type: "funnel", items: [{ label: "PhA", value: "10K" }, { label: "PhB", value: "4K" }] }], null,
+      (vp) => vp && _$$("text[data-svg-edit]", vp).some((el) => el.textContent.trim() === "PhA") ? vp : null);
+    await _wait(1000);
+    document.activeElement?.blur(); await _wait(100);
+    const vp = _mrdViewport();
+    const ph = _$("[data-vela-placeholder]", vp);
+    if (!ph) throw new Error("no placeholder found");
+    const host = ph.closest("[data-block-type]");
+    const op = () => parseFloat(getComputedStyle(ph).opacity);
+    await _mrdUnhover(host);
+    const r0 = ph.getBoundingClientRect();
+    if (op() !== 0) throw new Error(`placeholder opacity ${op()} without hover, want 0`);
+    await _mrdHover(host);
+    if (!(op() > 0.2)) throw new Error(`placeholder opacity ${op()} on hover, want visible`);
+    const r1 = ph.getBoundingClientRect();
+    if (Math.abs(r0.width - r1.width) > 0.5 || Math.abs(r0.height - r1.height) > 0.5 || Math.abs(r0.left - r1.left) > 0.5) throw new Error("placeholder box changed on hover");
+    if (!(r0.width > 4 && r0.height > 4)) throw new Error(`hidden placeholder target is ${r0.width}x${r0.height}`);
+    await _mrdUnhover(host);
+    if (op() !== 0) throw new Error("placeholder stays visible after hover ends");
+  }},
+  { name: "CR26: markup typed into an SVG label is stored like the same input in an HTML text", fn: async () => {
+    const typed = "<b>hi</b> sub";
+    // HTML path: the value EditableText stores for this input, as shown.
+    await _mrdInject([{ type: "checklist", items: [{ text: "Task one", status: "pending" }] }], null,
+      (vp) => vp?.textContent.includes("Task one") ? vp : null);
+    let done = 0, want;
+    try {
+      _click(await _waitFor(() => _tlEditNode("Task one"), 2000));
+      const ed = await _waitFor(() => _$("[contenteditable='true']", _mrdViewport()), 1500);
+      ed.textContent = typed;
+      ed.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+      await _waitFor(() => !_$("[contenteditable='true']"), 2000); done++;
+      want = _$$("div", _mrdViewport()).filter((el) => el.style.cursor === "pointer" && el.textContent.trim() !== "PENDING" && !_$$("div", el).some((c) => c.style.cursor === "pointer"))[0]?.textContent.trim();
+    } finally { document.activeElement?.blur?.(); for (let k = 0; k < done; k++) { _key("z", { ctrlKey: true }); await _wait(60); } }
+    if (!want || /[<>]/.test(want)) throw new Error(`HTML text kept markup: "${want}"`);
+    // SVG path: funnel value, cycle centre label, flow loop label.
+    const svgText = (t) => _$$("text[data-svg-edit]", _mrdViewport() || document).find((el) => el.textContent.trim() === t);
+    const cases = [
+      [{ type: "funnel", items: [{ label: "FunA", value: "100" }] }, "100"],
+      [{ type: "cycle", centerLabel: "CtrL", items: [{ label: "CyA" }, { label: "CyB" }] }, "CtrL"],
+      [{ type: "flow", loop: true, loopLabel: "LoopH", items: [{ label: "A" }, { label: "B" }] }, "LoopH"],
+    ];
+    for (const [block, from] of cases) {
+      await _mrdInject([block], null, (vp) => vp && svgText(from) ? vp : null);
+      let n = 0;
+      try {
+        _clickMod(svgText(from));
+        const inp = await _waitFor(() => _$("[data-testid='svg-text-edit']", _mrdViewport()), 1500);
+        inp.value = typed;
+        inp.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+        await _waitFor(() => !_$("[data-testid='svg-text-edit']") && svgText(want), 2000).catch(() => {
+          throw new Error(`typed markup shows "${_$$("text[data-svg-edit]", _mrdViewport()).map((el) => el.textContent).join("|")}", want "${want}"`);
+        }); n++;
+      } catch (e) { throw new Error(`${block.type}: ${e.message}`); }
+      finally { document.activeElement?.blur?.(); for (let k = 0; k < n; k++) { _key("z", { ctrlKey: true }); await _wait(60); } }
+    }
+  }},
+  { name: "CR26: an empty flow loop label placeholder sits where the filled label sits", fn: async () => {
+    const texts = () => _$$("text[data-svg-edit]", _mrdViewport() || document);
+    const svgText = (t) => texts().find((el) => el.textContent.trim() === t);
+    const cx = (el) => { const r = el.getBoundingClientRect(); return (r.left + r.right) / 2; };
+    const cy = (el) => { const r = el.getBoundingClientRect(); return (r.top + r.bottom) / 2; };
+    for (const [dir, lab] of [["horizontal", "LoopP"], ["vertical", "LoopQ"]]) {
+      await _mrdInject([{ type: "flow", loop: true, direction: dir, loopLabel: lab, items: [{ label: "A" }, { label: "B" }, { label: "C" }] }], null,
+        (vp) => vp && svgText(lab) ? vp : null);
+      await _wait(900); // let the entrance animation settle before measuring
+      let done = 0;
+      try {
+        const f = svgText(lab), fx = cx(f), fy = cy(f);
+        _clickMod(f);
+        const inp = await _waitFor(() => _$("[data-testid='svg-text-edit']", _mrdViewport()), 1500);
+        inp.value = "";
+        inp.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true })); done++;
+        const ph = await _waitFor(() => !_$("[data-testid='svg-text-edit']") && texts().find((el) => el.textContent.trim() === EDIT_PLACEHOLDER), 2000);
+        await _wait(200);
+        const px = cx(ph), py = cy(ph);
+        if (Math.abs(px - fx) > 4 || Math.abs(py - fy) > 4) throw new Error(`placeholder at ${px.toFixed(1)},${py.toFixed(1)}, label at ${fx.toFixed(1)},${fy.toFixed(1)}`);
+      } catch (e) { throw new Error(`${dir}: ${e.message}`); }
+      finally { document.activeElement?.blur?.(); for (let k = 0; k < done; k++) { _key("z", { ctrlKey: true }); await _wait(60); } }
+    }
+  }},
+], { setup: _selectFirstModule });
+
+// CR21: while a slide or section is dragged in the TOC, the pointer near the top /
+// bottom edge of the scroll pane scrolls it, so a drop can reach the first / last
+// section. The pane is made short here so it overflows with any deck.
+async function _tidelineTocDrag(fn) {
+  const tree = await _waitFor(() => document.querySelector('[data-testid="toc-tree"]'), 3000);
+  const pane = tree.parentElement; const old = pane.style.maxHeight;
+  pane.style.maxHeight = Math.max(90, Math.min(220, Math.floor(tree.offsetHeight / 2))) + "px";
+  try {
+    await _wait(60);
+    const sc = tocScrollParent(tree);
+    if (sc !== pane) throw new Error("TOC pane does not overflow");
+    return await fn(sc, tree);
+  } finally { pane.style.maxHeight = old; }
+}
+function _tidelineFire(dt) { return (el, type, extra) => el.dispatchEvent(new DragEvent(type, Object.assign({ bubbles: true, cancelable: true, dataTransfer: dt }, extra))); }
+// Fire dragover at (x, y) every 40ms until cond() or timeout; return cond().
+async function _tidelineHold(el, fire, x, y, cond, ms) {
+  const t0 = performance.now();
+  while (performance.now() - t0 < ms) { fire(el, "dragover", { clientX: x, clientY: y }); await _wait(40); if (cond()) return true; }
+  return cond();
+}
+const _tidelineRows = () => _$$('[data-testid="toc-slide-row"]');
+// The title span has flex:1 (the number / time spans before it change on a move).
+const _tidelineTitle = (r) => { const t = _$$("span", r).find((x) => x.style.flex && x.style.flex.startsWith("1")); return ((t || r).textContent || "").trim(); };
+
+uiSuite("tideline-CR21 TOC drag auto-scroll", [
+  { name: "Speed is 0 in the middle, grows toward each edge, and is 0 far outside", fn: async () => {
+    const v = (y) => tocAutoScrollSpeed(y, 100, 500);
+    if (v(300) !== 0) throw new Error("middle scrolls: " + v(300));
+    if (!(v(150) < 0 && v(110) < v(150) && v(101) <= v(110))) throw new Error("top zone speed: " + [v(150), v(110), v(101)]);
+    if (!(v(450) > 0 && v(490) > v(450) && v(499) >= v(490))) throw new Error("bottom zone speed: " + [v(450), v(490), v(499)]);
+    if (v(90) !== -TOC_AUTOSCROLL_MAX || v(510) !== TOC_AUTOSCROLL_MAX) throw new Error("just outside is not full speed");
+    if (v(0) !== 0 || v(700) !== 0 || tocAutoScrollSpeed(NaN, 0, 10) !== 0 || tocAutoScrollSpeed(5, 10, 10) !== 0) throw new Error("far outside / bad input scrolls");
+  }},
+  { name: "Drag near the top scrolls up to the start; drop lands in the first section", fn: () => _tidelineTocDrag(async (sc) => {
+    sc.scrollTop = sc.scrollHeight; await _wait(60);
+    const before = _tidelineRows().map(_tidelineTitle);
+    if (before.length < 3) throw new Error("need >=3 slide rows");
+    const src = _tidelineRows()[before.length - 1];
+    const r = sc.getBoundingClientRect(); const x = r.left + r.width / 2;
+    const fire = _tidelineFire(new DataTransfer());
+    fire(src, "dragstart");
+    try {
+      if (!(await _tidelineHold(sc, fire, x, r.top + 3, () => sc.scrollTop === 0, 6000))) throw new Error("did not reach the top: " + sc.scrollTop);
+      const dst = _tidelineRows()[0]; const b = dst.getBoundingClientRect();
+      if (b.bottom < r.top || b.top > r.bottom) throw new Error("first row not visible after scroll");
+      fire(dst, "dragover", { clientX: b.left + 5, clientY: b.top + 2 });
+      fire(dst, "drop", { clientX: b.left + 5, clientY: b.top + 2 });
+    } finally { fire(src, "dragend"); }
+    await _waitFor(() => _tidelineTitle(_tidelineRows()[0]) === before[before.length - 1], 2000).catch(() => { throw new Error("drop did not land first: " + _tidelineRows().slice(0, 2).map(_tidelineTitle) + " | want " + before[before.length - 1]); });
+    // Restore: drag it back below the row that is now last.
+    const f2 = _tidelineFire(new DataTransfer()); const s2 = _tidelineRows()[0]; const rows = _tidelineRows(); const d2 = rows[rows.length - 1];
+    d2.scrollIntoView({ block: "nearest" }); await _wait(40);
+    const b2 = d2.getBoundingClientRect();
+    f2(s2, "dragstart"); f2(d2, "dragover", { clientX: b2.left + 5, clientY: b2.bottom - 2 }); f2(d2, "drop", { clientX: b2.left + 5, clientY: b2.bottom - 2 }); f2(s2, "dragend");
+    await _waitFor(() => JSON.stringify(_tidelineRows().map(_tidelineTitle)) === JSON.stringify(before), 2000).catch(() => { throw new Error("restore failed: " + _tidelineRows().map(_tidelineTitle).slice(-3)); });
+  })},
+  { name: "Drag near the bottom scrolls down to the end and stops there", fn: () => _tidelineTocDrag(async (sc) => {
+    sc.scrollTop = 0; await _wait(60);
+    const src = _tidelineRows()[0]; const r = sc.getBoundingClientRect(); const x = r.left + r.width / 2;
+    const end = () => sc.scrollTop >= sc.scrollHeight - sc.clientHeight - 1;
+    const fire = _tidelineFire(new DataTransfer());
+    fire(src, "dragstart");
+    try {
+      if (!(await _tidelineHold(sc, fire, x, r.bottom - 3, end, 6000))) throw new Error("did not reach the end: " + sc.scrollTop);
+      const at = sc.scrollTop; await _wait(120);
+      if (sc.scrollTop !== at) throw new Error("scrolled past the end");
+    } finally { fire(src, "dragend"); }
+  })},
+  { name: "Scroll stops on dragend (Escape), on drop, in the middle and without a drag", fn: () => _tidelineTocDrag(async (sc) => {
+    const r = sc.getBoundingClientRect(); const x = r.left + r.width / 2;
+    const mid = Math.floor((sc.scrollHeight - sc.clientHeight) / 2);
+    const still = async () => { const a = sc.scrollTop; await _wait(150); return sc.scrollTop === a; };
+    // No drag active: an edge dragover does nothing.
+    sc.scrollTop = mid; await _wait(40);
+    const fire0 = _tidelineFire(new DataTransfer());
+    fire0(sc, "dragover", { clientX: x, clientY: r.bottom - 3 });
+    if (!(await still()) || sc.scrollTop !== mid) throw new Error("scrolled without a drag");
+    const src = _tidelineRows()[0];
+    for (const endType of ["dragend", "drop"]) {
+      sc.scrollTop = mid; await _wait(40);
+      const fire = _tidelineFire(new DataTransfer());
+      fire(src, "dragstart");
+      try {
+        fire(sc, "dragover", { clientX: x, clientY: r.bottom - 3 });
+        await _wait(80);
+        if (sc.scrollTop === mid) throw new Error("edge did not scroll");
+        fire(endType === "drop" ? document.body : src, endType);
+        if (!(await still())) throw new Error("still scrolls after " + endType);
+        // Pointer back in the middle: no scroll.
+        if (endType === "dragend") {
+          fire(src, "dragstart"); sc.scrollTop = mid; await _wait(40);
+          fire(sc, "dragover", { clientX: x, clientY: r.top + r.height / 2 });
+          if (!(await still()) || sc.scrollTop !== mid) throw new Error("middle scrolls");
+        }
+      } finally { fire(src, "dragend"); }
+    }
+  })},
+]);
+
+// ── Sprint tideline (CR22-CR25): image paste placement stress test ──────
+// Pastes 1-4 images of mixed aspect (wide 3:1, 16:9, square, tall 9:16) through
+// the real paste handler onto (a) an empty slide, (b) a heading slide and (c) a
+// heading + text + credit slide, then measures the rendered boxes.
+const _tlAspects = { wide: [900, 300, "#3b82f6"], hd: [1280, 720, "#10b981"], sq: [600, 600, "#f59e0b"], tall: [450, 800, "#ef4444"] };
+const _tlBases = {
+  a: [],
+  b: [{ type: "heading", text: "TL heading only" }],
+  c: [{ type: "heading", text: "TL heading text credit" }, { type: "text", text: "Short body text that explains the pictures." }, { type: "text", text: "Credit: Example Author, 16 Jun 2025", size: "sm" }],
+};
+const _tlPaste = async (kind) => {
+  const [w, h, color] = _tlAspects[kind];
+  const cv = document.createElement("canvas"); cv.width = w; cv.height = h;
+  const g = cv.getContext("2d"); g.fillStyle = color; g.fillRect(0, 0, w, h);
+  const blob = await new Promise((r) => cv.toBlob(r, "image/png"));
+  const dt = new DataTransfer(); dt.items.add(new File([blob], `${kind}.png`, { type: "image/png" }));
+  _mrdViewport().dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true }));
+};
+const _tlMeasure = () => {
+  const vp = _mrdViewport(); const v = vp.getBoundingClientRect(); const s = v.width / 960;
+  const outside = Array.from(vp.querySelectorAll("[data-block-type]")).filter((el) => el.dataset.blockType !== "image").map((el) => el.getBoundingClientRect())
+    .filter((r) => r.left < v.left - 1 || r.top < v.top - 1 || r.right > v.right + 1 || r.bottom > v.bottom + 1);
+  const imgs = Array.from(vp.querySelectorAll("img")).map((im) => {
+    const r = im.getBoundingClientRect(); const k = Math.min(r.width / im.naturalWidth, r.height / im.naturalHeight);
+    return { w: im.naturalWidth * k / s, h: im.naturalHeight * k / s, cx: (r.left + r.width / 2 - v.left) / s };
+  });
+  const grid = vp.querySelector("[data-testid='image-grid']");
+  return { outside: outside.length, imgs, area: imgs.reduce((a, i) => a + i.w * i.h, 0) / (960 * 540), cols: grid ? Number(grid.getAttribute("data-image-cols")) : null };
+};
+const _tlCase = async (base, kinds, extra, probe) => {
+  const past = _hooks().getHistoryCounts ? _hooks().getHistoryCounts().past : 0;
+  await _mrdInject(_tlBases[base], { layout: undefined, contentFlex: undefined, imageFlex: undefined, imageCols: undefined, ...(extra || {}) }, (vp) => vp);
+  for (let k = 0; k < kinds.length; k++) {
+    await _tlPaste(kinds[k]);
+    await _waitFor(() => Array.from(_mrdViewport().querySelectorAll("img")).filter((im) => im.complete && im.naturalWidth > 0).length >= k + 1, 4000);
+  }
+  // Let the fit pass, the aspect cache and the grid box settle.
+  await _wait(500); await _mrdFrame();
+  const m = _tlMeasure();
+  const label = `${base}:${kinds.join("+")}`;
+  if (m.outside) throw new Error(`${label}: ${m.outside} non-image block(s) outside the 960x540 canvas`);
+  if (m.imgs.length !== kinds.length) throw new Error(`${label}: ${m.imgs.length}/${kinds.length} images rendered`);
+  if (m.imgs.some((i) => !(i.h > 20 && i.w > 20))) throw new Error(`${label}: an image is collapsed (${m.imgs.map((i) => `${i.w.toFixed(0)}x${i.h.toFixed(0)}`).join(" ")})`);
+  if (probe) m.probe = await probe(m, label);
+  await _mrdUndoTo(past);
+  return m;
+};
+
+uiSuite("tideline-CR22-CR25 image placement", [
+  { name: "CR22: one image on an empty slide that kept a split layout fills the slide, not one half", fn: async () => {
+    for (const layout of ["image-right", "image-left"]) {
+      const m = await _tlCase("a", ["tall"], { layout });
+      const cx = m.imgs[0].cx;
+      if (Math.abs(cx - 480) > 24) throw new Error(`${layout}: image centre x=${cx.toFixed(0)} (expected near 480)`);
+      if (m.imgs[0].h < 500) throw new Error(`${layout}: tall image height ${m.imgs[0].h.toFixed(0)} does not fill the slide`);
+    }
+  }},
+  { name: "CR24: a wide image fills the free width (solo and under a heading)", fn: async () => {
+    for (const base of ["a", "b", "c"]) {
+      const m = await _tlCase(base, ["wide"]);
+      if (m.imgs[0].w < 800) throw new Error(`${base}: wide image is only ${m.imgs[0].w.toFixed(0)}px wide`);
+    }
+  }},
+  { name: "CR22/CR24: single images of every aspect use the free area well", fn: async () => {
+    const minArea = { a: 0.3, b: 0.18, c: 0.15 };
+    for (const base of ["a", "b", "c"]) for (const kind of ["wide", "hd", "sq", "tall"]) {
+      const m = await _tlCase(base, [kind]);
+      if (m.area < minArea[base]) throw new Error(`${base}:${kind}: image covers ${(m.area * 100).toFixed(0)}% of the slide`);
+    }
+  }},
+  { name: "CR23: three images pick their grid by aspect ratio", fn: async () => {
+    for (const base of ["a", "b"]) {
+      const tall = await _tlCase(base, ["tall", "tall", "tall"]);
+      if (tall.cols !== 3) throw new Error(`${base}: 3 tall images use ${tall.cols} columns (expected one row of 3)`);
+      const wide = await _tlCase(base, ["wide", "wide", "wide"]);
+      if (!(wide.cols < 3)) throw new Error(`${base}: 3 wide images still use ${wide.cols} columns`);
+    }
+    const c = await _tlCase("c", ["wide", "wide", "wide"]);
+    if (!(c.cols < 3)) throw new Error(`c: 3 wide images still use ${c.cols} columns`);
+  }},
+  { name: "CR25: 2-4 mixed images never push text off the slide", fn: async () => {
+    for (const base of ["a", "b", "c"]) for (const kinds of [["wide", "tall"], ["hd", "hd"], ["wide", "sq", "tall"], ["wide", "hd", "sq", "tall"]]) {
+      await _tlCase(base, kinds);
+    }
+  }},
+  { name: "CR25: a tall image between a heading and a credit line yields its height", fn: async () => {
+    const marker = "TL CR25 credit";
+    const src = _mrdSvg(338, 600, "ef4444");
+    for (const body of [[], [{ type: "text", text: "A long paragraph of body text. ".repeat(14) }]]) {
+      await _mrdInject([{ type: "heading", text: "TL CR25" }, ...body, { type: "image", src }, { type: "text", text: marker }], { layout: undefined }, (vp) => vp?.textContent.includes(marker) && vp.querySelector("img")?.naturalWidth > 0 ? vp : null);
+      await _wait(400);
+      const m = _tlMeasure();
+      if (m.outside) throw new Error(`${body.length ? "heavy" : "plain"}: ${m.outside} text block(s) outside the canvas`);
+      const credit = Array.from(_mrdViewport().querySelectorAll("[data-block-type='text']")).find((el) => el.textContent.includes(marker));
+      const vr = _mrdViewport().getBoundingClientRect(), cr = credit.getBoundingClientRect();
+      if (cr.bottom > vr.bottom - 4) throw new Error(`credit line is clipped (bottom ${(cr.bottom - vr.bottom).toFixed(1)}px past the slide)`);
+      if (m.imgs[0].h < 100) throw new Error(`image collapsed to ${m.imgs[0].h.toFixed(0)}px`);
+    }
+  }},
+  { name: "CR24/CR25: small icons and logos are never upscaled past 2x natural size", fn: async () => {
+    const png = (w, h, color) => { const cv = document.createElement("canvas"); cv.width = w; cv.height = h; const g = cv.getContext("2d"); g.fillStyle = color; g.fillRect(0, 0, w, h); return cv.toDataURL("image/png"); };
+    const icon = png(32, 32, "#3b82f6"), logo = png(64, 64, "#f59e0b"), hd = png(1280, 720, "#10b981"), wide = png(900, 300, "#ef4444");
+    const cases = [
+      ["icon alone", [{ type: "image", src: icon }], [32]],
+      ["icon under a heading", [{ type: "heading", text: "TL icon" }, { type: "image", src: icon }], [32]],
+      ["logo in a 3-image grid", [{ type: "heading", text: "TL logo" }, { type: "image", src: logo }, { type: "image", src: hd }, { type: "image", src: wide }], [64, 1280, 900]],
+    ];
+    for (const [label, blocks, naturals] of cases) {
+      const past = _hooks().getHistoryCounts ? _hooks().getHistoryCounts().past : 0;
+      await _mrdInject(blocks, { layout: undefined, imageCols: undefined }, (vp) => { const ims = Array.from(vp?.querySelectorAll("img") || []); return ims.length === naturals.length && ims.every((im) => im.complete && im.naturalWidth > 0) ? vp : null; });
+      await _wait(300); await _mrdFrame();
+      const m = _tlMeasure();
+      if (m.outside) throw new Error(`${label}: ${m.outside} block(s) outside the canvas`);
+      m.imgs.forEach((im, k) => { if (im.w > naturals[k] * 2 + 1) throw new Error(`${label}: image ${k} shown ${im.w.toFixed(0)}px wide (natural ${naturals[k]})`); });
+      if (label === "icon alone" && Math.abs(m.imgs[0].cx - 480) > 4) throw new Error(`icon alone is not centered (cx ${m.imgs[0].cx.toFixed(0)})`);
+      await _mrdUndoTo(past);
+    }
+  }},
+  { name: "CR23: sequential pastes pick the layout with the larger image area", fn: async () => {
+    // After each paste, render the same images in the other layout (split <->
+    // stacked) and measure it. The chosen layout must show at least as much
+    // image area (3% measurement tolerance) and keep all text on the slide.
+    const alt = async (m, label) => {
+      const vp = _mrdViewport();
+      const split = !!vp.querySelector("[data-split-image]");
+      const srcs = Array.from(vp.querySelectorAll("img")).map((im) => im.getAttribute("src"));
+      const n = srcs.length, last = m.imgs[n - 1];
+      const [cf, imf] = pasteSplitFlex(n, last.w / last.h);
+      await _mrdInject([..._tlBases.c, ...srcs.map((src) => ({ type: "image", src }))], split ? { layout: undefined, contentFlex: undefined, imageFlex: undefined, imageCols: undefined } : { layout: "image-right", contentFlex: cf, imageFlex: imf, imageCols: undefined },
+        (v) => (!!v?.querySelector("[data-split-image]")) !== split && Array.from(v.querySelectorAll("img")).filter((im) => im.complete && im.naturalWidth > 0).length === n ? v : null);
+      await _wait(400); await _mrdFrame();
+      const a = _tlMeasure();
+      if (m.area < a.area * 0.97) throw new Error(`${label}: ${split ? "split" : "stack"} shows ${(m.area * 100).toFixed(1)}% but ${split ? "stack" : "split"} would show ${(a.area * 100).toFixed(1)}%`);
+      return split;
+    };
+    for (const [kind, max] of [["sq", 4], ["wide", 3], ["tall", 3]]) for (let n = 1; n <= max; n++) await _tlCase("c", Array(n).fill(kind), undefined, alt);
+    // The reported case: 3 squares on heading+text+credit must not stay in a split.
+    const three = await _tlCase("c", ["sq", "sq", "sq"], undefined, async () => !!_mrdViewport().querySelector("[data-split-image]"));
+    if (three.probe) throw new Error("3 squares stayed in a side split");
+  }},
+  { name: "CR23: a split the author set stays a split on later pastes", fn: async () => {
+    const m = await _tlCase("c", ["sq", "sq", "sq"], { layout: "image-left" }, async () => !!_mrdViewport().querySelector("[data-split-image]"));
+    if (!m.probe) throw new Error("author image-left split was replaced");
+  }},
+  { name: "CR24: a large 1600x900 image alone still fills the slide width", fn: async () => {
+    const cv = document.createElement("canvas"); cv.width = 1600; cv.height = 900; cv.getContext("2d").fillRect(0, 0, 1600, 900);
+    const past = _hooks().getHistoryCounts ? _hooks().getHistoryCounts().past : 0;
+    await _mrdInject([{ type: "image", src: cv.toDataURL("image/png") }], { layout: undefined }, (vp) => vp?.querySelector("img")?.naturalWidth > 0 ? vp : null);
+    await _wait(300); await _mrdFrame();
+    const m = _tlMeasure();
+    await _mrdUndoTo(past);
+    if (m.imgs[0].w < 960 * 0.9) throw new Error(`1600x900 image is only ${m.imgs[0].w.toFixed(0)}px wide`);
+  }},
+  { name: "paste burst: 3 and 5 rapid image pastes (0/50/150 ms apart) all land in order, one undo step each", fn: async () => {
+    const counts = () => _hooks().getHistoryCounts().past;
+    for (const n of [3, 5]) for (const gap of [0, 50, 150]) {
+      const label = `${n} pastes ${gap}ms apart`, mark = `TL-BURST-${n}-${gap}`;
+      const past = counts();
+      await _mrdInject([{ type: "heading", text: mark }], { layout: undefined, contentFlex: undefined, imageFlex: undefined, imageCols: undefined }, (vp) => vp?.textContent.includes(mark) && !vp.querySelector("img") ? vp : null);
+      const rows = _m1RowTitles().length;
+      // Distinct widths (natural size is kept) mark the paste order.
+      const widths = Array.from({ length: n }, (_, k) => 120 + 60 * k);
+      const blobs = await Promise.all(widths.map((w, k) => { const cv = document.createElement("canvas"); cv.width = w; cv.height = 90; const g = cv.getContext("2d"); g.fillStyle = _tlColors[k % 5]; g.fillRect(0, 0, w, 90); return new Promise((r) => cv.toBlob(r, "image/png")); }));
+      for (let k = 0; k < n; k++) {
+        const dt = new DataTransfer(); dt.items.add(new File([blobs[k]], `b${k}.png`, { type: "image/png" }));
+        _mrdViewport().dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true }));
+        if (gap) await _wait(gap);
+      }
+      let got = [];
+      try { await _waitFor(() => { const vp = _mrdViewport(); got = Array.from(vp?.querySelectorAll("img") || []).filter((im) => im.complete && im.naturalWidth > 0).map((im) => im.naturalWidth); return got.length >= n && vp.textContent.includes(mark) ? vp : null; }, 8000); } catch { /* reported below */ }
+      await _wait(200);
+      const rowsAfter = _m1RowTitles().length;
+      // One undo step per paste: each Ctrl+Z removes exactly the last image.
+      // (Counted from the rendered slide: the history counter stops at its cap
+      // in a long battery run.)
+      let undoErr = null;
+      if (got.length === n) {
+        document.activeElement?.blur?.();
+        for (let k = n - 1; k >= 0 && !undoErr; k--) {
+          _key("z", { ctrlKey: true });
+          const left = await _waitFor(() => { const w = Array.from(_mrdViewport()?.querySelectorAll("img") || []).map((im) => im.naturalWidth); return w.length === k ? w : null; }, 1500).catch(() => null);
+          if (!left) undoErr = `undo ${n - k} did not remove exactly one image`;
+          else if (left.join(",") !== widths.slice(0, k).join(",")) undoErr = `undo ${n - k} left ${left.join(",")}`;
+        }
+      }
+      await _mrdUndoTo(past);
+      if (got.length !== n) throw new Error(`${label}: ${got.length}/${n} images on the target slide`);
+      if (got.join(",") !== widths.join(",")) throw new Error(`${label}: images out of paste order (${got.join(",")})`);
+      if (undoErr) throw new Error(`${label}: ${undoErr}`);
+      if (rowsAfter !== rows) throw new Error(`${label}: slide count changed ${rows} -> ${rowsAfter}`);
+    }
+  }},
+  { name: "CR23 stress matrix: the pasted layout and grid show >= 85% of the best alternative (5 gate repros + 12 seeded cases; the unit matrix has all 66)", fn: async () => {
+    // The last image goes through the real paste handler; the chosen result is
+    // then compared, by real rendering, with the other layout (split <-> stack)
+    // and with the uniform count-driven grid in the same layout.
+    const fixed = [{ body: "table", aspects: [16 / 9] }, { body: "table", aspects: [16 / 9, 16 / 9] }, { body: "bullets8", aspects: [16 / 9, 16 / 9, 16 / 9, 16 / 9] }, { body: "none", aspects: [1 / 3, 16 / 9] }, { body: "none", aspects: [1 / 3, 16 / 9, 1 / 3] }];
+    const cases = [...fixed, ...tidelineStressCases().filter((_, k) => k % 5 === 2).slice(0, 12)];
+    let min = Infinity, worst = "";
+    for (const c of cases) {
+      const r = await _tlStressCase(c);
+      if (r.ratio < min) { min = r.ratio; worst = r.label; }
+      if (r.ratio < 0.85) throw new Error(`${r.label}: chosen ${r.detail}`);
+    }
+    return { cases: cases.length, min: Number(min.toFixed(3)), worst };
+  }},
+  { name: "paste race: deleting the slide while an image paste is pending drops the paste", fn: async () => {
+    const past = _hooks().getHistoryCounts().past;
+    await _mrdInject([{ type: "heading", text: "TL-RACE-A" }], { layout: undefined }, (vp) => vp?.textContent.includes("TL-RACE-A") ? vp : null);
+    await _waitFor(() => _m1RowTitles().includes("TL-RACE-A"), 2000);
+    const before = _m1RowTitles(), i = before.indexOf("TL-RACE-A");
+    await _tlPasteBig();
+    _click(_tocRows()[i].querySelector("[data-testid='toc-slide-delete']"));
+    await _wait(2500);
+    const after = _m1RowTitles();
+    const want = before.filter((_, k) => k !== i).join("|");
+    await _mrdUndoTo(past);
+    if (after.join("|") !== want) throw new Error(`slide list after delete: ${after.join("|")} (expected ${want})`);
+  }},
+  { name: "paste race: Ctrl+Z right after a paste stays undone", fn: async () => {
+    const past = _hooks().getHistoryCounts().past;
+    await _mrdInject([{ type: "heading", text: "TL-RACE-B" }], { layout: undefined }, (vp) => vp?.textContent.includes("TL-RACE-B") ? vp : null);
+    await _mrdInject([{ type: "heading", text: "TL-RACE-B-E1" }], { layout: undefined }, (vp) => vp?.textContent.includes("TL-RACE-B-E1") ? vp : null);
+    await _tlPasteBig();
+    document.activeElement?.blur?.();
+    _key("z", { ctrlKey: true });
+    await _wait(2500);
+    const vp = _mrdViewport(), text = vp.textContent, imgs = vp.querySelectorAll("img").length;
+    await _mrdUndoTo(past);
+    if (text.includes("TL-RACE-B-E1") || !text.includes("TL-RACE-B")) throw new Error("the undone edit came back");
+    if (imgs) throw new Error(`${imgs} image(s) added after the undo`);
+  }},
+  { name: "paste race: an image paste into an open inline edit keeps the typed text", fn: async () => {
+    const past = _hooks().getHistoryCounts().past;
+    const vp = await _mrdInject([{ type: "heading", text: "TL-RACE-C" }], { layout: undefined }, (v) => v?.textContent.includes("TL-RACE-C") ? v : null);
+    const disp = Array.from(vp.querySelectorAll("[data-block-type='heading'] div")).find((d) => d.textContent === "TL-RACE-C" && d.style.cursor === "pointer");
+    if (!disp) throw new Error("heading text is not editable");
+    _click(disp);
+    const ed = await _waitFor(() => vp.querySelector("[data-block-type='heading'] [contenteditable]"), 1500);
+    ed.focus();
+    const sel = window.getSelection(); sel.selectAllChildren(ed); sel.collapseToEnd();
+    document.execCommand("insertText", false, "-TYPED");
+    const cv = document.createElement("canvas"); cv.width = 64; cv.height = 64;
+    const blob = await new Promise((r) => cv.toBlob(r, "image/png"));
+    const dt = new DataTransfer(); dt.items.add(new File([blob], "c.png", { type: "image/png" }));
+    ed.dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true }));
+    await _wait(1200);
+    const stillEditing = document.activeElement === ed;
+    ed.blur();
+    await _wait(300);
+    const text = _mrdViewport().textContent, imgs = _mrdViewport().querySelectorAll("img").length;
+    await _mrdUndoTo(past);
+    if (!stillEditing) throw new Error("the paste closed the inline edit");
+    if (!text.includes("TL-RACE-C-TYPED")) throw new Error("typed text was dropped");
+    if (imgs) throw new Error("the paste into the inline edit added an image");
+  }},
+], { setup: _selectFirstModule });
+
+// Helpers for the CR23 stress matrix and the paste-race tests above.
+const _tlColors = ["#3b82f6", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6"];
+const _tlCanvas = (a, k) => { const cv = document.createElement("canvas"); cv.height = 300; cv.width = Math.max(1, Math.round(300 * a)); const g = cv.getContext("2d"); g.fillStyle = _tlColors[k % 5]; g.fillRect(0, 0, cv.width, cv.height); return cv; };
+const _tlPasteCanvas = async (cv) => {
+  const blob = await new Promise((r) => cv.toBlob(r, "image/png"));
+  const dt = new DataTransfer(); dt.items.add(new File([blob], "p.png", { type: "image/png" }));
+  _mrdViewport().dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true }));
+};
+const _tlPasteBig = async () => { const cv = document.createElement("canvas"); cv.width = 3000; cv.height = 2000; cv.getContext("2d").fillRect(0, 0, 3000, 2000); await _tlPasteCanvas(cv); };
+const _tlLoaded = (vp) => Array.from(vp?.querySelectorAll("img") || []).filter((im) => im.complete && im.naturalWidth > 0).length;
+const _tlStressMeasure = () => {
+  const vp = _mrdViewport(), v = vp.getBoundingClientRect(), s = v.width / 960, off = [];
+  vp.querySelectorAll("[data-block-type]").forEach((el) => {
+    if (el.dataset.blockType === "image") return;
+    const r = el.getBoundingClientRect();
+    if (r.width && (r.left < v.left - 1 || r.top < v.top - 1 || r.right > v.right + 1 || r.bottom > v.bottom + 1)) off.push(el.dataset.blockType);
+  });
+  const imgs = Array.from(vp.querySelectorAll("img")).map((im) => {
+    const r = im.getBoundingClientRect(), k = Math.min(r.width / im.naturalWidth, r.height / im.naturalHeight);
+    const w = im.naturalWidth * k, h = im.naturalHeight * k, cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+    if (cx - w / 2 < v.left - 1 || cx + w / 2 > v.right + 1 || cy - h / 2 < v.top - 1 || cy + h / 2 > v.bottom + 1) off.push("image");
+    return { w: w / s, h: h / s, scale: k / s, src: im.getAttribute("src") };
+  });
+  const grid = vp.querySelector("[data-testid='image-grid']");
+  return { off, imgs, area: imgs.reduce((t, i) => t + i.w * i.h, 0), split: !!vp.querySelector("[data-split-image]"), cols: grid ? Number(grid.getAttribute("data-image-cols")) : 1 };
+};
+const _tlStressCase = async (c) => {
+  const n = c.aspects.length, body = TL_STRESS_BODIES[c.body];
+  const label = `${c.body}:[${c.aspects.map((a) => a.toFixed(2)).join(",")}]`;
+  const past = _hooks().getHistoryCounts().past;
+  const base = { layout: undefined, contentFlex: undefined, imageFlex: undefined, imageCols: undefined };
+  const settle = async () => { await _wait(350); await _mrdFrame(); };
+  try {
+    await _mrdInject([...body, ...c.aspects.slice(0, -1).map((a, k) => ({ type: "image", src: _tlCanvas(a, k).toDataURL("image/png") }))], base, (vp) => _tlLoaded(vp) >= n - 1 && vp.querySelectorAll("img").length === n - 1 ? vp : null);
+    await _tlPasteCanvas(_tlCanvas(c.aspects[n - 1], n - 1));
+    await _waitFor(() => _tlLoaded(_mrdViewport()) >= n, 4000);
+    await _wait(150); await settle();
+    const chosen = _tlStressMeasure();
+    if (chosen.off.length) throw new Error(`${label}: off the slide: ${chosen.off.join(",")}`);
+    const big = chosen.imgs.find((i) => i.scale > 2.02);
+    if (big) throw new Error(`${label}: image shown at ${big.scale.toFixed(2)}x natural size`);
+    const blocks = [...body, ...chosen.imgs.map((i) => ({ type: "image", src: i.src }))];
+    const [cf, imf] = pasteSplitFlex(n, c.aspects[n - 1]);
+    const splitProps = { layout: "image-right", contentFlex: cf, imageFlex: imf, imageCols: undefined };
+    const render = async (props, ready) => { await _mrdInject(blocks, props, (vp) => _tlLoaded(vp) === n && ready(vp) ? vp : null); await settle(); return _tlStressMeasure(); };
+    const alts = [];
+    if (body.length) {
+      const other = await render(chosen.split ? base : splitProps, (vp) => !!vp.querySelector("[data-split-image]") !== chosen.split);
+      alts.push([chosen.split ? "stack" : "split", other.area]);
+    }
+    if (n >= 2) {
+      const cols = gridColsFor(n, chosen.split ? "half" : "full");
+      const eq = await render({ ...(chosen.split ? splitProps : base), imageCols: cols }, (vp) => vp.querySelector("[data-testid='image-grid']")?.getAttribute("data-image-cols") === String(cols) && !!vp.querySelector("[data-split-image]") === chosen.split);
+      alts.push([`uniform ${cols}-col grid`, eq.area]);
+    }
+    const best = alts.reduce((b, a) => (a[1] > b[1] ? a : b), ["chosen", chosen.area]);
+    return { label, ratio: chosen.area / best[1], detail: `${chosen.split ? "split" : "stack"} ${Math.round(chosen.area)} px2 vs ${best[0]} ${Math.round(best[1])} px2` };
+  } finally { await _mrdUndoTo(past); }
+};
+
 // ━━━ UI TEST RUNNER COMPONENT ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 // Demo deck guard — UI tests only run against the original demo deck

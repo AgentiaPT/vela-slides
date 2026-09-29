@@ -694,6 +694,7 @@ def _turbo_encode_block(block, palette):
                 block.get("yTop", ""), block.get("yBottom", "")]
     if t == "checklist":
         items = [[i.get("text", ""), i.get("status", "pending")]
+                 + ([i["label"]] if i.get("label") else [])
                  for i in block.get("items", [])]
         return [19, items, block.get("size", ""),
                 1 if block.get("showLabels", True) else 0]
@@ -901,7 +902,11 @@ def _turbo_decode_block(arr, palette):
         if len(arr) > 5 and arr[5]: r["yBottom"] = arr[5]
         return r
     if tid == 19:  # checklist
-        items = [{"text": i[0], "status": i[1]} for i in arr[1]]
+        items = []
+        for i in arr[1]:
+            item = {"text": i[0], "status": i[1]}
+            if len(i) > 2 and i[2]: item["label"] = i[2]
+            items.append(item)
         r = {"type": "checklist", "items": items}
         if len(arr) > 2 and arr[2]: r["size"] = arr[2]
         if len(arr) > 3 and not arr[3]: r["showLabels"] = False

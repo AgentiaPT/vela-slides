@@ -138,8 +138,9 @@ const velaClipboardReadSlides = async () => {
   return [];
 };
 
-const VELA_VERSION = "13.75";
+const VELA_VERSION = "13.76";
 const VELA_CHANGELOG = [
+  { v: "13.76", d: ["TOC: dragging a slide or section near the list edge auto-scrolls the list.", "TOC: moving a slide to a section in an earlier lane no longer loses the slide.", "Images: a pasted image on an empty slide fills the slide, not one half.", "Images: grids pick rows and columns by image aspect ratio.", "Images: solo and wide images fill the free slide area.", "Images: images shrink to fit, so text below an image stays on the slide.", "Editing: all text in checklist, comparison, matrix, number-row, progress and flow blocks is editable inline.", "Checklist: type a status name to change the status; custom status labels survive compact/turbo formats."] },
   { v: "13.75", d: ["Editor: mark slides reviewed (✓); Review cycle makes arrow keys skip reviewed slides.", "View switch (editor | presenter | gallery) next to Present.", "Gallery: hide/unhide a slide beside delete; TOC: delete icon on slide rows (undoable).", "Fullscreen nav icons stay visible on any slide background.", "Branding: right-side settings pane; accent line removable at 0px.", "Block toolbar stays visible on full-bleed images; link badges sit right after the text.", "Vector PDF: € and other WinAnsi symbols render as text at correct size.", "validate: reports a gradient in solid-color bg fields (use bgGradient).", "Opening or switching a deck keeps lane/module ids.", "Desktop: window title shows the deck title; keyboard works after alt-tab; AI agents detected on first start; HTML export fixed."] },
   { v: "13.74", d: ["Security: CLI output now neutralizes terminal control sequences in deck text (CWE-150 class), closing a display-spoofing channel.", "Security: the machine-readable --json output is fully escaped for the same class.", "Added one canonical output encoder, a CI gate keeping every CLI output path routed through it, and regression tests."] },
   { v: "13.73", d: ["Security (High): hardened the deck-injection build path — trusted app source is now transformed before untrusted deck data is injected.", "Security: added a fail-closed integrity check that refuses to write an artifact whose trusted bytes changed.", "Local preview server: same injection-last ordering applied to its HTML build path.", "Tests: added build-pipeline trust-boundary regression coverage."] },
@@ -1974,6 +1975,13 @@ const imageAspect = (dataUrl) => new Promise((resolve) => {
   img.onerror = () => resolve(1);
   img.src = dataUrl;
 });
+// Natural size {w, h} of a data URL image; {w: 0, h: 0} on error (CR23 paste caps).
+const imageNaturalSize = (dataUrl) => new Promise((resolve) => {
+  const img = new Image();
+  img.onload = () => resolve({ w: img.naturalWidth || 0, h: img.naturalHeight || 0 });
+  img.onerror = () => resolve({ w: 0, h: 0 });
+  img.src = dataUrl;
+});
 
 // Decide the layout for a slide an image is being pasted onto. Returns the layout
 // the slide should carry: an explicit author layout is preserved; an empty/mostly-
@@ -1981,7 +1989,7 @@ const imageAspect = (dataUrl) => new Promise((resolve) => {
 // the image below ("stack"); otherwise the slide is promoted to "image-right" so
 // the image sits beside the existing body content. aspect = image width / height.
 const PASTE_TITLE_BLOCKS = new Set(["heading", "text", "subtitle", "badge", "quote"]);
-function pasteImageLayout(slide, aspect, n) {
+function pasteImageLayout(slide, aspect, n, aspects, measure, naturalW) {
   const layout = slide && slide.layout;
   if (layout && layout !== "stack") return layout; // respect explicit author layout
   const body = ((slide && slide.blocks) || []).filter((b) => b.type !== "image" && b.type !== "spacer" && b.type !== "divider");
@@ -1990,9 +1998,110 @@ function pasteImageLayout(slide, aspect, n) {
   // Heavy body text + a grid of images (>=3): don't cram the grid into a half.
   // Keep the slide stacked so the text reads as a full-width header and the
   // image run grids full-width below it (the renderer auto-grids the run).
-  if (hasContent && n >= 3) return "stack";
   const wide = aspect >= 1.6;
-  return (!mostlyTitle && !wide) ? "image-right" : "stack";
+  const rule = (hasContent && n >= 3) ? "stack" : (!mostlyTitle && !wide) ? "image-right" : "stack";
+  // CR23: with every image aspect known, compare the two candidates and keep the
+  // one that shows the most image area (see pasteLayoutArea). The count rule
+  // above is the fallback when the estimate cannot be made.
+  if (!body.length || !Array.isArray(aspects) || aspects.length !== n) return rule;
+  const split = pasteLayoutArea(slide, aspects, "image-right", measure, naturalW), stack = pasteLayoutArea(slide, aspects, "stack", measure, naturalW);
+  if (split == null || stack == null) return rule;
+  return split > stack ? "image-right" : "stack";
+}
+
+// Split-column flex the paste handler gives a split slide it lays out itself: a
+// lone square/portrait image gives the text the larger share; a grid splits 1:1.
+function pasteSplitFlex(n, aspect) {
+  return n === 1 && aspect <= 1.2 ? [1.4, 1] : [1, 1];
+}
+
+// CR23: estimated image area (slide px^2) for `aspects` on `slide` in layout
+// "stack" (body text on top, image grid full width below) or "image-right" (body
+// text beside an image column), at the default 960x540 geometry. The image area
+// comes from imageGridPlan(), the same packing the renderer draws, so the two
+// cannot disagree. The body height comes from `measure(width)` (the paste handler
+// measures the rendered blocks); without it, from a per-block estimate that
+// covers every block type. A stacked slide whose text overflows is scaled down as
+// a whole (area x scale^2). A split slide widens its columns when it scales, so
+// its image column keeps its visual size. Null only for a custom slide padding.
+const PASTE_TEXT_METRICS = { heading: ["2xl", 1.2, 0.56], text: ["md", 1.6, 0.5], bullets: ["md", 1.6, 0.5], quote: ["xl", 1.4, 0.52] };
+function pasteBodyEstimate(body, w, gap) {
+  let total = 0;
+  for (const b of body) {
+    const m = PASTE_TEXT_METRICS[b.type];
+    if (b.type === "badge") total += 28;
+    else if (m) {
+      const px = parseFloat(BASE_SIZES[b.size] || BASE_SIZES[m[0]]) * 16, lineH = px * m[1];
+      const lines = (str, width) => String(str == null ? "" : str).split("\n").reduce((k, seg) => k + Math.max(1, Math.ceil(seg.length * px * m[2] / Math.max(40, width))), 0);
+      if (b.type === "bullets") {
+        const items = Array.isArray(b.items) ? b.items : [];
+        total += items.reduce((h, it) => h + lines(typeof it === "string" ? it : it && it.text, w - 28) * lineH, 0) + Math.max(0, items.length - 1) * (Number(b.gap) || 8);
+      } else total += lines(b.text, b.type === "quote" ? w * 0.85 : w) * lineH;
+    }
+    // Conservative, width-free estimates for every other block type.
+    else if (Array.isArray(b.rows)) total += 44 + b.rows.length * 38;
+    else if (b.type === "code") total += 36 + String(b.text || "").split("\n").length * 20;
+    else if (b.type === "chart") total += 240;
+    else if (Array.isArray(b.items)) total += 24 + b.items.length * 44;
+    else total += 90;
+    total += gap;
+  }
+  return Math.max(0, total - gap);
+}
+function pasteLayoutArea(slide, aspects, layout, measure, naturalW) {
+  if (!slide || slide.padding != null || !Array.isArray(aspects) || !aspects.length) return null;
+  if (!aspects.every((a) => typeof a === "number" && a > 0 && Number.isFinite(a))) return null;
+  const body = (slide.blocks || []).filter((b) => b && b.type !== "image" && b.type !== "spacer" && b.type !== "divider");
+  const gap = Number(slide.gap) || 12, W = 864, H = 468;
+  const textH = (w) => {
+    const m = typeof measure === "function" ? measure(w) : null;
+    return typeof m === "number" && Number.isFinite(m) && m >= 0 ? m : pasteBodyEstimate(body, w, gap);
+  };
+  const n = aspects.length;
+  // Upscale caps (natural widths, optional): a grid cell draws an image at most
+  // GRID_IMG_MAX_UPSCALE x natural size; a lone side image at most 1x.
+  const known = Array.isArray(naturalW) && naturalW.length === n;
+  const capGrid = known ? naturalW.map((w) => w * GRID_IMG_MAX_UPSCALE) : undefined;
+  if (layout === "stack") {
+    const head = body.length ? textH(W) + gap : 0;
+    const floorRows = imageGridPlan(aspects, 0, 0, gap, gridColsFor(n, "full")).rows.length;
+    const gridH = Math.max(H - head, floorRows * 72);
+    const s = Math.min(1, H / (head + gridH));
+    return imageGridPlan(aspects, W, gridH, gap, gridColsFor(n, "full"), 0, capGrid).area * s * s;
+  }
+  const [cf, imf] = pasteSplitFlex(n, aspects[n - 1]);
+  const colW = (W - (Number(slide.splitGap) || 32)) / (cf + imf);
+  return imageGridPlan(aspects, colW * imf, H, gap, gridColsFor(n, "half"), 0, n === 1 && known ? naturalW : capGrid).area;
+}
+
+// CR23: body-height probe for pasteLayoutArea(). When a paste starts, it copies
+// (cloneNode) the rendered non-image blocks of the on-screen slide. measure(w)
+// lays the copies out at width w in a hidden box inside the slide and returns
+// their stacked height in slide px, so every block type (table, chart, code...)
+// is measured, not guessed. Null when the viewport does not show `slide`.
+function pasteBodyProbe(root, slide) {
+  const vp = root && root.querySelector ? root.querySelector("[data-testid='slide-viewport']") : null;
+  if (!vp || !slide) return null;
+  const els = Array.from(vp.querySelectorAll("[data-block-type]")).filter((el) => el.getAttribute("data-block-type") !== "image" && !el.parentElement.closest("[data-block-type]"));
+  if (els.length !== (slide.blocks || []).filter((b) => b && b.type !== "image").length) return null;
+  if (!els.length) return () => 0;
+  const host = els[0].parentElement, copies = els.map((el) => el.cloneNode(true));
+  const gap = Number(slide.gap) || 12, cache = new Map();
+  return (w) => {
+    if (cache.has(w)) return cache.get(w);
+    let h = null;
+    if (host && host.isConnected) {
+      const probe = document.createElement("div");
+      probe.setAttribute("aria-hidden", "true");
+      probe.style.cssText = `position:absolute;left:0;top:0;visibility:hidden;pointer-events:none;display:flex;flex-direction:column;gap:${gap}px;width:${Math.max(1, Math.round(w))}px`;
+      copies.forEach((c) => probe.appendChild(c));
+      host.appendChild(probe);
+      h = probe.offsetHeight;
+      probe.remove();
+    }
+    cache.set(w, h);
+    return h;
+  };
 }
 
 // Columns for a run of `n` images, by region. "full" = image-only slide or a
@@ -2005,6 +2114,120 @@ function gridColsFor(n, region) {
   n = Math.max(1, n | 0);
   if (region === "half") return n <= 1 ? 1 : 2;
   return ({ 1: 1, 2: 2, 3: 3, 4: 2, 5: 3 })[n] || 3;
+}
+
+// CR23: the image-grid packing. The renderer (renderImageGrid) and the paste
+// layout chooser (pasteLayoutArea) both use it, so they cannot disagree.
+// A plan is a list of rows; each row is { cells: [{ i, f }], gc, hw }:
+//   cell width = (boxW - gap * gc) * f     (f = share of the row width)
+//   row height = (boxH - gap * (rows - 1)) * hw / sum(hw)
+// Each image is drawn with objectFit:contain in its cell. Candidates:
+//   - uniform grids of 1..6 columns (equal cells; a short last row is centered);
+//   - for mixed aspect ratios, "justified" rows: consecutive images share one
+//     row height and get widths in proportion to their aspect (every row split).
+// The count-driven uniform grid (`fallback` columns) wins unless another plan
+// shows at least 5% more image area, so the arrangement is stable. `pinned`
+// (the author's imageCols) forces a uniform grid. Unknown aspects or box → the
+// fallback grid with area 0. aspects = width / height of each image, in order;
+// maxW (optional) = the widest each image may be drawn (the upscale cap).
+function imageGridPlan(aspects, boxW, boxH, gap, fallback, pinned, maxW) {
+  const n = Array.isArray(aspects) ? aspects.length : 0;
+  const g = Math.max(0, Number(gap) || 0);
+  const valid = n > 0 && boxW > 0 && boxH > 0 && aspects.every((a) => typeof a === "number" && a > 0 && Number.isFinite(a));
+  const uniform = (c) => {
+    const rows = [];
+    for (let s = 0; s < n; s += c) rows.push({ cells: aspects.slice(s, s + c).map((_, k) => ({ i: s + k, f: 1 / c })), gc: c - 1, hw: 1 });
+    return { rows, cols: c };
+  };
+  const areaOf = (rows) => {
+    const avail = boxH - g * (rows.length - 1), sumHw = rows.reduce((t, r) => t + r.hw, 0);
+    if (!(avail > 0 && sumHw > 0)) return 0;
+    let area = 0;
+    for (const r of rows) {
+      const h = avail * r.hw / sumHw;
+      for (const c of r.cells) {
+        const w = (boxW - g * r.gc) * c.f, a = aspects[c.i];
+        if (!(w > 0)) return 0;
+        const cap = maxW && maxW[c.i] > 0 ? maxW[c.i] : Infinity;
+        const iw = Math.min(w, h * a, cap);
+        area += iw * iw / a;
+      }
+    }
+    return area;
+  };
+  const pack = (p) => ({ ...p, area: valid ? areaOf(p.rows) : 0 });
+  if (pinned) return pack(uniform(Math.min(6, Math.max(1, pinned | 0))));
+  if (n <= 1) return pack(uniform(1));
+  const base = pack(uniform(Math.min(n, Math.max(1, fallback | 0))));
+  if (!valid) return base;
+  let best = base;
+  const consider = (p) => { const q = pack(p); if (q.area > base.area * 1.05 && q.area > best.area) best = q; };
+  for (let c = 1; c <= Math.min(n, 6); c++) consider(uniform(c));
+  // Justified rows only help a mixed set; equal aspects keep uniform cells.
+  if (n <= 8 && Math.max(...aspects) > Math.min(...aspects) * 1.15) {
+    for (let mask = 0; mask < (1 << (n - 1)); mask++) {
+      const rows = [];
+      let run = [0];
+      for (let i = 1; i <= n; i++) {
+        if (i === n || (mask >> (i - 1)) & 1) {
+          const S = run.reduce((t, k) => t + aspects[k], 0);
+          rows.push({ cells: run.map((k) => ({ i: k, f: aspects[k] / S })), gc: run.length - 1, hw: 1 / S });
+          run = [i];
+        } else run.push(i);
+      }
+      consider({ rows, cols: Math.max(...rows.map((r) => r.cells.length)) });
+    }
+  }
+  return best;
+}
+// Column count of the chosen plan (the longest row).
+function bestImageGridCols(aspects, boxW, boxH, gap, fallback) {
+  return imageGridPlan(aspects, boxW, boxH, gap, fallback).cols;
+}
+
+// Bounded cache of image aspect ratios keyed by the (data:) src, filled by the
+// slide renderer via imageAspect() so bestImageGridCols() has aspects to work with.
+const IMAGE_ASPECT_CACHE = new Map();
+function rememberImageAspect(src, aspect) {
+  if (typeof src !== "string" || !(aspect > 0)) return;
+  if (IMAGE_ASPECT_CACHE.size >= 256) IMAGE_ASPECT_CACHE.delete(IMAGE_ASPECT_CACHE.keys().next().value);
+  IMAGE_ASPECT_CACHE.set(src, aspect);
+}
+
+// CR23: which split layouts the paste handler set itself. Keyed by the pasted
+// image src; the value is the slide's layout signature right after that paste.
+// A later paste re-evaluates the layout only when the slide still carries that
+// exact signature (the user did not change it). Session memory only: after a
+// reload a split is treated as the author's choice.
+const PASTE_LAYOUT_OWNED = new Map();
+const pasteLayoutSig = (s) => `${(s && s.layout) || "stack"}|${s && s.contentFlex != null ? s.contentFlex : ""}|${s && s.imageFlex != null ? s.imageFlex : ""}`;
+function rememberPasteLayout(src, slide) {
+  if (typeof src !== "string") return;
+  if (PASTE_LAYOUT_OWNED.size >= 256) PASTE_LAYOUT_OWNED.delete(PASTE_LAYOUT_OWNED.keys().next().value);
+  PASTE_LAYOUT_OWNED.set(src, pasteLayoutSig(slide));
+}
+
+// Rapid image pastes. Slides carry no id, so an async paste finds its target by
+// object identity. Each applied paste records the slide object it produced as
+// the successor of the slide it changed (or spilled over from), so a paste
+// queued behind it follows the chain to the live slide instead of being dropped.
+// An undo that restores the older object ends the chain there. WeakMap: session
+// memory only, nothing is kept for slides that are gone.
+const PASTE_SLIDE_SUCC = new WeakMap();
+// The newest member of the target's successor chain that is still in `list`, or null.
+function pasteResolveTarget(target, list) {
+  if (!target || !Array.isArray(list)) return null;
+  let best = list.includes(target) ? target : null;
+  for (let x = target, k = 0; k < 512 && (x = PASTE_SLIDE_SUCC.get(x)); k++) if (list.includes(x)) best = x;
+  return best;
+}
+// After a paste renders: link `from` to the new slide object whose last block is
+// the pasted image (the one slide in `after` that was not in `before`).
+function pasteRecordSuccessor(from, before, after, src) {
+  if (!from || typeof from !== "object" || !Array.isArray(after)) return;
+  const seen = new Set(before || []);
+  const next = after.find((s) => s && !seen.has(s) && Array.isArray(s.blocks) && s.blocks.length && s.blocks[s.blocks.length - 1].src === src);
+  if (next) PASTE_SLIDE_SUCC.set(from, next);
 }
 
 // ━━━ Status & Importance Meta ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -2819,7 +3042,12 @@ function GlossaryLink({ label, term, entry }) {
   );
 }
 
-function EditableText({ text, onSave, editable, style, multiline, className, prefix, suffix }) {
+// Faint editor-only text shown in an empty inline-editable text (CR26).
+const EDIT_PLACEHOLDER = "Text";
+
+// controlled: show only the saved `text` prop after a commit (no optimistic local
+// copy), for callers whose onSave normalizes the value (checklist status label).
+function EditableText({ text, onSave, editable, style, multiline, className, prefix, suffix, controlled }) {
   const [editing, setEditing] = useState(false);
   const [hovered, setHovered] = useState(false);
   const [localText, setLocalText] = useState(text);
@@ -2876,7 +3104,7 @@ function EditableText({ text, onSave, editable, style, multiline, className, pre
     const el = ref.current;
     if (!el) { setEditing(false); setHovered(false); return; }
     const v = htmlToMd(el).trim();
-    if (v !== text) { setLocalText(v); onSave(v); }
+    if (v !== text) { if (!controlled) setLocalText(v); onSave(v); }
     setEditing(false);
     setHovered(false);
   };
@@ -2897,21 +3125,115 @@ function EditableText({ text, onSave, editable, style, multiline, className, pre
       onClick={(e) => e.stopPropagation()}
       onMouseDown={(e) => e.stopPropagation()}
       className={className}
-      style={{ ...baseStyle, outline: `2px solid ${T.accent}`, outlineOffset: 2, borderRadius: 2, cursor: "text", minHeight: "1em", whiteSpace: "pre-wrap" }}
+      style={{ ...baseStyle, outline: `2px solid ${T.accent}`, outlineOffset: 2, borderRadius: 2, cursor: "text", minHeight: "1em", minWidth: "2em", whiteSpace: "pre-wrap" }}
     />
   );
 
+  // CR26: an empty text keeps a clickable target (min size + a faint editor-only
+  // placeholder), so a cleared text can be edited again. The placeholder sits at
+  // the left and the right padding is room for the item's hover toolbar
+  // (top-right, ~80px), so the toolbar never covers it. Present/export render
+  // with editable=false and never see the placeholder.
+  const empty = !String(localText || "").trim();
   return (
     <div key="display" className={className}
       onClick={begin}
       onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}
       style={{ ...baseStyle, cursor: "pointer", borderRadius: 2,
+        ...(empty ? { minWidth: "2em", minHeight: "1em", paddingRight: 100, textAlign: "left" } : {}),
         outline: hovered ? `1px dashed ${T.accent}60` : "1px dashed transparent",
         outlineOffset: 2, transition: "outline 0.15s ease" }}
-    >{prefix}{parseInline(localText)}{suffix}</div>
+    >{prefix}{empty ? <EditPlaceholder /> : parseInline(localText)}{suffix}</div>
   );
 }
 
+
+// CR26: the editor-only placeholder keeps its box (same size and hit area) but
+// stays invisible unless the holding block is hovered or has focus. Listeners sit
+// on the closest block wrapper, so the layout never changes.
+function EditPlaceholder({ svg }) {
+  const ref = useRef(null);
+  const [on, setOn] = useState(false);
+  useEffect(() => {
+    const host = ref.current?.closest?.("[data-block-type]");
+    if (!host) { setOn(true); return; }
+    const over = () => setOn(true);
+    const out = (e) => { if (!e.relatedTarget || !host.contains(e.relatedTarget)) setOn(host.contains(document.activeElement)); };
+    const fin = () => setOn(true);
+    const fout = (e) => { if (!e.relatedTarget || !host.contains(e.relatedTarget)) setOn(false); };
+    host.addEventListener("mouseover", over); host.addEventListener("mouseout", out);
+    host.addEventListener("focusin", fin); host.addEventListener("focusout", fout);
+    return () => { host.removeEventListener("mouseover", over); host.removeEventListener("mouseout", out); host.removeEventListener("focusin", fin); host.removeEventListener("focusout", fout); };
+  }, []);
+  const o = on ? 0.35 : 0;
+  return svg
+    ? <tspan ref={ref} data-vela-placeholder="" opacity={o} fontStyle="italic">{EDIT_PLACEHOLDER}</tspan>
+    : <span ref={ref} data-vela-placeholder="" style={{ opacity: o, fontStyle: "italic", transition: "opacity 0.15s ease" }}>{EDIT_PLACEHOLDER}</span>;
+}
+
+// CR26: inline edit for an SVG <text> label (cycle, funnel, flow loop). SVG text
+// cannot be contentEditable, so a click opens an HTML input in a <foreignObject>
+// over the text. The click stops here, so ZoomWrap does not zoom. Enter or blur
+// commits through the same onSave -> onChange path as EditableText; Escape
+// cancels. Read-only (present/export) renders the plain <text>.
+function SvgEditText({ text, editable, onSave, suffix, ...textProps }) {
+  const [box, setBox] = useState(null);
+  const ref = useRef(null);
+  const inRef = useRef(null);
+  const doneRef = useRef(false);
+  useEffect(() => {
+    if (!box || !inRef.current) return;
+    // preventScroll: focus must not scroll the slide (no layout jump on open).
+    try { inRef.current.focus({ preventScroll: true }); } catch (_) { inRef.current.focus(); }
+    try { inRef.current.select(); } catch (_) {}
+  }, [box]);
+  const val = text == null ? "" : String(text);
+  if (!editable || !onSave) return <text {...textProps}>{val}{suffix}</text>;
+  const fs = parseFloat(textProps.fontSize) || 12;
+  const begin = (e) => {
+    e.stopPropagation(); e.preventDefault();
+    const el = ref.current; const m = el?.ownerSVGElement?.getScreenCTM?.();
+    if (!el || !m) return;
+    const r = el.getBoundingClientRect(); const inv = m.inverse();
+    const a = new DOMPoint(r.left, r.top).matrixTransform(inv);
+    const b = new DOMPoint(r.right, r.bottom).matrixTransform(inv);
+    // Size the overlay to the text box (long side = width, short side = line
+    // height), so it does not cover the adjacent labels.
+    const dx = Math.abs(b.x - a.x), dy = Math.abs(b.y - a.y);
+    const w = Math.max(dx, dy, fs * 4) + fs;
+    const h = Math.max(Math.min(dx, dy), fs * 1.2) + 2;
+    doneRef.current = false;
+    setBox({ x: (a.x + b.x) / 2 - w / 2, y: (a.y + b.y) / 2 - h / 2, w, h, v: val });
+  };
+  const finish = (save) => {
+    if (doneRef.current) return;
+    doneRef.current = true;
+    const v = sanitizeString(inRef.current?.value || "").trim();
+    setBox(null);
+    if (save && v !== val) onSave(v);
+  };
+  const empty = !val.trim();
+  const stop = (e) => e.stopPropagation();
+  return <>
+    <text ref={ref} data-svg-edit="" {...textProps} onClick={begin}
+      style={{ ...(textProps.style || {}), cursor: "pointer", visibility: box ? "hidden" : undefined }}>
+      {empty ? <EditPlaceholder svg /> : val}{suffix}
+    </text>
+    {box && <foreignObject x={box.x} y={box.y} width={box.w} height={box.h} style={{ overflow: "visible" }}>
+      <input ref={inRef} data-testid="svg-text-edit" defaultValue={box.v}
+        onClick={stop} onMouseDown={stop} onBlur={() => finish(true)}
+        onKeyDown={(e) => {
+          e.stopPropagation();
+          if (e.key === "Enter") { e.preventDefault(); finish(true); }
+          else if (e.key === "Escape") { e.preventDefault(); finish(false); }
+        }}
+        style={{ width: "100%", height: "100%", boxSizing: "border-box", margin: 0, padding: `0 ${fs * 0.3}px`,
+          fontSize: fs, fontWeight: textProps.fontWeight, fontFamily: textProps.fontFamily,
+          textAlign: "center", color: T.text, background: T.bgInput, border: "none",
+          outline: `2px solid ${T.accent}`, borderRadius: 2 }} />
+    </foreignObject>}
+  </>;
+}
 
 // ━━━ Block Helpers ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 const stg = (base, offset = 0) => `stg-${Math.min(base + offset, 7)}`;
@@ -3356,6 +3678,30 @@ function GridCellBlock({ block, staggerIdx, slideTheme, editable, onChange, slid
   );
 }
 
+// ━━━ Grid-cell image (capped upscale) ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// A grid cell fills its track, so a small icon or logo would otherwise stretch
+// to the whole free area. Cap the drawn box at GRID_IMG_MAX_UPSCALE x the natural
+// pixel size (read on load, cached by src) and center it in the cell. Until the
+// size is known the image stays hidden, so a huge first frame never shows.
+// Images without an intrinsic size (naturalWidth 0) or that fail to load are
+// not capped.
+const GRID_IMG_MAX_UPSCALE = 2;
+const IMAGE_NATURAL_SIZE = new Map();
+function GridCellImage({ src, alt, style }) {
+  const [, setTick] = useState(0);
+  const size = IMAGE_NATURAL_SIZE.get(src);
+  const remember = (w, h) => {
+    if (!IMAGE_NATURAL_SIZE.has(src) && IMAGE_NATURAL_SIZE.size >= 256) IMAGE_NATURAL_SIZE.delete(IMAGE_NATURAL_SIZE.keys().next().value);
+    IMAGE_NATURAL_SIZE.set(src, { w, h });
+    setTick((t) => t + 1);
+  };
+  const capped = size && size.w > 0 && size.h > 0;
+  return <img src={src} alt={alt} data-grid-cap={capped ? GRID_IMG_MAX_UPSCALE : undefined}
+    onLoad={(e) => remember(e.currentTarget.naturalWidth || 0, e.currentTarget.naturalHeight || 0)}
+    onError={() => remember(0, 0)}
+    style={{ ...style, margin: "auto", maxWidth: capped ? size.w * GRID_IMG_MAX_UPSCALE : undefined, maxHeight: capped ? size.h * GRID_IMG_MAX_UPSCALE : undefined, visibility: size ? undefined : "hidden" }} />;
+}
+
 // ━━━ Zoomable Block Wrapper ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 function ZoomWrap({ children, enabled, link, fill }) {
   const [zoomed, setZoomed] = useState(false);
@@ -3529,7 +3875,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
       } : null;
       return <ZoomWrap enabled={!!block.src && !block._solo} link={block.link} fill={!!block._gridCell}><div className={cls} style={{ display: "flex", flexDirection: "column", alignItems: block.align === "left" ? "flex-start" : block.align === "right" ? "flex-end" : "center", ...(block._solo ? { flex: 1, width: "100%", justifyContent: "center" } : {}), ...(block._gridCell ? { flex: 1, minHeight: 0, minWidth: 0, width: "100%", justifyContent: "center", position: "relative" } : {}), ...block.style }}>
         {block._gridCell ? <div data-image-grid-media="" style={gridMediaStyle}>
-          {block.src ? <img src={block.src} alt={block.alt || ""} style={
+          {block.src ? <GridCellImage src={block.src} alt={block.alt || ""} style={
           // Absolutely fill the grid cell so the row height is driven ONLY by the
           // grid track (minmax(0,1fr)), never by the image's intrinsic height. A
           // portrait/tall image therefore letterboxes (objectFit:contain) into the
@@ -3703,7 +4049,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
                 <div style={{ width: 22, height: 22, borderRadius: "50%", border: `2px dashed ${gc}`, display: "flex", alignItems: "center", justifyContent: "center" }}>
                   {getIcon(block.gateIcon || "UserCheck", { size: 10, color: gc })}
                 </div>
-                {block.gateLabel && <span style={{ position: "absolute", top: 24, fontSize: 7, color: gc, fontWeight: 600, lineHeight: 1, whiteSpace: "nowrap" }}>{block.gateLabel}</span>}
+                {block.gateLabel && <div style={{ position: "absolute", top: 24, width: "max-content", fontSize: 7, color: gc, fontWeight: 600, lineHeight: 1, whiteSpace: "nowrap" }}><EditableText text={block.gateLabel} editable={textEditable} onSave={(v) => onChange?.({ gateLabel: v || undefined })} /></div>}
               </div>}
               {renderArrowSvg()}
             </div>
@@ -3722,7 +4068,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
             <line x1={`${x2}%`} y1="4" x2={`${x2}%`} y2="20" stroke={loopCol} strokeWidth="1.5" strokeDasharray={loopDash} strokeLinecap="round" />
             <line x1={`${x2}%`} y1="20" x2={`${x1}%`} y2="20" stroke={loopCol} strokeWidth="1.5" strokeDasharray={loopDash} strokeLinecap="round" />
             <line x1={`${x1}%`} y1="20" x2={`${x1}%`} y2="4" stroke={loopCol} strokeWidth="1.5" strokeDasharray={loopDash} strokeLinecap="round" markerEnd={`url(#loopArr-${staggerIdx})`} />
-            {block.loopLabel && <text x="50%" y="32" textAnchor="middle" fill={loopCol} fontSize="10" fontFamily="monospace" style={{ fontStyle: "italic" }}>{block.loopLabel}</text>}
+            {(block.loopLabel || textEditable) && <SvgEditText text={block.loopLabel} editable={textEditable} onSave={(v) => onChange?.({ loopLabel: v })} x="50%" y="32" textAnchor="middle" fill={loopCol} fontSize="10" fontFamily="monospace" style={{ fontStyle: "italic" }} />}
           </>; })()}
         </svg>}
         {block.loop && isVert && <svg style={{ position: "absolute", top: 0, bottom: 0, right: 0, width: 36, height: "100%", overflow: "visible" }}>
@@ -3731,7 +4077,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
             <line x1="4" y1={`${y2}%`} x2="20" y2={`${y2}%`} stroke={loopCol} strokeWidth="1.5" strokeDasharray={loopDash} strokeLinecap="round" />
             <line x1="20" y1={`${y2}%`} x2="20" y2={`${y1}%`} stroke={loopCol} strokeWidth="1.5" strokeDasharray={loopDash} strokeLinecap="round" />
             <line x1="20" y1={`${y1}%`} x2="4" y2={`${y1}%`} stroke={loopCol} strokeWidth="1.5" strokeDasharray={loopDash} strokeLinecap="round" markerEnd={`url(#loopArrV-${staggerIdx})`} />
-            {block.loopLabel && <text x="28" y="50%" textAnchor="middle" fill={loopCol} fontSize="10" fontFamily="monospace" style={{ fontStyle: "italic" }} transform={`rotate(90, 28, 50%)`} dominantBaseline="middle">{block.loopLabel}</text>}
+            {(block.loopLabel || textEditable) && <SvgEditText text={block.loopLabel} editable={textEditable} onSave={(v) => onChange?.({ loopLabel: v })} x="28" y="50%" textAnchor="middle" fill={loopCol} fontSize="10" fontFamily="monospace" style={{ fontStyle: "italic" }} transform={`rotate(90, 28, 50%)`} dominantBaseline="middle" />}
           </>; })()}
         </svg>}
       </div></ZoomWrap>
@@ -3774,10 +4120,10 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: -6 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
               <EditableIcon editable={editable && !presenting} value={block.leftIcon} size={14} onPick={(name) => onChange?.({ leftIcon: name || undefined })}>{block.leftIcon ? getIcon(block.leftIcon, { size: 14, color: labelColor }) : null}</EditableIcon>
-              {block.leftLabel && <span style={{ fontSize: 11, fontWeight: 600, color: labelColor }}>{block.leftLabel}</span>}
+              {block.leftLabel && <EditableText text={block.leftLabel} editable={textEditable} onSave={(v) => onChange?.({ leftLabel: v || undefined })} style={{ fontSize: 11, fontWeight: 600, color: labelColor }} />}
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-              {block.rightLabel && <span style={{ fontSize: 11, fontWeight: 600, color: labelColor }}>{block.rightLabel}</span>}
+              {block.rightLabel && <EditableText text={block.rightLabel} editable={textEditable} onSave={(v) => onChange?.({ rightLabel: v || undefined })} style={{ fontSize: 11, fontWeight: 600, color: labelColor }} />}
               <EditableIcon editable={editable && !presenting} value={block.rightIcon} size={14} onPick={(name) => onChange?.({ rightIcon: name || undefined })}>{block.rightIcon ? getIcon(block.rightIcon, { size: 14, color: labelColor }) : null}</EditableIcon>
             </div>
           </div>
@@ -3802,9 +4148,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
         })}
         {canEdit && hasItems && <AddItem label="Add bar" accent={st.accent} onAdd={() => addItemAt(block, onChange, newItemFor(block,"progress"))} />}
         {block.annotation && (
-          <div style={{ textAlign: "center", marginTop: -4, fontSize: 11, fontStyle: "italic", color: block.annotationColor || "#94a3b8" }}>
-            {block.annotation}
-          </div>
+          <EditableText text={block.annotation} editable={textEditable} onSave={(v) => onChange?.({ annotation: v || undefined })} style={{ textAlign: "center", marginTop: -4, fontSize: 11, fontStyle: "italic", color: block.annotationColor || "#94a3b8" }} />
         )}
       </div>;
     }
@@ -3945,6 +4289,8 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
         [pts[pi], pts[t]] = [pts[t], pts[pi]];
         return { ...col, items: pts };
       }) });
+      const setColField = (side, patch) => { const cols = [...items]; while (cols.length < 2) cols.push({}); cols[side] = { ...cols[side], ...patch }; onChange?.({ items: cols }); };
+      const setPointText = (side, pi, v) => onChange?.({ items: items.map((col, k) => k !== side ? col : { ...col, items: (col.items || []).map((p, j) => j !== pi ? p : (typeof p === "string" ? v : { ...p, text: v })) }) });
       const pointReorder = (side, pts, pi) => (onChange && (pts || []).length > 1)
         ? reorderCtl(pts.length, pi, (dir) => movePoint(side, pi, dir), (k) => `c${side}_${k}`, _pin) : undefined;
       return <div className={cls} style={{ display: "flex", gap: 0, flex: 1, alignItems: "stretch", ...block.style }}>
@@ -3954,7 +4300,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
               <EditableIcon editable={editable && !presenting} value={left.icon} size={18} onPick={onChange ? (name) => onChange({ items: items.map((c, k) => k === 0 ? { ...c, icon: name || undefined } : c) }) : undefined}>
                 {left.icon ? <IconBubble icon={left.icon} size={18} color={leftColor} bg={`${leftColor}15`} /> : null}
               </EditableIcon>
-              <span style={{ fontFamily: FONT.display, fontSize: SIZES[block.titleSize || "md"], fontWeight: 700, color: `${leftColor}cc` }}>{left.title || "A"}</span>
+              <EditableText text={left.title || "A"} editable={textEditable} onSave={(v) => setColField(0, { title: v })} style={{ fontFamily: FONT.display, fontSize: SIZES[block.titleSize || "md"], fontWeight: 700, color: `${leftColor}cc` }} />
             </div>
             {(left.items || []).map((pt, pi) => (
               <ItemChrome key={pi} editable={editable} presenting={presenting}
@@ -3964,14 +4310,14 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
                 onSetLink={onChange ? (url) => linkPoint(0, pi, url) : undefined}
                 onDelete={onChange ? () => deletePoint(0, pi) : undefined}>
                 <span style={{ width: 6, height: 6, borderRadius: "50%", background: leftColor, flexShrink: 0, marginTop: 7 }} />
-                <span>{typeof pt === "string" ? pt : pt.text || ""}</span>
+                <EditableText text={typeof pt === "string" ? pt : pt.text || ""} editable={textEditable} onSave={(v) => setPointText(0, pi, v)} />
               </ItemChrome>
             ))}
             {canEdit && <AddItem variant="chip" label="Add point" accent={leftColor} onAdd={() => addPoint(0)} />}
           </div>
         </div>
         {block.hideDivider ? null : <div style={{ display: "flex", alignItems: "center", justifyContent: "center", zIndex: 2, margin: "0 -18px" }}>
-          <div style={{ width: 36, height: 36, borderRadius: "50%", background: st.bg || "#1e293b", border: `2px solid ${st.border || "#475569"}`, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: FONT.mono, fontSize: 11, fontWeight: 700, color: st.muted }}>{dividerLabel}</div>
+          <div style={{ width: 36, height: 36, borderRadius: "50%", background: st.bg || "#1e293b", border: `2px solid ${st.border || "#475569"}`, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: FONT.mono, fontSize: 11, fontWeight: 700, color: st.muted }}><EditableText text={dividerLabel} editable={textEditable} onSave={(v) => onChange?.({ dividerLabel: v || undefined })} /></div>
         </div>}
         <div style={{ flex: 1, background: `${rightColor}08`, border: `1px solid ${rightColor}30`, borderRadius: "0 12px 12px 0", padding: "20px 22px", display: "flex", flexDirection: "column", alignItems: "center" }}>
           <div style={{ display: "flex", flexDirection: "column", gap: 10, maxWidth: "100%" }}>
@@ -3979,7 +4325,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
               <EditableIcon editable={editable && !presenting} value={right.icon} size={18} onPick={onChange ? (name) => onChange({ items: items.map((c, k) => k === 1 ? { ...c, icon: name || undefined } : c) }) : undefined}>
                 {right.icon ? <IconBubble icon={right.icon} size={18} color={rightColor} bg={`${rightColor}15`} /> : null}
               </EditableIcon>
-              <span style={{ fontFamily: FONT.display, fontSize: SIZES[block.titleSize || "md"], fontWeight: 700, color: `${rightColor}cc` }}>{right.title || "B"}</span>
+              <EditableText text={right.title || "B"} editable={textEditable} onSave={(v) => setColField(1, { title: v })} style={{ fontFamily: FONT.display, fontSize: SIZES[block.titleSize || "md"], fontWeight: 700, color: `${rightColor}cc` }} />
             </div>
             {(right.items || []).map((pt, pi) => (
               <ItemChrome key={pi} editable={editable} presenting={presenting}
@@ -3989,7 +4335,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
                 onSetLink={onChange ? (url) => linkPoint(1, pi, url) : undefined}
                 onDelete={onChange ? () => deletePoint(1, pi) : undefined}>
                 <span style={{ width: 6, height: 6, borderRadius: "50%", background: rightColor, flexShrink: 0, marginTop: 7 }} />
-                <span>{typeof pt === "string" ? pt : pt.text || ""}</span>
+                <EditableText text={typeof pt === "string" ? pt : pt.text || ""} editable={textEditable} onSave={(v) => setPointText(1, pi, v)} />
               </ItemChrome>
             ))}
             {canEdit && <AddItem variant="chip" label="Add point" accent={rightColor} onAdd={() => addPoint(1)} />}
@@ -4017,12 +4363,12 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
               <polygon points={`${x1},${y} ${x2},${y} ${x4},${y + stageH} ${x3},${y + stageH}`}
                 fill={`${col}${isHighlight ? "22" : "18"}`} stroke={`${col}80`} strokeWidth={isHighlight ? 2 : 1.5}
                 strokeDasharray={isHighlight ? "8,4" : "none"} />
-              <text x="350" y={y + stageH * 0.38} textAnchor="middle" fill={`${col}dd`}
-                fontSize="14" fontWeight="600" fontFamily="Inter, sans-serif">{item.label || ""}{isHighlight ? " \u26A0" : ""}</text>
-              {item.value && <text x="350" y={y + stageH * 0.72} textAnchor="middle" fill={col}
-                fontSize="20" fontWeight="800" fontFamily="Inter, sans-serif">{item.value}</text>}
-              {item.drop && <text x={x4 + 16} y={y + stageH * 0.55} textAnchor="start" fill={isHighlight ? col : st.muted}
-                fontSize="12" fontWeight={isHighlight ? 700 : 400} fontFamily="Inter, sans-serif">{item.drop}</text>}
+              <SvgEditText text={item.label} editable={textEditable} onSave={(v) => patchItemAt(block, onChange, i, { label: v })} suffix={isHighlight ? " \u26A0" : ""} x="350" y={y + stageH * 0.38} textAnchor="middle" fill={`${col}dd`}
+                fontSize="14" fontWeight="600" fontFamily="Inter, sans-serif" />
+              {(item.value || textEditable) && <SvgEditText text={item.value} editable={textEditable} onSave={(v) => patchItemAt(block, onChange, i, { value: v })} x="350" y={y + stageH * 0.72} textAnchor="middle" fill={col}
+                fontSize="20" fontWeight="800" fontFamily="Inter, sans-serif" />}
+              {(item.drop || textEditable) && <SvgEditText text={item.drop} editable={textEditable} onSave={(v) => patchItemAt(block, onChange, i, { drop: v })} x={x4 + 16} y={y + stageH * 0.55} textAnchor="start" fill={isHighlight ? col : st.muted}
+                fontSize="12" fontWeight={isHighlight ? 700 : 400} fontFamily="Inter, sans-serif" />}
             </g>;
           })}
         </svg>
@@ -4047,9 +4393,9 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
               </marker>;
             })}
           </defs>
-          {block.centerLabel && <>
-            <text x={cx} y={cy - 8} textAnchor="middle" fill={st.border || "#475569"} fontSize="16" fontWeight="700" fontFamily="Inter, sans-serif" letterSpacing="3">{block.centerLabel}</text>
-            {block.centerSub && <text x={cx} y={cy + 14} textAnchor="middle" fill={st.muted} fontSize="13" fontFamily="Inter, sans-serif">{block.centerSub}</text>}
+          {(block.centerLabel || textEditable) && <>
+            <SvgEditText text={block.centerLabel} editable={textEditable} onSave={(v) => onChange?.({ centerLabel: v })} x={cx} y={cy - 8} textAnchor="middle" fill={st.border || "#475569"} fontSize="16" fontWeight="700" fontFamily="Inter, sans-serif" letterSpacing="3" />
+            {(block.centerSub || textEditable) && <SvgEditText text={block.centerSub} editable={textEditable} onSave={(v) => onChange?.({ centerSub: v })} x={cx} y={cy + 14} textAnchor="middle" fill={st.muted} fontSize="13" fontFamily="Inter, sans-serif" />}
           </>}
           {items.map((item, i) => {
             const angle = (2 * Math.PI * i / n) - Math.PI / 2;
@@ -4073,8 +4419,8 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
                 markerEnd={`url(#cyc-arr-${staggerIdx}-${i})`} />
               <circle cx={nx} cy={ny} r={nodeR} fill={`${col}15`} stroke={col} strokeWidth="2.5" />
               {item.icon && <text x={nx} y={ny - 6} textAnchor="middle" fontSize="18" fontFamily="Inter, sans-serif">{item.icon}</text>}
-              <text x={nx} y={ny + (item.icon ? 14 : 5)} textAnchor="middle" fill={`${col}dd`}
-                fontSize="12" fontWeight="700" fontFamily="Inter, sans-serif">{item.label || ""}</text>
+              <SvgEditText text={item.label} editable={textEditable} onSave={(v) => patchItemAt(block, onChange, i, { label: v })} x={nx} y={ny + (item.icon ? 14 : 5)} textAnchor="middle" fill={`${col}dd`}
+                fontSize="12" fontWeight="700" fontFamily="Inter, sans-serif" />
             </g>;
           })}
         </svg>
@@ -4102,8 +4448,8 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
                   {getIcon(item.icon, { size: 20, color: col, strokeWidth: 2 })}
                 </div> : null}
               </EditableIcon>}
-              <div style={{ fontFamily: FONT.display, fontSize: SIZES[block.size || (block.compact ? "2xl" : "3xl")], fontWeight: 800, color: col, lineHeight: 1 }}>{item.value || ""}</div>
-              {item.label && <div style={{ fontFamily: FONT.mono, fontSize: SIZES.xs, fontWeight: 600, letterSpacing: "0.1em", textTransform: "uppercase", color: st.muted }}>{item.label}</div>}
+              <EditableText text={String(item.value || "")} editable={textEditable} onSave={(v) => patchItemAt(block, onChange, i, { value: v })} style={{ fontFamily: FONT.display, fontSize: SIZES[block.size || (block.compact ? "2xl" : "3xl")], fontWeight: 800, color: col, lineHeight: 1 }} />
+              {item.label && <ItemText block={block} onChange={onChange} editable={textEditable} idx={i} prop="label" style={{ fontFamily: FONT.mono, fontSize: SIZES.xs, fontWeight: 600, letterSpacing: "0.1em", textTransform: "uppercase", color: st.muted }} />}
             </ItemChrome>
           </React.Fragment>;
         })}
@@ -4145,12 +4491,15 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
         [pts[pi], pts[t]] = [pts[t], pts[pi]];
         return { ...qq, items: pts };
       }) });
+      const setQField = (qi, patch) => onChange?.({ [qKey]: [0, 1, 2, 3].map((k) => k === qi ? { ...(quadrants[k] || {}), ...patch } : (quadrants[k] || {})) });
+      const setQPointText = (qi, pi, v) => onChange?.({ [qKey]: quadrants.map((qq, k) => k !== qi ? qq : { ...qq, items: (qq.items || []).map((p, j) => j !== pi ? p : (typeof p === "string" ? v : { ...p, text: v })) }) });
+      const axisText = (key, text, style) => <EditableText text={text} editable={textEditable} onSave={(v) => onChange?.({ [key]: v || undefined })} style={style} />;
       const qPointReorder = (qi, pts, pi) => (onChange && (pts || []).length > 1)
         ? reorderCtl(pts.length, pi, (dir) => moveQPoint(qi, pi, dir), (k) => `q${qi}_${k}`, _pin) : undefined;
-      const renderRow = (indices, radii, yLabel) => (
+      const renderRow = (indices, radii, yLabel, yKey) => (
         <div style={{ display: "flex", gap: 0, alignItems: "stretch" }}>
           {hasY && <div style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 24, flexShrink: 0 }}>
-            {yLabel && <span style={yLabelStyle}>{yLabel}</span>}
+            {yLabel && <div style={{ ...yLabelStyle, width: "max-content", flexShrink: 0 }}>{axisText(yKey, yLabel)}</div>}
           </div>}
           <div style={{ display: "flex", gap: 6, flex: 1 }}>
             {indices.map((qi) => {
@@ -4161,7 +4510,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
                   <EditableIcon editable={editable && !presenting} value={qd.icon} size={16} onPick={onChange ? (name) => onChange({ [qKey]: quadrants.map((qq, k) => k === qi ? { ...qq, icon: name || undefined } : qq) }) : undefined}>
                     {qd.icon ? <span style={{ display: "flex" }}>{getIcon(qd.icon, { size: 16, color: qc, strokeWidth: 2 })}</span> : null}
                   </EditableIcon>
-                  <span style={{ fontFamily: FONT.display, fontSize: SIZES.sm, fontWeight: 700, color: `${qc}cc` }}>{qd.title || ""}</span>
+                  <EditableText text={qd.title || ""} editable={textEditable} onSave={(v) => setQField(qi, { title: v })} style={{ fontFamily: FONT.display, fontSize: SIZES.sm, fontWeight: 700, color: `${qc}cc` }} />
                 </div>
                 {(qd.items || []).map((pt, pi) => (
                   <ItemChrome key={pi} editable={editable} presenting={presenting}
@@ -4170,7 +4519,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
                     reorder={qPointReorder(qi, qd.items, pi)}
                     onSetLink={onChange ? (url) => linkQPoint(qi, pi, url) : undefined}
                     onDelete={onChange ? () => deleteQPoint(qi, pi) : undefined}>
-                    <span style={{ color: qc }}>•</span> {typeof pt === "string" ? pt : pt.text || ""}
+                    <span style={{ color: qc }}>•</span> <EditableText text={typeof pt === "string" ? pt : pt.text || ""} editable={textEditable} onSave={(v) => setQPointText(qi, pi, v)} />
                   </ItemChrome>
                 ))}
                 {canEdit && <AddItem variant="chip" label="Add point" accent={qc} style={{ marginTop: 4 }} onAdd={() => addQPoint(qi)} />}
@@ -4181,12 +4530,12 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
       );
       return <div className={cls} style={{ flex: 1, display: "flex", flexDirection: "column", justifyContent: "center", width: "100%", ...block.style }}>
           {(xLeft || xRight) && <div style={{ display: "flex", justifyContent: "space-around", marginBottom: 8, paddingLeft: hasY ? 24 : 0, padding: "0 20px" }}>
-            <span style={{ fontFamily: FONT.mono, fontSize: SIZES.xs, fontWeight: 600, color: st.muted, letterSpacing: "0.08em" }}>{xLeft}</span>
-            <span style={{ fontFamily: FONT.mono, fontSize: SIZES.xs, fontWeight: 600, color: st.muted, letterSpacing: "0.08em" }}>{xRight}</span>
+            {axisText("xLeft", xLeft, { fontFamily: FONT.mono, fontSize: SIZES.xs, fontWeight: 600, color: st.muted, letterSpacing: "0.08em" })}
+            {axisText("xRight", xRight, { fontFamily: FONT.mono, fontSize: SIZES.xs, fontWeight: 600, color: st.muted, letterSpacing: "0.08em" })}
           </div>}
-          {renderRow([0, 1], ["10px 4px 4px 4px", "4px 10px 4px 4px"], yTop)}
+          {renderRow([0, 1], ["10px 4px 4px 4px", "4px 10px 4px 4px"], yTop, "yTop")}
           <div style={{ height: 6 }} />
-          {renderRow([2, 3], ["4px 4px 4px 10px", "4px 4px 10px 4px"], yBottom)}
+          {renderRow([2, 3], ["4px 4px 4px 10px", "4px 4px 10px 4px"], yBottom, "yBottom")}
       </div>;
     }
 
@@ -4213,8 +4562,20 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
               {status === "partial" && <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, height: "50%", background: "#f59e0b" }} />}
               {cfg.icon && <span style={{ display: "flex", zIndex: 1 }}>{getIcon(cfg.icon, { size: 12, color: status === "done" ? "#fff" : "#ef4444", strokeWidth: 3 })}</span>}
             </div>
-            <span style={{ fontFamily: FONT.body, fontSize: SIZES[block.size || "sm"], color: cfg.textColor, flex: 1 }}>{typeof item === "string" ? item : item.text || ""}</span>
-            {block.showLabels !== false && <span style={{ marginLeft: "auto", fontFamily: FONT.mono, fontSize: SIZES.xs, fontWeight: 600, color: labelColor }}>{cfg.label}</span>}
+            {typeof item === "string"
+              ? <span style={{ fontFamily: FONT.body, fontSize: SIZES[block.size || "sm"], color: cfg.textColor, flex: 1 }}>{item}</span>
+              : <ItemText block={block} onChange={onChange} editable={textEditable} idx={i} prop="text" style={{ fontFamily: FONT.body, fontSize: SIZES[block.size || "sm"], color: cfg.textColor, flex: 1 }} />}
+            {block.showLabels !== false && (typeof item === "string"
+              ? <span style={{ marginLeft: "auto", fontFamily: FONT.mono, fontSize: SIZES.xs, fontWeight: 600, color: labelColor }}>{cfg.label}</span>
+              : <EditableText text={item.label || cfg.label} editable={textEditable} onSave={(v) => {
+                  // A typed status name (key or default label) switches the status;
+                  // any other text is a custom label; empty text restores the default.
+                  // Case, "_", "-" and runs of spaces do not matter ("in_progress").
+                  const norm = (t) => String(t).trim().toLowerCase().replace(/[\s_-]+/g, " ");
+                  const key = norm(v);
+                  const hit = Object.keys(statusConfig).find((k) => k === key || norm(statusConfig[k].label) === key);
+                  patchItemAt(block, onChange, i, hit ? { status: hit, label: undefined } : { label: v || undefined });
+                }} controlled style={{ marginLeft: "auto", fontFamily: FONT.mono, fontSize: SIZES.xs, fontWeight: 600, color: labelColor, textTransform: "uppercase" }} />)}
           </ItemChrome>;
         })}
         {canEdit && <AddItem label="Add item" accent={st.accent} onAdd={() => addItemAt(block, onChange, newItemFor(block,"checklist"))} />}
@@ -4329,7 +4690,11 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
   const align = slide.align || "left";
   const layout = slide.layout || "stack";
   const isCols = layout === "cols" && (Array.isArray(slide.L) || Array.isArray(slide.R));
-  const isSplit = layout === "image-right" || layout === "image-left";
+  // CR22: a split needs content beside the image. A slide can keep image-left/right
+  // with no body (a blank slide inherits the previous slide's layout), and then a
+  // pasted image sat in one half next to an empty half. Without content, stack.
+  const isSplit = (layout === "image-right" || layout === "image-left")
+    && blocks.some((b) => b && b.type !== "image" && b.type !== "spacer" && b.type !== "divider");
   const colsL = isCols ? _vis(slide.L) : [];
   const colsR = isCols ? _vis(slide.R) : [];
   const isMediaOnlyColumn = (column) =>
@@ -4389,6 +4754,10 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
   const [fitJustify, setFitJustify] = useState(requestedJustify);
   const [splitImgMaxH, setSplitImgMaxH] = useState(null); // px cap so a side image conforms to the content column's height
   const [colsImageFit, setColsImageFit] = useState(null);
+  // CR23: measured image-grid boxes (keyed by the run's first block index) and a
+  // tick that re-renders when image aspect ratios arrive in IMAGE_ASPECT_CACHE.
+  const [gridBoxes, setGridBoxes] = useState({});
+  const [, setAspectTick] = useState(0);
   const [hoveredBlock, setHoveredBlock] = useState(null);
   const [itemHovered, setItemHovered] = useState(false); // an inner item's chrome is hovered → hide block toolbar
   const [editingLink, setEditingLink] = useState(null);
@@ -4472,6 +4841,11 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
       inner.style.height = scaled && (isSplit || isCols)
         ? `${100 / scale}%`
         : (isSplit || (isCols && hasDirectColumnImage) ? "100%" : "auto");
+      // Unscaled, the inner box fills the slide (the same flex:1 the render gives
+      // it). Set it here too: a render still scaled from an earlier state has no
+      // flex yet, and then a flex-sized image grid would measure at its floor.
+      // (The shorthand resets flex-shrink, so it goes first.)
+      inner.style.flex = scaled ? "" : "1";
       inner.style.flexShrink = scaled && (isSplit || isCols) ? "0" : "";
       void inner.offsetHeight;
     };
@@ -4684,8 +5058,22 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
       // cap is computed only after the reciprocal final height is active.
       const contentEl = isSplit ? inner.querySelector("[data-split-content]") : null;
       const contentH = contentEl ? contentEl.scrollHeight : 0;
-      const ih = isSplit ? contentH : inner.scrollHeight;
+      // CR25: a stack with an image grid fills the slide exactly (the grid takes
+      // the free height). Measure its layout boxes, not scrollHeight: a block's
+      // entrance-animation offset would read as overflow and shrink the slide,
+      // and a shrunk slide collapses the grid to its floor.
+      const stackKids = isSplit ? [] : Array.from(inner.children);
+      const ih = isSplit ? contentH
+        : stackKids.some((c) => c.hasAttribute("data-image-grid-key"))
+          ? Math.max(0, ...stackKids.map((c) => c.offsetTop + c.offsetHeight))
+          : inner.scrollHeight;
       const finalScale = ih > availH && ih > 0 ? Math.max(availH / ih, SCALE_FLOOR) : 1;
+      // CR23: record each image grid's free box at the natural (unscaled) size.
+      // The box is flex-driven (it does not depend on the grid's column count),
+      // so it is a stable input for bestImageGridCols().
+      const boxes = {};
+      inner.querySelectorAll("[data-image-grid-key]").forEach((g) => { boxes[g.getAttribute("data-image-grid-key")] = [g.clientWidth, g.clientHeight]; });
+      setGridBoxes((prev) => JSON.stringify(prev) === JSON.stringify(boxes) ? prev : boxes);
       applyGeometry(inner, finalScale);
       let splitCap = null;
       if (isSplit && contentEl) {
@@ -4751,6 +5139,15 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
       });
     };
   }, [layoutGeneration, requestedJustify]);
+
+  // CR23: learn the aspect ratio of each image once (cached by src), so a run of
+  // images can pick the column count that shows them largest.
+  useEffect(() => {
+    let live = true;
+    const pending = new Set(blocks.filter((b) => b && b.type === "image" && typeof b.src === "string" && b.src && !IMAGE_ASPECT_CACHE.has(b.src)).map((b) => b.src));
+    pending.forEach((src) => imageAspect(src).then((a) => { rememberImageAspect(src, a); if (live) setAspectTick((t) => t + 1); }));
+    return () => { live = false; };
+  }, [layoutGeneration]);
 
   if (!blocks.length && !(slide.layout === "cols" && (Array.isArray(slide.L) || Array.isArray(slide.R)))) return null;
 
@@ -4856,24 +5253,46 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
     // Belt-and-braces: ingress already clamps imageCols to an integer 1..6
     // (SLIDE_NUMERIC_BOUNDS), but this value drives a CSS grid track count, so
     // re-clamp at the sink for any slide object that reached here unsanitized.
-    const cols = slide.imageCols ? Math.min(6, Math.max(1, slide.imageCols | 0)) : gridColsFor(runLen, region);
-    const rows = Math.ceil(runLen / cols);
-    const lastRowCount = runLen - (rows - 1) * cols;
-    const incomplete = lastRowCount < cols;
     const gap = slide.gap || 12;
+    const gridKey = String(idxs[0]);
+    const box = alignWithinColumn ? null : gridBoxes[gridKey];
+    // CR23: the packing comes from imageGridPlan() — the same function the paste
+    // layout chooser uses — so what paste predicts is what renders. Each cell is
+    // placed absolutely from the plan (row height = its share hw, cell width = its
+    // share f of the row width after gaps; a short row is centered). The cells
+    // stay flat siblings keyed by block, so a new plan moves them, never remounts.
+    const maxW = idxs.map((bi) => { const z = IMAGE_NATURAL_SIZE.get(blocks[bi].src); return z && z.w > 0 ? z.w * GRID_IMG_MAX_UPSCALE : 0; });
+    const plan = imageGridPlan(idxs.map((bi) => IMAGE_ASPECT_CACHE.get(blocks[bi].src)), box?.[0], box?.[1], gap, gridColsFor(runLen, region), slide.imageCols ? Math.min(6, Math.max(1, slide.imageCols | 0)) : 0, maxW);
+    const rows = plan.rows.length;
+    const hwSum = plan.rows.reduce((t, r) => t + r.hw, 0) || 1, gapsH = gap * (rows - 1);
+    const len = (pct, px) => `calc(${pct * 100}% + ${px}px)`;
+    const cellPos = [];
+    let cumH = 0;
+    plan.rows.forEach((row, r) => {
+      const h = row.hw / hwSum, sumF = row.cells.reduce((t, c) => t + c.f, 0), rowGaps = gap * row.gc;
+      let cumF = 0;
+      row.cells.forEach((c, k) => {
+        cellPos[c.i] = {
+          top: len(cumH, gap * r - cumH * gapsH), height: len(h, -h * gapsH),
+          left: len((1 - sumF) / 2 + cumF, gap * k - rowGaps * ((1 - sumF) / 2 + cumF)), width: len(c.f, -c.f * rowGaps),
+        };
+        cumF += c.f;
+      });
+      cumH += h;
+    });
+    // CR25: a full-width run yields height to the other blocks (flex basis 0), but
+    // it keeps a small floor so the fit measurement still reserves room for it
+    // and it never collapses to nothing.
+    const minGridH = region === "full" ? rows * 72 : 0;
     // Grid images are absolute-fill cells, so they have no intrinsic grid
     // height. Use one balanced 140px row per grid row only when the author
     // requests alignment. The default path still fills all available height.
     const gridHeight = alignWithinColumn ? Math.min(splitImgMaxH || rows * 140, rows * 140) : null;
     return (
-      <div key={`__imgrid-${idxs[0]}`} data-testid="image-grid" data-image-grid={region} data-image-count={runLen}
-        style={{ display: "grid", gridTemplateColumns: `repeat(${cols * 2}, minmax(0, 1fr))`, gridAutoRows: "minmax(0, 1fr)", gap, flex: gridHeight == null ? 1 : "0 0 auto", height: gridHeight == null ? undefined : gridHeight, maxHeight: "100%", minHeight: 0, minWidth: 0, width: "100%", alignItems: "stretch" }}>
+      <div key={`__imgrid-${idxs[0]}`} data-testid="image-grid" data-image-grid={region} data-image-count={runLen} data-image-grid-key={gridKey} data-image-cols={plan.cols} data-image-rows={rows}
+        style={{ position: "relative", flex: gridHeight == null ? "1 1 0" : "0 0 auto", height: gridHeight == null ? undefined : gridHeight, maxHeight: "100%", minHeight: minGridH, minWidth: 0, width: "100%" }}>
         {idxs.map((bi, k) => {
-          const firstOfLastRow = k === (rows - 1) * cols;
-          const gridColumn = (incomplete && firstOfLastRow)
-            ? `${cols - lastRowCount + 1} / span 2`
-            : "span 2";
-          const rendered = renderBlockWithComments({ ...blocks[bi], _gridCell: true }, bi);
+          const rendered = renderBlockWithComments({ ...blocks[bi], _gridCell: true, ...(isSoloImage && blocks[bi].rounded == null ? { rounded: 0 } : {}) }, bi);
           const [blockEl, ...rest] = rendered;
           // Make the block wrapper fill its cell height so the image (height:100%)
           // and objectFit:contain letterbox uniformly across mixed aspect ratios.
@@ -4881,7 +5300,7 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
             style: { ...(blockEl.props.style || {}), display: "flex", flexDirection: "column", flex: 1, minHeight: 0, minWidth: 0, width: "100%" },
           });
           return (
-            <div key={`__imgcell-${bi}`} data-testid="image-grid-cell" style={{ gridColumn, display: "flex", flexDirection: "column", minWidth: 0, minHeight: 0 }}>
+            <div key={`__imgcell-${bi}`} data-testid="image-grid-cell" style={{ position: "absolute", ...cellPos[k], display: "flex", flexDirection: "column", minWidth: 0, minHeight: 0 }}>
               {filled}{rest}
             </div>
           );
@@ -4899,7 +5318,10 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
       if (blocks[i].type === "image") {
         let j = i;
         while (j < blocks.length && blocks[j].type === "image") j++;
-        if (j - i >= 2) {
+        // CR24/CR25: a lone stacked image also takes the grid path (unless the
+        // author pinned its width), so it fills the free height below/above the
+        // text and shrinks, instead of pushing the other blocks off the slide.
+        if (j - i >= 2 || blocks[i].maxWidth == null) {
           const idxs = [];
           for (let k = i; k < j; k++) idxs.push(k);
           out.push(renderImageGrid(idxs, "full"));
@@ -4969,6 +5391,10 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
         : <div key="__images" data-split-image style={{ flex: slide.imageFlex || 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: splitImageJustify, gap: slide.gap || 12, minWidth: 0, height: "100%" }}>{imageIdxs.flatMap((i) => renderBlockWithComments(splitImgMaxH != null && blocks[i].maxHeight == null ? { ...blocks[i], maxHeight: splitImgMaxH } : blocks[i], i))}</div>;
       return imageOnRight ? [contentCol, imageCol] : [imageCol, contentCol];
     }
+    // CR24: a solo image goes through the one-image grid path (absolute fill of a
+    // flex-sized cell), or it keeps its natural height and a wide image sits at
+    // the top of an otherwise empty slide. It stays full-bleed (pad 0, square).
+    if (isSoloImage && blocks[0].maxWidth == null) return [renderImageGrid([0], "full")];
     if (isSoloImage) return renderBlockWithComments({ ...blocks[0], _solo: true }, 0);
     return renderStackWithImageGrids();
   };
@@ -5170,7 +5596,9 @@ function innerReducer(state, a) {
     case "DUPLICATE_SLIDE": _dirtyMods.add(a.id); return mapItems((i) => { if (i.id !== a.id || !i.slides[a.index]) return i; const dup = JSON.parse(JSON.stringify(i.slides[a.index])); const ns = [...i.slides]; ns.splice(a.index + 1, 0, dup); return { ...i, slides: ns }; });
     case "MOVE_SLIDE": _dirtyMods.add(a.id); return mapItems((i) => { if (i.id !== a.id) return i; const ns = [...i.slides]; const t = a.from + a.dir; if (t < 0 || t >= ns.length) return i; [ns[a.from], ns[t]] = [ns[t], ns[a.from]]; return { ...i, slides: ns }; });
     case "REORDER_SLIDE": _dirtyMods.add(a.id); return mapItems((i) => { if (i.id !== a.id) return i; const ns = [...i.slides]; const [moved] = ns.splice(a.from, 1); ns.splice(a.to, 0, moved); return { ...i, slides: ns }; });
-    case "MOVE_SLIDE_TO_MODULE": { let slide = null; _dirtyMods.add(a.fromId); _dirtyMods.add(a.toId); return { ...state, lanes: state.lanes.map((l) => ({ ...l, items: l.items.map((i) => { if (i.id === a.fromId) { slide = i.slides[a.index]; return { ...i, slides: i.slides.filter((_, idx) => idx !== a.index) }; } return i; }).map((i) => { if (i.id === a.toId && slide) { if (a.toIndex != null) { const _ns = [...i.slides]; _ns.splice(a.toIndex, 0, slide); return { ...i, slides: _ns }; } return { ...i, slides: [...i.slides, slide] }; } return i; }) })), selectedId: a.toId, slideIndex: a.toIndex != null ? a.toIndex : (() => { for (const l of state.lanes) { const it = l.items.find((i) => i.id === a.toId); if (it) return it.slides?.length || 0; } return 0; })() }; }
+    // Remove from ALL lanes first, then insert: a one-pass map lost the slide when
+    // the target section sat in an earlier lane than the source (CR21).
+    case "MOVE_SLIDE_TO_MODULE": { let slide = null; _dirtyMods.add(a.fromId); _dirtyMods.add(a.toId); return { ...state, lanes: state.lanes.map((l) => ({ ...l, items: l.items.map((i) => { if (i.id === a.fromId) { slide = i.slides[a.index]; return { ...i, slides: i.slides.filter((_, idx) => idx !== a.index) }; } return i; }) })).map((l) => ({ ...l, items: l.items.map((i) => { if (i.id === a.toId && slide) { if (a.toIndex != null) { const _ns = [...i.slides]; _ns.splice(a.toIndex, 0, slide); return { ...i, slides: _ns }; } return { ...i, slides: [...i.slides, slide] }; } return i; }) })), selectedId: a.toId, slideIndex: a.toIndex != null ? a.toIndex : (() => { for (const l of state.lanes) { const it = l.items.find((i) => i.id === a.toId); if (it) return it.slides?.length || 0; } return 0; })() }; }
     // Multi-slide move to another module as a SINGLE reduce (one undo). Gathers the
     // slides at `indices` (ascending, order preserved) from fromId, drops them all,
     // then inserts them into toId at `toIndex` (or appends). Undo reverses the whole
@@ -5184,7 +5612,7 @@ function innerReducer(state, a) {
       return { ...state, lanes: state.lanes.map((l) => ({ ...l, items: l.items.map((i) => {
         if (i.id === a.fromId) { movedSlides = idxs.map((ix) => i.slides[ix]).filter(Boolean); return { ...i, slides: i.slides.filter((_, ix) => !drop.has(ix)) }; }
         return i;
-      }).map((i) => {
+      }) })).map((l) => ({ ...l, items: l.items.map((i) => {
         if (i.id === a.toId && movedSlides.length) {
           if (a.toIndex != null) { const _ns = [...i.slides]; _ns.splice(a.toIndex, 0, ...movedSlides); return { ...i, slides: _ns }; }
           return { ...i, slides: [...i.slides, ...movedSlides] };
@@ -8206,6 +8634,12 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
   const slides = concept.slides || [];
   const slidesRef = useRef(slides);
   slidesRef.current = slides;
+  // Image paste: the view the paste sees now, the queue that keeps pastes in
+  // order, and a stand-in target per empty module (see handlePaste).
+  const pasteLiveRef = useRef(null);
+  pasteLiveRef.current = { moduleId: concept.id, index: slideIndex };
+  const pasteQueueRef = useRef(Promise.resolve());
+  const emptyPasteKeyRef = useRef(new Map());
   const aiOk = useAIAvailable();
 
   // Virtual title card for presentation mode
@@ -8642,7 +9076,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
   );
   const looksLikeSlide = (obj) => obj && typeof obj === "object" && !Array.isArray(obj) && Object.keys(obj).some((k) => SLIDE_KEYS.has(k));
   const handlePaste = useCallback((e) => {
-    const tag = e.target?.tagName?.toLowerCase(); if (tag === "textarea" || tag === "input") return;
+    const tag = e.target?.tagName?.toLowerCase(); if (tag === "textarea" || tag === "input" || e.target?.isContentEditable) return;
     const items = e.clipboardData?.items; if (!items) return;
     // Check for text/plain first — try to detect slide JSON
     const textItem = Array.from(items).find((i) => i.type === "text/plain");
@@ -8655,11 +9089,10 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
           const incoming = Array.isArray(parsed) ? parsed : [parsed];
           const validSlides = incoming.filter(looksLikeSlide).map((s) => sanitizeSlide(s)).filter(Boolean);
           if (validSlides.length === 0) return;
-          // Insert after current slide
-          const newSlides = [...slides];
+          // Insert after current slide. getAsString is async: insert into the live
+          // list (INSERT_SLIDES), never write back the captured slide list.
           const insertAt = slides.length === 0 ? 0 : slideIndex + 1;
-          newSlides.splice(insertAt, 0, ...validSlides);
-          dispatch({ type: "SET_SLIDES", id: concept.id, slides: newSlides });
+          dispatch({ type: "INSERT_SLIDES", id: concept.id, index: insertAt, slides: validSlides });
           dispatch({ type: "SET_SLIDE_INDEX", index: insertAt });
         } catch { /* not valid JSON, ignore */ }
       });
@@ -8668,33 +9101,75 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
     for (const item of items) {
       if (item.type.startsWith("image/")) {
         e.preventDefault(); const blob = item.getAsFile(); const reader = new FileReader();
-        reader.onload = async () => {
-          const compressed = await compressSlideImage(reader.result);
-          // Empty module → brand-new full-bleed solo-image slide.
-          if (slides.length === 0) { dispatch({ type: "ADD_SLIDE", id: concept.id, slide: { blocks: [{ type: "image", src: compressed }] } }); return; }
-          const cur = slides[slideIndex] || {};
-          const curImgs = (cur.blocks || []).filter((b) => b.type === "image").length;
+        // Capture the target now. The image work below is async: the user can
+        // undo, delete or edit slides, or paste again, before it ends. Pastes
+        // apply one at a time, in paste order (pasteQueueRef). Each one finds its
+        // target again just before its dispatch: the same slide object, or the
+        // slide an earlier queued paste made from it (pasteResolveTarget). It then
+        // builds the change from that CURRENT slide. If the target is gone, or the
+        // user changed it, the paste is dropped. Never write back a stale copy.
+        const moduleId = concept.id, epoch = deckEpochRef.current, empty = !slides.length;
+        let target = empty ? null : slides[slideIndex];
+        if (empty) { const keys = emptyPasteKeyRef.current; target = keys.get(moduleId) || {}; keys.set(moduleId, target); }
+        else emptyPasteKeyRef.current.delete(moduleId);
+        const bodyProbe = empty ? null : pasteBodyProbe(containerRef.current, target);
+        const data = new Promise((res) => { reader.onload = () => res(compressSlideImage(reader.result)); reader.onerror = () => res(null); });
+        reader.readAsDataURL(blob);
+        const live = () => deckEpochRef.current === epoch && pasteLiveRef.current.moduleId === moduleId;
+        // Wait until a dispatch below has rendered, then link the new slide object.
+        const settle = async (from, before, src) => {
+          for (let k = 0; k < 60 && slidesRef.current === before; k++) await new Promise((r) => setTimeout(r, 16));
+          if (live()) pasteRecordSuccessor(from, before, slidesRef.current, src);
+        };
+        const apply = async () => {
+          const compressed = await data;
+          if (!compressed || deckEpochRef.current !== epoch) return;
+          // Empty module → brand-new full-bleed solo-image slide (additive). Later
+          // pastes of the same burst go onto that slide.
+          if (empty && !pasteResolveTarget(target, slidesRef.current)) {
+            const before = slidesRef.current;
+            dispatch({ type: "ADD_SLIDE", id: moduleId, slide: { blocks: [{ type: "image", src: compressed }] } });
+            await settle(target, before, compressed); return;
+          }
+          let cur = null, sizes = null;
+          for (let tries = 0; tries < 4 && !cur; tries++) {
+            const c = live() ? pasteResolveTarget(target, slidesRef.current) : null;
+            if (!c) return;
+            // Natural sizes give the aspects and the upscale caps for the layout choice.
+            sizes = await Promise.all([...(c.blocks || []).filter((b) => b.type === "image").map((b) => b.src), compressed].map((src) => imageNaturalSize(src)));
+            // Resolve again, in the same task as the dispatch below; start over if it moved on.
+            if (live() && pasteResolveTarget(target, slidesRef.current) === c) cur = c;
+          }
+          if (!cur) return;
+          const aspects = sizes.map((z) => (z.w > 0 && z.h > 0 ? z.w / z.h : 1)), aspect = aspects[aspects.length - 1];
+          rememberImageAspect(compressed, aspect);
+          const before = slidesRef.current, at = before.indexOf(cur);
+          const curImgBlocks = (cur.blocks || []).filter((b) => b.type === "image");
+          const curImgs = curImgBlocks.length;
           // Overflow cap: at most 5 images per slide. A 6th image spills onto a new
           // image-only slide inserted after this one rather than over-packing the grid.
           if (curImgs >= 5) {
-            const newSlides = [...slides];
-            const insertAt = slideIndex + 1;
-            newSlides.splice(insertAt, 0, { blocks: [{ type: "image", src: compressed }] });
-            dispatch({ type: "SET_SLIDES", id: concept.id, slides: newSlides });
-            dispatch({ type: "SET_SLIDE_INDEX", index: insertAt });
-            return;
+            dispatch({ type: "INSERT_SLIDES", id: moduleId, index: at + 1, slides: [{ blocks: [{ type: "image", src: compressed }] }] });
+            dispatch({ type: "SET_SLIDE_INDEX", index: at + 1 });
+            await settle(cur, before, compressed); return;
           }
           const patch = { blocks: [...(cur.blocks || []), { type: "image", src: compressed }] };
           const n = curImgs + 1; // image count after this paste
+          // The body height is measured on screen. Measure again while the slide is
+          // on screen (an earlier paste of the burst can have changed its layout).
+          const probe = (pasteLiveRef.current.index === at && pasteBodyProbe(containerRef.current, cur)) || bodyProbe;
           // Layout-aware paste: place the image beside existing body content rather
           // than always stacking it below. pasteImageLayout() respects an explicit
-          // author layout, keeps mostly-title/image-only slides and wide images stacked
-          // (the renderer auto-grids a run of >=2 images), promotes heavy text + >=3
-          // images to a full-width header + full-width image grid, and otherwise returns
-          // "image-right" so the image column grids beside the content.
-          const aspect = await imageAspect(compressed);
-          const layout = pasteImageLayout(cur, aspect, n);
-          if (layout !== "stack" && layout !== cur.layout) {
+          // author layout and otherwise keeps the layout (stack or image-right) that
+          // shows the most image area, from the body height measured on screen.
+          // CR23: a split that an earlier paste set (the slide still carries the exact
+          // layout signature that paste left) is re-evaluated for the new image count
+          // and aspects. A split the author set is kept.
+          const pasteOwned = !!cur.layout && cur.layout !== "stack" && curImgBlocks.some((b) => PASTE_LAYOUT_OWNED.get(b.src) === pasteLayoutSig(cur));
+          const basis = pasteOwned ? { ...cur, layout: undefined, contentFlex: undefined, imageFlex: undefined } : cur;
+          const layout = pasteImageLayout(basis, aspect, n, aspects, probe, sizes.map((z) => z.w));
+          if (pasteOwned && layout === "stack") { patch.layout = undefined; patch.contentFlex = undefined; patch.imageFlex = undefined; }
+          else if (layout !== "stack" && (pasteOwned || layout !== cur.layout)) {
             patch.layout = layout;
             // Balance the split. A single square/portrait side image is tall; at the
             // default 1:1 split it squeezes the body text into a half-width column
@@ -8702,14 +9177,16 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
             // the content column the larger share. Two or more images grid inside their
             // half, so an even 1:1 split gives that grid the room it needs. Only when
             // the author hasn't pinned a ratio.
-            if (cur.contentFlex == null && cur.imageFlex == null) {
-              if (n === 1 && aspect <= 1.2) { patch.contentFlex = 1.4; patch.imageFlex = 1; }
-              else if (n >= 2) { patch.contentFlex = 1; patch.imageFlex = 1; }
+            if (basis.contentFlex == null && basis.imageFlex == null) {
+              [patch.contentFlex, patch.imageFlex] = pasteSplitFlex(n, aspect);
             }
+            rememberPasteLayout(compressed, { ...cur, ...patch });
           }
-          dispatch({ type: "UPDATE_SLIDE", id: concept.id, index: slideIndex, patch, merge: true });
+          dispatch({ type: "UPDATE_SLIDE", id: moduleId, index: at, patch, merge: true });
+          await settle(cur, before, compressed);
         };
-        reader.readAsDataURL(blob); break;
+        pasteQueueRef.current = pasteQueueRef.current.then(apply).catch(() => {});
+        break;
       }
     }
   }, [concept.id, slideIndex, slides, dispatch]);
@@ -9610,6 +10087,71 @@ let _velaDrag = null; // { kind: "slide", fromItemId, slideIndex } | { kind: "se
 const _setDrag = (p) => { _velaDrag = p; };
 const _clearDrag = () => { _velaDrag = null; };
 
+// ━━━ TOC drag auto-scroll ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Native drag does not scroll the TOC pane near its edges, so a dragged slide or
+// section could not reach sections outside the view. While a TOC drag is active,
+// a pointer in the edge zone of the scroll container scrolls it. The speed grows
+// nearer the edge. The container is the nearest scrollable ancestor of the tree,
+// or the page when no ancestor scrolls.
+const TOC_AUTOSCROLL_ZONE = 56; // px from the visible top / bottom edge
+const TOC_AUTOSCROLL_MAX = 22; // px per animation frame at the edge
+// Signed speed (px/frame) for pointer y and visible bounds [top, bottom]; < 0 = up.
+// A pointer just outside the bounds (within one zone) scrolls at full speed.
+function tocAutoScrollSpeed(y, top, bottom, zone = TOC_AUTOSCROLL_ZONE, max = TOC_AUTOSCROLL_MAX) {
+  if (!Number.isFinite(y) || !(bottom > top)) return 0;
+  const z = Math.max(8, Math.min(zone, (bottom - top) / 4));
+  if (y < top - z || y > bottom + z) return 0;
+  if (y < top + z) return -Math.ceil(max * Math.min(1, (top + z - y) / z));
+  if (y > bottom - z) return Math.ceil(max * Math.min(1, (y - (bottom - z)) / z));
+  return 0;
+}
+function tocScrollParent(el) {
+  for (let p = el && el.parentElement; p && p !== document.body && p !== document.documentElement; p = p.parentElement) {
+    const oy = getComputedStyle(p).overflowY;
+    if ((oy === "auto" || oy === "scroll") && p.scrollHeight > p.clientHeight + 1) return p;
+  }
+  return document.scrollingElement || document.documentElement;
+}
+// Attaches the auto-scroll to the tree element in treeRef for the life of the list.
+// Stops on drop, on dragend (includes Escape cancel), when the pointer leaves the
+// zone or the window, when no dragover arrives for a short time, and at the ends.
+function useTocDragAutoScroll(treeRef) {
+  useEffect(() => {
+    let raf = 0, speed = 0, scroller = null, last = 0;
+    const stop = () => { speed = 0; scroller = null; if (raf) { cancelAnimationFrame(raf); raf = 0; } };
+    const tick = () => {
+      raf = 0;
+      if (!_velaDrag || !scroller || !speed || performance.now() - last > 600) { stop(); return; }
+      const before = scroller.scrollTop;
+      scroller.scrollTop = before + speed;
+      if (scroller.scrollTop === before) { stop(); return; } // at the end
+      raf = requestAnimationFrame(tick);
+    };
+    const onOver = (e) => {
+      if (!_velaDrag || !treeRef.current) { if (speed || raf) stop(); return; }
+      if (!scroller) scroller = tocScrollParent(treeRef.current);
+      const page = scroller === document.scrollingElement || scroller === document.documentElement;
+      const r = page ? { left: 0, right: window.innerWidth, top: 0, bottom: window.innerHeight } : scroller.getBoundingClientRect();
+      const inX = e.clientX >= r.left && e.clientX <= r.right;
+      speed = inX ? tocAutoScrollSpeed(e.clientY, Math.max(0, r.top), Math.min(window.innerHeight, r.bottom)) : 0;
+      last = performance.now();
+      if (speed && !raf) raf = requestAnimationFrame(tick);
+    };
+    const onLeave = (e) => { if (!e.relatedTarget) speed = 0; }; // pointer left the window
+    document.addEventListener("dragover", onOver, true);
+    document.addEventListener("dragleave", onLeave, true);
+    document.addEventListener("drop", stop, true);
+    document.addEventListener("dragend", stop, true);
+    return () => {
+      document.removeEventListener("dragover", onOver, true);
+      document.removeEventListener("dragleave", onLeave, true);
+      document.removeEventListener("drop", stop, true);
+      document.removeEventListener("dragend", stop, true);
+      stop();
+    };
+  }, []);
+}
+
 // ━━━ Reusable right-click context menu ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Positioned at the cursor, clamped to the viewport, and closes on outside-click
 // or Escape. `children` is [menuFn, submenuFn]; each is called with a `move`
@@ -10350,6 +10892,8 @@ function ModuleList({ lanes, selectedId, slideIndex, selectedSlideIndices, colla
   const collapsedSet = React.useMemo(() => new Set(Array.isArray(collapsedSections) ? collapsedSections : []), [collapsedSections]);
   const allIds = allItems.map((i) => i.id);
   const toggleCollapse = (id, all) => dispatch({ type: "TOGGLE_SECTION_COLLAPSE", id, all, ids: allIds });
+  const treeRef = useRef(null);
+  useTocDragAutoScroll(treeRef);
 
   // ── Roving-tabindex tree focus (WAI-ARIA disclosure pattern) ──
   // A single tab stop for the whole rail; arrow keys move DOM focus between the
@@ -10397,7 +10941,7 @@ function ModuleList({ lanes, selectedId, slideIndex, selectedSlideIndices, colla
   const handleDrop = (e) => { if (!_velaDrag || _velaDrag.kind !== "section" || !laneId) return; e.preventDefault(); dispatch({ type: "DRAG_REORDER", id: _velaDrag.itemId, targetLaneId: laneId, beforeId: null, afterId: null }); };
 
   return (
-    <div role="tree" aria-label="Slide outline" data-testid="toc-tree" onDragOver={(e) => { if (_velaDrag && _velaDrag.kind === "section") { e.preventDefault(); e.dataTransfer.dropEffect = "move"; } }} onDrop={handleDrop}>
+    <div ref={treeRef} role="tree" aria-label="Slide outline" data-testid="toc-tree" onDragOver={(e) => { if (_velaDrag && _velaDrag.kind === "section") { e.preventDefault(); e.dataTransfer.dropEffect = "move"; } }} onDrop={handleDrop}>
       {(() => { let offset = 0; let timeOffset = 0; return allItems.map((item, idx) => {
         const itemLaneId = lanes.find((l) => l.items.some((i) => i.id === item.id))?.id || laneId;
         const slideOffset = offset;
@@ -10880,6 +11424,54 @@ function JsonClipboardModal({ mode, setMode, state, dispatch }) {
 // ━━━ Vela Battery Test ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Auto-runs on mount, shows toast notification, copy details button
 
+// ── tideline CR23: seeded image-placement stress matrix ──
+// Shared by the unit battery below and the "tideline-CR22-CR25 image placement"
+// UI suite (part-uitest2.jsx). Each case = a slide body + 1-5 image aspects.
+const TL_STRESS_ASPECTS = [4, 16 / 9, 4 / 3, 1, 3 / 4, 9 / 16];
+const TL_STRESS_BODIES = (() => {
+  const h = { type: "heading", text: "Stress heading" };
+  return {
+    none: [],
+    heading: [h],
+    htc: [h, { type: "text", text: "Short body text that explains the pictures." }, { type: "text", text: "Credit: Example Author, 16 Jun 2025", size: "sm" }],
+    bullets8: [h, { type: "bullets", items: Array.from({ length: 8 }, (_, i) => `Bullet point ${i + 1} with a few words`) }],
+    table: [h, { type: "table", headers: ["Item", "Q1", "Q2", "Q3"], rows: Array.from({ length: 5 }, (_, r) => [`Row ${r + 1}`, `${r}1`, `${r}2`, `${r}3`]) }],
+    chart: [h, { type: "progress", items: Array.from({ length: 5 }, (_, i) => ({ label: `Metric ${i + 1}`, value: 20 + i * 15 })) }],
+  };
+})();
+function tidelineStressCases(count = 66, seed = 23) {
+  let s = seed >>> 0;
+  const rnd = () => { s = (Math.imul(s, 1664525) + 1013904223) >>> 0; return s / 4294967296; };
+  const bodies = Object.keys(TL_STRESS_BODIES), out = [];
+  for (let k = 0; k < count; k++) {
+    const n = 1 + (Math.floor(k / bodies.length) % 5);
+    out.push({ body: bodies[k % bodies.length], aspects: Array.from({ length: n }, () => TL_STRESS_ASPECTS[Math.floor(rnd() * TL_STRESS_ASPECTS.length)]) });
+  }
+  return out;
+}
+// Model-level check: for each case the chosen layout's image area (estimate) is
+// >= 85% of the other layout's, and the grid plan's area is >= 85% of the best
+// uniform grid in the same box. Returns the minimum ratio seen.
+function tidelineStressUnit() {
+  let min = Infinity;
+  const cases = tidelineStressCases();
+  for (const c of cases) {
+    const n = c.aspects.length, slide = { blocks: TL_STRESS_BODIES[c.body] };
+    if (slide.blocks.length) {
+      const pick = pasteImageLayout(slide, c.aspects[n - 1], n, c.aspects);
+      const split = pasteLayoutArea(slide, c.aspects, "image-right"), stack = pasteLayoutArea(slide, c.aspects, "stack");
+      min = Math.min(min, (pick === "stack" ? stack : split) / Math.max(split, stack));
+    }
+    for (const [w, h] of [[864, 468], [864, 360], [416, 468]]) {
+      const plan = imageGridPlan(c.aspects, w, h, 12, gridColsFor(n, "full"));
+      let eq = 0;
+      for (let k = 1; k <= n; k++) eq = Math.max(eq, imageGridPlan(c.aspects, w, h, 12, 1, k).area);
+      min = Math.min(min, plan.area / eq);
+    }
+  }
+  return { cases: cases.length, min };
+}
+
 const VELA_TESTS = [
   // ── Config & Utilities ──
   { name: "VELA_VERSION defined", fn: () => typeof VELA_VERSION === "string" && VELA_VERSION.length > 0 },
@@ -10923,6 +11515,23 @@ const VELA_TESTS = [
   { name: "gridColsFor full: N=4 makes 2 rows (2x2)", fn: () => Math.ceil(4 / gridColsFor(4, "full")) === 2 },
   { name: "gridColsFor full: N=5 makes 2 rows (3 then 2)", fn: () => Math.ceil(5 / gridColsFor(5, "full")) === 2 },
   { name: "gridColsFor full: N=2 stays one row", fn: () => Math.ceil(2 / gridColsFor(2, "full")) === 1 },
+  // ── tideline CR23: aspect-aware grid columns (bestImageGridCols) ──
+  { name: "bestImageGridCols: 3 tall images stay one row", fn: () => bestImageGridCols([0.5625, 0.5625, 0.5625], 864, 418, 12, 3) === 3 },
+  { name: "bestImageGridCols: 3 wide images leave one row", fn: () => bestImageGridCols([3, 3, 3], 864, 418, 12, 3) < 3 },
+  { name: "bestImageGridCols: 2 wide images stack in a tall box", fn: () => bestImageGridCols([3, 3], 864, 468, 12, 2) === 1 },
+  { name: "imageGridPlan CR23: 4 mixed images beat the uniform 2x2", fn: () => imageGridPlan([3, 1.78, 1, 0.5625], 864, 468, 12, 2).area >= imageGridPlan([3, 1.78, 1, 0.5625], 864, 468, 12, 2, 2).area },
+  { name: "imageGridPlan CR23: tall+wide gets aspect-sized cells (not equal halves)", fn: () => {
+    const p = imageGridPlan([1 / 3, 16 / 9], 864, 468, 12, 2), eq = imageGridPlan([1 / 3, 16 / 9], 864, 468, 12, 2, 2);
+    return p.rows.length === 1 && p.rows[0].cells[1].f > 0.7 && p.area > eq.area * 1.6;
+  } },
+  { name: "imageGridPlan CR23: equal aspects keep uniform cells", fn: () => imageGridPlan([1.78, 1.78, 1.78, 1.78, 1.78], 864, 400, 12, 3).rows.every((r) => r.cells.every((c) => Math.abs(c.f - 1 / 3) < 1e-9 || Math.abs(c.f - 1 / 2) < 1e-9 || c.f === 1)) },
+  { name: "imageGridPlan CR23: pinned imageCols forces a uniform grid", fn: () => { const p = imageGridPlan([4, 0.5], 864, 468, 12, 2, 3); return p.cols === 3 && p.rows[0].cells.every((c) => c.f === 1 / 3); } },
+  { name: "imageGridPlan CR23: no box → count default, area 0", fn: () => { const p = imageGridPlan([1, 2, 3], 0, 0, 12, 3); return p.cols === 3 && p.area === 0; } },
+  { name: "bestImageGridCols: unknown aspect → count default", fn: () => bestImageGridCols([3, undefined, 3], 864, 418, 12, 3) === 3 },
+  { name: "bestImageGridCols: no box → count default", fn: () => bestImageGridCols([3, 3, 3], 0, 0, 12, 3) === 3 },
+  { name: "bestImageGridCols: bad aspect values → count default", fn: () => bestImageGridCols([3, NaN, -1], 864, 418, 12, 3) === 3 && bestImageGridCols([3, "3", 3], 864, 418, 12, 3) === 3 },
+  { name: "bestImageGridCols: one image → 1", fn: () => bestImageGridCols([3], 864, 418, 12, 1) === 1 },
+  { name: "bestImageGridCols: result is always 1..n", fn: () => [[1, 1], [2, 0.5, 4, 1, 1]].every((a) => { const c = bestImageGridCols(a, 864, 418, 12, 3); return c >= 1 && c <= a.length; }) },
 
   // pasteImageLayout with image-count n: heavy text + >=3 images → full-width header (stack)
   { name: "pasteImageLayout: image-only slice N=2 stacks (auto-grids)", fn: () => pasteImageLayout({ blocks: [] }, 1, 2) === "stack" },
@@ -10931,6 +11540,27 @@ const VELA_TESTS = [
   { name: "pasteImageLayout: content + 5 images → stack (header + grid below)", fn: () => pasteImageLayout({ blocks: [{ type: "heading", text: "H" }, { type: "bullets", items: ["a"] }] }, 1, 5) === "stack" },
   { name: "pasteImageLayout: explicit image-left preserved even with 3 images", fn: () => pasteImageLayout({ layout: "image-left", blocks: [{ type: "bullets", items: ["a"] }] }, 1, 3) === "image-left" },
   { name: "pasteImageLayout: title-only + 3 images still stacks", fn: () => pasteImageLayout({ blocks: [{ type: "heading", text: "Hi" }] }, 1, 3) === "stack" },
+  // CR23: with known aspects the layout with the larger estimated image area wins.
+  { name: "pasteImageLayout CR23: heading+text+credit + 2 or 3 squares → stack", fn: () => {
+    const s = { blocks: [{ type: "heading", text: "Heading here" }, { type: "text", text: "Body text paragraph line that should stay visible on the slide." }, { type: "text", text: "Credit", size: "xs" }] };
+    return pasteImageLayout(s, 1, 2, [1, 1]) === "stack" && pasteImageLayout(s, 1, 3, [1, 1, 1]) === "stack" && pasteLayoutArea(s, [1, 1, 1], "stack") > pasteLayoutArea(s, [1, 1, 1], "image-right");
+  } },
+  { name: "pasteImageLayout CR23: long bullets + 2 tall images → image-right", fn: () => {
+    const s = { blocks: [{ type: "heading", text: "H" }, { type: "bullets", items: Array.from({ length: 8 }, (_, i) => `Bullet number ${i} with some words to fill a line of text`) }] };
+    return pasteImageLayout(s, 0.5625, 2, [0.5625, 0.5625]) === "image-right";
+  } },
+  { name: "pasteImageLayout CR23: every block type gets an area estimate", fn: () => ["table", "progress", "code", "flow", "metric"].every((t) => pasteLayoutArea({ blocks: [{ type: "heading", text: "H" }, { type: t, rows: [["a"]], items: [] }] }, [1], "stack") > 0) },
+  { name: "pasteImageLayout CR23: table + 16:9 uses the split column (D1)", fn: () => {
+    const s = { blocks: TL_STRESS_BODIES.table.concat([{ type: "text", text: "Credit", size: "sm" }]) };
+    return pasteImageLayout(s, 16 / 9, 1, [16 / 9], () => 229 + 12 + 43) === "image-right";
+  } },
+  { name: "pasteImageLayout CR23: measured body height overrides the estimate", fn: () => {
+    const s = { blocks: [{ type: "heading", text: "H" }, { type: "table", rows: [] }] };
+    return pasteLayoutArea(s, [1, 1], "stack", () => 400) < pasteLayoutArea(s, [1, 1], "stack", () => 40);
+  } },
+  { name: "pasteImageLayout CR23: 8 bullets + 4x 16:9 stays split (D2)", fn: () => pasteImageLayout(TL_STRESS_BODIES.bullets8 && { blocks: TL_STRESS_BODIES.bullets8 }, 16 / 9, 4, [16 / 9, 16 / 9, 16 / 9, 16 / 9], () => 380) === "image-right" },
+  { name: "tideline CR23 stress matrix (unit): >= 60 seeded cases, chosen >= 85% of best", fn: () => { const r = tidelineStressUnit(); return r.cases >= 60 && r.min >= 0.85; } },
+  { name: "pasteImageLayout CR23: explicit split kept with aspects", fn: () => pasteImageLayout({ layout: "image-left", blocks: [{ type: "text", text: "a" }, { type: "text", text: "b" }, { type: "text", text: "c" }] }, 1, 3, [1, 1, 1]) === "image-left" },
 
   // ── Editing UX Batch (v12.75): imageAspect ──
   { name: "imageAspect is function", fn: () => typeof imageAspect === "function" },
@@ -16318,6 +16948,724 @@ uiSuite("meridian-CR01 local save ends at the latest state with a slow backend",
   { name: "Edit, then undo during the in-flight write: file ends at the original", fn: () => _meridianF8SlowSave(["meridian-F8 edit", "meridian-F8 base"], "meridian-F8 base") },
   { name: "Edit, then edit again during the in-flight write: file ends at the last edit", fn: () => _meridianF8SlowSave(["meridian-F8 edit", "meridian-F8 edit 2"], "meridian-F8 edit 2") },
 ]);
+
+// tideline-CR26: every rendered block text is inline-editable in the editor.
+// Find the click-to-edit display node for an exact text inside the slide.
+const _tlEditNode = (text) => _$$("div", _mrdViewport() || document).find((el) =>
+  el.style.cursor === "pointer" && el.textContent.trim() === text && !_$$("div", el).some((c) => c.style.cursor === "pointer"));
+// Click the text, type the new value, commit with Enter, wait for the new text.
+const _tlEdit = async (from, to, shown = to) => {
+  const node = await _waitFor(() => _tlEditNode(from), 2000).catch(() => { throw new Error(`"${from}" is not inline-editable`); });
+  _click(node);
+  const ed = await _waitFor(() => _$("[contenteditable='true']", _mrdViewport()), 1500);
+  ed.textContent = to;
+  ed.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+  await _waitFor(() => !_$("[contenteditable='true']") && _tlEditNode(shown), 2000).catch(() => { throw new Error(`"${from}" -> "${to}" did not commit`); });
+};
+uiSuite("tideline-CR26 edit every block text", [
+  { name: "CR26: checklist item text and status label edit inline, with undo and redo", fn: async () => {
+    const hooks = _hooks();
+    await _mrdInject([{ type: "checklist", items: [{ text: "Task one", status: "pending" }, { text: "Task two", status: "done" }] }], null,
+      (vp) => vp?.textContent.includes("Task one") ? vp : null);
+    const past0 = hooks.getHistoryCounts ? hooks.getHistoryCounts().past : 0;
+    try {
+      await _tlEdit("Task one", "Task edited");
+      await _tlEdit("PENDING", "blocked", "BLOCKED");
+      const blockedCol = _tlEditNode("BLOCKED")?.style.color;
+      if (!/239, 68, 68|#ef4444/i.test(blockedCol || "")) throw new Error(`typed status did not switch the status (color ${blockedCol})`);
+      await _tlEdit("DONE", "Shipped");
+      _key("z", { ctrlKey: true });
+      await _waitFor(() => _tlEditNode("DONE"), 2000).catch(() => { throw new Error("undo did not restore the label"); });
+      _key("y", { ctrlKey: true });
+      await _waitFor(() => _tlEditNode("Shipped"), 2000).catch(() => { throw new Error("redo did not restore the custom label"); });
+      await _tlEdit("Shipped", "", "DONE");
+    } finally {
+      await _mrdUndoTo(past0);
+    }
+  }},
+  { name: "CR26: comparison, matrix, number-row, progress and flow texts edit inline", fn: async () => {
+    const cases = [
+      [[{ type: "comparison", dividerLabel: "OR", items: [{ title: "Left col", items: ["Left point"] }, { title: "Right col", items: [{ text: "Right point" }] }] }],
+        [["Left col", "Left new"], ["Right col", "Right new"], ["Left point", "LP new"], ["Right point", "RP new"], ["OR", "VERSUS"]]],
+      [[{ type: "matrix", xLeft: "Low X", xRight: "High X", yTop: "High Y", yBottom: "Low Y", quadrants: [{ title: "Q one", items: ["Q point"] }, { title: "Q two" }, { title: "Q three" }, { title: "Q four" }] }],
+        [["Q one", "Q1 new"], ["Q point", "QP new"], ["Low X", "LX new"], ["High Y", "HY new"]]],
+      [[{ type: "number-row", items: [{ value: "42", label: "Answers" }, { value: "7", label: "Days" }] }],
+        [["42", "43"], ["Answers", "Replies"]]],
+      [[{ type: "progress", leftLabel: "Start", rightLabel: "End", annotation: "Note here", items: [{ label: "Bar", value: 40 }] }],
+        [["Start", "Begin"], ["End", "Finish"], ["Note here", "Note new"]]],
+      [[{ type: "flow", gateLabel: "Gate", items: [{ label: "A", gate: true }, { label: "B" }] }],
+        [["Gate", "Check"]]],
+    ];
+    for (const [blocks, edits] of cases) {
+      await _mrdInject(blocks, null, (vp) => vp?.textContent.includes(edits[0][0]) ? vp : null);
+      // Undo one step per edit (history counts stop growing at MAX_HISTORY).
+      let done = 0;
+      try {
+        for (const [from, to] of edits) { await _tlEdit(from, to); done++; }
+      } catch (e) { throw new Error(`${blocks[0].type}: ${e.message}`); }
+      finally { document.activeElement?.blur?.(); for (let k = 0; k < done; k++) { _key("z", { ctrlKey: true }); await _wait(60); } }
+      await _waitFor(() => _tlEditNode(edits[0][0]), 2000).catch(() => { throw new Error(`${blocks[0].type}: undo did not restore the text`); });
+    }
+  }},
+  { name: "CR26: a cleared text keeps a clickable target and can be typed again", fn: async () => {
+    const cases = [
+      [{ type: "checklist", items: [{ text: "Task one", status: "pending" }] }, "Task one"],
+      [{ type: "comparison", items: [{ title: "L", items: ["Left point"] }, { title: "R", items: ["Right point"] }] }, "Left point"],
+      [{ type: "matrix", quadrants: [{ title: "Q1", items: ["Q point"] }, { title: "Q2" }, { title: "Q3" }, { title: "Q4" }] }, "Q point"],
+      [{ type: "number-row", items: [{ value: "42", label: "Answers" }] }, "42"],
+      [{ type: "bullets", items: ["Bullet one", "Bullet two"] }, "Bullet one"],
+    ];
+    for (const [block, from] of cases) {
+      await _mrdInject([block], null, (vp) => vp?.textContent.includes(from) ? vp : null);
+      let done = 0;
+      try {
+        await _tlEdit(from, "", EDIT_PLACEHOLDER); done++;
+        const node = _tlEditNode(EDIT_PLACEHOLDER);
+        const r = node.getBoundingClientRect();
+        if (!(r.width > 4 && r.height > 4)) throw new Error(`empty target is ${r.width}x${r.height}`);
+        // With the pointer on it, the item's hover toolbar must not cover the placeholder.
+        const ph = _$("[data-vela-placeholder]", node);
+        ph.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
+        await _wait(80);
+        const pr = ph.getBoundingClientRect();
+        const hit = document.elementFromPoint(pr.left + pr.width / 2, pr.top + pr.height / 2);
+        if (!node.contains(hit)) throw new Error(`placeholder is covered by ${hit?.tagName} "${(hit?.textContent || "").slice(0, 20)}"`);
+        await _tlEdit(EDIT_PLACEHOLDER, "Typed again"); done++;
+      } catch (e) { throw new Error(`${block.type}: ${e.message}`); }
+      finally { document.activeElement?.blur?.(); for (let k = 0; k < done; k++) { _key("z", { ctrlKey: true }); await _wait(60); } }
+      await _waitFor(() => _tlEditNode(from), 2000).catch(() => { throw new Error(`${block.type}: undo did not restore the text`); });
+    }
+  }},
+  { name: "CR26: SVG labels (cycle, funnel, flow loop) edit inline, with undo and redo, and do not zoom", fn: async () => {
+    const svgText = (t) => _$$("text[data-svg-edit]", _mrdViewport() || document).find((el) => el.textContent.trim() === t);
+    const zoomed = () => document.body.textContent.includes("ESC or click to close");
+    const svgEdit = async (from, to, key = "Enter") => {
+      const node = await _waitFor(() => svgText(from), 2000).catch(() => { throw new Error(`"${from}" is not an editable SVG label`); });
+      _clickMod(node);
+      const inp = await _waitFor(() => _$("[data-testid='svg-text-edit']", _mrdViewport()), 1500).catch(() => { throw new Error(`"${from}": no edit input`); });
+      if (zoomed()) throw new Error(`"${from}": click opened the zoom overlay`);
+      if (document.activeElement !== inp) throw new Error(`"${from}": input has no focus`);
+      inp.value = to;
+      inp.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }));
+      const shown = key === "Escape" ? from : to;
+      await _waitFor(() => !_$("[data-testid='svg-text-edit']") && svgText(shown), 2000).catch(() => { throw new Error(`"${from}" -> "${to}" (${key}) did not show "${shown}"`); });
+    };
+    const cases = [
+      [{ type: "cycle", centerLabel: "Center L", centerSub: "Center S", items: [{ label: "CyA" }, { label: "CyB" }, { label: "CyC" }] }, [["CyA", "CyA2"], ["Center L", "CL2"], ["Center S", "CS2"]]],
+      [{ type: "funnel", items: [{ label: "FunA", value: "100", drop: "-40%" }, { label: "FunB", value: "60" }] }, [["FunA", "FunA2"], ["100", "101"], ["-40%", "-41%"]]],
+      [{ type: "flow", loop: true, loopLabel: "LoopH", items: [{ label: "A" }, { label: "B" }] }, [["LoopH", "LoopH2"]]],
+      [{ type: "flow", loop: true, direction: "vertical", loopLabel: "LoopV", items: [{ label: "A" }, { label: "B" }] }, [["LoopV", "LoopV2"]]],
+    ];
+    for (const [block, edits] of cases) {
+      await _mrdInject([block], null, (vp) => vp && svgText(edits[0][0]) ? vp : null);
+      let done = 0;
+      try {
+        await svgEdit(edits[0][0], "Cancelled", "Escape");
+        for (const [from, to] of edits) {
+          await svgEdit(from, to); done++;
+          _key("z", { ctrlKey: true });
+          await _waitFor(() => svgText(from), 2000).catch(() => { throw new Error(`undo did not restore "${from}"`); });
+          _key("y", { ctrlKey: true });
+          await _waitFor(() => svgText(to), 2000).catch(() => { throw new Error(`redo did not restore "${to}"`); });
+        }
+      } catch (e) { throw new Error(`${block.type}: ${e.message}`); }
+      finally { document.activeElement?.blur?.(); for (let k = 0; k < done; k++) { _key("z", { ctrlKey: true }); await _wait(60); } }
+      await _waitFor(() => svgText(edits[0][0]), 2000).catch(() => { throw new Error(`${block.type}: undo did not restore the text`); });
+    }
+  }},
+  { name: "CR26: a cleared optional SVG label shows a placeholder and can be typed again", fn: async () => {
+    const texts = () => _$$("text[data-svg-edit]", _mrdViewport() || document);
+    const svgText = (t) => texts().find((el) => el.textContent.trim() === t);
+    const open = async (node, what) => {
+      _clickMod(node);
+      return _waitFor(() => _$("[data-testid='svg-text-edit']", _mrdViewport()), 1500).catch(() => { throw new Error(`${what}: no edit input`); });
+    };
+    const commit = (inp, v) => { inp.value = v; inp.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true })); };
+    const cases = [
+      [{ type: "cycle", centerLabel: "CtrL", centerSub: "CtrS", items: [{ label: "CyA" }, { label: "CyB" }] }, ["CtrL", "CtrS"]],
+      [{ type: "funnel", items: [{ label: "FunA", value: "100", drop: "-40%" }] }, ["100", "-40%"]],
+      [{ type: "flow", loop: true, loopLabel: "LoopH", items: [{ label: "A" }, { label: "B" }] }, ["LoopH"]],
+      [{ type: "flow", loop: true, direction: "vertical", loopLabel: "LoopV", items: [{ label: "A" }, { label: "B" }] }, ["LoopV"]],
+    ];
+    for (const [block, labels] of cases) {
+      await _mrdInject([block], null, (vp) => vp && svgText(labels[0]) ? vp : null);
+      for (const from of labels) {
+        let done = 0;
+        try {
+          const before = new Set(texts().filter((el) => el.textContent.trim() === EDIT_PLACEHOLDER));
+          commit(await open(svgText(from), from), ""); done++;
+          const ph = await _waitFor(() => !_$("[data-testid='svg-text-edit']") && texts().find((el) => el.textContent.trim() === EDIT_PLACEHOLDER && !before.has(el)), 2000)
+            .catch(() => { throw new Error(`"${from}": cleared label shows no placeholder`); });
+          if (!_$("[data-vela-placeholder]", ph)) throw new Error(`"${from}": placeholder is not marked`);
+          const r = ph.getBoundingClientRect();
+          if (!(r.width > 4 && r.height > 4)) throw new Error(`"${from}": placeholder target is ${r.width}x${r.height}`);
+          commit(await open(ph, `"${from}" placeholder`), "Back " + from); done++;
+          await _waitFor(() => !_$("[data-testid='svg-text-edit']") && svgText("Back " + from), 2000).catch(() => { throw new Error(`"${from}": re-typed text not shown`); });
+        } catch (e) { throw new Error(`${block.type}: ${e.message}`); }
+        finally { document.activeElement?.blur?.(); for (let k = 0; k < done; k++) { _key("z", { ctrlKey: true }); await _wait(60); } }
+        await _waitFor(() => svgText(from), 2000).catch(() => { throw new Error(`${block.type}: undo did not restore "${from}"`); });
+      }
+    }
+  }},
+  { name: "CR26: empty optional SVG labels show no placeholder in Present mode", fn: async () => {
+    await _mrdInject([{ type: "cycle", items: [{ label: "PcA" }, { label: "PcB" }] }, { type: "funnel", items: [{ label: "PfA" }] }], null,
+      (vp) => vp && _$$("text[data-svg-edit]", vp).some((el) => el.textContent.trim() === "PcA") ? vp : null);
+    const n = _$$("[data-vela-placeholder]", _mrdViewport()).length;
+    if (n < 4) throw new Error(`editor shows ${n} placeholders, want >= 4 (center label, sub, value, drop)`);
+    document.activeElement?.blur(); await _wait(100);
+    _key("f");
+    try {
+      await _waitFor(() => !_$("header") && document.body.textContent.includes("PcA"), 2000);
+      await _wait(150);
+      const ph = _$$("[data-vela-placeholder]").length, ed = _$$("[data-svg-edit]").length;
+      if (ph || ed) throw new Error(`Present mode shows ${ph} placeholders and ${ed} editable SVG labels`);
+    } finally {
+      _key("f");
+      await _waitFor(() => _$("header"), 2000);
+    }
+  }},
+  { name: "CR26: opening an SVG label input does not move or cover the other labels", fn: async () => {
+    await _mrdInject([{ type: "funnel", items: [{ label: "LsA", value: "10K", drop: "-40%" }, { label: "LsB", value: "4K" }, { label: "LsC", value: "1K" }] }], null,
+      (vp) => vp && _$$("text[data-svg-edit]", vp).some((el) => el.textContent.trim() === "LsA") ? vp : null);
+    await _wait(1000); // let the entrance (stagger) animation settle before measuring
+    const texts = () => _$$("text[data-svg-edit]", _mrdViewport());
+    const others = () => texts().filter((el) => el.textContent.trim() !== "LsA");
+    const r0 = others().map((el) => el.getBoundingClientRect());
+    _clickMod(texts().find((el) => el.textContent.trim() === "LsA"));
+    const inp = await _waitFor(() => _$("[data-testid='svg-text-edit']", _mrdViewport()), 1500);
+    try {
+      await _mrdFrame();
+      const r1 = others().map((el) => el.getBoundingClientRect());
+      r0.forEach((a, i) => {
+        const b = r1[i];
+        if (Math.abs(a.left - b.left) > 1 || Math.abs(a.top - b.top) > 1) throw new Error(`label ${i} moved ${b.left - a.left},${b.top - a.top}px`);
+      });
+      const ir = inp.getBoundingClientRect();
+      const cover = r1.find((b) => ir.left < b.right - 1 && ir.right > b.left + 1 && ir.top < b.bottom - 1 && ir.bottom > b.top + 1);
+      if (cover) throw new Error("input covers an adjacent label");
+    } finally {
+      inp.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+      await _waitFor(() => !_$("[data-testid='svg-text-edit']"), 1500);
+    }
+  }},
+  { name: "CR26: typed status names ignore case, underscore and hyphen", fn: async () => {
+    const hooks = _hooks();
+    await _mrdInject([{ type: "checklist", items: [{ text: "St one", status: "pending" }, { text: "St two", status: "done" }] }], null,
+      (vp) => vp?.textContent.includes("St one") ? vp : null);
+    const past0 = hooks.getHistoryCounts ? hooks.getHistoryCounts().past : 0;
+    try {
+      await _tlEdit("PENDING", "in_progress", "IN PROGRESS");
+      await _tlEdit("DONE", "In-Progress", "IN PROGRESS");
+      // A save that normalizes to the current state shows the default label at once.
+      await _tlEdit("IN PROGRESS", "in_progress", "IN PROGRESS");
+      await _tlEdit("IN PROGRESS", "", "IN PROGRESS");
+      const cols = _$$("div", _mrdViewport()).filter((el) => el.style.cursor === "pointer" && el.textContent.trim() === "IN PROGRESS").map((el) => el.style.color);
+      if (cols.length !== 2 || !cols.every((c) => /245, 158, 11|#f59e0b/i.test(c))) throw new Error(`status not switched to in-progress (${cols})`);
+    } finally {
+      await _mrdUndoTo(past0);
+    }
+  }},
+  { name: "CR26: empty-text placeholder is invisible until its block is hovered, and keeps its size", fn: async () => {
+    await _mrdInject([{ type: "funnel", items: [{ label: "PhA", value: "10K" }, { label: "PhB", value: "4K" }] }], null,
+      (vp) => vp && _$$("text[data-svg-edit]", vp).some((el) => el.textContent.trim() === "PhA") ? vp : null);
+    await _wait(1000);
+    document.activeElement?.blur(); await _wait(100);
+    const vp = _mrdViewport();
+    const ph = _$("[data-vela-placeholder]", vp);
+    if (!ph) throw new Error("no placeholder found");
+    const host = ph.closest("[data-block-type]");
+    const op = () => parseFloat(getComputedStyle(ph).opacity);
+    await _mrdUnhover(host);
+    const r0 = ph.getBoundingClientRect();
+    if (op() !== 0) throw new Error(`placeholder opacity ${op()} without hover, want 0`);
+    await _mrdHover(host);
+    if (!(op() > 0.2)) throw new Error(`placeholder opacity ${op()} on hover, want visible`);
+    const r1 = ph.getBoundingClientRect();
+    if (Math.abs(r0.width - r1.width) > 0.5 || Math.abs(r0.height - r1.height) > 0.5 || Math.abs(r0.left - r1.left) > 0.5) throw new Error("placeholder box changed on hover");
+    if (!(r0.width > 4 && r0.height > 4)) throw new Error(`hidden placeholder target is ${r0.width}x${r0.height}`);
+    await _mrdUnhover(host);
+    if (op() !== 0) throw new Error("placeholder stays visible after hover ends");
+  }},
+  { name: "CR26: markup typed into an SVG label is stored like the same input in an HTML text", fn: async () => {
+    const typed = "<b>hi</b> sub";
+    // HTML path: the value EditableText stores for this input, as shown.
+    await _mrdInject([{ type: "checklist", items: [{ text: "Task one", status: "pending" }] }], null,
+      (vp) => vp?.textContent.includes("Task one") ? vp : null);
+    let done = 0, want;
+    try {
+      _click(await _waitFor(() => _tlEditNode("Task one"), 2000));
+      const ed = await _waitFor(() => _$("[contenteditable='true']", _mrdViewport()), 1500);
+      ed.textContent = typed;
+      ed.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+      await _waitFor(() => !_$("[contenteditable='true']"), 2000); done++;
+      want = _$$("div", _mrdViewport()).filter((el) => el.style.cursor === "pointer" && el.textContent.trim() !== "PENDING" && !_$$("div", el).some((c) => c.style.cursor === "pointer"))[0]?.textContent.trim();
+    } finally { document.activeElement?.blur?.(); for (let k = 0; k < done; k++) { _key("z", { ctrlKey: true }); await _wait(60); } }
+    if (!want || /[<>]/.test(want)) throw new Error(`HTML text kept markup: "${want}"`);
+    // SVG path: funnel value, cycle centre label, flow loop label.
+    const svgText = (t) => _$$("text[data-svg-edit]", _mrdViewport() || document).find((el) => el.textContent.trim() === t);
+    const cases = [
+      [{ type: "funnel", items: [{ label: "FunA", value: "100" }] }, "100"],
+      [{ type: "cycle", centerLabel: "CtrL", items: [{ label: "CyA" }, { label: "CyB" }] }, "CtrL"],
+      [{ type: "flow", loop: true, loopLabel: "LoopH", items: [{ label: "A" }, { label: "B" }] }, "LoopH"],
+    ];
+    for (const [block, from] of cases) {
+      await _mrdInject([block], null, (vp) => vp && svgText(from) ? vp : null);
+      let n = 0;
+      try {
+        _clickMod(svgText(from));
+        const inp = await _waitFor(() => _$("[data-testid='svg-text-edit']", _mrdViewport()), 1500);
+        inp.value = typed;
+        inp.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+        await _waitFor(() => !_$("[data-testid='svg-text-edit']") && svgText(want), 2000).catch(() => {
+          throw new Error(`typed markup shows "${_$$("text[data-svg-edit]", _mrdViewport()).map((el) => el.textContent).join("|")}", want "${want}"`);
+        }); n++;
+      } catch (e) { throw new Error(`${block.type}: ${e.message}`); }
+      finally { document.activeElement?.blur?.(); for (let k = 0; k < n; k++) { _key("z", { ctrlKey: true }); await _wait(60); } }
+    }
+  }},
+  { name: "CR26: an empty flow loop label placeholder sits where the filled label sits", fn: async () => {
+    const texts = () => _$$("text[data-svg-edit]", _mrdViewport() || document);
+    const svgText = (t) => texts().find((el) => el.textContent.trim() === t);
+    const cx = (el) => { const r = el.getBoundingClientRect(); return (r.left + r.right) / 2; };
+    const cy = (el) => { const r = el.getBoundingClientRect(); return (r.top + r.bottom) / 2; };
+    for (const [dir, lab] of [["horizontal", "LoopP"], ["vertical", "LoopQ"]]) {
+      await _mrdInject([{ type: "flow", loop: true, direction: dir, loopLabel: lab, items: [{ label: "A" }, { label: "B" }, { label: "C" }] }], null,
+        (vp) => vp && svgText(lab) ? vp : null);
+      await _wait(900); // let the entrance animation settle before measuring
+      let done = 0;
+      try {
+        const f = svgText(lab), fx = cx(f), fy = cy(f);
+        _clickMod(f);
+        const inp = await _waitFor(() => _$("[data-testid='svg-text-edit']", _mrdViewport()), 1500);
+        inp.value = "";
+        inp.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true })); done++;
+        const ph = await _waitFor(() => !_$("[data-testid='svg-text-edit']") && texts().find((el) => el.textContent.trim() === EDIT_PLACEHOLDER), 2000);
+        await _wait(200);
+        const px = cx(ph), py = cy(ph);
+        if (Math.abs(px - fx) > 4 || Math.abs(py - fy) > 4) throw new Error(`placeholder at ${px.toFixed(1)},${py.toFixed(1)}, label at ${fx.toFixed(1)},${fy.toFixed(1)}`);
+      } catch (e) { throw new Error(`${dir}: ${e.message}`); }
+      finally { document.activeElement?.blur?.(); for (let k = 0; k < done; k++) { _key("z", { ctrlKey: true }); await _wait(60); } }
+    }
+  }},
+], { setup: _selectFirstModule });
+
+// CR21: while a slide or section is dragged in the TOC, the pointer near the top /
+// bottom edge of the scroll pane scrolls it, so a drop can reach the first / last
+// section. The pane is made short here so it overflows with any deck.
+async function _tidelineTocDrag(fn) {
+  const tree = await _waitFor(() => document.querySelector('[data-testid="toc-tree"]'), 3000);
+  const pane = tree.parentElement; const old = pane.style.maxHeight;
+  pane.style.maxHeight = Math.max(90, Math.min(220, Math.floor(tree.offsetHeight / 2))) + "px";
+  try {
+    await _wait(60);
+    const sc = tocScrollParent(tree);
+    if (sc !== pane) throw new Error("TOC pane does not overflow");
+    return await fn(sc, tree);
+  } finally { pane.style.maxHeight = old; }
+}
+function _tidelineFire(dt) { return (el, type, extra) => el.dispatchEvent(new DragEvent(type, Object.assign({ bubbles: true, cancelable: true, dataTransfer: dt }, extra))); }
+// Fire dragover at (x, y) every 40ms until cond() or timeout; return cond().
+async function _tidelineHold(el, fire, x, y, cond, ms) {
+  const t0 = performance.now();
+  while (performance.now() - t0 < ms) { fire(el, "dragover", { clientX: x, clientY: y }); await _wait(40); if (cond()) return true; }
+  return cond();
+}
+const _tidelineRows = () => _$$('[data-testid="toc-slide-row"]');
+// The title span has flex:1 (the number / time spans before it change on a move).
+const _tidelineTitle = (r) => { const t = _$$("span", r).find((x) => x.style.flex && x.style.flex.startsWith("1")); return ((t || r).textContent || "").trim(); };
+
+uiSuite("tideline-CR21 TOC drag auto-scroll", [
+  { name: "Speed is 0 in the middle, grows toward each edge, and is 0 far outside", fn: async () => {
+    const v = (y) => tocAutoScrollSpeed(y, 100, 500);
+    if (v(300) !== 0) throw new Error("middle scrolls: " + v(300));
+    if (!(v(150) < 0 && v(110) < v(150) && v(101) <= v(110))) throw new Error("top zone speed: " + [v(150), v(110), v(101)]);
+    if (!(v(450) > 0 && v(490) > v(450) && v(499) >= v(490))) throw new Error("bottom zone speed: " + [v(450), v(490), v(499)]);
+    if (v(90) !== -TOC_AUTOSCROLL_MAX || v(510) !== TOC_AUTOSCROLL_MAX) throw new Error("just outside is not full speed");
+    if (v(0) !== 0 || v(700) !== 0 || tocAutoScrollSpeed(NaN, 0, 10) !== 0 || tocAutoScrollSpeed(5, 10, 10) !== 0) throw new Error("far outside / bad input scrolls");
+  }},
+  { name: "Drag near the top scrolls up to the start; drop lands in the first section", fn: () => _tidelineTocDrag(async (sc) => {
+    sc.scrollTop = sc.scrollHeight; await _wait(60);
+    const before = _tidelineRows().map(_tidelineTitle);
+    if (before.length < 3) throw new Error("need >=3 slide rows");
+    const src = _tidelineRows()[before.length - 1];
+    const r = sc.getBoundingClientRect(); const x = r.left + r.width / 2;
+    const fire = _tidelineFire(new DataTransfer());
+    fire(src, "dragstart");
+    try {
+      if (!(await _tidelineHold(sc, fire, x, r.top + 3, () => sc.scrollTop === 0, 6000))) throw new Error("did not reach the top: " + sc.scrollTop);
+      const dst = _tidelineRows()[0]; const b = dst.getBoundingClientRect();
+      if (b.bottom < r.top || b.top > r.bottom) throw new Error("first row not visible after scroll");
+      fire(dst, "dragover", { clientX: b.left + 5, clientY: b.top + 2 });
+      fire(dst, "drop", { clientX: b.left + 5, clientY: b.top + 2 });
+    } finally { fire(src, "dragend"); }
+    await _waitFor(() => _tidelineTitle(_tidelineRows()[0]) === before[before.length - 1], 2000).catch(() => { throw new Error("drop did not land first: " + _tidelineRows().slice(0, 2).map(_tidelineTitle) + " | want " + before[before.length - 1]); });
+    // Restore: drag it back below the row that is now last.
+    const f2 = _tidelineFire(new DataTransfer()); const s2 = _tidelineRows()[0]; const rows = _tidelineRows(); const d2 = rows[rows.length - 1];
+    d2.scrollIntoView({ block: "nearest" }); await _wait(40);
+    const b2 = d2.getBoundingClientRect();
+    f2(s2, "dragstart"); f2(d2, "dragover", { clientX: b2.left + 5, clientY: b2.bottom - 2 }); f2(d2, "drop", { clientX: b2.left + 5, clientY: b2.bottom - 2 }); f2(s2, "dragend");
+    await _waitFor(() => JSON.stringify(_tidelineRows().map(_tidelineTitle)) === JSON.stringify(before), 2000).catch(() => { throw new Error("restore failed: " + _tidelineRows().map(_tidelineTitle).slice(-3)); });
+  })},
+  { name: "Drag near the bottom scrolls down to the end and stops there", fn: () => _tidelineTocDrag(async (sc) => {
+    sc.scrollTop = 0; await _wait(60);
+    const src = _tidelineRows()[0]; const r = sc.getBoundingClientRect(); const x = r.left + r.width / 2;
+    const end = () => sc.scrollTop >= sc.scrollHeight - sc.clientHeight - 1;
+    const fire = _tidelineFire(new DataTransfer());
+    fire(src, "dragstart");
+    try {
+      if (!(await _tidelineHold(sc, fire, x, r.bottom - 3, end, 6000))) throw new Error("did not reach the end: " + sc.scrollTop);
+      const at = sc.scrollTop; await _wait(120);
+      if (sc.scrollTop !== at) throw new Error("scrolled past the end");
+    } finally { fire(src, "dragend"); }
+  })},
+  { name: "Scroll stops on dragend (Escape), on drop, in the middle and without a drag", fn: () => _tidelineTocDrag(async (sc) => {
+    const r = sc.getBoundingClientRect(); const x = r.left + r.width / 2;
+    const mid = Math.floor((sc.scrollHeight - sc.clientHeight) / 2);
+    const still = async () => { const a = sc.scrollTop; await _wait(150); return sc.scrollTop === a; };
+    // No drag active: an edge dragover does nothing.
+    sc.scrollTop = mid; await _wait(40);
+    const fire0 = _tidelineFire(new DataTransfer());
+    fire0(sc, "dragover", { clientX: x, clientY: r.bottom - 3 });
+    if (!(await still()) || sc.scrollTop !== mid) throw new Error("scrolled without a drag");
+    const src = _tidelineRows()[0];
+    for (const endType of ["dragend", "drop"]) {
+      sc.scrollTop = mid; await _wait(40);
+      const fire = _tidelineFire(new DataTransfer());
+      fire(src, "dragstart");
+      try {
+        fire(sc, "dragover", { clientX: x, clientY: r.bottom - 3 });
+        await _wait(80);
+        if (sc.scrollTop === mid) throw new Error("edge did not scroll");
+        fire(endType === "drop" ? document.body : src, endType);
+        if (!(await still())) throw new Error("still scrolls after " + endType);
+        // Pointer back in the middle: no scroll.
+        if (endType === "dragend") {
+          fire(src, "dragstart"); sc.scrollTop = mid; await _wait(40);
+          fire(sc, "dragover", { clientX: x, clientY: r.top + r.height / 2 });
+          if (!(await still()) || sc.scrollTop !== mid) throw new Error("middle scrolls");
+        }
+      } finally { fire(src, "dragend"); }
+    }
+  })},
+]);
+
+// ── Sprint tideline (CR22-CR25): image paste placement stress test ──────
+// Pastes 1-4 images of mixed aspect (wide 3:1, 16:9, square, tall 9:16) through
+// the real paste handler onto (a) an empty slide, (b) a heading slide and (c) a
+// heading + text + credit slide, then measures the rendered boxes.
+const _tlAspects = { wide: [900, 300, "#3b82f6"], hd: [1280, 720, "#10b981"], sq: [600, 600, "#f59e0b"], tall: [450, 800, "#ef4444"] };
+const _tlBases = {
+  a: [],
+  b: [{ type: "heading", text: "TL heading only" }],
+  c: [{ type: "heading", text: "TL heading text credit" }, { type: "text", text: "Short body text that explains the pictures." }, { type: "text", text: "Credit: Example Author, 16 Jun 2025", size: "sm" }],
+};
+const _tlPaste = async (kind) => {
+  const [w, h, color] = _tlAspects[kind];
+  const cv = document.createElement("canvas"); cv.width = w; cv.height = h;
+  const g = cv.getContext("2d"); g.fillStyle = color; g.fillRect(0, 0, w, h);
+  const blob = await new Promise((r) => cv.toBlob(r, "image/png"));
+  const dt = new DataTransfer(); dt.items.add(new File([blob], `${kind}.png`, { type: "image/png" }));
+  _mrdViewport().dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true }));
+};
+const _tlMeasure = () => {
+  const vp = _mrdViewport(); const v = vp.getBoundingClientRect(); const s = v.width / 960;
+  const outside = Array.from(vp.querySelectorAll("[data-block-type]")).filter((el) => el.dataset.blockType !== "image").map((el) => el.getBoundingClientRect())
+    .filter((r) => r.left < v.left - 1 || r.top < v.top - 1 || r.right > v.right + 1 || r.bottom > v.bottom + 1);
+  const imgs = Array.from(vp.querySelectorAll("img")).map((im) => {
+    const r = im.getBoundingClientRect(); const k = Math.min(r.width / im.naturalWidth, r.height / im.naturalHeight);
+    return { w: im.naturalWidth * k / s, h: im.naturalHeight * k / s, cx: (r.left + r.width / 2 - v.left) / s };
+  });
+  const grid = vp.querySelector("[data-testid='image-grid']");
+  return { outside: outside.length, imgs, area: imgs.reduce((a, i) => a + i.w * i.h, 0) / (960 * 540), cols: grid ? Number(grid.getAttribute("data-image-cols")) : null };
+};
+const _tlCase = async (base, kinds, extra, probe) => {
+  const past = _hooks().getHistoryCounts ? _hooks().getHistoryCounts().past : 0;
+  await _mrdInject(_tlBases[base], { layout: undefined, contentFlex: undefined, imageFlex: undefined, imageCols: undefined, ...(extra || {}) }, (vp) => vp);
+  for (let k = 0; k < kinds.length; k++) {
+    await _tlPaste(kinds[k]);
+    await _waitFor(() => Array.from(_mrdViewport().querySelectorAll("img")).filter((im) => im.complete && im.naturalWidth > 0).length >= k + 1, 4000);
+  }
+  // Let the fit pass, the aspect cache and the grid box settle.
+  await _wait(500); await _mrdFrame();
+  const m = _tlMeasure();
+  const label = `${base}:${kinds.join("+")}`;
+  if (m.outside) throw new Error(`${label}: ${m.outside} non-image block(s) outside the 960x540 canvas`);
+  if (m.imgs.length !== kinds.length) throw new Error(`${label}: ${m.imgs.length}/${kinds.length} images rendered`);
+  if (m.imgs.some((i) => !(i.h > 20 && i.w > 20))) throw new Error(`${label}: an image is collapsed (${m.imgs.map((i) => `${i.w.toFixed(0)}x${i.h.toFixed(0)}`).join(" ")})`);
+  if (probe) m.probe = await probe(m, label);
+  await _mrdUndoTo(past);
+  return m;
+};
+
+uiSuite("tideline-CR22-CR25 image placement", [
+  { name: "CR22: one image on an empty slide that kept a split layout fills the slide, not one half", fn: async () => {
+    for (const layout of ["image-right", "image-left"]) {
+      const m = await _tlCase("a", ["tall"], { layout });
+      const cx = m.imgs[0].cx;
+      if (Math.abs(cx - 480) > 24) throw new Error(`${layout}: image centre x=${cx.toFixed(0)} (expected near 480)`);
+      if (m.imgs[0].h < 500) throw new Error(`${layout}: tall image height ${m.imgs[0].h.toFixed(0)} does not fill the slide`);
+    }
+  }},
+  { name: "CR24: a wide image fills the free width (solo and under a heading)", fn: async () => {
+    for (const base of ["a", "b", "c"]) {
+      const m = await _tlCase(base, ["wide"]);
+      if (m.imgs[0].w < 800) throw new Error(`${base}: wide image is only ${m.imgs[0].w.toFixed(0)}px wide`);
+    }
+  }},
+  { name: "CR22/CR24: single images of every aspect use the free area well", fn: async () => {
+    const minArea = { a: 0.3, b: 0.18, c: 0.15 };
+    for (const base of ["a", "b", "c"]) for (const kind of ["wide", "hd", "sq", "tall"]) {
+      const m = await _tlCase(base, [kind]);
+      if (m.area < minArea[base]) throw new Error(`${base}:${kind}: image covers ${(m.area * 100).toFixed(0)}% of the slide`);
+    }
+  }},
+  { name: "CR23: three images pick their grid by aspect ratio", fn: async () => {
+    for (const base of ["a", "b"]) {
+      const tall = await _tlCase(base, ["tall", "tall", "tall"]);
+      if (tall.cols !== 3) throw new Error(`${base}: 3 tall images use ${tall.cols} columns (expected one row of 3)`);
+      const wide = await _tlCase(base, ["wide", "wide", "wide"]);
+      if (!(wide.cols < 3)) throw new Error(`${base}: 3 wide images still use ${wide.cols} columns`);
+    }
+    const c = await _tlCase("c", ["wide", "wide", "wide"]);
+    if (!(c.cols < 3)) throw new Error(`c: 3 wide images still use ${c.cols} columns`);
+  }},
+  { name: "CR25: 2-4 mixed images never push text off the slide", fn: async () => {
+    for (const base of ["a", "b", "c"]) for (const kinds of [["wide", "tall"], ["hd", "hd"], ["wide", "sq", "tall"], ["wide", "hd", "sq", "tall"]]) {
+      await _tlCase(base, kinds);
+    }
+  }},
+  { name: "CR25: a tall image between a heading and a credit line yields its height", fn: async () => {
+    const marker = "TL CR25 credit";
+    const src = _mrdSvg(338, 600, "ef4444");
+    for (const body of [[], [{ type: "text", text: "A long paragraph of body text. ".repeat(14) }]]) {
+      await _mrdInject([{ type: "heading", text: "TL CR25" }, ...body, { type: "image", src }, { type: "text", text: marker }], { layout: undefined }, (vp) => vp?.textContent.includes(marker) && vp.querySelector("img")?.naturalWidth > 0 ? vp : null);
+      await _wait(400);
+      const m = _tlMeasure();
+      if (m.outside) throw new Error(`${body.length ? "heavy" : "plain"}: ${m.outside} text block(s) outside the canvas`);
+      const credit = Array.from(_mrdViewport().querySelectorAll("[data-block-type='text']")).find((el) => el.textContent.includes(marker));
+      const vr = _mrdViewport().getBoundingClientRect(), cr = credit.getBoundingClientRect();
+      if (cr.bottom > vr.bottom - 4) throw new Error(`credit line is clipped (bottom ${(cr.bottom - vr.bottom).toFixed(1)}px past the slide)`);
+      if (m.imgs[0].h < 100) throw new Error(`image collapsed to ${m.imgs[0].h.toFixed(0)}px`);
+    }
+  }},
+  { name: "CR24/CR25: small icons and logos are never upscaled past 2x natural size", fn: async () => {
+    const png = (w, h, color) => { const cv = document.createElement("canvas"); cv.width = w; cv.height = h; const g = cv.getContext("2d"); g.fillStyle = color; g.fillRect(0, 0, w, h); return cv.toDataURL("image/png"); };
+    const icon = png(32, 32, "#3b82f6"), logo = png(64, 64, "#f59e0b"), hd = png(1280, 720, "#10b981"), wide = png(900, 300, "#ef4444");
+    const cases = [
+      ["icon alone", [{ type: "image", src: icon }], [32]],
+      ["icon under a heading", [{ type: "heading", text: "TL icon" }, { type: "image", src: icon }], [32]],
+      ["logo in a 3-image grid", [{ type: "heading", text: "TL logo" }, { type: "image", src: logo }, { type: "image", src: hd }, { type: "image", src: wide }], [64, 1280, 900]],
+    ];
+    for (const [label, blocks, naturals] of cases) {
+      const past = _hooks().getHistoryCounts ? _hooks().getHistoryCounts().past : 0;
+      await _mrdInject(blocks, { layout: undefined, imageCols: undefined }, (vp) => { const ims = Array.from(vp?.querySelectorAll("img") || []); return ims.length === naturals.length && ims.every((im) => im.complete && im.naturalWidth > 0) ? vp : null; });
+      await _wait(300); await _mrdFrame();
+      const m = _tlMeasure();
+      if (m.outside) throw new Error(`${label}: ${m.outside} block(s) outside the canvas`);
+      m.imgs.forEach((im, k) => { if (im.w > naturals[k] * 2 + 1) throw new Error(`${label}: image ${k} shown ${im.w.toFixed(0)}px wide (natural ${naturals[k]})`); });
+      if (label === "icon alone" && Math.abs(m.imgs[0].cx - 480) > 4) throw new Error(`icon alone is not centered (cx ${m.imgs[0].cx.toFixed(0)})`);
+      await _mrdUndoTo(past);
+    }
+  }},
+  { name: "CR23: sequential pastes pick the layout with the larger image area", fn: async () => {
+    // After each paste, render the same images in the other layout (split <->
+    // stacked) and measure it. The chosen layout must show at least as much
+    // image area (3% measurement tolerance) and keep all text on the slide.
+    const alt = async (m, label) => {
+      const vp = _mrdViewport();
+      const split = !!vp.querySelector("[data-split-image]");
+      const srcs = Array.from(vp.querySelectorAll("img")).map((im) => im.getAttribute("src"));
+      const n = srcs.length, last = m.imgs[n - 1];
+      const [cf, imf] = pasteSplitFlex(n, last.w / last.h);
+      await _mrdInject([..._tlBases.c, ...srcs.map((src) => ({ type: "image", src }))], split ? { layout: undefined, contentFlex: undefined, imageFlex: undefined, imageCols: undefined } : { layout: "image-right", contentFlex: cf, imageFlex: imf, imageCols: undefined },
+        (v) => (!!v?.querySelector("[data-split-image]")) !== split && Array.from(v.querySelectorAll("img")).filter((im) => im.complete && im.naturalWidth > 0).length === n ? v : null);
+      await _wait(400); await _mrdFrame();
+      const a = _tlMeasure();
+      if (m.area < a.area * 0.97) throw new Error(`${label}: ${split ? "split" : "stack"} shows ${(m.area * 100).toFixed(1)}% but ${split ? "stack" : "split"} would show ${(a.area * 100).toFixed(1)}%`);
+      return split;
+    };
+    for (const [kind, max] of [["sq", 4], ["wide", 3], ["tall", 3]]) for (let n = 1; n <= max; n++) await _tlCase("c", Array(n).fill(kind), undefined, alt);
+    // The reported case: 3 squares on heading+text+credit must not stay in a split.
+    const three = await _tlCase("c", ["sq", "sq", "sq"], undefined, async () => !!_mrdViewport().querySelector("[data-split-image]"));
+    if (three.probe) throw new Error("3 squares stayed in a side split");
+  }},
+  { name: "CR23: a split the author set stays a split on later pastes", fn: async () => {
+    const m = await _tlCase("c", ["sq", "sq", "sq"], { layout: "image-left" }, async () => !!_mrdViewport().querySelector("[data-split-image]"));
+    if (!m.probe) throw new Error("author image-left split was replaced");
+  }},
+  { name: "CR24: a large 1600x900 image alone still fills the slide width", fn: async () => {
+    const cv = document.createElement("canvas"); cv.width = 1600; cv.height = 900; cv.getContext("2d").fillRect(0, 0, 1600, 900);
+    const past = _hooks().getHistoryCounts ? _hooks().getHistoryCounts().past : 0;
+    await _mrdInject([{ type: "image", src: cv.toDataURL("image/png") }], { layout: undefined }, (vp) => vp?.querySelector("img")?.naturalWidth > 0 ? vp : null);
+    await _wait(300); await _mrdFrame();
+    const m = _tlMeasure();
+    await _mrdUndoTo(past);
+    if (m.imgs[0].w < 960 * 0.9) throw new Error(`1600x900 image is only ${m.imgs[0].w.toFixed(0)}px wide`);
+  }},
+  { name: "paste burst: 3 and 5 rapid image pastes (0/50/150 ms apart) all land in order, one undo step each", fn: async () => {
+    const counts = () => _hooks().getHistoryCounts().past;
+    for (const n of [3, 5]) for (const gap of [0, 50, 150]) {
+      const label = `${n} pastes ${gap}ms apart`, mark = `TL-BURST-${n}-${gap}`;
+      const past = counts();
+      await _mrdInject([{ type: "heading", text: mark }], { layout: undefined, contentFlex: undefined, imageFlex: undefined, imageCols: undefined }, (vp) => vp?.textContent.includes(mark) && !vp.querySelector("img") ? vp : null);
+      const rows = _m1RowTitles().length;
+      // Distinct widths (natural size is kept) mark the paste order.
+      const widths = Array.from({ length: n }, (_, k) => 120 + 60 * k);
+      const blobs = await Promise.all(widths.map((w, k) => { const cv = document.createElement("canvas"); cv.width = w; cv.height = 90; const g = cv.getContext("2d"); g.fillStyle = _tlColors[k % 5]; g.fillRect(0, 0, w, 90); return new Promise((r) => cv.toBlob(r, "image/png")); }));
+      for (let k = 0; k < n; k++) {
+        const dt = new DataTransfer(); dt.items.add(new File([blobs[k]], `b${k}.png`, { type: "image/png" }));
+        _mrdViewport().dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true }));
+        if (gap) await _wait(gap);
+      }
+      let got = [];
+      try { await _waitFor(() => { const vp = _mrdViewport(); got = Array.from(vp?.querySelectorAll("img") || []).filter((im) => im.complete && im.naturalWidth > 0).map((im) => im.naturalWidth); return got.length >= n && vp.textContent.includes(mark) ? vp : null; }, 8000); } catch { /* reported below */ }
+      await _wait(200);
+      const rowsAfter = _m1RowTitles().length;
+      // One undo step per paste: each Ctrl+Z removes exactly the last image.
+      // (Counted from the rendered slide: the history counter stops at its cap
+      // in a long battery run.)
+      let undoErr = null;
+      if (got.length === n) {
+        document.activeElement?.blur?.();
+        for (let k = n - 1; k >= 0 && !undoErr; k--) {
+          _key("z", { ctrlKey: true });
+          const left = await _waitFor(() => { const w = Array.from(_mrdViewport()?.querySelectorAll("img") || []).map((im) => im.naturalWidth); return w.length === k ? w : null; }, 1500).catch(() => null);
+          if (!left) undoErr = `undo ${n - k} did not remove exactly one image`;
+          else if (left.join(",") !== widths.slice(0, k).join(",")) undoErr = `undo ${n - k} left ${left.join(",")}`;
+        }
+      }
+      await _mrdUndoTo(past);
+      if (got.length !== n) throw new Error(`${label}: ${got.length}/${n} images on the target slide`);
+      if (got.join(",") !== widths.join(",")) throw new Error(`${label}: images out of paste order (${got.join(",")})`);
+      if (undoErr) throw new Error(`${label}: ${undoErr}`);
+      if (rowsAfter !== rows) throw new Error(`${label}: slide count changed ${rows} -> ${rowsAfter}`);
+    }
+  }},
+  { name: "CR23 stress matrix: the pasted layout and grid show >= 85% of the best alternative (5 gate repros + 12 seeded cases; the unit matrix has all 66)", fn: async () => {
+    // The last image goes through the real paste handler; the chosen result is
+    // then compared, by real rendering, with the other layout (split <-> stack)
+    // and with the uniform count-driven grid in the same layout.
+    const fixed = [{ body: "table", aspects: [16 / 9] }, { body: "table", aspects: [16 / 9, 16 / 9] }, { body: "bullets8", aspects: [16 / 9, 16 / 9, 16 / 9, 16 / 9] }, { body: "none", aspects: [1 / 3, 16 / 9] }, { body: "none", aspects: [1 / 3, 16 / 9, 1 / 3] }];
+    const cases = [...fixed, ...tidelineStressCases().filter((_, k) => k % 5 === 2).slice(0, 12)];
+    let min = Infinity, worst = "";
+    for (const c of cases) {
+      const r = await _tlStressCase(c);
+      if (r.ratio < min) { min = r.ratio; worst = r.label; }
+      if (r.ratio < 0.85) throw new Error(`${r.label}: chosen ${r.detail}`);
+    }
+    return { cases: cases.length, min: Number(min.toFixed(3)), worst };
+  }},
+  { name: "paste race: deleting the slide while an image paste is pending drops the paste", fn: async () => {
+    const past = _hooks().getHistoryCounts().past;
+    await _mrdInject([{ type: "heading", text: "TL-RACE-A" }], { layout: undefined }, (vp) => vp?.textContent.includes("TL-RACE-A") ? vp : null);
+    await _waitFor(() => _m1RowTitles().includes("TL-RACE-A"), 2000);
+    const before = _m1RowTitles(), i = before.indexOf("TL-RACE-A");
+    await _tlPasteBig();
+    _click(_tocRows()[i].querySelector("[data-testid='toc-slide-delete']"));
+    await _wait(2500);
+    const after = _m1RowTitles();
+    const want = before.filter((_, k) => k !== i).join("|");
+    await _mrdUndoTo(past);
+    if (after.join("|") !== want) throw new Error(`slide list after delete: ${after.join("|")} (expected ${want})`);
+  }},
+  { name: "paste race: Ctrl+Z right after a paste stays undone", fn: async () => {
+    const past = _hooks().getHistoryCounts().past;
+    await _mrdInject([{ type: "heading", text: "TL-RACE-B" }], { layout: undefined }, (vp) => vp?.textContent.includes("TL-RACE-B") ? vp : null);
+    await _mrdInject([{ type: "heading", text: "TL-RACE-B-E1" }], { layout: undefined }, (vp) => vp?.textContent.includes("TL-RACE-B-E1") ? vp : null);
+    await _tlPasteBig();
+    document.activeElement?.blur?.();
+    _key("z", { ctrlKey: true });
+    await _wait(2500);
+    const vp = _mrdViewport(), text = vp.textContent, imgs = vp.querySelectorAll("img").length;
+    await _mrdUndoTo(past);
+    if (text.includes("TL-RACE-B-E1") || !text.includes("TL-RACE-B")) throw new Error("the undone edit came back");
+    if (imgs) throw new Error(`${imgs} image(s) added after the undo`);
+  }},
+  { name: "paste race: an image paste into an open inline edit keeps the typed text", fn: async () => {
+    const past = _hooks().getHistoryCounts().past;
+    const vp = await _mrdInject([{ type: "heading", text: "TL-RACE-C" }], { layout: undefined }, (v) => v?.textContent.includes("TL-RACE-C") ? v : null);
+    const disp = Array.from(vp.querySelectorAll("[data-block-type='heading'] div")).find((d) => d.textContent === "TL-RACE-C" && d.style.cursor === "pointer");
+    if (!disp) throw new Error("heading text is not editable");
+    _click(disp);
+    const ed = await _waitFor(() => vp.querySelector("[data-block-type='heading'] [contenteditable]"), 1500);
+    ed.focus();
+    const sel = window.getSelection(); sel.selectAllChildren(ed); sel.collapseToEnd();
+    document.execCommand("insertText", false, "-TYPED");
+    const cv = document.createElement("canvas"); cv.width = 64; cv.height = 64;
+    const blob = await new Promise((r) => cv.toBlob(r, "image/png"));
+    const dt = new DataTransfer(); dt.items.add(new File([blob], "c.png", { type: "image/png" }));
+    ed.dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true }));
+    await _wait(1200);
+    const stillEditing = document.activeElement === ed;
+    ed.blur();
+    await _wait(300);
+    const text = _mrdViewport().textContent, imgs = _mrdViewport().querySelectorAll("img").length;
+    await _mrdUndoTo(past);
+    if (!stillEditing) throw new Error("the paste closed the inline edit");
+    if (!text.includes("TL-RACE-C-TYPED")) throw new Error("typed text was dropped");
+    if (imgs) throw new Error("the paste into the inline edit added an image");
+  }},
+], { setup: _selectFirstModule });
+
+// Helpers for the CR23 stress matrix and the paste-race tests above.
+const _tlColors = ["#3b82f6", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6"];
+const _tlCanvas = (a, k) => { const cv = document.createElement("canvas"); cv.height = 300; cv.width = Math.max(1, Math.round(300 * a)); const g = cv.getContext("2d"); g.fillStyle = _tlColors[k % 5]; g.fillRect(0, 0, cv.width, cv.height); return cv; };
+const _tlPasteCanvas = async (cv) => {
+  const blob = await new Promise((r) => cv.toBlob(r, "image/png"));
+  const dt = new DataTransfer(); dt.items.add(new File([blob], "p.png", { type: "image/png" }));
+  _mrdViewport().dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true }));
+};
+const _tlPasteBig = async () => { const cv = document.createElement("canvas"); cv.width = 3000; cv.height = 2000; cv.getContext("2d").fillRect(0, 0, 3000, 2000); await _tlPasteCanvas(cv); };
+const _tlLoaded = (vp) => Array.from(vp?.querySelectorAll("img") || []).filter((im) => im.complete && im.naturalWidth > 0).length;
+const _tlStressMeasure = () => {
+  const vp = _mrdViewport(), v = vp.getBoundingClientRect(), s = v.width / 960, off = [];
+  vp.querySelectorAll("[data-block-type]").forEach((el) => {
+    if (el.dataset.blockType === "image") return;
+    const r = el.getBoundingClientRect();
+    if (r.width && (r.left < v.left - 1 || r.top < v.top - 1 || r.right > v.right + 1 || r.bottom > v.bottom + 1)) off.push(el.dataset.blockType);
+  });
+  const imgs = Array.from(vp.querySelectorAll("img")).map((im) => {
+    const r = im.getBoundingClientRect(), k = Math.min(r.width / im.naturalWidth, r.height / im.naturalHeight);
+    const w = im.naturalWidth * k, h = im.naturalHeight * k, cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+    if (cx - w / 2 < v.left - 1 || cx + w / 2 > v.right + 1 || cy - h / 2 < v.top - 1 || cy + h / 2 > v.bottom + 1) off.push("image");
+    return { w: w / s, h: h / s, scale: k / s, src: im.getAttribute("src") };
+  });
+  const grid = vp.querySelector("[data-testid='image-grid']");
+  return { off, imgs, area: imgs.reduce((t, i) => t + i.w * i.h, 0), split: !!vp.querySelector("[data-split-image]"), cols: grid ? Number(grid.getAttribute("data-image-cols")) : 1 };
+};
+const _tlStressCase = async (c) => {
+  const n = c.aspects.length, body = TL_STRESS_BODIES[c.body];
+  const label = `${c.body}:[${c.aspects.map((a) => a.toFixed(2)).join(",")}]`;
+  const past = _hooks().getHistoryCounts().past;
+  const base = { layout: undefined, contentFlex: undefined, imageFlex: undefined, imageCols: undefined };
+  const settle = async () => { await _wait(350); await _mrdFrame(); };
+  try {
+    await _mrdInject([...body, ...c.aspects.slice(0, -1).map((a, k) => ({ type: "image", src: _tlCanvas(a, k).toDataURL("image/png") }))], base, (vp) => _tlLoaded(vp) >= n - 1 && vp.querySelectorAll("img").length === n - 1 ? vp : null);
+    await _tlPasteCanvas(_tlCanvas(c.aspects[n - 1], n - 1));
+    await _waitFor(() => _tlLoaded(_mrdViewport()) >= n, 4000);
+    await _wait(150); await settle();
+    const chosen = _tlStressMeasure();
+    if (chosen.off.length) throw new Error(`${label}: off the slide: ${chosen.off.join(",")}`);
+    const big = chosen.imgs.find((i) => i.scale > 2.02);
+    if (big) throw new Error(`${label}: image shown at ${big.scale.toFixed(2)}x natural size`);
+    const blocks = [...body, ...chosen.imgs.map((i) => ({ type: "image", src: i.src }))];
+    const [cf, imf] = pasteSplitFlex(n, c.aspects[n - 1]);
+    const splitProps = { layout: "image-right", contentFlex: cf, imageFlex: imf, imageCols: undefined };
+    const render = async (props, ready) => { await _mrdInject(blocks, props, (vp) => _tlLoaded(vp) === n && ready(vp) ? vp : null); await settle(); return _tlStressMeasure(); };
+    const alts = [];
+    if (body.length) {
+      const other = await render(chosen.split ? base : splitProps, (vp) => !!vp.querySelector("[data-split-image]") !== chosen.split);
+      alts.push([chosen.split ? "stack" : "split", other.area]);
+    }
+    if (n >= 2) {
+      const cols = gridColsFor(n, chosen.split ? "half" : "full");
+      const eq = await render({ ...(chosen.split ? splitProps : base), imageCols: cols }, (vp) => vp.querySelector("[data-testid='image-grid']")?.getAttribute("data-image-cols") === String(cols) && !!vp.querySelector("[data-split-image]") === chosen.split);
+      alts.push([`uniform ${cols}-col grid`, eq.area]);
+    }
+    const best = alts.reduce((b, a) => (a[1] > b[1] ? a : b), ["chosen", chosen.area]);
+    return { label, ratio: chosen.area / best[1], detail: `${chosen.split ? "split" : "stack"} ${Math.round(chosen.area)} px2 vs ${best[0]} ${Math.round(best[1])} px2` };
+  } finally { await _mrdUndoTo(past); }
+};
 
 // ━━━ UI TEST RUNNER COMPONENT ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
