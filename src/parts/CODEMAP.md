@@ -41,6 +41,7 @@ that symbol in the named part for the line. No line numbers here — they rot.
 - Icon Row Item (per-item link + delete): IconRowItem
 - Bullet Item (per-item link + delete): BulletItem
 - Grid Cell Block (with per-block link editing): GridCellBlock
+- Grid-cell image (capped upscale): GRID_IMG_MAX_UPSCALE IMAGE_NATURAL_SIZE GridCellImage
 - Zoomable Block Wrapper: ZoomWrap
 - Code Block (sub-component for useState copy feedback): CodeBlock
 - Callout Block (sub-component for useState reveal toggle): CalloutBlock
@@ -322,7 +323,7 @@ add_lane add_item batch_add_items remove_item remove_lane rename_item rename_lan
 ## Navigability debt (WARN — candidates for banners or splits)
 
 - part-imports.jsx: 860-line unbannered stretch after line 514
-- part-blocks.jsx: 777-line unbannered stretch after line 843
+- part-blocks.jsx: 777-line unbannered stretch after line 867
 - part-canvas.jsx: 489-line unbannered stretch after line 24
 - part-slidepanel.jsx: 475-line unbannered stretch after line 235
 - part-slidepanel.jsx: 406-line unbannered stretch after line 1022

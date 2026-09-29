@@ -736,6 +736,30 @@ function GridCellBlock({ block, staggerIdx, slideTheme, editable, onChange, slid
   );
 }
 
+// ━━━ Grid-cell image (capped upscale) ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// A grid cell fills its track, so a small icon or logo would otherwise stretch
+// to the whole free area. Cap the drawn box at GRID_IMG_MAX_UPSCALE x the natural
+// pixel size (read on load, cached by src) and center it in the cell. Until the
+// size is known the image stays hidden, so a huge first frame never shows.
+// Images without an intrinsic size (naturalWidth 0) or that fail to load are
+// not capped.
+const GRID_IMG_MAX_UPSCALE = 2;
+const IMAGE_NATURAL_SIZE = new Map();
+function GridCellImage({ src, alt, style }) {
+  const [, setTick] = useState(0);
+  const size = IMAGE_NATURAL_SIZE.get(src);
+  const remember = (w, h) => {
+    if (!IMAGE_NATURAL_SIZE.has(src) && IMAGE_NATURAL_SIZE.size >= 256) IMAGE_NATURAL_SIZE.delete(IMAGE_NATURAL_SIZE.keys().next().value);
+    IMAGE_NATURAL_SIZE.set(src, { w, h });
+    setTick((t) => t + 1);
+  };
+  const capped = size && size.w > 0 && size.h > 0;
+  return <img src={src} alt={alt} data-grid-cap={capped ? GRID_IMG_MAX_UPSCALE : undefined}
+    onLoad={(e) => remember(e.currentTarget.naturalWidth || 0, e.currentTarget.naturalHeight || 0)}
+    onError={() => remember(0, 0)}
+    style={{ ...style, margin: "auto", maxWidth: capped ? size.w * GRID_IMG_MAX_UPSCALE : undefined, maxHeight: capped ? size.h * GRID_IMG_MAX_UPSCALE : undefined, visibility: size ? undefined : "hidden" }} />;
+}
+
 // ━━━ Zoomable Block Wrapper ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 function ZoomWrap({ children, enabled, link, fill }) {
   const [zoomed, setZoomed] = useState(false);
@@ -909,7 +933,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
       } : null;
       return <ZoomWrap enabled={!!block.src && !block._solo} link={block.link} fill={!!block._gridCell}><div className={cls} style={{ display: "flex", flexDirection: "column", alignItems: block.align === "left" ? "flex-start" : block.align === "right" ? "flex-end" : "center", ...(block._solo ? { flex: 1, width: "100%", justifyContent: "center" } : {}), ...(block._gridCell ? { flex: 1, minHeight: 0, minWidth: 0, width: "100%", justifyContent: "center", position: "relative" } : {}), ...block.style }}>
         {block._gridCell ? <div data-image-grid-media="" style={gridMediaStyle}>
-          {block.src ? <img src={block.src} alt={block.alt || ""} style={
+          {block.src ? <GridCellImage src={block.src} alt={block.alt || ""} style={
           // Absolutely fill the grid cell so the row height is driven ONLY by the
           // grid track (minmax(0,1fr)), never by the image's intrinsic height. A
           // portrait/tall image therefore letterboxes (objectFit:contain) into the

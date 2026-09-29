@@ -3392,6 +3392,30 @@ function GridCellBlock({ block, staggerIdx, slideTheme, editable, onChange, slid
   );
 }
 
+// ━━━ Grid-cell image (capped upscale) ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// A grid cell fills its track, so a small icon or logo would otherwise stretch
+// to the whole free area. Cap the drawn box at GRID_IMG_MAX_UPSCALE x the natural
+// pixel size (read on load, cached by src) and center it in the cell. Until the
+// size is known the image stays hidden, so a huge first frame never shows.
+// Images without an intrinsic size (naturalWidth 0) or that fail to load are
+// not capped.
+const GRID_IMG_MAX_UPSCALE = 2;
+const IMAGE_NATURAL_SIZE = new Map();
+function GridCellImage({ src, alt, style }) {
+  const [, setTick] = useState(0);
+  const size = IMAGE_NATURAL_SIZE.get(src);
+  const remember = (w, h) => {
+    if (!IMAGE_NATURAL_SIZE.has(src) && IMAGE_NATURAL_SIZE.size >= 256) IMAGE_NATURAL_SIZE.delete(IMAGE_NATURAL_SIZE.keys().next().value);
+    IMAGE_NATURAL_SIZE.set(src, { w, h });
+    setTick((t) => t + 1);
+  };
+  const capped = size && size.w > 0 && size.h > 0;
+  return <img src={src} alt={alt} data-grid-cap={capped ? GRID_IMG_MAX_UPSCALE : undefined}
+    onLoad={(e) => remember(e.currentTarget.naturalWidth || 0, e.currentTarget.naturalHeight || 0)}
+    onError={() => remember(0, 0)}
+    style={{ ...style, margin: "auto", maxWidth: capped ? size.w * GRID_IMG_MAX_UPSCALE : undefined, maxHeight: capped ? size.h * GRID_IMG_MAX_UPSCALE : undefined, visibility: size ? undefined : "hidden" }} />;
+}
+
 // ━━━ Zoomable Block Wrapper ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 function ZoomWrap({ children, enabled, link, fill }) {
   const [zoomed, setZoomed] = useState(false);
@@ -3565,7 +3589,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
       } : null;
       return <ZoomWrap enabled={!!block.src && !block._solo} link={block.link} fill={!!block._gridCell}><div className={cls} style={{ display: "flex", flexDirection: "column", alignItems: block.align === "left" ? "flex-start" : block.align === "right" ? "flex-end" : "center", ...(block._solo ? { flex: 1, width: "100%", justifyContent: "center" } : {}), ...(block._gridCell ? { flex: 1, minHeight: 0, minWidth: 0, width: "100%", justifyContent: "center", position: "relative" } : {}), ...block.style }}>
         {block._gridCell ? <div data-image-grid-media="" style={gridMediaStyle}>
-          {block.src ? <img src={block.src} alt={block.alt || ""} style={
+          {block.src ? <GridCellImage src={block.src} alt={block.alt || ""} style={
           // Absolutely fill the grid cell so the row height is driven ONLY by the
           // grid track (minmax(0,1fr)), never by the image's intrinsic height. A
           // portrait/tall image therefore letterboxes (objectFit:contain) into the
@@ -16755,6 +16779,34 @@ uiSuite("tideline-CR22-CR25 image placement", [
       if (cr.bottom > vr.bottom - 4) throw new Error(`credit line is clipped (bottom ${(cr.bottom - vr.bottom).toFixed(1)}px past the slide)`);
       if (m.imgs[0].h < 100) throw new Error(`image collapsed to ${m.imgs[0].h.toFixed(0)}px`);
     }
+  }},
+  { name: "CR24/CR25: small icons and logos are never upscaled past 2x natural size", fn: async () => {
+    const png = (w, h, color) => { const cv = document.createElement("canvas"); cv.width = w; cv.height = h; const g = cv.getContext("2d"); g.fillStyle = color; g.fillRect(0, 0, w, h); return cv.toDataURL("image/png"); };
+    const icon = png(32, 32, "#3b82f6"), logo = png(64, 64, "#f59e0b"), hd = png(1280, 720, "#10b981"), wide = png(900, 300, "#ef4444");
+    const cases = [
+      ["icon alone", [{ type: "image", src: icon }], [32]],
+      ["icon under a heading", [{ type: "heading", text: "TL icon" }, { type: "image", src: icon }], [32]],
+      ["logo in a 3-image grid", [{ type: "heading", text: "TL logo" }, { type: "image", src: logo }, { type: "image", src: hd }, { type: "image", src: wide }], [64, 1280, 900]],
+    ];
+    for (const [label, blocks, naturals] of cases) {
+      const past = _hooks().getHistoryCounts ? _hooks().getHistoryCounts().past : 0;
+      await _mrdInject(blocks, { layout: undefined, imageCols: undefined }, (vp) => { const ims = Array.from(vp?.querySelectorAll("img") || []); return ims.length === naturals.length && ims.every((im) => im.complete && im.naturalWidth > 0) ? vp : null; });
+      await _wait(300); await _mrdFrame();
+      const m = _tlMeasure();
+      if (m.outside) throw new Error(`${label}: ${m.outside} block(s) outside the canvas`);
+      m.imgs.forEach((im, k) => { if (im.w > naturals[k] * 2 + 1) throw new Error(`${label}: image ${k} shown ${im.w.toFixed(0)}px wide (natural ${naturals[k]})`); });
+      if (label === "icon alone" && Math.abs(m.imgs[0].cx - 480) > 4) throw new Error(`icon alone is not centered (cx ${m.imgs[0].cx.toFixed(0)})`);
+      await _mrdUndoTo(past);
+    }
+  }},
+  { name: "CR24: a large 1600x900 image alone still fills the slide width", fn: async () => {
+    const cv = document.createElement("canvas"); cv.width = 1600; cv.height = 900; cv.getContext("2d").fillRect(0, 0, 1600, 900);
+    const past = _hooks().getHistoryCounts ? _hooks().getHistoryCounts().past : 0;
+    await _mrdInject([{ type: "image", src: cv.toDataURL("image/png") }], { layout: undefined }, (vp) => vp?.querySelector("img")?.naturalWidth > 0 ? vp : null);
+    await _wait(300); await _mrdFrame();
+    const m = _tlMeasure();
+    await _mrdUndoTo(past);
+    if (m.imgs[0].w < 960 * 0.9) throw new Error(`1600x900 image is only ${m.imgs[0].w.toFixed(0)}px wide`);
   }},
 ], { setup: _selectFirstModule });
 
