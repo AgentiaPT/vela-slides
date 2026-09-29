@@ -2709,6 +2709,72 @@ uiSuite("tideline-CR26 edit every block text", [
       await _waitFor(() => _tlEditNode(edits[0][0]), 2000).catch(() => { throw new Error(`${blocks[0].type}: undo did not restore the text`); });
     }
   }},
+  { name: "CR26: a cleared text keeps a clickable target and can be typed again", fn: async () => {
+    const cases = [
+      [{ type: "checklist", items: [{ text: "Task one", status: "pending" }] }, "Task one"],
+      [{ type: "comparison", items: [{ title: "L", items: ["Left point"] }, { title: "R", items: ["Right point"] }] }, "Left point"],
+      [{ type: "matrix", quadrants: [{ title: "Q1", items: ["Q point"] }, { title: "Q2" }, { title: "Q3" }, { title: "Q4" }] }, "Q point"],
+      [{ type: "number-row", items: [{ value: "42", label: "Answers" }] }, "42"],
+      [{ type: "bullets", items: ["Bullet one", "Bullet two"] }, "Bullet one"],
+    ];
+    for (const [block, from] of cases) {
+      await _mrdInject([block], null, (vp) => vp?.textContent.includes(from) ? vp : null);
+      let done = 0;
+      try {
+        await _tlEdit(from, "", EDIT_PLACEHOLDER); done++;
+        const node = _tlEditNode(EDIT_PLACEHOLDER);
+        const r = node.getBoundingClientRect();
+        if (!(r.width > 4 && r.height > 4)) throw new Error(`empty target is ${r.width}x${r.height}`);
+        // With the pointer on it, the item's hover toolbar must not cover the placeholder.
+        const ph = _$("[data-vela-placeholder]", node);
+        ph.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
+        await _wait(80);
+        const pr = ph.getBoundingClientRect();
+        const hit = document.elementFromPoint(pr.left + pr.width / 2, pr.top + pr.height / 2);
+        if (!node.contains(hit)) throw new Error(`placeholder is covered by ${hit?.tagName} "${(hit?.textContent || "").slice(0, 20)}"`);
+        await _tlEdit(EDIT_PLACEHOLDER, "Typed again"); done++;
+      } catch (e) { throw new Error(`${block.type}: ${e.message}`); }
+      finally { document.activeElement?.blur?.(); for (let k = 0; k < done; k++) { _key("z", { ctrlKey: true }); await _wait(60); } }
+      await _waitFor(() => _tlEditNode(from), 2000).catch(() => { throw new Error(`${block.type}: undo did not restore the text`); });
+    }
+  }},
+  { name: "CR26: SVG labels (cycle, funnel, flow loop) edit inline, with undo and redo, and do not zoom", fn: async () => {
+    const svgText = (t) => _$$("text[data-svg-edit]", _mrdViewport() || document).find((el) => el.textContent.trim() === t);
+    const zoomed = () => document.body.textContent.includes("ESC or click to close");
+    const svgEdit = async (from, to, key = "Enter") => {
+      const node = await _waitFor(() => svgText(from), 2000).catch(() => { throw new Error(`"${from}" is not an editable SVG label`); });
+      _clickMod(node);
+      const inp = await _waitFor(() => _$("[data-testid='svg-text-edit']", _mrdViewport()), 1500).catch(() => { throw new Error(`"${from}": no edit input`); });
+      if (zoomed()) throw new Error(`"${from}": click opened the zoom overlay`);
+      if (document.activeElement !== inp) throw new Error(`"${from}": input has no focus`);
+      inp.value = to;
+      inp.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }));
+      const shown = key === "Escape" ? from : to;
+      await _waitFor(() => !_$("[data-testid='svg-text-edit']") && svgText(shown), 2000).catch(() => { throw new Error(`"${from}" -> "${to}" (${key}) did not show "${shown}"`); });
+    };
+    const cases = [
+      [{ type: "cycle", centerLabel: "Center L", centerSub: "Center S", items: [{ label: "CyA" }, { label: "CyB" }, { label: "CyC" }] }, [["CyA", "CyA2"], ["Center L", "CL2"], ["Center S", "CS2"]]],
+      [{ type: "funnel", items: [{ label: "FunA", value: "100", drop: "-40%" }, { label: "FunB", value: "60" }] }, [["FunA", "FunA2"], ["100", "101"], ["-40%", "-41%"]]],
+      [{ type: "flow", loop: true, loopLabel: "LoopH", items: [{ label: "A" }, { label: "B" }] }, [["LoopH", "LoopH2"]]],
+      [{ type: "flow", loop: true, direction: "vertical", loopLabel: "LoopV", items: [{ label: "A" }, { label: "B" }] }, [["LoopV", "LoopV2"]]],
+    ];
+    for (const [block, edits] of cases) {
+      await _mrdInject([block], null, (vp) => vp && svgText(edits[0][0]) ? vp : null);
+      let done = 0;
+      try {
+        await svgEdit(edits[0][0], "Cancelled", "Escape");
+        for (const [from, to] of edits) {
+          await svgEdit(from, to); done++;
+          _key("z", { ctrlKey: true });
+          await _waitFor(() => svgText(from), 2000).catch(() => { throw new Error(`undo did not restore "${from}"`); });
+          _key("y", { ctrlKey: true });
+          await _waitFor(() => svgText(to), 2000).catch(() => { throw new Error(`redo did not restore "${to}"`); });
+        }
+      } catch (e) { throw new Error(`${block.type}: ${e.message}`); }
+      finally { document.activeElement?.blur?.(); for (let k = 0; k < done; k++) { _key("z", { ctrlKey: true }); await _wait(60); } }
+      await _waitFor(() => svgText(edits[0][0]), 2000).catch(() => { throw new Error(`${block.type}: undo did not restore the text`); });
+    }
+  }},
 ], { setup: _selectFirstModule });
 
 // CR21: while a slide or section is dragged in the TOC, the pointer near the top /
