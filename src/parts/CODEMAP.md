@@ -87,6 +87,7 @@ that symbol in the named part for the line. No line numbers here — they rot.
 
 ### part-list.jsx
 - (file preamble): _velaDrag _setDrag _clearDrag
+- TOC drag auto-scroll: TOC_AUTOSCROLL_ZONE TOC_AUTOSCROLL_MAX tocAutoScrollSpeed tocScrollParent useTocDragAutoScroll
 - Reusable right-click context menu: ContextMenu CtxItem SLIDE_STYLE_KEYS blankSlideFrom
 - AI Slide Adder (inline prompt): AiSlideAdder
 - Add Menu (blank / AI / section): AddMenu
@@ -123,7 +124,7 @@ that symbol in the named part for the line. No line numbers here — they rot.
 - meridian CR04 / CR14 / CR07 (sprint "meridian"): _m1RowTitles _m1Undo _m1ClickRow
 - meridian-CR10 / meridian-CR11: fullscreen nav icons keep a visible chip: _mrdIsLightTheme _mrdCheckNavGlyphs
 - meridian-CR13: editor|presenter|gallery view switcher next to Present: _mrdSeg _mrdActive _mrdOnTop _mrdSwitchTo _mrdGalleryOpen
-- Sprint meridian (C3): split image alignment, accent 0, docked branding: _mrdSvg _mrdViewport _mrdFrame _mrdInject _mrdSetRange _mrdOpenBranding _mrdCloseBranding _mrdUndoTo _mrdHover _mrdUnhover _mrdCr15Clear _meridianF8SlowSave
+- Sprint meridian (C3): split image alignment, accent 0, docked branding: _mrdSvg _mrdViewport _mrdFrame _mrdInject _mrdSetRange _mrdOpenBranding _mrdCloseBranding _mrdUndoTo _mrdHover _mrdUnhover _mrdCr15Clear _meridianF8SlowSave _tidelineTocDrag _tidelineFire _tidelineHold _tidelineRows _tidelineTitle
 - UI TEST RUNNER COMPONENT: computeDeckFingerprint DEMO_DECK_FP_TITLE VelaUITestRunner
 
 ### part-demo.jsx
@@ -327,7 +328,7 @@ add_lane add_item batch_add_items remove_item remove_lane rename_item rename_lan
 - part-uitest.jsx: 616-line unbannered stretch after line 1230
 - part-uitest2.jsx: 448-line unbannered stretch after line 2
 - part-uitest2.jsx: 593-line unbannered stretch after line 1395
-- part-uitest2.jsx: 393-line unbannered stretch after line 2261
+- part-uitest2.jsx: 493-line unbannered stretch after line 2261
 - part-demo.jsx: 407-line unbannered stretch after line 510
 - part-demo.jsx: 373-line unbannered stretch after line 917
 - part-pdf.jsx: 389-line unbannered stretch after line 582

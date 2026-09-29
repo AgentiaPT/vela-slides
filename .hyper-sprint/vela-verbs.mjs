@@ -273,3 +273,53 @@ export async function viewSwitch(page, where, mode) {
 export async function viewSwitchActive(page) {
   return page.evaluate(() => { const a = (t) => { const g = document.querySelector(`[data-testid=${t}]`); if (!g) return null; const b = g.querySelector("button[aria-pressed=true]"); return b ? b.getAttribute("aria-label") : "none"; }; return { top: a("view-switch"), gallery: a("gallery-view-switch"), fs: a("fs-view-switch") }; });
 }
+// ── TOC drag auto-scroll (sprint tideline CR21) ───────────────────────────────
+// Real-mouse drag of TOC slide row `from` onto row `to` (negative = from the end;
+// where "top" = before it, "bottom" = after it). While the target row is out of
+// view, the pointer stays at the pane edge (top or bottom), so the pane must
+// auto-scroll. Returns { scrolledFrom, scrolledTo, holdMs } of the TOC pane.
+export async function tocDragSlideEdge(page, from, to, { where = "top", maxHoldMs = 8000 } = {}) {
+  const info = (i) => page.evaluate((i) => {
+    const rows = document.querySelectorAll("[data-testid=toc-slide-row]"); const r = rows[i < 0 ? rows.length + i : i];
+    const pane = document.querySelector("[data-testid=toc-tree]").parentElement; const p = pane.getBoundingClientRect();
+    if (!r) return null; const b = r.getBoundingClientRect();
+    return { x: b.left + Math.min(60, b.width / 2), top: b.top, bottom: b.bottom, h: b.height, pTop: p.top, pBottom: p.bottom, pX: p.left + p.width / 2, st: pane.scrollTop };
+  }, i);
+  const s0 = await info(from); if (!s0) throw new Error(`tocDragSlideEdge: no row ${from}`);
+  if (s0.top < s0.pTop || s0.bottom > s0.pBottom) {
+    await page.evaluate((i) => { const rows = document.querySelectorAll("[data-testid=toc-slide-row]"); rows[i < 0 ? rows.length + i : i].scrollIntoView({ block: "center" }); }, from);
+  }
+  // Hover can reveal an inline add bar that shifts rows, so re-read the row after
+  // the hover and retry once when no TOC drag started.
+  let s = await info(from); const scrolledFrom = s.st;
+  for (let attempt = 0; ; attempt++) {
+    await page.mouse.move(s.x, s.top + s.h / 2); await page.waitForTimeout(60); s = await info(from);
+    await page.evaluate(() => { window.__tocDragStarted = false; if (!window.__tocDragHook) { window.__tocDragHook = true; window.addEventListener("dragstart", () => { window.__tocDragStarted = true; }, true); } });
+    await page.mouse.move(s.x, s.top + s.h / 2); await page.mouse.down();
+    await page.mouse.move(s.x, s.top + s.h / 2 + 6, { steps: 3 });
+    if (await page.evaluate(() => window.__tocDragStarted)) break;
+    await page.mouse.up(); if (attempt >= 1) throw new Error(`tocDragSlideEdge: drag of row ${from} did not start`);
+    await page.waitForTimeout(100); s = await info(from);
+  }
+  const visible = (t) => t && t.top >= t.pTop && t.bottom <= t.pBottom;
+  // Hold at the edge until the row is clear of the edge zone (64px), or it is
+  // visible and the pane stopped scrolling (it reached the end).
+  const clear = (t) => t && t.top >= t.pTop + 64 && t.bottom <= t.pBottom - 64;
+  const t0 = Date.now(); let t = await info(to); let k = 0; let prev = null, same = 0;
+  while (!clear(t) && !(visible(t) && same >= 3) && Date.now() - t0 < maxHoldMs) {
+    const y = t.top + t.h / 2 < (t.pTop + t.pBottom) / 2 ? t.pTop + 4 : t.pBottom - 4;
+    await page.mouse.move(t.pX + (k++ % 2), y); await page.waitForTimeout(50); t = await info(to);
+    same = prev === t.st ? same + 1 : 0; prev = t.st;
+  }
+  const holdMs = Date.now() - t0;
+  if (!visible(t)) { await page.mouse.up(); throw new Error(`tocDragSlideEdge: row ${to} never scrolled into view`); }
+  // Leave the edge zone (pane middle) so the scroll stops, then aim at the row.
+  await page.mouse.move(t.pX, (t.pTop + t.pBottom) / 2, { steps: 2 }); await page.waitForTimeout(120); t = await info(to);
+  const y = where === "top" ? t.top + 3 : t.bottom - 3;
+  await page.mouse.move(t.x, y, { steps: 4 }); await page.waitForTimeout(80);
+  const at = await info(to); const hit = await page.evaluate(([x, y]) => { const e = document.elementFromPoint(x, y); const r = e && e.closest("[data-testid=toc-slide-row]"); return r ? r.textContent.slice(0, 30) : (e ? e.tagName + ":" + (e.textContent || "").slice(0, 20) : null); }, [t.x, y]);
+  await page.mouse.up(); await page.waitForTimeout(150);
+  return { scrolledFrom, scrolledTo: t.st, holdMs, dropY: y, rowTopAtDrop: at.top, hit };
+}
+// Titles (the flex:1 title span) of the TOC slide rows, in order.
+export async function tocSlideTitles(page) { return page.evaluate(() => [...document.querySelectorAll("[data-testid=toc-slide-row]")].map((r) => { const t = [...r.querySelectorAll("span")].find((x) => (x.style.flex || "").startsWith("1")); return ((t || r).textContent || "").trim(); })); }

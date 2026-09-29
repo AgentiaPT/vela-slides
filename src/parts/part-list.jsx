@@ -9,6 +9,71 @@ let _velaDrag = null; // { kind: "slide", fromItemId, slideIndex } | { kind: "se
 const _setDrag = (p) => { _velaDrag = p; };
 const _clearDrag = () => { _velaDrag = null; };
 
+// ━━━ TOC drag auto-scroll ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Native drag does not scroll the TOC pane near its edges, so a dragged slide or
+// section could not reach sections outside the view. While a TOC drag is active,
+// a pointer in the edge zone of the scroll container scrolls it. The speed grows
+// nearer the edge. The container is the nearest scrollable ancestor of the tree,
+// or the page when no ancestor scrolls.
+const TOC_AUTOSCROLL_ZONE = 56; // px from the visible top / bottom edge
+const TOC_AUTOSCROLL_MAX = 22; // px per animation frame at the edge
+// Signed speed (px/frame) for pointer y and visible bounds [top, bottom]; < 0 = up.
+// A pointer just outside the bounds (within one zone) scrolls at full speed.
+function tocAutoScrollSpeed(y, top, bottom, zone = TOC_AUTOSCROLL_ZONE, max = TOC_AUTOSCROLL_MAX) {
+  if (!Number.isFinite(y) || !(bottom > top)) return 0;
+  const z = Math.max(8, Math.min(zone, (bottom - top) / 4));
+  if (y < top - z || y > bottom + z) return 0;
+  if (y < top + z) return -Math.ceil(max * Math.min(1, (top + z - y) / z));
+  if (y > bottom - z) return Math.ceil(max * Math.min(1, (y - (bottom - z)) / z));
+  return 0;
+}
+function tocScrollParent(el) {
+  for (let p = el && el.parentElement; p && p !== document.body && p !== document.documentElement; p = p.parentElement) {
+    const oy = getComputedStyle(p).overflowY;
+    if ((oy === "auto" || oy === "scroll") && p.scrollHeight > p.clientHeight + 1) return p;
+  }
+  return document.scrollingElement || document.documentElement;
+}
+// Attaches the auto-scroll to the tree element in treeRef for the life of the list.
+// Stops on drop, on dragend (includes Escape cancel), when the pointer leaves the
+// zone or the window, when no dragover arrives for a short time, and at the ends.
+function useTocDragAutoScroll(treeRef) {
+  useEffect(() => {
+    let raf = 0, speed = 0, scroller = null, last = 0;
+    const stop = () => { speed = 0; scroller = null; if (raf) { cancelAnimationFrame(raf); raf = 0; } };
+    const tick = () => {
+      raf = 0;
+      if (!_velaDrag || !scroller || !speed || performance.now() - last > 600) { stop(); return; }
+      const before = scroller.scrollTop;
+      scroller.scrollTop = before + speed;
+      if (scroller.scrollTop === before) { stop(); return; } // at the end
+      raf = requestAnimationFrame(tick);
+    };
+    const onOver = (e) => {
+      if (!_velaDrag || !treeRef.current) { if (speed || raf) stop(); return; }
+      if (!scroller) scroller = tocScrollParent(treeRef.current);
+      const page = scroller === document.scrollingElement || scroller === document.documentElement;
+      const r = page ? { left: 0, right: window.innerWidth, top: 0, bottom: window.innerHeight } : scroller.getBoundingClientRect();
+      const inX = e.clientX >= r.left && e.clientX <= r.right;
+      speed = inX ? tocAutoScrollSpeed(e.clientY, Math.max(0, r.top), Math.min(window.innerHeight, r.bottom)) : 0;
+      last = performance.now();
+      if (speed && !raf) raf = requestAnimationFrame(tick);
+    };
+    const onLeave = (e) => { if (!e.relatedTarget) speed = 0; }; // pointer left the window
+    document.addEventListener("dragover", onOver, true);
+    document.addEventListener("dragleave", onLeave, true);
+    document.addEventListener("drop", stop, true);
+    document.addEventListener("dragend", stop, true);
+    return () => {
+      document.removeEventListener("dragover", onOver, true);
+      document.removeEventListener("dragleave", onLeave, true);
+      document.removeEventListener("drop", stop, true);
+      document.removeEventListener("dragend", stop, true);
+      stop();
+    };
+  }, []);
+}
+
 // ━━━ Reusable right-click context menu ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Positioned at the cursor, clamped to the viewport, and closes on outside-click
 // or Escape. `children` is [menuFn, submenuFn]; each is called with a `move`
@@ -749,6 +814,8 @@ function ModuleList({ lanes, selectedId, slideIndex, selectedSlideIndices, colla
   const collapsedSet = React.useMemo(() => new Set(Array.isArray(collapsedSections) ? collapsedSections : []), [collapsedSections]);
   const allIds = allItems.map((i) => i.id);
   const toggleCollapse = (id, all) => dispatch({ type: "TOGGLE_SECTION_COLLAPSE", id, all, ids: allIds });
+  const treeRef = useRef(null);
+  useTocDragAutoScroll(treeRef);
 
   // ── Roving-tabindex tree focus (WAI-ARIA disclosure pattern) ──
   // A single tab stop for the whole rail; arrow keys move DOM focus between the
@@ -796,7 +863,7 @@ function ModuleList({ lanes, selectedId, slideIndex, selectedSlideIndices, colla
   const handleDrop = (e) => { if (!_velaDrag || _velaDrag.kind !== "section" || !laneId) return; e.preventDefault(); dispatch({ type: "DRAG_REORDER", id: _velaDrag.itemId, targetLaneId: laneId, beforeId: null, afterId: null }); };
 
   return (
-    <div role="tree" aria-label="Slide outline" data-testid="toc-tree" onDragOver={(e) => { if (_velaDrag && _velaDrag.kind === "section") { e.preventDefault(); e.dataTransfer.dropEffect = "move"; } }} onDrop={handleDrop}>
+    <div ref={treeRef} role="tree" aria-label="Slide outline" data-testid="toc-tree" onDragOver={(e) => { if (_velaDrag && _velaDrag.kind === "section") { e.preventDefault(); e.dataTransfer.dropEffect = "move"; } }} onDrop={handleDrop}>
       {(() => { let offset = 0; let timeOffset = 0; return allItems.map((item, idx) => {
         const itemLaneId = lanes.find((l) => l.items.some((i) => i.id === item.id))?.id || laneId;
         const slideOffset = offset;
