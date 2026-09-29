@@ -3143,7 +3143,131 @@ uiSuite("tideline-CR22-CR25 image placement", [
     await _mrdUndoTo(past);
     if (m.imgs[0].w < 960 * 0.9) throw new Error(`1600x900 image is only ${m.imgs[0].w.toFixed(0)}px wide`);
   }},
+  { name: "CR23 stress matrix: the pasted layout and grid show >= 85% of the best alternative (65 seeded cases)", fn: async () => {
+    // The last image goes through the real paste handler; the chosen result is
+    // then compared, by real rendering, with the other layout (split <-> stack)
+    // and with the uniform count-driven grid in the same layout.
+    const fixed = [{ body: "table", aspects: [16 / 9] }, { body: "table", aspects: [16 / 9, 16 / 9] }, { body: "bullets8", aspects: [16 / 9, 16 / 9, 16 / 9, 16 / 9] }, { body: "none", aspects: [1 / 3, 16 / 9] }, { body: "none", aspects: [1 / 3, 16 / 9, 1 / 3] }];
+    const cases = [...fixed, ...tidelineStressCases(60)];
+    let min = Infinity, worst = "";
+    for (const c of cases) {
+      const r = await _tlStressCase(c);
+      if (r.ratio < min) { min = r.ratio; worst = r.label; }
+      if (r.ratio < 0.85) throw new Error(`${r.label}: chosen ${r.detail}`);
+    }
+    return { cases: cases.length, min: Number(min.toFixed(3)), worst };
+  }},
+  { name: "paste race: deleting the slide while an image paste is pending drops the paste", fn: async () => {
+    const past = _hooks().getHistoryCounts().past;
+    await _mrdInject([{ type: "heading", text: "TL-RACE-A" }], { layout: undefined }, (vp) => vp?.textContent.includes("TL-RACE-A") ? vp : null);
+    await _waitFor(() => _m1RowTitles().includes("TL-RACE-A"), 2000);
+    const before = _m1RowTitles(), i = before.indexOf("TL-RACE-A");
+    await _tlPasteBig();
+    _click(_tocRows()[i].querySelector("[data-testid='toc-slide-delete']"));
+    await _wait(2500);
+    const after = _m1RowTitles();
+    const want = before.filter((_, k) => k !== i).join("|");
+    await _mrdUndoTo(past);
+    if (after.join("|") !== want) throw new Error(`slide list after delete: ${after.join("|")} (expected ${want})`);
+  }},
+  { name: "paste race: Ctrl+Z right after a paste stays undone", fn: async () => {
+    const past = _hooks().getHistoryCounts().past;
+    await _mrdInject([{ type: "heading", text: "TL-RACE-B" }], { layout: undefined }, (vp) => vp?.textContent.includes("TL-RACE-B") ? vp : null);
+    await _mrdInject([{ type: "heading", text: "TL-RACE-B-E1" }], { layout: undefined }, (vp) => vp?.textContent.includes("TL-RACE-B-E1") ? vp : null);
+    await _tlPasteBig();
+    document.activeElement?.blur?.();
+    _key("z", { ctrlKey: true });
+    await _wait(2500);
+    const vp = _mrdViewport(), text = vp.textContent, imgs = vp.querySelectorAll("img").length;
+    await _mrdUndoTo(past);
+    if (text.includes("TL-RACE-B-E1") || !text.includes("TL-RACE-B")) throw new Error("the undone edit came back");
+    if (imgs) throw new Error(`${imgs} image(s) added after the undo`);
+  }},
+  { name: "paste race: an image paste into an open inline edit keeps the typed text", fn: async () => {
+    const past = _hooks().getHistoryCounts().past;
+    const vp = await _mrdInject([{ type: "heading", text: "TL-RACE-C" }], { layout: undefined }, (v) => v?.textContent.includes("TL-RACE-C") ? v : null);
+    const disp = Array.from(vp.querySelectorAll("[data-block-type='heading'] div")).find((d) => d.textContent === "TL-RACE-C" && d.style.cursor === "pointer");
+    if (!disp) throw new Error("heading text is not editable");
+    _click(disp);
+    const ed = await _waitFor(() => vp.querySelector("[data-block-type='heading'] [contenteditable]"), 1500);
+    ed.focus();
+    const sel = window.getSelection(); sel.selectAllChildren(ed); sel.collapseToEnd();
+    document.execCommand("insertText", false, "-TYPED");
+    const cv = document.createElement("canvas"); cv.width = 64; cv.height = 64;
+    const blob = await new Promise((r) => cv.toBlob(r, "image/png"));
+    const dt = new DataTransfer(); dt.items.add(new File([blob], "c.png", { type: "image/png" }));
+    ed.dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true }));
+    await _wait(1200);
+    const stillEditing = document.activeElement === ed;
+    ed.blur();
+    await _wait(300);
+    const text = _mrdViewport().textContent, imgs = _mrdViewport().querySelectorAll("img").length;
+    await _mrdUndoTo(past);
+    if (!stillEditing) throw new Error("the paste closed the inline edit");
+    if (!text.includes("TL-RACE-C-TYPED")) throw new Error("typed text was dropped");
+    if (imgs) throw new Error("the paste into the inline edit added an image");
+  }},
 ], { setup: _selectFirstModule });
+
+// Helpers for the CR23 stress matrix and the paste-race tests above.
+const _tlColors = ["#3b82f6", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6"];
+const _tlCanvas = (a, k) => { const cv = document.createElement("canvas"); cv.height = 300; cv.width = Math.max(1, Math.round(300 * a)); const g = cv.getContext("2d"); g.fillStyle = _tlColors[k % 5]; g.fillRect(0, 0, cv.width, cv.height); return cv; };
+const _tlPasteCanvas = async (cv) => {
+  const blob = await new Promise((r) => cv.toBlob(r, "image/png"));
+  const dt = new DataTransfer(); dt.items.add(new File([blob], "p.png", { type: "image/png" }));
+  _mrdViewport().dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true }));
+};
+const _tlPasteBig = async () => { const cv = document.createElement("canvas"); cv.width = 3000; cv.height = 2000; cv.getContext("2d").fillRect(0, 0, 3000, 2000); await _tlPasteCanvas(cv); };
+const _tlLoaded = (vp) => Array.from(vp?.querySelectorAll("img") || []).filter((im) => im.complete && im.naturalWidth > 0).length;
+const _tlStressMeasure = () => {
+  const vp = _mrdViewport(), v = vp.getBoundingClientRect(), s = v.width / 960, off = [];
+  vp.querySelectorAll("[data-block-type]").forEach((el) => {
+    if (el.dataset.blockType === "image") return;
+    const r = el.getBoundingClientRect();
+    if (r.width && (r.left < v.left - 1 || r.top < v.top - 1 || r.right > v.right + 1 || r.bottom > v.bottom + 1)) off.push(el.dataset.blockType);
+  });
+  const imgs = Array.from(vp.querySelectorAll("img")).map((im) => {
+    const r = im.getBoundingClientRect(), k = Math.min(r.width / im.naturalWidth, r.height / im.naturalHeight);
+    const w = im.naturalWidth * k, h = im.naturalHeight * k, cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+    if (cx - w / 2 < v.left - 1 || cx + w / 2 > v.right + 1 || cy - h / 2 < v.top - 1 || cy + h / 2 > v.bottom + 1) off.push("image");
+    return { w: w / s, h: h / s, scale: k / s, src: im.getAttribute("src") };
+  });
+  const grid = vp.querySelector("[data-testid='image-grid']");
+  return { off, imgs, area: imgs.reduce((t, i) => t + i.w * i.h, 0), split: !!vp.querySelector("[data-split-image]"), cols: grid ? Number(grid.getAttribute("data-image-cols")) : 1 };
+};
+const _tlStressCase = async (c) => {
+  const n = c.aspects.length, body = TL_STRESS_BODIES[c.body];
+  const label = `${c.body}:[${c.aspects.map((a) => a.toFixed(2)).join(",")}]`;
+  const past = _hooks().getHistoryCounts().past;
+  const base = { layout: undefined, contentFlex: undefined, imageFlex: undefined, imageCols: undefined };
+  const settle = async () => { await _wait(350); await _mrdFrame(); };
+  try {
+    await _mrdInject([...body, ...c.aspects.slice(0, -1).map((a, k) => ({ type: "image", src: _tlCanvas(a, k).toDataURL("image/png") }))], base, (vp) => _tlLoaded(vp) >= n - 1 && vp.querySelectorAll("img").length === n - 1 ? vp : null);
+    await _tlPasteCanvas(_tlCanvas(c.aspects[n - 1], n - 1));
+    await _waitFor(() => _tlLoaded(_mrdViewport()) >= n, 4000);
+    await _wait(150); await settle();
+    const chosen = _tlStressMeasure();
+    if (chosen.off.length) throw new Error(`${label}: off the slide: ${chosen.off.join(",")}`);
+    const big = chosen.imgs.find((i) => i.scale > 2.02);
+    if (big) throw new Error(`${label}: image shown at ${big.scale.toFixed(2)}x natural size`);
+    const blocks = [...body, ...chosen.imgs.map((i) => ({ type: "image", src: i.src }))];
+    const [cf, imf] = pasteSplitFlex(n, c.aspects[n - 1]);
+    const splitProps = { layout: "image-right", contentFlex: cf, imageFlex: imf, imageCols: undefined };
+    const render = async (props, ready) => { await _mrdInject(blocks, props, (vp) => _tlLoaded(vp) === n && ready(vp) ? vp : null); await settle(); return _tlStressMeasure(); };
+    const alts = [];
+    if (body.length) {
+      const other = await render(chosen.split ? base : splitProps, (vp) => !!vp.querySelector("[data-split-image]") !== chosen.split);
+      alts.push([chosen.split ? "stack" : "split", other.area]);
+    }
+    if (n >= 2) {
+      const cols = gridColsFor(n, chosen.split ? "half" : "full");
+      const eq = await render({ ...(chosen.split ? splitProps : base), imageCols: cols }, (vp) => vp.querySelector("[data-testid='image-grid']")?.getAttribute("data-image-cols") === String(cols) && !!vp.querySelector("[data-split-image]") === chosen.split);
+      alts.push([`uniform ${cols}-col grid`, eq.area]);
+    }
+    const best = alts.reduce((b, a) => (a[1] > b[1] ? a : b), ["chosen", chosen.area]);
+    return { label, ratio: chosen.area / best[1], detail: `${chosen.split ? "split" : "stack"} ${Math.round(chosen.area)} px2 vs ${best[0]} ${Math.round(best[1])} px2` };
+  } finally { await _mrdUndoTo(past); }
+};
 
 // ━━━ UI TEST RUNNER COMPONENT ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 

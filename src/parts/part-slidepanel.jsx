@@ -468,7 +468,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
   );
   const looksLikeSlide = (obj) => obj && typeof obj === "object" && !Array.isArray(obj) && Object.keys(obj).some((k) => SLIDE_KEYS.has(k));
   const handlePaste = useCallback((e) => {
-    const tag = e.target?.tagName?.toLowerCase(); if (tag === "textarea" || tag === "input") return;
+    const tag = e.target?.tagName?.toLowerCase(); if (tag === "textarea" || tag === "input" || e.target?.isContentEditable) return;
     const items = e.clipboardData?.items; if (!items) return;
     // Check for text/plain first — try to detect slide JSON
     const textItem = Array.from(items).find((i) => i.type === "text/plain");
@@ -481,11 +481,10 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
           const incoming = Array.isArray(parsed) ? parsed : [parsed];
           const validSlides = incoming.filter(looksLikeSlide).map((s) => sanitizeSlide(s)).filter(Boolean);
           if (validSlides.length === 0) return;
-          // Insert after current slide
-          const newSlides = [...slides];
+          // Insert after current slide. getAsString is async: insert into the live
+          // list (INSERT_SLIDES), never write back the captured slide list.
           const insertAt = slides.length === 0 ? 0 : slideIndex + 1;
-          newSlides.splice(insertAt, 0, ...validSlides);
-          dispatch({ type: "SET_SLIDES", id: concept.id, slides: newSlides });
+          dispatch({ type: "INSERT_SLIDES", id: concept.id, index: insertAt, slides: validSlides });
           dispatch({ type: "SET_SLIDE_INDEX", index: insertAt });
         } catch { /* not valid JSON, ignore */ }
       });
@@ -494,40 +493,48 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
     for (const item of items) {
       if (item.type.startsWith("image/")) {
         e.preventDefault(); const blob = item.getAsFile(); const reader = new FileReader();
+        // Capture the target now. The image work below is async: the user can
+        // undo, delete or edit slides before it ends. The change goes to this
+        // exact slide object only (found again by identity just before the
+        // dispatch); if it is gone or changed, the paste is dropped. Never write
+        // back a stale copy of the slide list or of the slide.
+        const moduleId = concept.id, epoch = deckEpochRef.current;
+        const target = slides.length ? slides[slideIndex] : null;
+        const bodyProbe = target ? pasteBodyProbe(containerRef.current, target) : null;
         reader.onload = async () => {
           const compressed = await compressSlideImage(reader.result);
-          // Empty module → brand-new full-bleed solo-image slide.
-          if (slides.length === 0) { dispatch({ type: "ADD_SLIDE", id: concept.id, slide: { blocks: [{ type: "image", src: compressed }] } }); return; }
-          const cur = slides[slideIndex] || {};
-          const curImgs = (cur.blocks || []).filter((b) => b.type === "image").length;
+          if (deckEpochRef.current !== epoch) return;
+          // Empty module → brand-new full-bleed solo-image slide (additive).
+          if (!target) { dispatch({ type: "ADD_SLIDE", id: moduleId, slide: { blocks: [{ type: "image", src: compressed }] } }); return; }
+          const curImgBlocks = (target.blocks || []).filter((b) => b.type === "image");
+          // Natural sizes give the aspects and the upscale caps for the layout choice.
+          const sizes = await Promise.all([...curImgBlocks.map((b) => b.src), compressed].map((src) => imageNaturalSize(src)));
+          const aspects = sizes.map((z) => (z.w > 0 && z.h > 0 ? z.w / z.h : 1)), aspect = aspects[aspects.length - 1];
+          rememberImageAspect(compressed, aspect);
+          // Resolve the target again, in the same task as the dispatch below.
+          const at = deckEpochRef.current === epoch ? slidesRef.current.indexOf(target) : -1;
+          if (at < 0) return;
+          const cur = target;
+          const curImgs = curImgBlocks.length;
           // Overflow cap: at most 5 images per slide. A 6th image spills onto a new
           // image-only slide inserted after this one rather than over-packing the grid.
           if (curImgs >= 5) {
-            const newSlides = [...slides];
-            const insertAt = slideIndex + 1;
-            newSlides.splice(insertAt, 0, { blocks: [{ type: "image", src: compressed }] });
-            dispatch({ type: "SET_SLIDES", id: concept.id, slides: newSlides });
-            dispatch({ type: "SET_SLIDE_INDEX", index: insertAt });
+            dispatch({ type: "INSERT_SLIDES", id: moduleId, index: at + 1, slides: [{ blocks: [{ type: "image", src: compressed }] }] });
+            dispatch({ type: "SET_SLIDE_INDEX", index: at + 1 });
             return;
           }
           const patch = { blocks: [...(cur.blocks || []), { type: "image", src: compressed }] };
           const n = curImgs + 1; // image count after this paste
           // Layout-aware paste: place the image beside existing body content rather
           // than always stacking it below. pasteImageLayout() respects an explicit
-          // author layout, keeps mostly-title/image-only slides and wide images stacked
-          // (the renderer auto-grids a run of >=2 images), promotes heavy text + >=3
-          // images to a full-width header + full-width image grid, and otherwise returns
-          // "image-right" so the image column grids beside the content.
-          const aspect = await imageAspect(compressed);
-          rememberImageAspect(compressed, aspect);
+          // author layout and otherwise keeps the layout (stack or image-right) that
+          // shows the most image area, from the body height measured on screen.
           // CR23: a split that an earlier paste set (the slide still carries the exact
           // layout signature that paste left) is re-evaluated for the new image count
           // and aspects. A split the author set is kept.
-          const curImgBlocks = (cur.blocks || []).filter((b) => b.type === "image");
           const pasteOwned = !!cur.layout && cur.layout !== "stack" && curImgBlocks.some((b) => PASTE_LAYOUT_OWNED.get(b.src) === pasteLayoutSig(cur));
           const basis = pasteOwned ? { ...cur, layout: undefined, contentFlex: undefined, imageFlex: undefined } : cur;
-          const aspects = [...await Promise.all(curImgBlocks.map((b) => IMAGE_ASPECT_CACHE.get(b.src) || imageAspect(b.src))), aspect];
-          const layout = pasteImageLayout(basis, aspect, n, aspects);
+          const layout = pasteImageLayout(basis, aspect, n, aspects, bodyProbe, sizes.map((z) => z.w));
           if (pasteOwned && layout === "stack") { patch.layout = undefined; patch.contentFlex = undefined; patch.imageFlex = undefined; }
           else if (layout !== "stack" && (pasteOwned || layout !== cur.layout)) {
             patch.layout = layout;
@@ -542,7 +549,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
             }
             rememberPasteLayout(compressed, { ...cur, ...patch });
           }
-          dispatch({ type: "UPDATE_SLIDE", id: concept.id, index: slideIndex, patch, merge: true });
+          dispatch({ type: "UPDATE_SLIDE", id: moduleId, index: at, patch, merge: true });
         };
         reader.readAsDataURL(blob); break;
       }

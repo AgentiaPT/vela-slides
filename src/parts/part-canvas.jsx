@@ -615,12 +615,30 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
     const gap = slide.gap || 12;
     const gridKey = String(idxs[0]);
     const box = alignWithinColumn ? null : gridBoxes[gridKey];
-    const cols = slide.imageCols
-      ? Math.min(6, Math.max(1, slide.imageCols | 0))
-      : bestImageGridCols(idxs.map((bi) => IMAGE_ASPECT_CACHE.get(blocks[bi].src)), box?.[0], box?.[1], gap, gridColsFor(runLen, region));
-    const rows = Math.ceil(runLen / cols);
-    const lastRowCount = runLen - (rows - 1) * cols;
-    const incomplete = lastRowCount < cols;
+    // CR23: the packing comes from imageGridPlan() — the same function the paste
+    // layout chooser uses — so what paste predicts is what renders. Each cell is
+    // placed absolutely from the plan (row height = its share hw, cell width = its
+    // share f of the row width after gaps; a short row is centered). The cells
+    // stay flat siblings keyed by block, so a new plan moves them, never remounts.
+    const maxW = idxs.map((bi) => { const z = IMAGE_NATURAL_SIZE.get(blocks[bi].src); return z && z.w > 0 ? z.w * GRID_IMG_MAX_UPSCALE : 0; });
+    const plan = imageGridPlan(idxs.map((bi) => IMAGE_ASPECT_CACHE.get(blocks[bi].src)), box?.[0], box?.[1], gap, gridColsFor(runLen, region), slide.imageCols ? Math.min(6, Math.max(1, slide.imageCols | 0)) : 0, maxW);
+    const rows = plan.rows.length;
+    const hwSum = plan.rows.reduce((t, r) => t + r.hw, 0) || 1, gapsH = gap * (rows - 1);
+    const len = (pct, px) => `calc(${pct * 100}% + ${px}px)`;
+    const cellPos = [];
+    let cumH = 0;
+    plan.rows.forEach((row, r) => {
+      const h = row.hw / hwSum, sumF = row.cells.reduce((t, c) => t + c.f, 0), rowGaps = gap * row.gc;
+      let cumF = 0;
+      row.cells.forEach((c, k) => {
+        cellPos[c.i] = {
+          top: len(cumH, gap * r - cumH * gapsH), height: len(h, -h * gapsH),
+          left: len((1 - sumF) / 2 + cumF, gap * k - rowGaps * ((1 - sumF) / 2 + cumF)), width: len(c.f, -c.f * rowGaps),
+        };
+        cumF += c.f;
+      });
+      cumH += h;
+    });
     // CR25: a full-width run yields height to the other blocks (flex basis 0), but
     // it keeps a small floor so the fit measurement still reserves room for it
     // and it never collapses to nothing.
@@ -630,13 +648,9 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
     // requests alignment. The default path still fills all available height.
     const gridHeight = alignWithinColumn ? Math.min(splitImgMaxH || rows * 140, rows * 140) : null;
     return (
-      <div key={`__imgrid-${idxs[0]}`} data-testid="image-grid" data-image-grid={region} data-image-count={runLen} data-image-grid-key={gridKey} data-image-cols={cols}
-        style={{ display: "grid", gridTemplateColumns: `repeat(${cols * 2}, minmax(0, 1fr))`, gridAutoRows: "minmax(0, 1fr)", gap, flex: gridHeight == null ? "1 1 0" : "0 0 auto", height: gridHeight == null ? undefined : gridHeight, maxHeight: "100%", minHeight: minGridH, minWidth: 0, width: "100%", alignItems: "stretch" }}>
+      <div key={`__imgrid-${idxs[0]}`} data-testid="image-grid" data-image-grid={region} data-image-count={runLen} data-image-grid-key={gridKey} data-image-cols={plan.cols} data-image-rows={rows}
+        style={{ position: "relative", flex: gridHeight == null ? "1 1 0" : "0 0 auto", height: gridHeight == null ? undefined : gridHeight, maxHeight: "100%", minHeight: minGridH, minWidth: 0, width: "100%" }}>
         {idxs.map((bi, k) => {
-          const firstOfLastRow = k === (rows - 1) * cols;
-          const gridColumn = (incomplete && firstOfLastRow)
-            ? `${cols - lastRowCount + 1} / span 2`
-            : "span 2";
           const rendered = renderBlockWithComments({ ...blocks[bi], _gridCell: true, ...(isSoloImage && blocks[bi].rounded == null ? { rounded: 0 } : {}) }, bi);
           const [blockEl, ...rest] = rendered;
           // Make the block wrapper fill its cell height so the image (height:100%)
@@ -645,7 +659,7 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
             style: { ...(blockEl.props.style || {}), display: "flex", flexDirection: "column", flex: 1, minHeight: 0, minWidth: 0, width: "100%" },
           });
           return (
-            <div key={`__imgcell-${bi}`} data-testid="image-grid-cell" style={{ gridColumn, display: "flex", flexDirection: "column", minWidth: 0, minHeight: 0 }}>
+            <div key={`__imgcell-${bi}`} data-testid="image-grid-cell" style={{ position: "absolute", ...cellPos[k], display: "flex", flexDirection: "column", minWidth: 0, minHeight: 0 }}>
               {filled}{rest}
             </div>
           );

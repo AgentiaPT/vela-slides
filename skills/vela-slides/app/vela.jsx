@@ -1975,6 +1975,13 @@ const imageAspect = (dataUrl) => new Promise((resolve) => {
   img.onerror = () => resolve(1);
   img.src = dataUrl;
 });
+// Natural size {w, h} of a data URL image; {w: 0, h: 0} on error (CR23 paste caps).
+const imageNaturalSize = (dataUrl) => new Promise((resolve) => {
+  const img = new Image();
+  img.onload = () => resolve({ w: img.naturalWidth || 0, h: img.naturalHeight || 0 });
+  img.onerror = () => resolve({ w: 0, h: 0 });
+  img.src = dataUrl;
+});
 
 // Decide the layout for a slide an image is being pasted onto. Returns the layout
 // the slide should carry: an explicit author layout is preserved; an empty/mostly-
@@ -1982,7 +1989,7 @@ const imageAspect = (dataUrl) => new Promise((resolve) => {
 // the image below ("stack"); otherwise the slide is promoted to "image-right" so
 // the image sits beside the existing body content. aspect = image width / height.
 const PASTE_TITLE_BLOCKS = new Set(["heading", "text", "subtitle", "badge", "quote"]);
-function pasteImageLayout(slide, aspect, n, aspects) {
+function pasteImageLayout(slide, aspect, n, aspects, measure, naturalW) {
   const layout = slide && slide.layout;
   if (layout && layout !== "stack") return layout; // respect explicit author layout
   const body = ((slide && slide.blocks) || []).filter((b) => b.type !== "image" && b.type !== "spacer" && b.type !== "divider");
@@ -1996,8 +2003,8 @@ function pasteImageLayout(slide, aspect, n, aspects) {
   // CR23: with every image aspect known, compare the two candidates and keep the
   // one that shows the most image area (see pasteLayoutArea). The count rule
   // above is the fallback when the estimate cannot be made.
-  if (!hasContent || !Array.isArray(aspects) || aspects.length !== n) return rule;
-  const split = pasteLayoutArea(slide, aspects, "image-right"), stack = pasteLayoutArea(slide, aspects, "stack");
+  if (!body.length || !Array.isArray(aspects) || aspects.length !== n) return rule;
+  const split = pasteLayoutArea(slide, aspects, "image-right", measure, naturalW), stack = pasteLayoutArea(slide, aspects, "stack", measure, naturalW);
   if (split == null || stack == null) return rule;
   return split > stack ? "image-right" : "stack";
 }
@@ -2010,55 +2017,91 @@ function pasteSplitFlex(n, aspect) {
 
 // CR23: estimated image area (slide px^2) for `aspects` on `slide` in layout
 // "stack" (body text on top, image grid full width below) or "image-right" (body
-// text beside an image column), at the default 960x540 geometry. Text heights
-// come from the block font sizes and a mean glyph width; if the text overflows,
-// the renderer scales the whole slide down, so the area shrinks by scale^2.
-// Returns null when a body block has no estimate (the caller then keeps its rule).
+// text beside an image column), at the default 960x540 geometry. The image area
+// comes from imageGridPlan(), the same packing the renderer draws, so the two
+// cannot disagree. The body height comes from `measure(width)` (the paste handler
+// measures the rendered blocks); without it, from a per-block estimate that
+// covers every block type. A stacked slide whose text overflows is scaled down as
+// a whole (area x scale^2). A split slide widens its columns when it scales, so
+// its image column keeps its visual size. Null only for a custom slide padding.
 const PASTE_TEXT_METRICS = { heading: ["2xl", 1.2, 0.56], text: ["md", 1.6, 0.5], bullets: ["md", 1.6, 0.5], quote: ["xl", 1.4, 0.52] };
-function pasteLayoutArea(slide, aspects, layout) {
-  if (!slide || slide.padding != null || !Array.isArray(aspects) || !aspects.length) return null;
-  if (!aspects.every((a) => typeof a === "number" && a > 0 && Number.isFinite(a))) return null;
-  const body = (slide.blocks || []).filter((b) => b && b.type !== "image" && b.type !== "spacer" && b.type !== "divider");
-  const gap = Number(slide.gap) || 12, W = 864, H = 468;
-  const textH = (w) => {
-    let total = 0;
-    for (const b of body) {
-      if (b.type === "badge") { total += 28 + gap; continue; }
-      const m = PASTE_TEXT_METRICS[b.type];
-      if (!m) return null;
+function pasteBodyEstimate(body, w, gap) {
+  let total = 0;
+  for (const b of body) {
+    const m = PASTE_TEXT_METRICS[b.type];
+    if (b.type === "badge") total += 28;
+    else if (m) {
       const px = parseFloat(BASE_SIZES[b.size] || BASE_SIZES[m[0]]) * 16, lineH = px * m[1];
       const lines = (str, width) => String(str == null ? "" : str).split("\n").reduce((k, seg) => k + Math.max(1, Math.ceil(seg.length * px * m[2] / Math.max(40, width))), 0);
       if (b.type === "bullets") {
         const items = Array.isArray(b.items) ? b.items : [];
         total += items.reduce((h, it) => h + lines(typeof it === "string" ? it : it && it.text, w - 28) * lineH, 0) + Math.max(0, items.length - 1) * (Number(b.gap) || 8);
       } else total += lines(b.text, b.type === "quote" ? w * 0.85 : w) * lineH;
-      total += gap;
     }
-    return Math.max(0, total - gap);
+    // Conservative, width-free estimates for every other block type.
+    else if (Array.isArray(b.rows)) total += 44 + b.rows.length * 38;
+    else if (b.type === "code") total += 36 + String(b.text || "").split("\n").length * 20;
+    else if (b.type === "chart") total += 240;
+    else if (Array.isArray(b.items)) total += 24 + b.items.length * 44;
+    else total += 90;
+    total += gap;
+  }
+  return Math.max(0, total - gap);
+}
+function pasteLayoutArea(slide, aspects, layout, measure, naturalW) {
+  if (!slide || slide.padding != null || !Array.isArray(aspects) || !aspects.length) return null;
+  if (!aspects.every((a) => typeof a === "number" && a > 0 && Number.isFinite(a))) return null;
+  const body = (slide.blocks || []).filter((b) => b && b.type !== "image" && b.type !== "spacer" && b.type !== "divider");
+  const gap = Number(slide.gap) || 12, W = 864, H = 468;
+  const textH = (w) => {
+    const m = typeof measure === "function" ? measure(w) : null;
+    return typeof m === "number" && Number.isFinite(m) && m >= 0 ? m : pasteBodyEstimate(body, w, gap);
   };
   const n = aspects.length;
-  const areaIn = (bw, bh, region) => {
-    if (!(bw > 0 && bh > 0)) return 0;
-    const cols = n === 1 ? 1 : bestImageGridCols(aspects, bw, bh, gap, gridColsFor(n, region));
-    const rows = Math.ceil(n / cols);
-    const cw = (bw - gap * (cols - 1)) / cols, ch = (bh - gap * (rows - 1)) / rows;
-    if (cw <= 0 || ch <= 0) return 0;
-    return aspects.reduce((sum, a) => { const w = Math.min(cw, ch * a); return sum + w * (w / a); }, 0);
-  };
+  // Upscale caps (natural widths, optional): a grid cell draws an image at most
+  // GRID_IMG_MAX_UPSCALE x natural size; a lone side image at most 1x.
+  const known = Array.isArray(naturalW) && naturalW.length === n;
+  const capGrid = known ? naturalW.map((w) => w * GRID_IMG_MAX_UPSCALE) : undefined;
   if (layout === "stack") {
-    const t = textH(W);
-    if (t == null) return null;
-    const rows = Math.ceil(n / gridColsFor(n, "full"));
-    const gridH = Math.max(H - t - gap, rows * 72);
-    const s = Math.min(1, H / (t + gap + gridH));
-    return areaIn(W, gridH, "full") * s * s;
+    const head = body.length ? textH(W) + gap : 0;
+    const floorRows = imageGridPlan(aspects, 0, 0, gap, gridColsFor(n, "full")).rows.length;
+    const gridH = Math.max(H - head, floorRows * 72);
+    const s = Math.min(1, H / (head + gridH));
+    return imageGridPlan(aspects, W, gridH, gap, gridColsFor(n, "full"), 0, capGrid).area * s * s;
   }
   const [cf, imf] = pasteSplitFlex(n, aspects[n - 1]);
   const colW = (W - (Number(slide.splitGap) || 32)) / (cf + imf);
-  const t = textH(colW * cf);
-  if (t == null) return null;
-  const s = Math.min(1, H / Math.max(t, 1));
-  return areaIn(colW * imf, H, "half") * s * s;
+  return imageGridPlan(aspects, colW * imf, H, gap, gridColsFor(n, "half"), 0, n === 1 && known ? naturalW : capGrid).area;
+}
+
+// CR23: body-height probe for pasteLayoutArea(). When a paste starts, it copies
+// (cloneNode) the rendered non-image blocks of the on-screen slide. measure(w)
+// lays the copies out at width w in a hidden box inside the slide and returns
+// their stacked height in slide px, so every block type (table, chart, code...)
+// is measured, not guessed. Null when the viewport does not show `slide`.
+function pasteBodyProbe(root, slide) {
+  const vp = root && root.querySelector ? root.querySelector("[data-testid='slide-viewport']") : null;
+  if (!vp || !slide) return null;
+  const els = Array.from(vp.querySelectorAll("[data-block-type]")).filter((el) => el.getAttribute("data-block-type") !== "image" && !el.parentElement.closest("[data-block-type]"));
+  if (els.length !== (slide.blocks || []).filter((b) => b && b.type !== "image").length) return null;
+  if (!els.length) return () => 0;
+  const host = els[0].parentElement, copies = els.map((el) => el.cloneNode(true));
+  const gap = Number(slide.gap) || 12, cache = new Map();
+  return (w) => {
+    if (cache.has(w)) return cache.get(w);
+    let h = null;
+    if (host && host.isConnected) {
+      const probe = document.createElement("div");
+      probe.setAttribute("aria-hidden", "true");
+      probe.style.cssText = `position:absolute;left:0;top:0;visibility:hidden;pointer-events:none;display:flex;flex-direction:column;gap:${gap}px;width:${Math.max(1, Math.round(w))}px`;
+      copies.forEach((c) => probe.appendChild(c));
+      host.appendChild(probe);
+      h = probe.offsetHeight;
+      probe.remove();
+    }
+    cache.set(w, h);
+    return h;
+  };
 }
 
 // Columns for a run of `n` images, by region. "full" = image-only slide or a
@@ -2073,30 +2116,73 @@ function gridColsFor(n, region) {
   return ({ 1: 1, 2: 2, 3: 3, 4: 2, 5: 3 })[n] || 3;
 }
 
-// CR23: aspect-aware column choice for an image run. gridColsFor() only knows the
-// count, so three wide images always became one thin row. When every aspect ratio
-// (width / height) and the measured grid box are known, try each column count and
-// keep the one that shows the most image area (objectFit:contain in uniform cells).
-// The count-driven default wins unless another choice is at least 5% better, so
-// the arrangement is stable. Unknown aspects or box → the count-driven default.
-function bestImageGridCols(aspects, boxW, boxH, gap, fallback) {
+// CR23: the image-grid packing. The renderer (renderImageGrid) and the paste
+// layout chooser (pasteLayoutArea) both use it, so they cannot disagree.
+// A plan is a list of rows; each row is { cells: [{ i, f }], gc, hw }:
+//   cell width = (boxW - gap * gc) * f     (f = share of the row width)
+//   row height = (boxH - gap * (rows - 1)) * hw / sum(hw)
+// Each image is drawn with objectFit:contain in its cell. Candidates:
+//   - uniform grids of 1..6 columns (equal cells; a short last row is centered);
+//   - for mixed aspect ratios, "justified" rows: consecutive images share one
+//     row height and get widths in proportion to their aspect (every row split).
+// The count-driven uniform grid (`fallback` columns) wins unless another plan
+// shows at least 5% more image area, so the arrangement is stable. `pinned`
+// (the author's imageCols) forces a uniform grid. Unknown aspects or box → the
+// fallback grid with area 0. aspects = width / height of each image, in order;
+// maxW (optional) = the widest each image may be drawn (the upscale cap).
+function imageGridPlan(aspects, boxW, boxH, gap, fallback, pinned, maxW) {
   const n = Array.isArray(aspects) ? aspects.length : 0;
-  const base = Math.max(1, fallback | 0);
-  if (n <= 1) return 1;
-  if (!(boxW > 0 && boxH > 0) || !aspects.every((a) => typeof a === "number" && a > 0 && Number.isFinite(a))) return base;
   const g = Math.max(0, Number(gap) || 0);
-  const areaFor = (cols) => {
-    const rows = Math.ceil(n / cols);
-    const cw = (boxW - g * (cols - 1)) / cols, ch = (boxH - g * (rows - 1)) / rows;
-    if (cw <= 0 || ch <= 0) return 0;
-    return aspects.reduce((sum, a) => { const w = Math.min(cw, ch * a); return sum + w * (w / a); }, 0);
+  const valid = n > 0 && boxW > 0 && boxH > 0 && aspects.every((a) => typeof a === "number" && a > 0 && Number.isFinite(a));
+  const uniform = (c) => {
+    const rows = [];
+    for (let s = 0; s < n; s += c) rows.push({ cells: aspects.slice(s, s + c).map((_, k) => ({ i: s + k, f: 1 / c })), gc: c - 1, hw: 1 });
+    return { rows, cols: c };
   };
-  let best = Math.min(base, n), bestArea = areaFor(best);
-  for (let cols = 1; cols <= Math.min(n, 6); cols++) {
-    const area = areaFor(cols);
-    if (area > bestArea * 1.05) { best = cols; bestArea = area; }
+  const areaOf = (rows) => {
+    const avail = boxH - g * (rows.length - 1), sumHw = rows.reduce((t, r) => t + r.hw, 0);
+    if (!(avail > 0 && sumHw > 0)) return 0;
+    let area = 0;
+    for (const r of rows) {
+      const h = avail * r.hw / sumHw;
+      for (const c of r.cells) {
+        const w = (boxW - g * r.gc) * c.f, a = aspects[c.i];
+        if (!(w > 0)) return 0;
+        const cap = maxW && maxW[c.i] > 0 ? maxW[c.i] : Infinity;
+        const iw = Math.min(w, h * a, cap);
+        area += iw * iw / a;
+      }
+    }
+    return area;
+  };
+  const pack = (p) => ({ ...p, area: valid ? areaOf(p.rows) : 0 });
+  if (pinned) return pack(uniform(Math.min(6, Math.max(1, pinned | 0))));
+  if (n <= 1) return pack(uniform(1));
+  const base = pack(uniform(Math.min(n, Math.max(1, fallback | 0))));
+  if (!valid) return base;
+  let best = base;
+  const consider = (p) => { const q = pack(p); if (q.area > base.area * 1.05 && q.area > best.area) best = q; };
+  for (let c = 1; c <= Math.min(n, 6); c++) consider(uniform(c));
+  // Justified rows only help a mixed set; equal aspects keep uniform cells.
+  if (n <= 8 && Math.max(...aspects) > Math.min(...aspects) * 1.15) {
+    for (let mask = 0; mask < (1 << (n - 1)); mask++) {
+      const rows = [];
+      let run = [0];
+      for (let i = 1; i <= n; i++) {
+        if (i === n || (mask >> (i - 1)) & 1) {
+          const S = run.reduce((t, k) => t + aspects[k], 0);
+          rows.push({ cells: run.map((k) => ({ i: k, f: aspects[k] / S })), gc: run.length - 1, hw: 1 / S });
+          run = [i];
+        } else run.push(i);
+      }
+      consider({ rows, cols: Math.max(...rows.map((r) => r.cells.length)) });
+    }
   }
   return best;
+}
+// Column count of the chosen plan (the longest row).
+function bestImageGridCols(aspects, boxW, boxH, gap, fallback) {
+  return imageGridPlan(aspects, boxW, boxH, gap, fallback).cols;
 }
 
 // Bounded cache of image aspect ratios keyed by the (data:) src, filled by the
@@ -5147,12 +5233,30 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
     const gap = slide.gap || 12;
     const gridKey = String(idxs[0]);
     const box = alignWithinColumn ? null : gridBoxes[gridKey];
-    const cols = slide.imageCols
-      ? Math.min(6, Math.max(1, slide.imageCols | 0))
-      : bestImageGridCols(idxs.map((bi) => IMAGE_ASPECT_CACHE.get(blocks[bi].src)), box?.[0], box?.[1], gap, gridColsFor(runLen, region));
-    const rows = Math.ceil(runLen / cols);
-    const lastRowCount = runLen - (rows - 1) * cols;
-    const incomplete = lastRowCount < cols;
+    // CR23: the packing comes from imageGridPlan() — the same function the paste
+    // layout chooser uses — so what paste predicts is what renders. Each cell is
+    // placed absolutely from the plan (row height = its share hw, cell width = its
+    // share f of the row width after gaps; a short row is centered). The cells
+    // stay flat siblings keyed by block, so a new plan moves them, never remounts.
+    const maxW = idxs.map((bi) => { const z = IMAGE_NATURAL_SIZE.get(blocks[bi].src); return z && z.w > 0 ? z.w * GRID_IMG_MAX_UPSCALE : 0; });
+    const plan = imageGridPlan(idxs.map((bi) => IMAGE_ASPECT_CACHE.get(blocks[bi].src)), box?.[0], box?.[1], gap, gridColsFor(runLen, region), slide.imageCols ? Math.min(6, Math.max(1, slide.imageCols | 0)) : 0, maxW);
+    const rows = plan.rows.length;
+    const hwSum = plan.rows.reduce((t, r) => t + r.hw, 0) || 1, gapsH = gap * (rows - 1);
+    const len = (pct, px) => `calc(${pct * 100}% + ${px}px)`;
+    const cellPos = [];
+    let cumH = 0;
+    plan.rows.forEach((row, r) => {
+      const h = row.hw / hwSum, sumF = row.cells.reduce((t, c) => t + c.f, 0), rowGaps = gap * row.gc;
+      let cumF = 0;
+      row.cells.forEach((c, k) => {
+        cellPos[c.i] = {
+          top: len(cumH, gap * r - cumH * gapsH), height: len(h, -h * gapsH),
+          left: len((1 - sumF) / 2 + cumF, gap * k - rowGaps * ((1 - sumF) / 2 + cumF)), width: len(c.f, -c.f * rowGaps),
+        };
+        cumF += c.f;
+      });
+      cumH += h;
+    });
     // CR25: a full-width run yields height to the other blocks (flex basis 0), but
     // it keeps a small floor so the fit measurement still reserves room for it
     // and it never collapses to nothing.
@@ -5162,13 +5266,9 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
     // requests alignment. The default path still fills all available height.
     const gridHeight = alignWithinColumn ? Math.min(splitImgMaxH || rows * 140, rows * 140) : null;
     return (
-      <div key={`__imgrid-${idxs[0]}`} data-testid="image-grid" data-image-grid={region} data-image-count={runLen} data-image-grid-key={gridKey} data-image-cols={cols}
-        style={{ display: "grid", gridTemplateColumns: `repeat(${cols * 2}, minmax(0, 1fr))`, gridAutoRows: "minmax(0, 1fr)", gap, flex: gridHeight == null ? "1 1 0" : "0 0 auto", height: gridHeight == null ? undefined : gridHeight, maxHeight: "100%", minHeight: minGridH, minWidth: 0, width: "100%", alignItems: "stretch" }}>
+      <div key={`__imgrid-${idxs[0]}`} data-testid="image-grid" data-image-grid={region} data-image-count={runLen} data-image-grid-key={gridKey} data-image-cols={plan.cols} data-image-rows={rows}
+        style={{ position: "relative", flex: gridHeight == null ? "1 1 0" : "0 0 auto", height: gridHeight == null ? undefined : gridHeight, maxHeight: "100%", minHeight: minGridH, minWidth: 0, width: "100%" }}>
         {idxs.map((bi, k) => {
-          const firstOfLastRow = k === (rows - 1) * cols;
-          const gridColumn = (incomplete && firstOfLastRow)
-            ? `${cols - lastRowCount + 1} / span 2`
-            : "span 2";
           const rendered = renderBlockWithComments({ ...blocks[bi], _gridCell: true, ...(isSoloImage && blocks[bi].rounded == null ? { rounded: 0 } : {}) }, bi);
           const [blockEl, ...rest] = rendered;
           // Make the block wrapper fill its cell height so the image (height:100%)
@@ -5177,7 +5277,7 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
             style: { ...(blockEl.props.style || {}), display: "flex", flexDirection: "column", flex: 1, minHeight: 0, minWidth: 0, width: "100%" },
           });
           return (
-            <div key={`__imgcell-${bi}`} data-testid="image-grid-cell" style={{ gridColumn, display: "flex", flexDirection: "column", minWidth: 0, minHeight: 0 }}>
+            <div key={`__imgcell-${bi}`} data-testid="image-grid-cell" style={{ position: "absolute", ...cellPos[k], display: "flex", flexDirection: "column", minWidth: 0, minHeight: 0 }}>
               {filled}{rest}
             </div>
           );
@@ -8947,7 +9047,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
   );
   const looksLikeSlide = (obj) => obj && typeof obj === "object" && !Array.isArray(obj) && Object.keys(obj).some((k) => SLIDE_KEYS.has(k));
   const handlePaste = useCallback((e) => {
-    const tag = e.target?.tagName?.toLowerCase(); if (tag === "textarea" || tag === "input") return;
+    const tag = e.target?.tagName?.toLowerCase(); if (tag === "textarea" || tag === "input" || e.target?.isContentEditable) return;
     const items = e.clipboardData?.items; if (!items) return;
     // Check for text/plain first — try to detect slide JSON
     const textItem = Array.from(items).find((i) => i.type === "text/plain");
@@ -8960,11 +9060,10 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
           const incoming = Array.isArray(parsed) ? parsed : [parsed];
           const validSlides = incoming.filter(looksLikeSlide).map((s) => sanitizeSlide(s)).filter(Boolean);
           if (validSlides.length === 0) return;
-          // Insert after current slide
-          const newSlides = [...slides];
+          // Insert after current slide. getAsString is async: insert into the live
+          // list (INSERT_SLIDES), never write back the captured slide list.
           const insertAt = slides.length === 0 ? 0 : slideIndex + 1;
-          newSlides.splice(insertAt, 0, ...validSlides);
-          dispatch({ type: "SET_SLIDES", id: concept.id, slides: newSlides });
+          dispatch({ type: "INSERT_SLIDES", id: concept.id, index: insertAt, slides: validSlides });
           dispatch({ type: "SET_SLIDE_INDEX", index: insertAt });
         } catch { /* not valid JSON, ignore */ }
       });
@@ -8973,40 +9072,48 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
     for (const item of items) {
       if (item.type.startsWith("image/")) {
         e.preventDefault(); const blob = item.getAsFile(); const reader = new FileReader();
+        // Capture the target now. The image work below is async: the user can
+        // undo, delete or edit slides before it ends. The change goes to this
+        // exact slide object only (found again by identity just before the
+        // dispatch); if it is gone or changed, the paste is dropped. Never write
+        // back a stale copy of the slide list or of the slide.
+        const moduleId = concept.id, epoch = deckEpochRef.current;
+        const target = slides.length ? slides[slideIndex] : null;
+        const bodyProbe = target ? pasteBodyProbe(containerRef.current, target) : null;
         reader.onload = async () => {
           const compressed = await compressSlideImage(reader.result);
-          // Empty module → brand-new full-bleed solo-image slide.
-          if (slides.length === 0) { dispatch({ type: "ADD_SLIDE", id: concept.id, slide: { blocks: [{ type: "image", src: compressed }] } }); return; }
-          const cur = slides[slideIndex] || {};
-          const curImgs = (cur.blocks || []).filter((b) => b.type === "image").length;
+          if (deckEpochRef.current !== epoch) return;
+          // Empty module → brand-new full-bleed solo-image slide (additive).
+          if (!target) { dispatch({ type: "ADD_SLIDE", id: moduleId, slide: { blocks: [{ type: "image", src: compressed }] } }); return; }
+          const curImgBlocks = (target.blocks || []).filter((b) => b.type === "image");
+          // Natural sizes give the aspects and the upscale caps for the layout choice.
+          const sizes = await Promise.all([...curImgBlocks.map((b) => b.src), compressed].map((src) => imageNaturalSize(src)));
+          const aspects = sizes.map((z) => (z.w > 0 && z.h > 0 ? z.w / z.h : 1)), aspect = aspects[aspects.length - 1];
+          rememberImageAspect(compressed, aspect);
+          // Resolve the target again, in the same task as the dispatch below.
+          const at = deckEpochRef.current === epoch ? slidesRef.current.indexOf(target) : -1;
+          if (at < 0) return;
+          const cur = target;
+          const curImgs = curImgBlocks.length;
           // Overflow cap: at most 5 images per slide. A 6th image spills onto a new
           // image-only slide inserted after this one rather than over-packing the grid.
           if (curImgs >= 5) {
-            const newSlides = [...slides];
-            const insertAt = slideIndex + 1;
-            newSlides.splice(insertAt, 0, { blocks: [{ type: "image", src: compressed }] });
-            dispatch({ type: "SET_SLIDES", id: concept.id, slides: newSlides });
-            dispatch({ type: "SET_SLIDE_INDEX", index: insertAt });
+            dispatch({ type: "INSERT_SLIDES", id: moduleId, index: at + 1, slides: [{ blocks: [{ type: "image", src: compressed }] }] });
+            dispatch({ type: "SET_SLIDE_INDEX", index: at + 1 });
             return;
           }
           const patch = { blocks: [...(cur.blocks || []), { type: "image", src: compressed }] };
           const n = curImgs + 1; // image count after this paste
           // Layout-aware paste: place the image beside existing body content rather
           // than always stacking it below. pasteImageLayout() respects an explicit
-          // author layout, keeps mostly-title/image-only slides and wide images stacked
-          // (the renderer auto-grids a run of >=2 images), promotes heavy text + >=3
-          // images to a full-width header + full-width image grid, and otherwise returns
-          // "image-right" so the image column grids beside the content.
-          const aspect = await imageAspect(compressed);
-          rememberImageAspect(compressed, aspect);
+          // author layout and otherwise keeps the layout (stack or image-right) that
+          // shows the most image area, from the body height measured on screen.
           // CR23: a split that an earlier paste set (the slide still carries the exact
           // layout signature that paste left) is re-evaluated for the new image count
           // and aspects. A split the author set is kept.
-          const curImgBlocks = (cur.blocks || []).filter((b) => b.type === "image");
           const pasteOwned = !!cur.layout && cur.layout !== "stack" && curImgBlocks.some((b) => PASTE_LAYOUT_OWNED.get(b.src) === pasteLayoutSig(cur));
           const basis = pasteOwned ? { ...cur, layout: undefined, contentFlex: undefined, imageFlex: undefined } : cur;
-          const aspects = [...await Promise.all(curImgBlocks.map((b) => IMAGE_ASPECT_CACHE.get(b.src) || imageAspect(b.src))), aspect];
-          const layout = pasteImageLayout(basis, aspect, n, aspects);
+          const layout = pasteImageLayout(basis, aspect, n, aspects, bodyProbe, sizes.map((z) => z.w));
           if (pasteOwned && layout === "stack") { patch.layout = undefined; patch.contentFlex = undefined; patch.imageFlex = undefined; }
           else if (layout !== "stack" && (pasteOwned || layout !== cur.layout)) {
             patch.layout = layout;
@@ -9021,7 +9128,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
             }
             rememberPasteLayout(compressed, { ...cur, ...patch });
           }
-          dispatch({ type: "UPDATE_SLIDE", id: concept.id, index: slideIndex, patch, merge: true });
+          dispatch({ type: "UPDATE_SLIDE", id: moduleId, index: at, patch, merge: true });
         };
         reader.readAsDataURL(blob); break;
       }
@@ -11261,6 +11368,54 @@ function JsonClipboardModal({ mode, setMode, state, dispatch }) {
 // ━━━ Vela Battery Test ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Auto-runs on mount, shows toast notification, copy details button
 
+// ── tideline CR23: seeded image-placement stress matrix ──
+// Shared by the unit battery below and the "tideline-CR22-CR25 image placement"
+// UI suite (part-uitest2.jsx). Each case = a slide body + 1-5 image aspects.
+const TL_STRESS_ASPECTS = [4, 16 / 9, 4 / 3, 1, 3 / 4, 9 / 16];
+const TL_STRESS_BODIES = (() => {
+  const h = { type: "heading", text: "Stress heading" };
+  return {
+    none: [],
+    heading: [h],
+    htc: [h, { type: "text", text: "Short body text that explains the pictures." }, { type: "text", text: "Credit: Example Author, 16 Jun 2025", size: "sm" }],
+    bullets8: [h, { type: "bullets", items: Array.from({ length: 8 }, (_, i) => `Bullet point ${i + 1} with a few words`) }],
+    table: [h, { type: "table", headers: ["Item", "Q1", "Q2", "Q3"], rows: Array.from({ length: 5 }, (_, r) => [`Row ${r + 1}`, `${r}1`, `${r}2`, `${r}3`]) }],
+    chart: [h, { type: "progress", items: Array.from({ length: 5 }, (_, i) => ({ label: `Metric ${i + 1}`, value: 20 + i * 15 })) }],
+  };
+})();
+function tidelineStressCases(count = 66, seed = 23) {
+  let s = seed >>> 0;
+  const rnd = () => { s = (Math.imul(s, 1664525) + 1013904223) >>> 0; return s / 4294967296; };
+  const bodies = Object.keys(TL_STRESS_BODIES), out = [];
+  for (let k = 0; k < count; k++) {
+    const n = 1 + (Math.floor(k / bodies.length) % 5);
+    out.push({ body: bodies[k % bodies.length], aspects: Array.from({ length: n }, () => TL_STRESS_ASPECTS[Math.floor(rnd() * TL_STRESS_ASPECTS.length)]) });
+  }
+  return out;
+}
+// Model-level check: for each case the chosen layout's image area (estimate) is
+// >= 85% of the other layout's, and the grid plan's area is >= 85% of the best
+// uniform grid in the same box. Returns the minimum ratio seen.
+function tidelineStressUnit() {
+  let min = Infinity;
+  const cases = tidelineStressCases();
+  for (const c of cases) {
+    const n = c.aspects.length, slide = { blocks: TL_STRESS_BODIES[c.body] };
+    if (slide.blocks.length) {
+      const pick = pasteImageLayout(slide, c.aspects[n - 1], n, c.aspects);
+      const split = pasteLayoutArea(slide, c.aspects, "image-right"), stack = pasteLayoutArea(slide, c.aspects, "stack");
+      min = Math.min(min, (pick === "stack" ? stack : split) / Math.max(split, stack));
+    }
+    for (const [w, h] of [[864, 468], [864, 360], [416, 468]]) {
+      const plan = imageGridPlan(c.aspects, w, h, 12, gridColsFor(n, "full"));
+      let eq = 0;
+      for (let k = 1; k <= n; k++) eq = Math.max(eq, imageGridPlan(c.aspects, w, h, 12, 1, k).area);
+      min = Math.min(min, plan.area / eq);
+    }
+  }
+  return { cases: cases.length, min };
+}
+
 const VELA_TESTS = [
   // ── Config & Utilities ──
   { name: "VELA_VERSION defined", fn: () => typeof VELA_VERSION === "string" && VELA_VERSION.length > 0 },
@@ -11308,7 +11463,14 @@ const VELA_TESTS = [
   { name: "bestImageGridCols: 3 tall images stay one row", fn: () => bestImageGridCols([0.5625, 0.5625, 0.5625], 864, 418, 12, 3) === 3 },
   { name: "bestImageGridCols: 3 wide images leave one row", fn: () => bestImageGridCols([3, 3, 3], 864, 418, 12, 3) < 3 },
   { name: "bestImageGridCols: 2 wide images stack in a tall box", fn: () => bestImageGridCols([3, 3], 864, 468, 12, 2) === 1 },
-  { name: "bestImageGridCols: 4 mixed images keep 2x2", fn: () => bestImageGridCols([3, 1.78, 1, 0.5625], 864, 468, 12, 2) === 2 },
+  { name: "imageGridPlan CR23: 4 mixed images beat the uniform 2x2", fn: () => imageGridPlan([3, 1.78, 1, 0.5625], 864, 468, 12, 2).area >= imageGridPlan([3, 1.78, 1, 0.5625], 864, 468, 12, 2, 2).area },
+  { name: "imageGridPlan CR23: tall+wide gets aspect-sized cells (not equal halves)", fn: () => {
+    const p = imageGridPlan([1 / 3, 16 / 9], 864, 468, 12, 2), eq = imageGridPlan([1 / 3, 16 / 9], 864, 468, 12, 2, 2);
+    return p.rows.length === 1 && p.rows[0].cells[1].f > 0.7 && p.area > eq.area * 1.6;
+  } },
+  { name: "imageGridPlan CR23: equal aspects keep uniform cells", fn: () => imageGridPlan([1.78, 1.78, 1.78, 1.78, 1.78], 864, 400, 12, 3).rows.every((r) => r.cells.every((c) => Math.abs(c.f - 1 / 3) < 1e-9 || Math.abs(c.f - 1 / 2) < 1e-9 || c.f === 1)) },
+  { name: "imageGridPlan CR23: pinned imageCols forces a uniform grid", fn: () => { const p = imageGridPlan([4, 0.5], 864, 468, 12, 2, 3); return p.cols === 3 && p.rows[0].cells.every((c) => c.f === 1 / 3); } },
+  { name: "imageGridPlan CR23: no box → count default, area 0", fn: () => { const p = imageGridPlan([1, 2, 3], 0, 0, 12, 3); return p.cols === 3 && p.area === 0; } },
   { name: "bestImageGridCols: unknown aspect → count default", fn: () => bestImageGridCols([3, undefined, 3], 864, 418, 12, 3) === 3 },
   { name: "bestImageGridCols: no box → count default", fn: () => bestImageGridCols([3, 3, 3], 0, 0, 12, 3) === 3 },
   { name: "bestImageGridCols: bad aspect values → count default", fn: () => bestImageGridCols([3, NaN, -1], 864, 418, 12, 3) === 3 && bestImageGridCols([3, "3", 3], 864, 418, 12, 3) === 3 },
@@ -11331,7 +11493,17 @@ const VELA_TESTS = [
     const s = { blocks: [{ type: "heading", text: "H" }, { type: "bullets", items: Array.from({ length: 8 }, (_, i) => `Bullet number ${i} with some words to fill a line of text`) }] };
     return pasteImageLayout(s, 0.5625, 2, [0.5625, 0.5625]) === "image-right";
   } },
-  { name: "pasteImageLayout CR23: unknown block type → count rule", fn: () => pasteImageLayout({ blocks: [{ type: "heading", text: "H" }, { type: "table", rows: [] }] }, 1, 2, [1, 1]) === "image-right" },
+  { name: "pasteImageLayout CR23: every block type gets an area estimate", fn: () => ["table", "progress", "code", "flow", "metric"].every((t) => pasteLayoutArea({ blocks: [{ type: "heading", text: "H" }, { type: t, rows: [["a"]], items: [] }] }, [1], "stack") > 0) },
+  { name: "pasteImageLayout CR23: table + 16:9 uses the split column (D1)", fn: () => {
+    const s = { blocks: TL_STRESS_BODIES.table.concat([{ type: "text", text: "Credit", size: "sm" }]) };
+    return pasteImageLayout(s, 16 / 9, 1, [16 / 9], () => 229 + 12 + 43) === "image-right";
+  } },
+  { name: "pasteImageLayout CR23: measured body height overrides the estimate", fn: () => {
+    const s = { blocks: [{ type: "heading", text: "H" }, { type: "table", rows: [] }] };
+    return pasteLayoutArea(s, [1, 1], "stack", () => 400) < pasteLayoutArea(s, [1, 1], "stack", () => 40);
+  } },
+  { name: "pasteImageLayout CR23: 8 bullets + 4x 16:9 stays split (D2)", fn: () => pasteImageLayout(TL_STRESS_BODIES.bullets8 && { blocks: TL_STRESS_BODIES.bullets8 }, 16 / 9, 4, [16 / 9, 16 / 9, 16 / 9, 16 / 9], () => 380) === "image-right" },
+  { name: "tideline CR23 stress matrix (unit): >= 60 seeded cases, chosen >= 85% of best", fn: () => { const r = tidelineStressUnit(); return r.cases >= 60 && r.min >= 0.85; } },
   { name: "pasteImageLayout CR23: explicit split kept with aspects", fn: () => pasteImageLayout({ layout: "image-left", blocks: [{ type: "text", text: "a" }, { type: "text", text: "b" }, { type: "text", text: "c" }] }, 1, 3, [1, 1, 1]) === "image-left" },
 
   // ── Editing UX Batch (v12.75): imageAspect ──
@@ -17213,7 +17385,131 @@ uiSuite("tideline-CR22-CR25 image placement", [
     await _mrdUndoTo(past);
     if (m.imgs[0].w < 960 * 0.9) throw new Error(`1600x900 image is only ${m.imgs[0].w.toFixed(0)}px wide`);
   }},
+  { name: "CR23 stress matrix: the pasted layout and grid show >= 85% of the best alternative (65 seeded cases)", fn: async () => {
+    // The last image goes through the real paste handler; the chosen result is
+    // then compared, by real rendering, with the other layout (split <-> stack)
+    // and with the uniform count-driven grid in the same layout.
+    const fixed = [{ body: "table", aspects: [16 / 9] }, { body: "table", aspects: [16 / 9, 16 / 9] }, { body: "bullets8", aspects: [16 / 9, 16 / 9, 16 / 9, 16 / 9] }, { body: "none", aspects: [1 / 3, 16 / 9] }, { body: "none", aspects: [1 / 3, 16 / 9, 1 / 3] }];
+    const cases = [...fixed, ...tidelineStressCases(60)];
+    let min = Infinity, worst = "";
+    for (const c of cases) {
+      const r = await _tlStressCase(c);
+      if (r.ratio < min) { min = r.ratio; worst = r.label; }
+      if (r.ratio < 0.85) throw new Error(`${r.label}: chosen ${r.detail}`);
+    }
+    return { cases: cases.length, min: Number(min.toFixed(3)), worst };
+  }},
+  { name: "paste race: deleting the slide while an image paste is pending drops the paste", fn: async () => {
+    const past = _hooks().getHistoryCounts().past;
+    await _mrdInject([{ type: "heading", text: "TL-RACE-A" }], { layout: undefined }, (vp) => vp?.textContent.includes("TL-RACE-A") ? vp : null);
+    await _waitFor(() => _m1RowTitles().includes("TL-RACE-A"), 2000);
+    const before = _m1RowTitles(), i = before.indexOf("TL-RACE-A");
+    await _tlPasteBig();
+    _click(_tocRows()[i].querySelector("[data-testid='toc-slide-delete']"));
+    await _wait(2500);
+    const after = _m1RowTitles();
+    const want = before.filter((_, k) => k !== i).join("|");
+    await _mrdUndoTo(past);
+    if (after.join("|") !== want) throw new Error(`slide list after delete: ${after.join("|")} (expected ${want})`);
+  }},
+  { name: "paste race: Ctrl+Z right after a paste stays undone", fn: async () => {
+    const past = _hooks().getHistoryCounts().past;
+    await _mrdInject([{ type: "heading", text: "TL-RACE-B" }], { layout: undefined }, (vp) => vp?.textContent.includes("TL-RACE-B") ? vp : null);
+    await _mrdInject([{ type: "heading", text: "TL-RACE-B-E1" }], { layout: undefined }, (vp) => vp?.textContent.includes("TL-RACE-B-E1") ? vp : null);
+    await _tlPasteBig();
+    document.activeElement?.blur?.();
+    _key("z", { ctrlKey: true });
+    await _wait(2500);
+    const vp = _mrdViewport(), text = vp.textContent, imgs = vp.querySelectorAll("img").length;
+    await _mrdUndoTo(past);
+    if (text.includes("TL-RACE-B-E1") || !text.includes("TL-RACE-B")) throw new Error("the undone edit came back");
+    if (imgs) throw new Error(`${imgs} image(s) added after the undo`);
+  }},
+  { name: "paste race: an image paste into an open inline edit keeps the typed text", fn: async () => {
+    const past = _hooks().getHistoryCounts().past;
+    const vp = await _mrdInject([{ type: "heading", text: "TL-RACE-C" }], { layout: undefined }, (v) => v?.textContent.includes("TL-RACE-C") ? v : null);
+    const disp = Array.from(vp.querySelectorAll("[data-block-type='heading'] div")).find((d) => d.textContent === "TL-RACE-C" && d.style.cursor === "pointer");
+    if (!disp) throw new Error("heading text is not editable");
+    _click(disp);
+    const ed = await _waitFor(() => vp.querySelector("[data-block-type='heading'] [contenteditable]"), 1500);
+    ed.focus();
+    const sel = window.getSelection(); sel.selectAllChildren(ed); sel.collapseToEnd();
+    document.execCommand("insertText", false, "-TYPED");
+    const cv = document.createElement("canvas"); cv.width = 64; cv.height = 64;
+    const blob = await new Promise((r) => cv.toBlob(r, "image/png"));
+    const dt = new DataTransfer(); dt.items.add(new File([blob], "c.png", { type: "image/png" }));
+    ed.dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true }));
+    await _wait(1200);
+    const stillEditing = document.activeElement === ed;
+    ed.blur();
+    await _wait(300);
+    const text = _mrdViewport().textContent, imgs = _mrdViewport().querySelectorAll("img").length;
+    await _mrdUndoTo(past);
+    if (!stillEditing) throw new Error("the paste closed the inline edit");
+    if (!text.includes("TL-RACE-C-TYPED")) throw new Error("typed text was dropped");
+    if (imgs) throw new Error("the paste into the inline edit added an image");
+  }},
 ], { setup: _selectFirstModule });
+
+// Helpers for the CR23 stress matrix and the paste-race tests above.
+const _tlColors = ["#3b82f6", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6"];
+const _tlCanvas = (a, k) => { const cv = document.createElement("canvas"); cv.height = 300; cv.width = Math.max(1, Math.round(300 * a)); const g = cv.getContext("2d"); g.fillStyle = _tlColors[k % 5]; g.fillRect(0, 0, cv.width, cv.height); return cv; };
+const _tlPasteCanvas = async (cv) => {
+  const blob = await new Promise((r) => cv.toBlob(r, "image/png"));
+  const dt = new DataTransfer(); dt.items.add(new File([blob], "p.png", { type: "image/png" }));
+  _mrdViewport().dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true }));
+};
+const _tlPasteBig = async () => { const cv = document.createElement("canvas"); cv.width = 3000; cv.height = 2000; cv.getContext("2d").fillRect(0, 0, 3000, 2000); await _tlPasteCanvas(cv); };
+const _tlLoaded = (vp) => Array.from(vp?.querySelectorAll("img") || []).filter((im) => im.complete && im.naturalWidth > 0).length;
+const _tlStressMeasure = () => {
+  const vp = _mrdViewport(), v = vp.getBoundingClientRect(), s = v.width / 960, off = [];
+  vp.querySelectorAll("[data-block-type]").forEach((el) => {
+    if (el.dataset.blockType === "image") return;
+    const r = el.getBoundingClientRect();
+    if (r.width && (r.left < v.left - 1 || r.top < v.top - 1 || r.right > v.right + 1 || r.bottom > v.bottom + 1)) off.push(el.dataset.blockType);
+  });
+  const imgs = Array.from(vp.querySelectorAll("img")).map((im) => {
+    const r = im.getBoundingClientRect(), k = Math.min(r.width / im.naturalWidth, r.height / im.naturalHeight);
+    const w = im.naturalWidth * k, h = im.naturalHeight * k, cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+    if (cx - w / 2 < v.left - 1 || cx + w / 2 > v.right + 1 || cy - h / 2 < v.top - 1 || cy + h / 2 > v.bottom + 1) off.push("image");
+    return { w: w / s, h: h / s, scale: k / s, src: im.getAttribute("src") };
+  });
+  const grid = vp.querySelector("[data-testid='image-grid']");
+  return { off, imgs, area: imgs.reduce((t, i) => t + i.w * i.h, 0), split: !!vp.querySelector("[data-split-image]"), cols: grid ? Number(grid.getAttribute("data-image-cols")) : 1 };
+};
+const _tlStressCase = async (c) => {
+  const n = c.aspects.length, body = TL_STRESS_BODIES[c.body];
+  const label = `${c.body}:[${c.aspects.map((a) => a.toFixed(2)).join(",")}]`;
+  const past = _hooks().getHistoryCounts().past;
+  const base = { layout: undefined, contentFlex: undefined, imageFlex: undefined, imageCols: undefined };
+  const settle = async () => { await _wait(350); await _mrdFrame(); };
+  try {
+    await _mrdInject([...body, ...c.aspects.slice(0, -1).map((a, k) => ({ type: "image", src: _tlCanvas(a, k).toDataURL("image/png") }))], base, (vp) => _tlLoaded(vp) >= n - 1 && vp.querySelectorAll("img").length === n - 1 ? vp : null);
+    await _tlPasteCanvas(_tlCanvas(c.aspects[n - 1], n - 1));
+    await _waitFor(() => _tlLoaded(_mrdViewport()) >= n, 4000);
+    await _wait(150); await settle();
+    const chosen = _tlStressMeasure();
+    if (chosen.off.length) throw new Error(`${label}: off the slide: ${chosen.off.join(",")}`);
+    const big = chosen.imgs.find((i) => i.scale > 2.02);
+    if (big) throw new Error(`${label}: image shown at ${big.scale.toFixed(2)}x natural size`);
+    const blocks = [...body, ...chosen.imgs.map((i) => ({ type: "image", src: i.src }))];
+    const [cf, imf] = pasteSplitFlex(n, c.aspects[n - 1]);
+    const splitProps = { layout: "image-right", contentFlex: cf, imageFlex: imf, imageCols: undefined };
+    const render = async (props, ready) => { await _mrdInject(blocks, props, (vp) => _tlLoaded(vp) === n && ready(vp) ? vp : null); await settle(); return _tlStressMeasure(); };
+    const alts = [];
+    if (body.length) {
+      const other = await render(chosen.split ? base : splitProps, (vp) => !!vp.querySelector("[data-split-image]") !== chosen.split);
+      alts.push([chosen.split ? "stack" : "split", other.area]);
+    }
+    if (n >= 2) {
+      const cols = gridColsFor(n, chosen.split ? "half" : "full");
+      const eq = await render({ ...(chosen.split ? splitProps : base), imageCols: cols }, (vp) => vp.querySelector("[data-testid='image-grid']")?.getAttribute("data-image-cols") === String(cols) && !!vp.querySelector("[data-split-image]") === chosen.split);
+      alts.push([`uniform ${cols}-col grid`, eq.area]);
+    }
+    const best = alts.reduce((b, a) => (a[1] > b[1] ? a : b), ["chosen", chosen.area]);
+    return { label, ratio: chosen.area / best[1], detail: `${chosen.split ? "split" : "stack"} ${Math.round(chosen.area)} px2 vs ${best[0]} ${Math.round(best[1])} px2` };
+  } finally { await _mrdUndoTo(past); }
+};
 
 // ━━━ UI TEST RUNNER COMPONENT ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
