@@ -2007,6 +2007,41 @@ function gridColsFor(n, region) {
   return ({ 1: 1, 2: 2, 3: 3, 4: 2, 5: 3 })[n] || 3;
 }
 
+// CR23: aspect-aware column choice for an image run. gridColsFor() only knows the
+// count, so three wide images always became one thin row. When every aspect ratio
+// (width / height) and the measured grid box are known, try each column count and
+// keep the one that shows the most image area (objectFit:contain in uniform cells).
+// The count-driven default wins unless another choice is at least 5% better, so
+// the arrangement is stable. Unknown aspects or box → the count-driven default.
+function bestImageGridCols(aspects, boxW, boxH, gap, fallback) {
+  const n = Array.isArray(aspects) ? aspects.length : 0;
+  const base = Math.max(1, fallback | 0);
+  if (n <= 1) return 1;
+  if (!(boxW > 0 && boxH > 0) || !aspects.every((a) => typeof a === "number" && a > 0 && Number.isFinite(a))) return base;
+  const g = Math.max(0, Number(gap) || 0);
+  const areaFor = (cols) => {
+    const rows = Math.ceil(n / cols);
+    const cw = (boxW - g * (cols - 1)) / cols, ch = (boxH - g * (rows - 1)) / rows;
+    if (cw <= 0 || ch <= 0) return 0;
+    return aspects.reduce((sum, a) => { const w = Math.min(cw, ch * a); return sum + w * (w / a); }, 0);
+  };
+  let best = Math.min(base, n), bestArea = areaFor(best);
+  for (let cols = 1; cols <= Math.min(n, 6); cols++) {
+    const area = areaFor(cols);
+    if (area > bestArea * 1.05) { best = cols; bestArea = area; }
+  }
+  return best;
+}
+
+// Bounded cache of image aspect ratios keyed by the (data:) src, filled by the
+// slide renderer via imageAspect() so bestImageGridCols() has aspects to work with.
+const IMAGE_ASPECT_CACHE = new Map();
+function rememberImageAspect(src, aspect) {
+  if (typeof src !== "string" || !(aspect > 0)) return;
+  if (IMAGE_ASPECT_CACHE.size >= 256) IMAGE_ASPECT_CACHE.delete(IMAGE_ASPECT_CACHE.keys().next().value);
+  IMAGE_ASPECT_CACHE.set(src, aspect);
+}
+
 // ━━━ Status & Importance Meta ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 const STATUSES = ["todo", "done", "signed-off"];
 const STATUS_META = {

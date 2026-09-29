@@ -17,7 +17,7 @@ that symbol in the named part for the line. No line numbers here — they rot.
 - Sanitizers: sanitizeString sanitizeDeckTitle sanitizeUrl openExternalLink SVG_ALLOWED_TAGS SVG_URL_REF_ATTRS CSS_FETCH_SCHEME SVG_VALUE_FNS SVG_STYLE_PROPS SVG_ROOT_BLOCKED isSvgStyleSafe isSvgInlineStyleSafe sanitizeSvgMarkup SAFE_RASTER_DATA_IMAGE sanitizeImageDataUri SAFE_STYLE_KEYS STYLE_VALUE_REJECT sanitizeStyle CSS_COLOR_KEY scrubCssFields scrubColorFields CSS_LAYOUT_KEY scrubLayoutFields CSS_PAINT_KEY cssKeyStem scrubPaintFields velaTestSurfaceEnabled MAX_SUBOBJECT_DEPTH scrubSubObject cssUrl CSS_COLOR_OK cssColor CSS_GRADIENT_OK cssGradient
 - Deck-ingress key allowlists: SAFE_SLIDE_KEYS SAFE_BLOCK_KEYS SLIDE_NUMERIC_BOUNDS clampDeckNumber MAX_BLOCK_DEPTH sanitizeBlock VALID_COMMENT_STATUSES MAX_COMMENTS sanitizeComment
 - Offline Study Notes sanitizer: sanitizeStudyNotes sanitizeSlide stableIdFrom sanitizeItem resanitizeLoadedLanes resanitizeLoadedBranding KEEPABLE_DECK_ID isKeepableDeckId adoptPriorDeckIds localDeckPayload validateAndSanitizeDeck
-- Image Compression: compressImage IMG_SETTINGS compressSlideImage imageAspect PASTE_TITLE_BLOCKS pasteImageLayout gridColsFor
+- Image Compression: compressImage IMG_SETTINGS compressSlideImage imageAspect PASTE_TITLE_BLOCKS pasteImageLayout gridColsFor bestImageGridCols IMAGE_ASPECT_CACHE rememberImageAspect
 - Status & Importance Meta: STATUSES STATUS_META IMP
 - Themes: themes T statusColor FONT buildTitleCardSlide
 - Vela Logo Icon: VelaIcon BASE_SIZES
@@ -124,6 +124,7 @@ that symbol in the named part for the line. No line numbers here — they rot.
 - meridian-CR10 / meridian-CR11: fullscreen nav icons keep a visible chip: _mrdIsLightTheme _mrdCheckNavGlyphs
 - meridian-CR13: editor|presenter|gallery view switcher next to Present: _mrdSeg _mrdActive _mrdOnTop _mrdSwitchTo _mrdGalleryOpen
 - Sprint meridian (C3): split image alignment, accent 0, docked branding: _mrdSvg _mrdViewport _mrdFrame _mrdInject _mrdSetRange _mrdOpenBranding _mrdCloseBranding _mrdUndoTo _mrdHover _mrdUnhover _mrdCr15Clear _meridianF8SlowSave
+- Sprint tideline (CR22-CR25): image paste placement stress test: _tlAspects _tlBases _tlPaste _tlMeasure _tlCase
 - UI TEST RUNNER COMPONENT: computeDeckFingerprint DEMO_DECK_FP_TITLE VelaUITestRunner
 
 ### part-demo.jsx
@@ -321,7 +322,7 @@ add_lane add_item batch_add_items remove_item remove_lane rename_item rename_lan
 
 - part-imports.jsx: 860-line unbannered stretch after line 513
 - part-blocks.jsx: 764-line unbannered stretch after line 843
-- part-canvas.jsx: 453-line unbannered stretch after line 24
+- part-canvas.jsx: 489-line unbannered stretch after line 24
 - part-slidepanel.jsx: 475-line unbannered stretch after line 235
 - part-slidepanel.jsx: 406-line unbannered stretch after line 1022
 - part-uitest.jsx: 616-line unbannered stretch after line 1230

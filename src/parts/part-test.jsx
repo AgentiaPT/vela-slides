@@ -45,6 +45,16 @@ const VELA_TESTS = [
   { name: "gridColsFor full: N=4 makes 2 rows (2x2)", fn: () => Math.ceil(4 / gridColsFor(4, "full")) === 2 },
   { name: "gridColsFor full: N=5 makes 2 rows (3 then 2)", fn: () => Math.ceil(5 / gridColsFor(5, "full")) === 2 },
   { name: "gridColsFor full: N=2 stays one row", fn: () => Math.ceil(2 / gridColsFor(2, "full")) === 1 },
+  // ── tideline CR23: aspect-aware grid columns (bestImageGridCols) ──
+  { name: "bestImageGridCols: 3 tall images stay one row", fn: () => bestImageGridCols([0.5625, 0.5625, 0.5625], 864, 418, 12, 3) === 3 },
+  { name: "bestImageGridCols: 3 wide images leave one row", fn: () => bestImageGridCols([3, 3, 3], 864, 418, 12, 3) < 3 },
+  { name: "bestImageGridCols: 2 wide images stack in a tall box", fn: () => bestImageGridCols([3, 3], 864, 468, 12, 2) === 1 },
+  { name: "bestImageGridCols: 4 mixed images keep 2x2", fn: () => bestImageGridCols([3, 1.78, 1, 0.5625], 864, 468, 12, 2) === 2 },
+  { name: "bestImageGridCols: unknown aspect → count default", fn: () => bestImageGridCols([3, undefined, 3], 864, 418, 12, 3) === 3 },
+  { name: "bestImageGridCols: no box → count default", fn: () => bestImageGridCols([3, 3, 3], 0, 0, 12, 3) === 3 },
+  { name: "bestImageGridCols: bad aspect values → count default", fn: () => bestImageGridCols([3, NaN, -1], 864, 418, 12, 3) === 3 && bestImageGridCols([3, "3", 3], 864, 418, 12, 3) === 3 },
+  { name: "bestImageGridCols: one image → 1", fn: () => bestImageGridCols([3], 864, 418, 12, 1) === 1 },
+  { name: "bestImageGridCols: result is always 1..n", fn: () => [[1, 1], [2, 0.5, 4, 1, 1]].every((a) => { const c = bestImageGridCols(a, 864, 418, 12, 3); return c >= 1 && c <= a.length; }) },
 
   // pasteImageLayout with image-count n: heavy text + >=3 images → full-width header (stack)
   { name: "pasteImageLayout: image-only slice N=2 stacks (auto-grids)", fn: () => pasteImageLayout({ blocks: [] }, 1, 2) === "stack" },
