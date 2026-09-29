@@ -2936,7 +2936,9 @@ function GlossaryLink({ label, term, entry }) {
 // Faint editor-only text shown in an empty inline-editable text (CR26).
 const EDIT_PLACEHOLDER = "Text";
 
-function EditableText({ text, onSave, editable, style, multiline, className, prefix, suffix }) {
+// controlled: show only the saved `text` prop after a commit (no optimistic local
+// copy), for callers whose onSave normalizes the value (checklist status label).
+function EditableText({ text, onSave, editable, style, multiline, className, prefix, suffix, controlled }) {
   const [editing, setEditing] = useState(false);
   const [hovered, setHovered] = useState(false);
   const [localText, setLocalText] = useState(text);
@@ -2993,7 +2995,7 @@ function EditableText({ text, onSave, editable, style, multiline, className, pre
     const el = ref.current;
     if (!el) { setEditing(false); setHovered(false); return; }
     const v = htmlToMd(el).trim();
-    if (v !== text) { setLocalText(v); onSave(v); }
+    if (v !== text) { if (!controlled) setLocalText(v); onSave(v); }
     setEditing(false);
     setHovered(false);
   };
@@ -3049,7 +3051,8 @@ function SvgEditText({ text, editable, onSave, suffix, ...textProps }) {
   const doneRef = useRef(false);
   useEffect(() => {
     if (!box || !inRef.current) return;
-    inRef.current.focus();
+    // preventScroll: focus must not scroll the slide (no layout jump on open).
+    try { inRef.current.focus({ preventScroll: true }); } catch (_) { inRef.current.focus(); }
     try { inRef.current.select(); } catch (_) {}
   }, [box]);
   const val = text == null ? "" : String(text);
@@ -3062,8 +3065,11 @@ function SvgEditText({ text, editable, onSave, suffix, ...textProps }) {
     const r = el.getBoundingClientRect(); const inv = m.inverse();
     const a = new DOMPoint(r.left, r.top).matrixTransform(inv);
     const b = new DOMPoint(r.right, r.bottom).matrixTransform(inv);
-    const w = Math.max(Math.abs(b.x - a.x), Math.abs(b.y - a.y), fs * 6) + fs * 2;
-    const h = fs * 2;
+    // Size the overlay to the text box (long side = width, short side = line
+    // height), so it does not cover the adjacent labels.
+    const dx = Math.abs(b.x - a.x), dy = Math.abs(b.y - a.y);
+    const w = Math.max(dx, dy, fs * 4) + fs;
+    const h = Math.max(Math.min(dx, dy), fs * 1.2) + 2;
     doneRef.current = false;
     setBox({ x: (a.x + b.x) / 2 - w / 2, y: (a.y + b.y) / 2 - h / 2, w, h, v: val });
   };
@@ -3930,7 +3936,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
             <line x1={`${x2}%`} y1="4" x2={`${x2}%`} y2="20" stroke={loopCol} strokeWidth="1.5" strokeDasharray={loopDash} strokeLinecap="round" />
             <line x1={`${x2}%`} y1="20" x2={`${x1}%`} y2="20" stroke={loopCol} strokeWidth="1.5" strokeDasharray={loopDash} strokeLinecap="round" />
             <line x1={`${x1}%`} y1="20" x2={`${x1}%`} y2="4" stroke={loopCol} strokeWidth="1.5" strokeDasharray={loopDash} strokeLinecap="round" markerEnd={`url(#loopArr-${staggerIdx})`} />
-            {block.loopLabel && <SvgEditText text={block.loopLabel} editable={textEditable} onSave={(v) => onChange?.({ loopLabel: v })} x="50%" y="32" textAnchor="middle" fill={loopCol} fontSize="10" fontFamily="monospace" style={{ fontStyle: "italic" }} />}
+            {(block.loopLabel || textEditable) && <SvgEditText text={block.loopLabel} editable={textEditable} onSave={(v) => onChange?.({ loopLabel: v })} x="50%" y="32" textAnchor="middle" fill={loopCol} fontSize="10" fontFamily="monospace" style={{ fontStyle: "italic" }} />}
           </>; })()}
         </svg>}
         {block.loop && isVert && <svg style={{ position: "absolute", top: 0, bottom: 0, right: 0, width: 36, height: "100%", overflow: "visible" }}>
@@ -3939,7 +3945,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
             <line x1="4" y1={`${y2}%`} x2="20" y2={`${y2}%`} stroke={loopCol} strokeWidth="1.5" strokeDasharray={loopDash} strokeLinecap="round" />
             <line x1="20" y1={`${y2}%`} x2="20" y2={`${y1}%`} stroke={loopCol} strokeWidth="1.5" strokeDasharray={loopDash} strokeLinecap="round" />
             <line x1="20" y1={`${y1}%`} x2="4" y2={`${y1}%`} stroke={loopCol} strokeWidth="1.5" strokeDasharray={loopDash} strokeLinecap="round" markerEnd={`url(#loopArrV-${staggerIdx})`} />
-            {block.loopLabel && <SvgEditText text={block.loopLabel} editable={textEditable} onSave={(v) => onChange?.({ loopLabel: v })} x="28" y="50%" textAnchor="middle" fill={loopCol} fontSize="10" fontFamily="monospace" style={{ fontStyle: "italic" }} transform={`rotate(90, 28, 50%)`} dominantBaseline="middle" />}
+            {(block.loopLabel || textEditable) && <SvgEditText text={block.loopLabel} editable={textEditable} onSave={(v) => onChange?.({ loopLabel: v })} x="28" y="50%" textAnchor="middle" fill={loopCol} fontSize="10" fontFamily="monospace" style={{ fontStyle: "italic" }} transform={`rotate(90, 28, 50%)`} dominantBaseline="middle" />}
           </>; })()}
         </svg>}
       </div></ZoomWrap>
@@ -4227,9 +4233,9 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
                 strokeDasharray={isHighlight ? "8,4" : "none"} />
               <SvgEditText text={item.label} editable={textEditable} onSave={(v) => patchItemAt(block, onChange, i, { label: v })} suffix={isHighlight ? " \u26A0" : ""} x="350" y={y + stageH * 0.38} textAnchor="middle" fill={`${col}dd`}
                 fontSize="14" fontWeight="600" fontFamily="Inter, sans-serif" />
-              {item.value && <SvgEditText text={item.value} editable={textEditable} onSave={(v) => patchItemAt(block, onChange, i, { value: v })} x="350" y={y + stageH * 0.72} textAnchor="middle" fill={col}
+              {(item.value || textEditable) && <SvgEditText text={item.value} editable={textEditable} onSave={(v) => patchItemAt(block, onChange, i, { value: v })} x="350" y={y + stageH * 0.72} textAnchor="middle" fill={col}
                 fontSize="20" fontWeight="800" fontFamily="Inter, sans-serif" />}
-              {item.drop && <SvgEditText text={item.drop} editable={textEditable} onSave={(v) => patchItemAt(block, onChange, i, { drop: v })} x={x4 + 16} y={y + stageH * 0.55} textAnchor="start" fill={isHighlight ? col : st.muted}
+              {(item.drop || textEditable) && <SvgEditText text={item.drop} editable={textEditable} onSave={(v) => patchItemAt(block, onChange, i, { drop: v })} x={x4 + 16} y={y + stageH * 0.55} textAnchor="start" fill={isHighlight ? col : st.muted}
                 fontSize="12" fontWeight={isHighlight ? 700 : 400} fontFamily="Inter, sans-serif" />}
             </g>;
           })}
@@ -4255,9 +4261,9 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
               </marker>;
             })}
           </defs>
-          {block.centerLabel && <>
+          {(block.centerLabel || textEditable) && <>
             <SvgEditText text={block.centerLabel} editable={textEditable} onSave={(v) => onChange?.({ centerLabel: v })} x={cx} y={cy - 8} textAnchor="middle" fill={st.border || "#475569"} fontSize="16" fontWeight="700" fontFamily="Inter, sans-serif" letterSpacing="3" />
-            {block.centerSub && <SvgEditText text={block.centerSub} editable={textEditable} onSave={(v) => onChange?.({ centerSub: v })} x={cx} y={cy + 14} textAnchor="middle" fill={st.muted} fontSize="13" fontFamily="Inter, sans-serif" />}
+            {(block.centerSub || textEditable) && <SvgEditText text={block.centerSub} editable={textEditable} onSave={(v) => onChange?.({ centerSub: v })} x={cx} y={cy + 14} textAnchor="middle" fill={st.muted} fontSize="13" fontFamily="Inter, sans-serif" />}
           </>}
           {items.map((item, i) => {
             const angle = (2 * Math.PI * i / n) - Math.PI / 2;
@@ -4432,10 +4438,12 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
               : <EditableText text={item.label || cfg.label} editable={textEditable} onSave={(v) => {
                   // A typed status name (key or default label) switches the status;
                   // any other text is a custom label; empty text restores the default.
-                  const key = v.trim().toLowerCase();
-                  const hit = Object.keys(statusConfig).find((k) => k === key || statusConfig[k].label.toLowerCase() === key);
+                  // Case, "_", "-" and runs of spaces do not matter ("in_progress").
+                  const norm = (t) => String(t).trim().toLowerCase().replace(/[\s_-]+/g, " ");
+                  const key = norm(v);
+                  const hit = Object.keys(statusConfig).find((k) => k === key || norm(statusConfig[k].label) === key);
                   patchItemAt(block, onChange, i, hit ? { status: hit, label: undefined } : { label: v || undefined });
-                }} style={{ marginLeft: "auto", fontFamily: FONT.mono, fontSize: SIZES.xs, fontWeight: 600, color: labelColor, textTransform: "uppercase" }} />)}
+                }} controlled style={{ marginLeft: "auto", fontFamily: FONT.mono, fontSize: SIZES.xs, fontWeight: 600, color: labelColor, textTransform: "uppercase" }} />)}
           </ItemChrome>;
         })}
         {canEdit && <AddItem label="Add item" accent={st.accent} onAdd={() => addItemAt(block, onChange, newItemFor(block,"checklist"))} />}
@@ -16812,6 +16820,98 @@ uiSuite("tideline-CR26 edit every block text", [
       } catch (e) { throw new Error(`${block.type}: ${e.message}`); }
       finally { document.activeElement?.blur?.(); for (let k = 0; k < done; k++) { _key("z", { ctrlKey: true }); await _wait(60); } }
       await _waitFor(() => svgText(edits[0][0]), 2000).catch(() => { throw new Error(`${block.type}: undo did not restore the text`); });
+    }
+  }},
+  { name: "CR26: a cleared optional SVG label shows a placeholder and can be typed again", fn: async () => {
+    const texts = () => _$$("text[data-svg-edit]", _mrdViewport() || document);
+    const svgText = (t) => texts().find((el) => el.textContent.trim() === t);
+    const open = async (node, what) => {
+      _clickMod(node);
+      return _waitFor(() => _$("[data-testid='svg-text-edit']", _mrdViewport()), 1500).catch(() => { throw new Error(`${what}: no edit input`); });
+    };
+    const commit = (inp, v) => { inp.value = v; inp.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true })); };
+    const cases = [
+      [{ type: "cycle", centerLabel: "CtrL", centerSub: "CtrS", items: [{ label: "CyA" }, { label: "CyB" }] }, ["CtrL", "CtrS"]],
+      [{ type: "funnel", items: [{ label: "FunA", value: "100", drop: "-40%" }] }, ["100", "-40%"]],
+      [{ type: "flow", loop: true, loopLabel: "LoopH", items: [{ label: "A" }, { label: "B" }] }, ["LoopH"]],
+      [{ type: "flow", loop: true, direction: "vertical", loopLabel: "LoopV", items: [{ label: "A" }, { label: "B" }] }, ["LoopV"]],
+    ];
+    for (const [block, labels] of cases) {
+      await _mrdInject([block], null, (vp) => vp && svgText(labels[0]) ? vp : null);
+      for (const from of labels) {
+        let done = 0;
+        try {
+          const before = new Set(texts().filter((el) => el.textContent.trim() === EDIT_PLACEHOLDER));
+          commit(await open(svgText(from), from), ""); done++;
+          const ph = await _waitFor(() => !_$("[data-testid='svg-text-edit']") && texts().find((el) => el.textContent.trim() === EDIT_PLACEHOLDER && !before.has(el)), 2000)
+            .catch(() => { throw new Error(`"${from}": cleared label shows no placeholder`); });
+          if (!_$("[data-vela-placeholder]", ph)) throw new Error(`"${from}": placeholder is not marked`);
+          const r = ph.getBoundingClientRect();
+          if (!(r.width > 4 && r.height > 4)) throw new Error(`"${from}": placeholder target is ${r.width}x${r.height}`);
+          commit(await open(ph, `"${from}" placeholder`), "Back " + from); done++;
+          await _waitFor(() => !_$("[data-testid='svg-text-edit']") && svgText("Back " + from), 2000).catch(() => { throw new Error(`"${from}": re-typed text not shown`); });
+        } catch (e) { throw new Error(`${block.type}: ${e.message}`); }
+        finally { document.activeElement?.blur?.(); for (let k = 0; k < done; k++) { _key("z", { ctrlKey: true }); await _wait(60); } }
+        await _waitFor(() => svgText(from), 2000).catch(() => { throw new Error(`${block.type}: undo did not restore "${from}"`); });
+      }
+    }
+  }},
+  { name: "CR26: empty optional SVG labels show no placeholder in Present mode", fn: async () => {
+    await _mrdInject([{ type: "cycle", items: [{ label: "PcA" }, { label: "PcB" }] }, { type: "funnel", items: [{ label: "PfA" }] }], null,
+      (vp) => vp && _$$("text[data-svg-edit]", vp).some((el) => el.textContent.trim() === "PcA") ? vp : null);
+    const n = _$$("[data-vela-placeholder]", _mrdViewport()).length;
+    if (n < 4) throw new Error(`editor shows ${n} placeholders, want >= 4 (center label, sub, value, drop)`);
+    document.activeElement?.blur(); await _wait(100);
+    _key("f");
+    try {
+      await _waitFor(() => !_$("header") && document.body.textContent.includes("PcA"), 2000);
+      await _wait(150);
+      const ph = _$$("[data-vela-placeholder]").length, ed = _$$("[data-svg-edit]").length;
+      if (ph || ed) throw new Error(`Present mode shows ${ph} placeholders and ${ed} editable SVG labels`);
+    } finally {
+      _key("f");
+      await _waitFor(() => _$("header"), 2000);
+    }
+  }},
+  { name: "CR26: opening an SVG label input does not move or cover the other labels", fn: async () => {
+    await _mrdInject([{ type: "funnel", items: [{ label: "LsA", value: "10K", drop: "-40%" }, { label: "LsB", value: "4K" }, { label: "LsC", value: "1K" }] }], null,
+      (vp) => vp && _$$("text[data-svg-edit]", vp).some((el) => el.textContent.trim() === "LsA") ? vp : null);
+    await _wait(1000); // let the entrance (stagger) animation settle before measuring
+    const texts = () => _$$("text[data-svg-edit]", _mrdViewport());
+    const others = () => texts().filter((el) => el.textContent.trim() !== "LsA");
+    const r0 = others().map((el) => el.getBoundingClientRect());
+    _clickMod(texts().find((el) => el.textContent.trim() === "LsA"));
+    const inp = await _waitFor(() => _$("[data-testid='svg-text-edit']", _mrdViewport()), 1500);
+    try {
+      await _mrdFrame();
+      const r1 = others().map((el) => el.getBoundingClientRect());
+      r0.forEach((a, i) => {
+        const b = r1[i];
+        if (Math.abs(a.left - b.left) > 1 || Math.abs(a.top - b.top) > 1) throw new Error(`label ${i} moved ${b.left - a.left},${b.top - a.top}px`);
+      });
+      const ir = inp.getBoundingClientRect();
+      const cover = r1.find((b) => ir.left < b.right - 1 && ir.right > b.left + 1 && ir.top < b.bottom - 1 && ir.bottom > b.top + 1);
+      if (cover) throw new Error("input covers an adjacent label");
+    } finally {
+      inp.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+      await _waitFor(() => !_$("[data-testid='svg-text-edit']"), 1500);
+    }
+  }},
+  { name: "CR26: typed status names ignore case, underscore and hyphen", fn: async () => {
+    const hooks = _hooks();
+    await _mrdInject([{ type: "checklist", items: [{ text: "St one", status: "pending" }, { text: "St two", status: "done" }] }], null,
+      (vp) => vp?.textContent.includes("St one") ? vp : null);
+    const past0 = hooks.getHistoryCounts ? hooks.getHistoryCounts().past : 0;
+    try {
+      await _tlEdit("PENDING", "in_progress", "IN PROGRESS");
+      await _tlEdit("DONE", "In-Progress", "IN PROGRESS");
+      // A save that normalizes to the current state shows the default label at once.
+      await _tlEdit("IN PROGRESS", "in_progress", "IN PROGRESS");
+      await _tlEdit("IN PROGRESS", "", "IN PROGRESS");
+      const cols = _$$("div", _mrdViewport()).filter((el) => el.style.cursor === "pointer" && el.textContent.trim() === "IN PROGRESS").map((el) => el.style.color);
+      if (cols.length !== 2 || !cols.every((c) => /245, 158, 11|#f59e0b/i.test(c))) throw new Error(`status not switched to in-progress (${cols})`);
+    } finally {
+      await _mrdUndoTo(past0);
     }
   }},
 ], { setup: _selectFirstModule });
