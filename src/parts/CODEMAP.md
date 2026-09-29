@@ -17,7 +17,7 @@ that symbol in the named part for the line. No line numbers here — they rot.
 - Sanitizers: sanitizeString sanitizeDeckTitle sanitizeUrl openExternalLink SVG_ALLOWED_TAGS SVG_URL_REF_ATTRS CSS_FETCH_SCHEME SVG_VALUE_FNS SVG_STYLE_PROPS SVG_ROOT_BLOCKED isSvgStyleSafe isSvgInlineStyleSafe sanitizeSvgMarkup SAFE_RASTER_DATA_IMAGE sanitizeImageDataUri SAFE_STYLE_KEYS STYLE_VALUE_REJECT sanitizeStyle CSS_COLOR_KEY scrubCssFields scrubColorFields CSS_LAYOUT_KEY scrubLayoutFields CSS_PAINT_KEY cssKeyStem scrubPaintFields velaTestSurfaceEnabled MAX_SUBOBJECT_DEPTH scrubSubObject cssUrl CSS_COLOR_OK cssColor CSS_GRADIENT_OK cssGradient
 - Deck-ingress key allowlists: SAFE_SLIDE_KEYS SAFE_BLOCK_KEYS SLIDE_NUMERIC_BOUNDS clampDeckNumber MAX_BLOCK_DEPTH sanitizeBlock VALID_COMMENT_STATUSES MAX_COMMENTS sanitizeComment
 - Offline Study Notes sanitizer: sanitizeStudyNotes sanitizeSlide stableIdFrom sanitizeItem resanitizeLoadedLanes resanitizeLoadedBranding KEEPABLE_DECK_ID isKeepableDeckId adoptPriorDeckIds localDeckPayload validateAndSanitizeDeck
-- Image Compression: compressImage IMG_SETTINGS compressSlideImage imageAspect PASTE_TITLE_BLOCKS pasteImageLayout pasteSplitFlex PASTE_TEXT_METRICS pasteLayoutArea gridColsFor bestImageGridCols IMAGE_ASPECT_CACHE rememberImageAspect PASTE_LAYOUT_OWNED pasteLayoutSig rememberPasteLayout
+- Image Compression: compressImage IMG_SETTINGS compressSlideImage imageAspect imageNaturalSize PASTE_TITLE_BLOCKS pasteImageLayout pasteSplitFlex PASTE_TEXT_METRICS pasteBodyEstimate pasteLayoutArea pasteBodyProbe gridColsFor imageGridPlan bestImageGridCols IMAGE_ASPECT_CACHE rememberImageAspect PASTE_LAYOUT_OWNED pasteLayoutSig rememberPasteLayout
 - Status & Importance Meta: STATUSES STATUS_META IMP
 - Themes: themes T statusColor FONT buildTitleCardSlide
 - Vela Logo Icon: VelaIcon BASE_SIZES
@@ -103,7 +103,7 @@ that symbol in the named part for the line. No line numbers here — they rot.
 - JSON Clipboard Modal: JsonClipboardModal
 
 ### part-test.jsx
-- Vela Battery Test: VELA_TESTS
+- tideline CR23: seeded image-placement stress matrix: TL_STRESS_ASPECTS TL_STRESS_BODIES tidelineStressCases tidelineStressUnit VELA_TESTS
 - Feature: Delete key: VelaBatteryTest
 
 ### part-uitest.jsx
@@ -126,7 +126,7 @@ that symbol in the named part for the line. No line numbers here — they rot.
 - meridian-CR10 / meridian-CR11: fullscreen nav icons keep a visible chip: _mrdIsLightTheme _mrdCheckNavGlyphs
 - meridian-CR13: editor|presenter|gallery view switcher next to Present: _mrdSeg _mrdActive _mrdOnTop _mrdSwitchTo _mrdGalleryOpen
 - Sprint meridian (C3): split image alignment, accent 0, docked branding: _mrdSvg _mrdViewport _mrdFrame _mrdInject _mrdSetRange _mrdOpenBranding _mrdCloseBranding _mrdUndoTo _mrdHover _mrdUnhover _mrdCr15Clear _meridianF8SlowSave _tlEditNode _tlEdit _tidelineTocDrag _tidelineFire _tidelineHold _tidelineRows _tidelineTitle
-- Sprint tideline (CR22-CR25): image paste placement stress test: _tlAspects _tlBases _tlPaste _tlMeasure _tlCase
+- Sprint tideline (CR22-CR25): image paste placement stress test: _tlAspects _tlBases _tlPaste _tlMeasure _tlCase _tlColors _tlCanvas _tlPasteCanvas _tlPasteBig _tlLoaded _tlStressMeasure _tlStressCase
 - UI TEST RUNNER COMPONENT: computeDeckFingerprint DEMO_DECK_FP_TITLE VelaUITestRunner
 
 ### part-demo.jsx
@@ -267,7 +267,7 @@ keyboard ternaries) or are currently unused — check before assuming a UI exist
 - SET_LOADING: part-chat.jsx
 - SET_REVIEW_MODE: part-app-modals.jsx part-app.jsx part-demo.jsx part-slidepanel.jsx
 - SET_SECTION_COLLAPSED: part-demo.jsx part-list.jsx
-- SET_SLIDES: part-slidepanel.jsx
+- SET_SLIDES: (no direct dispatch site)
 - SET_SLIDE_INDEX: part-app.jsx part-chat.jsx part-list.jsx part-slidepanel.jsx part-slides.jsx
 - SET_SLIDE_SELECTION: part-demo.jsx part-list.jsx
 - SET_STATUS: (no direct dispatch site)
@@ -325,8 +325,8 @@ add_lane add_item batch_add_items remove_item remove_lane rename_item rename_lan
 - part-imports.jsx: 860-line unbannered stretch after line 514
 - part-blocks.jsx: 777-line unbannered stretch after line 937
 - part-canvas.jsx: 489-line unbannered stretch after line 24
-- part-slidepanel.jsx: 484-line unbannered stretch after line 235
-- part-slidepanel.jsx: 406-line unbannered stretch after line 1031
+- part-slidepanel.jsx: 491-line unbannered stretch after line 235
+- part-slidepanel.jsx: 406-line unbannered stretch after line 1038
 - part-uitest.jsx: 616-line unbannered stretch after line 1230
 - part-uitest2.jsx: 448-line unbannered stretch after line 2
 - part-uitest2.jsx: 593-line unbannered stretch after line 1395
