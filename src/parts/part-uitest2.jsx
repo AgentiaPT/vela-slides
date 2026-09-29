@@ -2711,6 +2711,106 @@ uiSuite("tideline-CR26 edit every block text", [
   }},
 ], { setup: _selectFirstModule });
 
+// CR21: while a slide or section is dragged in the TOC, the pointer near the top /
+// bottom edge of the scroll pane scrolls it, so a drop can reach the first / last
+// section. The pane is made short here so it overflows with any deck.
+async function _tidelineTocDrag(fn) {
+  const tree = await _waitFor(() => document.querySelector('[data-testid="toc-tree"]'), 3000);
+  const pane = tree.parentElement; const old = pane.style.maxHeight;
+  pane.style.maxHeight = Math.max(90, Math.min(220, Math.floor(tree.offsetHeight / 2))) + "px";
+  try {
+    await _wait(60);
+    const sc = tocScrollParent(tree);
+    if (sc !== pane) throw new Error("TOC pane does not overflow");
+    return await fn(sc, tree);
+  } finally { pane.style.maxHeight = old; }
+}
+function _tidelineFire(dt) { return (el, type, extra) => el.dispatchEvent(new DragEvent(type, Object.assign({ bubbles: true, cancelable: true, dataTransfer: dt }, extra))); }
+// Fire dragover at (x, y) every 40ms until cond() or timeout; return cond().
+async function _tidelineHold(el, fire, x, y, cond, ms) {
+  const t0 = performance.now();
+  while (performance.now() - t0 < ms) { fire(el, "dragover", { clientX: x, clientY: y }); await _wait(40); if (cond()) return true; }
+  return cond();
+}
+const _tidelineRows = () => _$$('[data-testid="toc-slide-row"]');
+// The title span has flex:1 (the number / time spans before it change on a move).
+const _tidelineTitle = (r) => { const t = _$$("span", r).find((x) => x.style.flex && x.style.flex.startsWith("1")); return ((t || r).textContent || "").trim(); };
+
+uiSuite("tideline-CR21 TOC drag auto-scroll", [
+  { name: "Speed is 0 in the middle, grows toward each edge, and is 0 far outside", fn: async () => {
+    const v = (y) => tocAutoScrollSpeed(y, 100, 500);
+    if (v(300) !== 0) throw new Error("middle scrolls: " + v(300));
+    if (!(v(150) < 0 && v(110) < v(150) && v(101) <= v(110))) throw new Error("top zone speed: " + [v(150), v(110), v(101)]);
+    if (!(v(450) > 0 && v(490) > v(450) && v(499) >= v(490))) throw new Error("bottom zone speed: " + [v(450), v(490), v(499)]);
+    if (v(90) !== -TOC_AUTOSCROLL_MAX || v(510) !== TOC_AUTOSCROLL_MAX) throw new Error("just outside is not full speed");
+    if (v(0) !== 0 || v(700) !== 0 || tocAutoScrollSpeed(NaN, 0, 10) !== 0 || tocAutoScrollSpeed(5, 10, 10) !== 0) throw new Error("far outside / bad input scrolls");
+  }},
+  { name: "Drag near the top scrolls up to the start; drop lands in the first section", fn: () => _tidelineTocDrag(async (sc) => {
+    sc.scrollTop = sc.scrollHeight; await _wait(60);
+    const before = _tidelineRows().map(_tidelineTitle);
+    if (before.length < 3) throw new Error("need >=3 slide rows");
+    const src = _tidelineRows()[before.length - 1];
+    const r = sc.getBoundingClientRect(); const x = r.left + r.width / 2;
+    const fire = _tidelineFire(new DataTransfer());
+    fire(src, "dragstart");
+    try {
+      if (!(await _tidelineHold(sc, fire, x, r.top + 3, () => sc.scrollTop === 0, 6000))) throw new Error("did not reach the top: " + sc.scrollTop);
+      const dst = _tidelineRows()[0]; const b = dst.getBoundingClientRect();
+      if (b.bottom < r.top || b.top > r.bottom) throw new Error("first row not visible after scroll");
+      fire(dst, "dragover", { clientX: b.left + 5, clientY: b.top + 2 });
+      fire(dst, "drop", { clientX: b.left + 5, clientY: b.top + 2 });
+    } finally { fire(src, "dragend"); }
+    await _waitFor(() => _tidelineTitle(_tidelineRows()[0]) === before[before.length - 1], 2000).catch(() => { throw new Error("drop did not land first: " + _tidelineRows().slice(0, 2).map(_tidelineTitle) + " | want " + before[before.length - 1]); });
+    // Restore: drag it back below the row that is now last.
+    const f2 = _tidelineFire(new DataTransfer()); const s2 = _tidelineRows()[0]; const rows = _tidelineRows(); const d2 = rows[rows.length - 1];
+    d2.scrollIntoView({ block: "nearest" }); await _wait(40);
+    const b2 = d2.getBoundingClientRect();
+    f2(s2, "dragstart"); f2(d2, "dragover", { clientX: b2.left + 5, clientY: b2.bottom - 2 }); f2(d2, "drop", { clientX: b2.left + 5, clientY: b2.bottom - 2 }); f2(s2, "dragend");
+    await _waitFor(() => JSON.stringify(_tidelineRows().map(_tidelineTitle)) === JSON.stringify(before), 2000).catch(() => { throw new Error("restore failed: " + _tidelineRows().map(_tidelineTitle).slice(-3)); });
+  })},
+  { name: "Drag near the bottom scrolls down to the end and stops there", fn: () => _tidelineTocDrag(async (sc) => {
+    sc.scrollTop = 0; await _wait(60);
+    const src = _tidelineRows()[0]; const r = sc.getBoundingClientRect(); const x = r.left + r.width / 2;
+    const end = () => sc.scrollTop >= sc.scrollHeight - sc.clientHeight - 1;
+    const fire = _tidelineFire(new DataTransfer());
+    fire(src, "dragstart");
+    try {
+      if (!(await _tidelineHold(sc, fire, x, r.bottom - 3, end, 6000))) throw new Error("did not reach the end: " + sc.scrollTop);
+      const at = sc.scrollTop; await _wait(120);
+      if (sc.scrollTop !== at) throw new Error("scrolled past the end");
+    } finally { fire(src, "dragend"); }
+  })},
+  { name: "Scroll stops on dragend (Escape), on drop, in the middle and without a drag", fn: () => _tidelineTocDrag(async (sc) => {
+    const r = sc.getBoundingClientRect(); const x = r.left + r.width / 2;
+    const mid = Math.floor((sc.scrollHeight - sc.clientHeight) / 2);
+    const still = async () => { const a = sc.scrollTop; await _wait(150); return sc.scrollTop === a; };
+    // No drag active: an edge dragover does nothing.
+    sc.scrollTop = mid; await _wait(40);
+    const fire0 = _tidelineFire(new DataTransfer());
+    fire0(sc, "dragover", { clientX: x, clientY: r.bottom - 3 });
+    if (!(await still()) || sc.scrollTop !== mid) throw new Error("scrolled without a drag");
+    const src = _tidelineRows()[0];
+    for (const endType of ["dragend", "drop"]) {
+      sc.scrollTop = mid; await _wait(40);
+      const fire = _tidelineFire(new DataTransfer());
+      fire(src, "dragstart");
+      try {
+        fire(sc, "dragover", { clientX: x, clientY: r.bottom - 3 });
+        await _wait(80);
+        if (sc.scrollTop === mid) throw new Error("edge did not scroll");
+        fire(endType === "drop" ? document.body : src, endType);
+        if (!(await still())) throw new Error("still scrolls after " + endType);
+        // Pointer back in the middle: no scroll.
+        if (endType === "dragend") {
+          fire(src, "dragstart"); sc.scrollTop = mid; await _wait(40);
+          fire(sc, "dragover", { clientX: x, clientY: r.top + r.height / 2 });
+          if (!(await still()) || sc.scrollTop !== mid) throw new Error("middle scrolls");
+        }
+      } finally { fire(src, "dragend"); }
+    }
+  })},
+]);
+
 // ━━━ UI TEST RUNNER COMPONENT ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 // Demo deck guard — UI tests only run against the original demo deck
