@@ -3143,12 +3143,51 @@ uiSuite("tideline-CR22-CR25 image placement", [
     await _mrdUndoTo(past);
     if (m.imgs[0].w < 960 * 0.9) throw new Error(`1600x900 image is only ${m.imgs[0].w.toFixed(0)}px wide`);
   }},
-  { name: "CR23 stress matrix: the pasted layout and grid show >= 85% of the best alternative (65 seeded cases)", fn: async () => {
+  { name: "paste burst: 3 and 5 rapid image pastes (0/50/150 ms apart) all land in order, one undo step each", fn: async () => {
+    const counts = () => _hooks().getHistoryCounts().past;
+    for (const n of [3, 5]) for (const gap of [0, 50, 150]) {
+      const label = `${n} pastes ${gap}ms apart`, mark = `TL-BURST-${n}-${gap}`;
+      const past = counts();
+      await _mrdInject([{ type: "heading", text: mark }], { layout: undefined, contentFlex: undefined, imageFlex: undefined, imageCols: undefined }, (vp) => vp?.textContent.includes(mark) && !vp.querySelector("img") ? vp : null);
+      const rows = _m1RowTitles().length;
+      // Distinct widths (natural size is kept) mark the paste order.
+      const widths = Array.from({ length: n }, (_, k) => 120 + 60 * k);
+      const blobs = await Promise.all(widths.map((w, k) => { const cv = document.createElement("canvas"); cv.width = w; cv.height = 90; const g = cv.getContext("2d"); g.fillStyle = _tlColors[k % 5]; g.fillRect(0, 0, w, 90); return new Promise((r) => cv.toBlob(r, "image/png")); }));
+      for (let k = 0; k < n; k++) {
+        const dt = new DataTransfer(); dt.items.add(new File([blobs[k]], `b${k}.png`, { type: "image/png" }));
+        _mrdViewport().dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true }));
+        if (gap) await _wait(gap);
+      }
+      let got = [];
+      try { await _waitFor(() => { const vp = _mrdViewport(); got = Array.from(vp?.querySelectorAll("img") || []).filter((im) => im.complete && im.naturalWidth > 0).map((im) => im.naturalWidth); return got.length >= n && vp.textContent.includes(mark) ? vp : null; }, 8000); } catch { /* reported below */ }
+      await _wait(200);
+      const rowsAfter = _m1RowTitles().length;
+      // One undo step per paste: each Ctrl+Z removes exactly the last image.
+      // (Counted from the rendered slide: the history counter stops at its cap
+      // in a long battery run.)
+      let undoErr = null;
+      if (got.length === n) {
+        document.activeElement?.blur?.();
+        for (let k = n - 1; k >= 0 && !undoErr; k--) {
+          _key("z", { ctrlKey: true });
+          const left = await _waitFor(() => { const w = Array.from(_mrdViewport()?.querySelectorAll("img") || []).map((im) => im.naturalWidth); return w.length === k ? w : null; }, 1500).catch(() => null);
+          if (!left) undoErr = `undo ${n - k} did not remove exactly one image`;
+          else if (left.join(",") !== widths.slice(0, k).join(",")) undoErr = `undo ${n - k} left ${left.join(",")}`;
+        }
+      }
+      await _mrdUndoTo(past);
+      if (got.length !== n) throw new Error(`${label}: ${got.length}/${n} images on the target slide`);
+      if (got.join(",") !== widths.join(",")) throw new Error(`${label}: images out of paste order (${got.join(",")})`);
+      if (undoErr) throw new Error(`${label}: ${undoErr}`);
+      if (rowsAfter !== rows) throw new Error(`${label}: slide count changed ${rows} -> ${rowsAfter}`);
+    }
+  }},
+  { name: "CR23 stress matrix: the pasted layout and grid show >= 85% of the best alternative (5 gate repros + 12 seeded cases; the unit matrix has all 66)", fn: async () => {
     // The last image goes through the real paste handler; the chosen result is
     // then compared, by real rendering, with the other layout (split <-> stack)
     // and with the uniform count-driven grid in the same layout.
     const fixed = [{ body: "table", aspects: [16 / 9] }, { body: "table", aspects: [16 / 9, 16 / 9] }, { body: "bullets8", aspects: [16 / 9, 16 / 9, 16 / 9, 16 / 9] }, { body: "none", aspects: [1 / 3, 16 / 9] }, { body: "none", aspects: [1 / 3, 16 / 9, 1 / 3] }];
-    const cases = [...fixed, ...tidelineStressCases(60)];
+    const cases = [...fixed, ...tidelineStressCases().filter((_, k) => k % 5 === 2).slice(0, 12)];
     let min = Infinity, worst = "";
     for (const c of cases) {
       const r = await _tlStressCase(c);
