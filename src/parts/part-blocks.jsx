@@ -300,10 +300,33 @@ function EditableText({ text, onSave, editable, style, multiline, className, pre
         ...(empty ? { minWidth: "2em", minHeight: "1em", paddingRight: 100, textAlign: "left" } : {}),
         outline: hovered ? `1px dashed ${T.accent}60` : "1px dashed transparent",
         outlineOffset: 2, transition: "outline 0.15s ease" }}
-    >{prefix}{empty ? <span data-vela-placeholder="" style={{ opacity: 0.35, fontStyle: "italic" }}>{EDIT_PLACEHOLDER}</span> : parseInline(localText)}{suffix}</div>
+    >{prefix}{empty ? <EditPlaceholder /> : parseInline(localText)}{suffix}</div>
   );
 }
 
+
+// CR26: the editor-only placeholder keeps its box (same size and hit area) but
+// stays invisible unless the holding block is hovered or has focus. Listeners sit
+// on the closest block wrapper, so the layout never changes.
+function EditPlaceholder({ svg }) {
+  const ref = useRef(null);
+  const [on, setOn] = useState(false);
+  useEffect(() => {
+    const host = ref.current?.closest?.("[data-block-type]");
+    if (!host) { setOn(true); return; }
+    const over = () => setOn(true);
+    const out = (e) => { if (!e.relatedTarget || !host.contains(e.relatedTarget)) setOn(host.contains(document.activeElement)); };
+    const fin = () => setOn(true);
+    const fout = (e) => { if (!e.relatedTarget || !host.contains(e.relatedTarget)) setOn(false); };
+    host.addEventListener("mouseover", over); host.addEventListener("mouseout", out);
+    host.addEventListener("focusin", fin); host.addEventListener("focusout", fout);
+    return () => { host.removeEventListener("mouseover", over); host.removeEventListener("mouseout", out); host.removeEventListener("focusin", fin); host.removeEventListener("focusout", fout); };
+  }, []);
+  const o = on ? 0.35 : 0;
+  return svg
+    ? <tspan ref={ref} data-vela-placeholder="" opacity={o} fontStyle="italic">{EDIT_PLACEHOLDER}</tspan>
+    : <span ref={ref} data-vela-placeholder="" style={{ opacity: o, fontStyle: "italic", transition: "opacity 0.15s ease" }}>{EDIT_PLACEHOLDER}</span>;
+}
 
 // CR26: inline edit for an SVG <text> label (cycle, funnel, flow loop). SVG text
 // cannot be contentEditable, so a click opens an HTML input in a <foreignObject>
@@ -351,7 +374,7 @@ function SvgEditText({ text, editable, onSave, suffix, ...textProps }) {
   return <>
     <text ref={ref} data-svg-edit="" {...textProps} onClick={begin}
       style={{ ...(textProps.style || {}), cursor: "pointer", visibility: box ? "hidden" : undefined }}>
-      {empty ? <tspan data-vela-placeholder="" opacity="0.35" fontStyle="italic">{EDIT_PLACEHOLDER}</tspan> : val}{suffix}
+      {empty ? <EditPlaceholder svg /> : val}{suffix}
     </text>
     {box && <foreignObject x={box.x} y={box.y} width={box.w} height={box.h} style={{ overflow: "visible" }}>
       <input ref={inRef} data-testid="svg-text-edit" defaultValue={box.v}

@@ -2867,6 +2867,27 @@ uiSuite("tideline-CR26 edit every block text", [
       await _mrdUndoTo(past0);
     }
   }},
+  { name: "CR26: empty-text placeholder is invisible until its block is hovered, and keeps its size", fn: async () => {
+    await _mrdInject([{ type: "funnel", items: [{ label: "PhA", value: "10K" }, { label: "PhB", value: "4K" }] }], null,
+      (vp) => vp && _$$("text[data-svg-edit]", vp).some((el) => el.textContent.trim() === "PhA") ? vp : null);
+    await _wait(1000);
+    document.activeElement?.blur(); await _wait(100);
+    const vp = _mrdViewport();
+    const ph = _$("[data-vela-placeholder]", vp);
+    if (!ph) throw new Error("no placeholder found");
+    const host = ph.closest("[data-block-type]");
+    const op = () => parseFloat(getComputedStyle(ph).opacity);
+    await _mrdUnhover(host);
+    const r0 = ph.getBoundingClientRect();
+    if (op() !== 0) throw new Error(`placeholder opacity ${op()} without hover, want 0`);
+    await _mrdHover(host);
+    if (!(op() > 0.2)) throw new Error(`placeholder opacity ${op()} on hover, want visible`);
+    const r1 = ph.getBoundingClientRect();
+    if (Math.abs(r0.width - r1.width) > 0.5 || Math.abs(r0.height - r1.height) > 0.5 || Math.abs(r0.left - r1.left) > 0.5) throw new Error("placeholder box changed on hover");
+    if (!(r0.width > 4 && r0.height > 4)) throw new Error(`hidden placeholder target is ${r0.width}x${r0.height}`);
+    await _mrdUnhover(host);
+    if (op() !== 0) throw new Error("placeholder stays visible after hover ends");
+  }},
 ], { setup: _selectFirstModule });
 
 // CR21: while a slide or section is dragged in the TOC, the pointer near the top /

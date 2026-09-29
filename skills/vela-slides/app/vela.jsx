@@ -3034,10 +3034,33 @@ function EditableText({ text, onSave, editable, style, multiline, className, pre
         ...(empty ? { minWidth: "2em", minHeight: "1em", paddingRight: 100, textAlign: "left" } : {}),
         outline: hovered ? `1px dashed ${T.accent}60` : "1px dashed transparent",
         outlineOffset: 2, transition: "outline 0.15s ease" }}
-    >{prefix}{empty ? <span data-vela-placeholder="" style={{ opacity: 0.35, fontStyle: "italic" }}>{EDIT_PLACEHOLDER}</span> : parseInline(localText)}{suffix}</div>
+    >{prefix}{empty ? <EditPlaceholder /> : parseInline(localText)}{suffix}</div>
   );
 }
 
+
+// CR26: the editor-only placeholder keeps its box (same size and hit area) but
+// stays invisible unless the holding block is hovered or has focus. Listeners sit
+// on the closest block wrapper, so the layout never changes.
+function EditPlaceholder({ svg }) {
+  const ref = useRef(null);
+  const [on, setOn] = useState(false);
+  useEffect(() => {
+    const host = ref.current?.closest?.("[data-block-type]");
+    if (!host) { setOn(true); return; }
+    const over = () => setOn(true);
+    const out = (e) => { if (!e.relatedTarget || !host.contains(e.relatedTarget)) setOn(host.contains(document.activeElement)); };
+    const fin = () => setOn(true);
+    const fout = (e) => { if (!e.relatedTarget || !host.contains(e.relatedTarget)) setOn(false); };
+    host.addEventListener("mouseover", over); host.addEventListener("mouseout", out);
+    host.addEventListener("focusin", fin); host.addEventListener("focusout", fout);
+    return () => { host.removeEventListener("mouseover", over); host.removeEventListener("mouseout", out); host.removeEventListener("focusin", fin); host.removeEventListener("focusout", fout); };
+  }, []);
+  const o = on ? 0.35 : 0;
+  return svg
+    ? <tspan ref={ref} data-vela-placeholder="" opacity={o} fontStyle="italic">{EDIT_PLACEHOLDER}</tspan>
+    : <span ref={ref} data-vela-placeholder="" style={{ opacity: o, fontStyle: "italic", transition: "opacity 0.15s ease" }}>{EDIT_PLACEHOLDER}</span>;
+}
 
 // CR26: inline edit for an SVG <text> label (cycle, funnel, flow loop). SVG text
 // cannot be contentEditable, so a click opens an HTML input in a <foreignObject>
@@ -3085,7 +3108,7 @@ function SvgEditText({ text, editable, onSave, suffix, ...textProps }) {
   return <>
     <text ref={ref} data-svg-edit="" {...textProps} onClick={begin}
       style={{ ...(textProps.style || {}), cursor: "pointer", visibility: box ? "hidden" : undefined }}>
-      {empty ? <tspan data-vela-placeholder="" opacity="0.35" fontStyle="italic">{EDIT_PLACEHOLDER}</tspan> : val}{suffix}
+      {empty ? <EditPlaceholder svg /> : val}{suffix}
     </text>
     {box && <foreignObject x={box.x} y={box.y} width={box.w} height={box.h} style={{ overflow: "visible" }}>
       <input ref={inRef} data-testid="svg-text-edit" defaultValue={box.v}
@@ -16913,6 +16936,27 @@ uiSuite("tideline-CR26 edit every block text", [
     } finally {
       await _mrdUndoTo(past0);
     }
+  }},
+  { name: "CR26: empty-text placeholder is invisible until its block is hovered, and keeps its size", fn: async () => {
+    await _mrdInject([{ type: "funnel", items: [{ label: "PhA", value: "10K" }, { label: "PhB", value: "4K" }] }], null,
+      (vp) => vp && _$$("text[data-svg-edit]", vp).some((el) => el.textContent.trim() === "PhA") ? vp : null);
+    await _wait(1000);
+    document.activeElement?.blur(); await _wait(100);
+    const vp = _mrdViewport();
+    const ph = _$("[data-vela-placeholder]", vp);
+    if (!ph) throw new Error("no placeholder found");
+    const host = ph.closest("[data-block-type]");
+    const op = () => parseFloat(getComputedStyle(ph).opacity);
+    await _mrdUnhover(host);
+    const r0 = ph.getBoundingClientRect();
+    if (op() !== 0) throw new Error(`placeholder opacity ${op()} without hover, want 0`);
+    await _mrdHover(host);
+    if (!(op() > 0.2)) throw new Error(`placeholder opacity ${op()} on hover, want visible`);
+    const r1 = ph.getBoundingClientRect();
+    if (Math.abs(r0.width - r1.width) > 0.5 || Math.abs(r0.height - r1.height) > 0.5 || Math.abs(r0.left - r1.left) > 0.5) throw new Error("placeholder box changed on hover");
+    if (!(r0.width > 4 && r0.height > 4)) throw new Error(`hidden placeholder target is ${r0.width}x${r0.height}`);
+    await _mrdUnhover(host);
+    if (op() !== 0) throw new Error("placeholder stays visible after hover ends");
   }},
 ], { setup: _selectFirstModule });
 
