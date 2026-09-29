@@ -49,7 +49,11 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
   const align = slide.align || "left";
   const layout = slide.layout || "stack";
   const isCols = layout === "cols" && (Array.isArray(slide.L) || Array.isArray(slide.R));
-  const isSplit = layout === "image-right" || layout === "image-left";
+  // CR22: a split needs content beside the image. A slide can keep image-left/right
+  // with no body (a blank slide inherits the previous slide's layout), and then a
+  // pasted image sat in one half next to an empty half. Without content, stack.
+  const isSplit = (layout === "image-right" || layout === "image-left")
+    && blocks.some((b) => b && b.type !== "image" && b.type !== "spacer" && b.type !== "divider");
   const colsL = isCols ? _vis(slide.L) : [];
   const colsR = isCols ? _vis(slide.R) : [];
   const isMediaOnlyColumn = (column) =>
@@ -109,6 +113,10 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
   const [fitJustify, setFitJustify] = useState(requestedJustify);
   const [splitImgMaxH, setSplitImgMaxH] = useState(null); // px cap so a side image conforms to the content column's height
   const [colsImageFit, setColsImageFit] = useState(null);
+  // CR23: measured image-grid boxes (keyed by the run's first block index) and a
+  // tick that re-renders when image aspect ratios arrive in IMAGE_ASPECT_CACHE.
+  const [gridBoxes, setGridBoxes] = useState({});
+  const [, setAspectTick] = useState(0);
   const [hoveredBlock, setHoveredBlock] = useState(null);
   const [itemHovered, setItemHovered] = useState(false); // an inner item's chrome is hovered → hide block toolbar
   const [editingLink, setEditingLink] = useState(null);
@@ -192,6 +200,11 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
       inner.style.height = scaled && (isSplit || isCols)
         ? `${100 / scale}%`
         : (isSplit || (isCols && hasDirectColumnImage) ? "100%" : "auto");
+      // Unscaled, the inner box fills the slide (the same flex:1 the render gives
+      // it). Set it here too: a render still scaled from an earlier state has no
+      // flex yet, and then a flex-sized image grid would measure at its floor.
+      // (The shorthand resets flex-shrink, so it goes first.)
+      inner.style.flex = scaled ? "" : "1";
       inner.style.flexShrink = scaled && (isSplit || isCols) ? "0" : "";
       void inner.offsetHeight;
     };
@@ -404,8 +417,22 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
       // cap is computed only after the reciprocal final height is active.
       const contentEl = isSplit ? inner.querySelector("[data-split-content]") : null;
       const contentH = contentEl ? contentEl.scrollHeight : 0;
-      const ih = isSplit ? contentH : inner.scrollHeight;
+      // CR25: a stack with an image grid fills the slide exactly (the grid takes
+      // the free height). Measure its layout boxes, not scrollHeight: a block's
+      // entrance-animation offset would read as overflow and shrink the slide,
+      // and a shrunk slide collapses the grid to its floor.
+      const stackKids = isSplit ? [] : Array.from(inner.children);
+      const ih = isSplit ? contentH
+        : stackKids.some((c) => c.hasAttribute("data-image-grid-key"))
+          ? Math.max(0, ...stackKids.map((c) => c.offsetTop + c.offsetHeight))
+          : inner.scrollHeight;
       const finalScale = ih > availH && ih > 0 ? Math.max(availH / ih, SCALE_FLOOR) : 1;
+      // CR23: record each image grid's free box at the natural (unscaled) size.
+      // The box is flex-driven (it does not depend on the grid's column count),
+      // so it is a stable input for bestImageGridCols().
+      const boxes = {};
+      inner.querySelectorAll("[data-image-grid-key]").forEach((g) => { boxes[g.getAttribute("data-image-grid-key")] = [g.clientWidth, g.clientHeight]; });
+      setGridBoxes((prev) => JSON.stringify(prev) === JSON.stringify(boxes) ? prev : boxes);
       applyGeometry(inner, finalScale);
       let splitCap = null;
       if (isSplit && contentEl) {
@@ -471,6 +498,15 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
       });
     };
   }, [layoutGeneration, requestedJustify]);
+
+  // CR23: learn the aspect ratio of each image once (cached by src), so a run of
+  // images can pick the column count that shows them largest.
+  useEffect(() => {
+    let live = true;
+    const pending = new Set(blocks.filter((b) => b && b.type === "image" && typeof b.src === "string" && b.src && !IMAGE_ASPECT_CACHE.has(b.src)).map((b) => b.src));
+    pending.forEach((src) => imageAspect(src).then((a) => { rememberImageAspect(src, a); if (live) setAspectTick((t) => t + 1); }));
+    return () => { live = false; };
+  }, [layoutGeneration]);
 
   if (!blocks.length && !(slide.layout === "cols" && (Array.isArray(slide.L) || Array.isArray(slide.R)))) return null;
 
@@ -576,24 +612,32 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
     // Belt-and-braces: ingress already clamps imageCols to an integer 1..6
     // (SLIDE_NUMERIC_BOUNDS), but this value drives a CSS grid track count, so
     // re-clamp at the sink for any slide object that reached here unsanitized.
-    const cols = slide.imageCols ? Math.min(6, Math.max(1, slide.imageCols | 0)) : gridColsFor(runLen, region);
+    const gap = slide.gap || 12;
+    const gridKey = String(idxs[0]);
+    const box = alignWithinColumn ? null : gridBoxes[gridKey];
+    const cols = slide.imageCols
+      ? Math.min(6, Math.max(1, slide.imageCols | 0))
+      : bestImageGridCols(idxs.map((bi) => IMAGE_ASPECT_CACHE.get(blocks[bi].src)), box?.[0], box?.[1], gap, gridColsFor(runLen, region));
     const rows = Math.ceil(runLen / cols);
     const lastRowCount = runLen - (rows - 1) * cols;
     const incomplete = lastRowCount < cols;
-    const gap = slide.gap || 12;
+    // CR25: a full-width run yields height to the other blocks (flex basis 0), but
+    // it keeps a small floor so the fit measurement still reserves room for it
+    // and it never collapses to nothing.
+    const minGridH = region === "full" ? rows * 72 : 0;
     // Grid images are absolute-fill cells, so they have no intrinsic grid
     // height. Use one balanced 140px row per grid row only when the author
     // requests alignment. The default path still fills all available height.
     const gridHeight = alignWithinColumn ? Math.min(splitImgMaxH || rows * 140, rows * 140) : null;
     return (
-      <div key={`__imgrid-${idxs[0]}`} data-testid="image-grid" data-image-grid={region} data-image-count={runLen}
-        style={{ display: "grid", gridTemplateColumns: `repeat(${cols * 2}, minmax(0, 1fr))`, gridAutoRows: "minmax(0, 1fr)", gap, flex: gridHeight == null ? 1 : "0 0 auto", height: gridHeight == null ? undefined : gridHeight, maxHeight: "100%", minHeight: 0, minWidth: 0, width: "100%", alignItems: "stretch" }}>
+      <div key={`__imgrid-${idxs[0]}`} data-testid="image-grid" data-image-grid={region} data-image-count={runLen} data-image-grid-key={gridKey} data-image-cols={cols}
+        style={{ display: "grid", gridTemplateColumns: `repeat(${cols * 2}, minmax(0, 1fr))`, gridAutoRows: "minmax(0, 1fr)", gap, flex: gridHeight == null ? "1 1 0" : "0 0 auto", height: gridHeight == null ? undefined : gridHeight, maxHeight: "100%", minHeight: minGridH, minWidth: 0, width: "100%", alignItems: "stretch" }}>
         {idxs.map((bi, k) => {
           const firstOfLastRow = k === (rows - 1) * cols;
           const gridColumn = (incomplete && firstOfLastRow)
             ? `${cols - lastRowCount + 1} / span 2`
             : "span 2";
-          const rendered = renderBlockWithComments({ ...blocks[bi], _gridCell: true }, bi);
+          const rendered = renderBlockWithComments({ ...blocks[bi], _gridCell: true, ...(isSoloImage && blocks[bi].rounded == null ? { rounded: 0 } : {}) }, bi);
           const [blockEl, ...rest] = rendered;
           // Make the block wrapper fill its cell height so the image (height:100%)
           // and objectFit:contain letterbox uniformly across mixed aspect ratios.
@@ -619,7 +663,10 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
       if (blocks[i].type === "image") {
         let j = i;
         while (j < blocks.length && blocks[j].type === "image") j++;
-        if (j - i >= 2) {
+        // CR24/CR25: a lone stacked image also takes the grid path (unless the
+        // author pinned its width), so it fills the free height below/above the
+        // text and shrinks, instead of pushing the other blocks off the slide.
+        if (j - i >= 2 || blocks[i].maxWidth == null) {
           const idxs = [];
           for (let k = i; k < j; k++) idxs.push(k);
           out.push(renderImageGrid(idxs, "full"));
@@ -689,6 +736,10 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
         : <div key="__images" data-split-image style={{ flex: slide.imageFlex || 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: splitImageJustify, gap: slide.gap || 12, minWidth: 0, height: "100%" }}>{imageIdxs.flatMap((i) => renderBlockWithComments(splitImgMaxH != null && blocks[i].maxHeight == null ? { ...blocks[i], maxHeight: splitImgMaxH } : blocks[i], i))}</div>;
       return imageOnRight ? [contentCol, imageCol] : [imageCol, contentCol];
     }
+    // CR24: a solo image goes through the one-image grid path (absolute fill of a
+    // flex-sized cell), or it keeps its natural height and a wide image sits at
+    // the top of an otherwise empty slide. It stays full-bleed (pad 0, square).
+    if (isSoloImage && blocks[0].maxWidth == null) return [renderImageGrid([0], "full")];
     if (isSoloImage) return renderBlockWithComments({ ...blocks[0], _solo: true }, 0);
     return renderStackWithImageGrids();
   };
