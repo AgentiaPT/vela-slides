@@ -365,7 +365,7 @@ function SvgEditText({ text, editable, onSave, suffix, ...textProps }) {
   const finish = (save) => {
     if (doneRef.current) return;
     doneRef.current = true;
-    const v = (inRef.current?.value || "").trim();
+    const v = sanitizeString(inRef.current?.value || "").trim();
     setBox(null);
     if (save && v !== val) onSave(v);
   };

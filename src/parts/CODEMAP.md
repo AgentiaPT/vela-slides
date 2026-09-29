@@ -330,7 +330,7 @@ add_lane add_item batch_add_items remove_item remove_lane rename_item rename_lan
 - part-uitest.jsx: 616-line unbannered stretch after line 1230
 - part-uitest2.jsx: 448-line unbannered stretch after line 2
 - part-uitest2.jsx: 593-line unbannered stretch after line 1395
-- part-uitest2.jsx: 732-line unbannered stretch after line 2261
+- part-uitest2.jsx: 793-line unbannered stretch after line 2261
 - part-demo.jsx: 407-line unbannered stretch after line 510
 - part-demo.jsx: 373-line unbannered stretch after line 917
 - part-pdf.jsx: 389-line unbannered stretch after line 582

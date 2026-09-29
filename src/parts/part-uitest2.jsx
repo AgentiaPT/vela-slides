@@ -2888,6 +2888,67 @@ uiSuite("tideline-CR26 edit every block text", [
     await _mrdUnhover(host);
     if (op() !== 0) throw new Error("placeholder stays visible after hover ends");
   }},
+  { name: "CR26: markup typed into an SVG label is stored like the same input in an HTML text", fn: async () => {
+    const typed = "<b>hi</b> sub";
+    // HTML path: the value EditableText stores for this input, as shown.
+    await _mrdInject([{ type: "checklist", items: [{ text: "Task one", status: "pending" }] }], null,
+      (vp) => vp?.textContent.includes("Task one") ? vp : null);
+    let done = 0, want;
+    try {
+      _click(await _waitFor(() => _tlEditNode("Task one"), 2000));
+      const ed = await _waitFor(() => _$("[contenteditable='true']", _mrdViewport()), 1500);
+      ed.textContent = typed;
+      ed.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+      await _waitFor(() => !_$("[contenteditable='true']"), 2000); done++;
+      want = _$$("div", _mrdViewport()).filter((el) => el.style.cursor === "pointer" && el.textContent.trim() !== "PENDING" && !_$$("div", el).some((c) => c.style.cursor === "pointer"))[0]?.textContent.trim();
+    } finally { document.activeElement?.blur?.(); for (let k = 0; k < done; k++) { _key("z", { ctrlKey: true }); await _wait(60); } }
+    if (!want || /[<>]/.test(want)) throw new Error(`HTML text kept markup: "${want}"`);
+    // SVG path: funnel value, cycle centre label, flow loop label.
+    const svgText = (t) => _$$("text[data-svg-edit]", _mrdViewport() || document).find((el) => el.textContent.trim() === t);
+    const cases = [
+      [{ type: "funnel", items: [{ label: "FunA", value: "100" }] }, "100"],
+      [{ type: "cycle", centerLabel: "CtrL", items: [{ label: "CyA" }, { label: "CyB" }] }, "CtrL"],
+      [{ type: "flow", loop: true, loopLabel: "LoopH", items: [{ label: "A" }, { label: "B" }] }, "LoopH"],
+    ];
+    for (const [block, from] of cases) {
+      await _mrdInject([block], null, (vp) => vp && svgText(from) ? vp : null);
+      let n = 0;
+      try {
+        _clickMod(svgText(from));
+        const inp = await _waitFor(() => _$("[data-testid='svg-text-edit']", _mrdViewport()), 1500);
+        inp.value = typed;
+        inp.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+        await _waitFor(() => !_$("[data-testid='svg-text-edit']") && svgText(want), 2000).catch(() => {
+          throw new Error(`typed markup shows "${_$$("text[data-svg-edit]", _mrdViewport()).map((el) => el.textContent).join("|")}", want "${want}"`);
+        }); n++;
+      } catch (e) { throw new Error(`${block.type}: ${e.message}`); }
+      finally { document.activeElement?.blur?.(); for (let k = 0; k < n; k++) { _key("z", { ctrlKey: true }); await _wait(60); } }
+    }
+  }},
+  { name: "CR26: an empty flow loop label placeholder sits where the filled label sits", fn: async () => {
+    const texts = () => _$$("text[data-svg-edit]", _mrdViewport() || document);
+    const svgText = (t) => texts().find((el) => el.textContent.trim() === t);
+    const cx = (el) => { const r = el.getBoundingClientRect(); return (r.left + r.right) / 2; };
+    const cy = (el) => { const r = el.getBoundingClientRect(); return (r.top + r.bottom) / 2; };
+    for (const [dir, lab] of [["horizontal", "LoopP"], ["vertical", "LoopQ"]]) {
+      await _mrdInject([{ type: "flow", loop: true, direction: dir, loopLabel: lab, items: [{ label: "A" }, { label: "B" }, { label: "C" }] }], null,
+        (vp) => vp && svgText(lab) ? vp : null);
+      await _wait(900); // let the entrance animation settle before measuring
+      let done = 0;
+      try {
+        const f = svgText(lab), fx = cx(f), fy = cy(f);
+        _clickMod(f);
+        const inp = await _waitFor(() => _$("[data-testid='svg-text-edit']", _mrdViewport()), 1500);
+        inp.value = "";
+        inp.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true })); done++;
+        const ph = await _waitFor(() => !_$("[data-testid='svg-text-edit']") && texts().find((el) => el.textContent.trim() === EDIT_PLACEHOLDER), 2000);
+        await _wait(200);
+        const px = cx(ph), py = cy(ph);
+        if (Math.abs(px - fx) > 4 || Math.abs(py - fy) > 4) throw new Error(`placeholder at ${px.toFixed(1)},${py.toFixed(1)}, label at ${fx.toFixed(1)},${fy.toFixed(1)}`);
+      } catch (e) { throw new Error(`${dir}: ${e.message}`); }
+      finally { document.activeElement?.blur?.(); for (let k = 0; k < done; k++) { _key("z", { ctrlKey: true }); await _wait(60); } }
+    }
+  }},
 ], { setup: _selectFirstModule });
 
 // CR21: while a slide or section is dragged in the TOC, the pointer near the top /
