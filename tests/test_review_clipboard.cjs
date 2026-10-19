@@ -29,21 +29,22 @@ const prelude = `
   var VELA_PRESENTATION_MODE = false;
   var dbg = function () {};
   var crypto = (typeof globalThis !== "undefined" && globalThis.crypto) ? globalThis.crypto : {};
-  var __clip = { text: "", deny: false };
+  var __clip = { text: "", deny: false, hang: false };
   var navigator = { clipboard: {
     writeText: async function (t) { if (__clip.deny) throw new Error("denied"); __clip.text = t; },
-    readText: async function () { if (__clip.deny) throw new Error("denied"); return __clip.text; } } };
+    readText: function () { if (__clip.hang) return new Promise(function () {}); if (__clip.deny) return Promise.reject(new Error("denied")); return Promise.resolve(__clip.text); } } };
   var velaClipboard = function () {};
 `;
 const combined = prelude + importsSrc.slice(sliceStart, sliceEnd) + "\n" + reducerSrc + "\n" +
   panelSrc.slice(hStart, hEnd) +
   "\n; return { reducer, init, NO_HISTORY, sanitizeSlide, sanitizeBlock, parseVelaBlockEnvelope," +
   " velaClipboardWriteBlock, velaClipboardReadBlocks, planBlockPaste, findPendingSlide, __clip," +
-  " VELA_BLOCK_CLIP_MAX_CHARS };";
+  " VELA_BLOCK_CLIP_MAX_CHARS, VELA_CLIP_READ_TIMEOUT_MS, isVelaBlockEnvelopeText, isEditableTarget, findPendingAfterDelete };";
 let API;
 try { API = Function(combined)(); } catch (e) { console.error("FATAL: sandbox eval failed:", e && e.stack || e); process.exit(1); }
 const { reducer, init, NO_HISTORY, sanitizeSlide, parseVelaBlockEnvelope, velaClipboardWriteBlock,
-  velaClipboardReadBlocks, planBlockPaste, findPendingSlide, __clip, VELA_BLOCK_CLIP_MAX_CHARS } = API;
+  velaClipboardReadBlocks, planBlockPaste, findPendingSlide, __clip, VELA_BLOCK_CLIP_MAX_CHARS,
+  VELA_CLIP_READ_TIMEOUT_MS, isVelaBlockEnvelopeText, isEditableTarget, findPendingAfterDelete } = API;
 
 let pass = 0, fail = 0;
 const ok = (n) => { pass++; console.log("  ✅ " + n); };
@@ -132,15 +133,68 @@ const deck = (slidesA, slidesB) => [{ id: "L1", title: "Lane", collapsed: false,
   __clip.deny = true;
   eq("read falls back to the same-tab memo when the clipboard is unreadable", (await velaClipboardReadBlocks()).map((b) => b.text), ["copy me"]);
   __clip.deny = false;
+  // W2-3: readText() that never settles (no clipboard-read permission) must
+  // not hang paste: the 800 ms race falls back to the same-tab memo.
+  __clip.hang = true;
+  const t0 = Date.now();
+  const hung = await velaClipboardReadBlocks();
+  const dt = Date.now() - t0;
+  eq("hanging readText falls back to the same-tab memo", hung.map((b) => b.text), ["copy me"]);
+  check(VELA_CLIP_READ_TIMEOUT_MS <= 1000 && dt < VELA_CLIP_READ_TIMEOUT_MS + 700, `hanging readText resolves near the timeout (${dt} ms)`);
+  __clip.hang = false;
+
+  console.log("CR6 — envelope never lands in a text field (W2-2)");
+  check(isVelaBlockEnvelopeText(JSON.stringify({ _velaBlock: true, v: 1, data: { type: "text", text: "x" } })), "copied envelope is detected");
+  check(isVelaBlockEnvelopeText("  " + JSON.stringify({ _velaBlock: true, data: {} }) + "\n"), "detected with surrounding whitespace");
+  check(!isVelaBlockEnvelopeText("plain text"), "plain text is not an envelope");
+  check(!isVelaBlockEnvelopeText(JSON.stringify({ _velaBlock: "true" })), "_velaBlock must be strictly true");
+  check(!isVelaBlockEnvelopeText(JSON.stringify({ note: "_velaBlock" })), "a mention of the marker is not an envelope");
+  check(!isVelaBlockEnvelopeText(JSON.stringify({ _velaSlide: true, data: {} })), "slide envelope is not a block envelope");
+  check(!isVelaBlockEnvelopeText("{\"_velaBlock\": true, broken"), "broken JSON is not an envelope");
+  check(isEditableTarget({ tagName: "DIV", isContentEditable: true }), "contentEditable counts as a text field");
+  check(isEditableTarget({ tagName: "INPUT" }) && isEditableTarget({ tagName: "TEXTAREA" }), "input/textarea count as text fields");
+  check(!isEditableTarget({ tagName: "DIV", isContentEditable: false }) && !isEditableTarget(null), "plain elements do not");
+  check(/addEventListener\("paste", onPasteCapture, true\)/.test(panelSrc), "paste guard is a capture-phase window listener");
+  check(/e\.key === "v" && !isEditableTarget\(document\.activeElement\)/.test(panelSrc), "Ctrl+V block/slide paste is skipped while a text field has focus");
 
   console.log("CR6 — paste location");
   const sl = { blocks: [{ type: "text" }, { type: "text" }], layout: "cols", L: [{ type: "text" }], R: [{ type: "text" }, { type: "text" }] };
-  eq("no selection -> end of slide.blocks", planBlockPaste(sl, null, 1), { key: "blocks", at: 2, newSelIdx: 2 });
-  eq("selected block 0 -> after it", planBlockPaste(sl, 0, 1), { key: "blocks", at: 1, newSelIdx: 1 });
-  eq("selected L block -> into L after it", planBlockPaste(sl, 2, 1), { key: "L", at: 1, newSelIdx: 3 });
-  eq("selected R block -> into R after it", planBlockPaste(sl, 3, 2), { key: "R", at: 1, newSelIdx: 5 });
-  eq("stale selection index -> end of slide.blocks", planBlockPaste(sl, 99, 1), { key: "blocks", at: 2, newSelIdx: 2 });
+  eq("cols slide, no selection -> end of the last (R) column", planBlockPaste(sl, null, 1), { key: "R", at: 2, newSelIdx: 5, selected: false });
+  eq("selected block 0 -> after it", planBlockPaste(sl, 0, 1), { key: "blocks", at: 1, newSelIdx: 1, selected: true });
+  eq("selected L block -> into L after it", planBlockPaste(sl, 2, 1), { key: "L", at: 1, newSelIdx: 3, selected: true });
+  eq("selected R block -> into R after it", planBlockPaste(sl, 3, 2), { key: "R", at: 1, newSelIdx: 5, selected: true });
+  eq("cols slide, stale selection -> end of the last (R) column", planBlockPaste(sl, 99, 1), { key: "R", at: 2, newSelIdx: 5, selected: false });
+  // W2-1: the validator's slide — heading on top, L [text, bullets], R [text, callout].
+  const gate = { blocks: [{ type: "heading" }], layout: "cols", L: [{ type: "text" }, { type: "bullets" }], R: [{ type: "text" }, { type: "callout" }] };
+  eq("selected R callout (idx 4) -> into R after it, never the top blocks", planBlockPaste(gate, 4, 1), { key: "R", at: 2, newSelIdx: 5, selected: true });
+  eq("selected R text (idx 3) -> into R between text and callout", planBlockPaste(gate, 3, 1), { key: "R", at: 1, newSelIdx: 4, selected: true });
+  eq("cols slide with only L, no selection -> end of L", planBlockPaste({ blocks: [{ type: "heading" }], layout: "cols", L: [{ type: "text" }] }, null, 1), { key: "L", at: 1, newSelIdx: 2, selected: false });
+  eq("non-cols slide, no selection -> end of slide.blocks", planBlockPaste({ blocks: [{ type: "text" }, { type: "text" }] }, null, 1), { key: "blocks", at: 2, newSelIdx: 2, selected: false });
+  eq("L/R without layout cols are not rendered -> end of slide.blocks", planBlockPaste({ blocks: [{ type: "text" }], R: [{ type: "text" }] }, null, 1), { key: "blocks", at: 1, newSelIdx: 1, selected: false });
+  check(/No block selected: pasted at end of \$\{where\}/.test(panelSrc), "no-selection rule is named in the status message");
+  check(/pasteBlocks\(arr, n\)/.test(panelSrc), "paste inside a block's inline text editor goes after that block");
   check(planBlockPaste({ blocks: Array.from({ length: 30 }, () => ({ type: "text" })) }, null, 1) === null, "full slide (30 blocks) refuses paste");
+
+  console.log("CR7 — delete the current slide in pending mode (W2-4)");
+  const D = deck([S("a1"), S("a2", { reviewed: true }), S("a3")], [S("b1", { reviewed: true }), S("b2")]);
+  const delA = deck([S("a1"), S("a2", { reviewed: true }), S("a3", { reviewed: true })], [S("b1", { reviewed: true }), S("b2")]);
+  eq("anchor past module end -> next module's first pending (skips reviewed B0)", findPendingAfterDelete(delA, "A", 3).target, { id: "B", index: 1 });
+  eq("anchor on a reviewed slide -> skips it to the next pending", findPendingAfterDelete(D, "A", 1).target, { id: "A", index: 2 });
+  eq("anchor on a pending slide -> that slide", findPendingAfterDelete(D, "A", 0).target, { id: "A", index: 0 });
+  eq("no pending after the anchor -> wraps to the first pending", findPendingAfterDelete(D, "B", 2).target, { id: "A", index: 0 });
+  const none = findPendingAfterDelete(deck([S("a1", { reviewed: true })], [S("b1", { reviewed: true })]), "A", 0);
+  check(none.target === null && none.total === 0, "no pending slides left -> no target (caller shows a message)");
+  eq("module emptied by the delete -> next module", findPendingAfterDelete(deck([], [S("b1", { reviewed: true }), S("b2")]), "A", 0).target, { id: "B", index: 1 });
+  check(/findPendingAfterDelete\(lanes, concept\.id/.test(panelSrc) && /Slide deleted · all slides reviewed/.test(panelSrc), "SlidePanel wires the delete hook and the none-left message");
+
+  console.log("Reducer — REMOVE_SLIDE clamps slideIndex (gallery delete of a module's last slide)");
+  const g0 = { past: [], present: { ...init, lanes: deck([S("a1"), S("a2")], [S("b1")]), selectedId: "A", slideIndex: 1 }, future: [] };
+  check(reducer(g0, { type: "REMOVE_SLIDE", id: "A", index: 1 }).present.slideIndex === 0, "deleting the selected last slide clamps to the new last");
+  check(reducer(g0, { type: "REMOVE_SLIDE", id: "A", index: 0 }).present.slideIndex === 0, "index past the end after an earlier delete clamps");
+  const g1 = { ...g0, present: { ...g0.present, slideIndex: 1 } };
+  check(reducer(g1, { type: "REMOVE_SLIDE", id: "B", index: 0 }).present.slideIndex === 1, "delete in another module leaves slideIndex alone");
+  const g2 = { ...g0, present: { ...g0.present, lanes: deck([S("a1")], []), slideIndex: 0 } };
+  check(reducer(g2, { type: "REMOVE_SLIDE", id: "A", index: 0 }).present.slideIndex === 0, "emptied module -> slideIndex 0");
 
   console.log("UI wiring (source)");
   for (const id of ["slide-reviewed-toggle", "review-pending-toggle", "block-copy-btn", "block-paste-btn", "review-status-msg"]) {
