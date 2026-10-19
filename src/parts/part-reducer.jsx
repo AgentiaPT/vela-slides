@@ -119,7 +119,21 @@ function innerReducer(state, a) {
       return { ...state, lanes, selectedId: newItems[0]?.id || state.selectedId, slideIndex: 0 };
     }
     case "BATCH_ADD": { const lane = state.lanes.find((l) => l.id === a.laneId); if (!lane) return state; let o = lane.items.length + 1; const items = a.items.map((it, i) => { const nid = uid(); const sl = ((typeof it === "object" && Array.isArray(it.slides)) ? it.slides : []).map(sanitizeSlide).filter(Boolean); if (sl.length) _dirtyMods.add(nid); return { id: nid, title: typeof it === "string" ? it : it.title, status: "todo", importance: (typeof it === "object" && it.importance) || "should", order: o + i, slides: sl, createdAt: now() }; }); return { ...state, lanes: state.lanes.map((l) => l.id === a.laneId ? { ...l, items: [...l.items, ...items] } : l) }; }
-    case "REMOVE_ITEM": _deletedMods.add(a.id); return { ...state, lanes: state.lanes.map((l) => ({ ...l, items: l.items.filter((i) => i.id !== a.id) })), selectedId: state.selectedId === a.id ? null : state.selectedId };
+    case "REMOVE_ITEM": {
+      _deletedMods.add(a.id);
+      const lanes = state.lanes.map((l) => ({ ...l, items: l.items.filter((i) => i.id !== a.id) }));
+      let selectedId = state.selectedId === a.id ? null : state.selectedId, slideIndex = state.slideIndex;
+      // W3-1: in editor pending-review mode, deleting the selected module keeps the
+      // editor open on the neighbour module (next, else previous). SlidePanel then
+      // moves to the next pending slide. Outside pending mode: unchanged (null).
+      if (selectedId === null && state.selectedId === a.id && state.reviewPending && !state.fullscreen) {
+        const flat = state.lanes.flatMap((l) => l.items || []);
+        const at = flat.findIndex((i) => i.id === a.id);
+        const nb = flat[at + 1] || flat[at - 1];
+        if (nb) { selectedId = nb.id; slideIndex = 0; }
+      }
+      return { ...state, lanes, selectedId, slideIndex };
+    }
     case "RENAME_ITEM": return mapItems((i) => i.id === a.id ? { ...i, title: a.title } : i);
     case "CYCLE_STATUS": return mapItems((i) => { if (i.id !== a.id) return i; const next = STATUS_META[i.status].next; if (!next) return i; return { ...i, status: next, ...(next === "signed-off" ? { signedOffAt: now() } : next === "todo" ? { signedOffAt: undefined } : {}) }; });
     case "SET_STATUS": case "SET_IMPORTANCE": return mapItems((i) => i.id === a.id ? { ...i, ...(a.status ? { status: a.status } : {}), ...(a.importance ? { importance: a.importance } : {}) } : i);
@@ -395,7 +409,8 @@ function reducer(hist, a) {
     // (CR5: also clear aiWork so a reverted slide never stays stuck shimmering).
     // CR2/D1: collapsedSections is view-only (in NO_HISTORY) — carry the CURRENT value
     // forward across UNDO so a content undo never silently re-folds/unfolds the TOC.
-    const cleaned = { ...prev, chatLoading: false, aiWork: null, collapsedSections: hist.present.collapsedSections, reviewPending: hist.present.reviewPending, _deckEpoch: hist.present._deckEpoch };
+    // W3-2: _histSeq counts undo/redo steps so SlidePanel can drop stale review messages.
+    const cleaned = { ...prev, chatLoading: false, aiWork: null, collapsedSections: hist.present.collapsedSections, reviewPending: hist.present.reviewPending, _deckEpoch: hist.present._deckEpoch, _histSeq: (hist.present._histSeq || 0) + 1 };
     // Clamp selectedId/slideIndex — restored state may reference modules/slides modified after snapshot
     if (cleaned.selectedId && cleaned.lanes) {
       let found = false;
@@ -423,7 +438,7 @@ function reducer(hist, a) {
     if (hist.future.length === 0) return hist;
     const next = hist.future[0];
     // CR2/D1: keep view-only collapsedSections unchanged across REDO (see UNDO above).
-    const cleaned = { ...next, chatLoading: false, aiWork: null, collapsedSections: hist.present.collapsedSections, reviewPending: hist.present.reviewPending, _deckEpoch: hist.present._deckEpoch };
+    const cleaned = { ...next, chatLoading: false, aiWork: null, collapsedSections: hist.present.collapsedSections, reviewPending: hist.present.reviewPending, _deckEpoch: hist.present._deckEpoch, _histSeq: (hist.present._histSeq || 0) + 1 };
     // Clamp selectedId/slideIndex
     if (cleaned.selectedId && cleaned.lanes) {
       let found = false;

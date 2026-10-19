@@ -41,12 +41,13 @@ const combined = prelude + importsSrc.slice(sliceStart, sliceEnd) + "\n" + reduc
   panelSrc.slice(hStart, hEnd) +
   "\n; return { reducer, init, NO_HISTORY, sanitizeSlide, sanitizeBlock, parseVelaBlockEnvelope," +
   " velaClipboardWriteBlock, velaClipboardReadBlocks, planBlockPaste, findPendingSlide, __clip, __perm, velaGuardedRead," +
-  " VELA_BLOCK_CLIP_MAX_CHARS, VELA_CLIP_READ_TIMEOUT_MS, isVelaBlockEnvelopeText, isEditableTarget, findPendingAfterDelete };";
+  " VELA_BLOCK_CLIP_MAX_CHARS, VELA_CLIP_READ_TIMEOUT_MS, isVelaBlockEnvelopeText, isEditableTarget, findPendingAfterDelete," +
+  " planReviewDeleteNav: typeof planReviewDeleteNav === 'function' ? planReviewDeleteNav : null };";
 let API;
 try { API = Function(combined)(); } catch (e) { console.error("FATAL: sandbox eval failed:", e && e.stack || e); process.exit(1); }
 const { reducer, init, NO_HISTORY, sanitizeSlide, parseVelaBlockEnvelope, velaClipboardWriteBlock,
   velaClipboardReadBlocks, planBlockPaste, findPendingSlide, __clip, __perm, velaGuardedRead, VELA_BLOCK_CLIP_MAX_CHARS,
-  VELA_CLIP_READ_TIMEOUT_MS, isVelaBlockEnvelopeText, isEditableTarget, findPendingAfterDelete } = API;
+  VELA_CLIP_READ_TIMEOUT_MS, isVelaBlockEnvelopeText, isEditableTarget, findPendingAfterDelete, planReviewDeleteNav } = API;
 
 let pass = 0, fail = 0;
 const ok = (n) => { pass++; console.log("  ✅ " + n); };
@@ -229,7 +230,61 @@ const deck = (slidesA, slidesB) => [{ id: "L1", title: "Lane", collapsed: false,
   const none = findPendingAfterDelete(deck([S("a1", { reviewed: true })], [S("b1", { reviewed: true })]), "A", 0);
   check(none.target === null && none.total === 0, "no pending slides left -> no target (caller shows a message)");
   eq("module emptied by the delete -> next module", findPendingAfterDelete(deck([], [S("b1", { reviewed: true }), S("b2")]), "A", 0).target, { id: "B", index: 1 });
-  check(/findPendingAfterDelete\(lanes, concept\.id/.test(panelSrc) && /Slide deleted · all slides reviewed/.test(panelSrc), "SlidePanel wires the delete hook and the none-left message");
+  check(/const nav = planReviewDeleteNav\(prev, cur\);/.test(panelSrc) && /\$\{what\} deleted · all slides reviewed/.test(panelSrc), "SlidePanel wires the delete hook and the none-left message");
+
+  console.log("CR7 — delete the current MODULE in pending mode (W3-1)");
+  {
+    const hasNav = typeof planReviewDeleteNav === "function";
+    const nav = (a, b) => (hasNav ? planReviewDeleteNav(a, b) : undefined);
+    const lanesM = [{ id: "L1", title: "Lane", collapsed: false, items: [
+      { id: "I", title: "Intro", status: "todo", importance: "should", order: 1, comments: [], slides: [S("i1")], createdAt: "t" },
+      { id: "B", title: "Body", status: "todo", importance: "should", order: 2, comments: [], slides: [S("img-right", { reviewed: true }), S("img-left"), S("b3")], createdAt: "t" },
+      { id: "C", title: "Other", status: "todo", importance: "should", order: 3, comments: [], slides: [S("c1")], createdAt: "t" },
+    ] }];
+    const base = { past: [], present: { ...init, lanes: lanesM, selectedId: "I", slideIndex: 0, reviewPending: true }, future: [] };
+    const snap = (h) => { const p = h.present; const it = p.lanes.flatMap((l) => l.items).find((i) => i.id === p.selectedId);
+      return { id: p.selectedId, slides: it ? it.slides : [], idx: p.slideIndex, lanes: p.lanes, histSeq: p._histSeq || 0 }; };
+    const hd = reducer(base, { type: "REMOVE_ITEM", id: "I" });
+    check(hd.present.selectedId === "B" && hd.present.slideIndex === 0, "REMOVE_ITEM of the selected module in pending mode keeps the editor on the next module",
+      `${hd.present.selectedId}/${hd.present.slideIndex}`);
+    const n1 = nav(snap(base), snap(hd));
+    eq("module delete -> next PENDING slide (skips the reviewed one)", n1 && n1.r.target, { id: "B", index: 1 });
+    check(n1 && n1.what === "Module", "module delete is reported as a module delete");
+    // Deleted module was the last one: neighbour is the previous module; the search wraps.
+    const lastSel = { ...base, present: { ...base.present, selectedId: "C" } };
+    const hl = reducer(lastSel, { type: "REMOVE_ITEM", id: "C" });
+    check(hl.present.selectedId === "B", "deleting the last (selected) module selects the previous module");
+    const n2 = nav(snap(lastSel), snap(hl));
+    eq("last module deleted -> wraps to the first pending slide", n2 && n2.r.target, { id: "I", index: 0 });
+    // No pending slide left: stay on the neighbour; the caller shows "all reviewed".
+    const allRev = { ...base, present: { ...base.present, lanes: [{ ...lanesM[0], items: [
+      lanesM[0].items[0], { ...lanesM[0].items[1], slides: [S("r1", { reviewed: true })] }] }] } };
+    const ha = reducer(allRev, { type: "REMOVE_ITEM", id: "I" });
+    const n3 = nav(snap(allRev), snap(ha));
+    check(ha.present.selectedId === "B" && n3 && n3.r.target === null, "no pending left -> stays on the neighbour, no target");
+    // Delete a module that does NOT hold the current slide: selection unchanged, no navigation.
+    const other = { ...base, present: { ...base.present, selectedId: "B", slideIndex: 2 } };
+    const ho = reducer(other, { type: "REMOVE_ITEM", id: "I" });
+    check(ho.present.selectedId === "B" && ho.present.slideIndex === 2, "deleting another module keeps the current slide selected");
+    check(hasNav && nav(snap(other), snap(ho)) === null, "deleting another module triggers no pending navigation");
+    check(hasNav && nav(snap(other), snap(reducer(other, { type: "SELECT", id: "C" }))) === null, "a normal module switch triggers no navigation");
+    const off = { ...base, present: { ...base.present, reviewPending: false } };
+    check(reducer(off, { type: "REMOVE_ITEM", id: "I" }).present.selectedId === null, "outside pending mode REMOVE_ITEM still clears the selection");
+    // Single-slide delete still works through the same helper.
+    const s0 = { ...base, present: { ...base.present, selectedId: "B", slideIndex: 2 } };
+    const s1 = reducer(s0, { type: "REMOVE_SLIDE", id: "B", index: 2 });
+    const n4 = nav(snap(s0), snap(s1));
+    check(n4 && n4.what === "Slide", "single-slide delete is still detected");
+    eq("single-slide delete -> next pending slide", n4 && n4.r.target, { id: "C", index: 0 });
+
+    console.log("CR7 — undo/redo after a delete in pending mode (W3-2)");
+    const u = reducer(s1, { type: "UNDO" });
+    check((u.present._histSeq || 0) > (s1.present._histSeq || 0), "UNDO bumps _histSeq");
+    const rd = reducer(u, { type: "REDO" });
+    check((rd.present._histSeq || 0) > (u.present._histSeq || 0), "REDO bumps _histSeq");
+    check(hasNav && nav(snap(u), snap(rd)) === null, "redo of a delete does not navigate again");
+    check(/histSeqSeenRef\.current = state\._histSeq;\n    clearTimeout\(reviewMsgTimer\.current\);\n    setReviewMsg\(null\);/.test(panelSrc), "SlidePanel clears the review status message on undo/redo");
+  }
 
   console.log("Reducer — REMOVE_SLIDE clamps slideIndex (gallery delete of a module's last slide)");
   const g0 = { past: [], present: { ...init, lanes: deck([S("a1"), S("a2")], [S("b1")]), selectedId: "A", slideIndex: 1 }, future: [] };
