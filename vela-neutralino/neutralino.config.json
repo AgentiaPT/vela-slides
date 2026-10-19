@@ -32,6 +32,7 @@
     "window.maximize",
     "window.unmaximize",
     "window.isMaximized",
+    "window.setTitle",
     "os.showFolderDialog",
     "os.getEnv",
     "filesystem.readFile",
