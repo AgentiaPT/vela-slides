@@ -165,6 +165,19 @@ function buildShadingDict(gradient, coords) {
 // ━━━ PDF Text encoding ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // For standard fonts, PDF uses WinAnsiEncoding (Latin-1 subset)
 // Characters outside this range get replaced with ?
+// WinAnsiEncoding bytes 0x80-0x9F hold these non-Latin-1 code points (same table
+// as the font-width map in part-pdf-vector.jsx). One table, shared by the
+// encoder AND isEmojiCodepoint: a char here is real text (correct size and
+// baseline), never the emoji raster path. Values are octal byte escapes so the
+// output stays ASCII (TextEncoder would otherwise UTF-8 encode them).
+const PDF_WINANSI_HIGH = {
+  0x20AC: "\\200", 0x201A: "\\202", 0x0192: "\\203", 0x201E: "\\204", 0x2026: "\\205",
+  0x2020: "\\206", 0x2021: "\\207", 0x02C6: "\\210", 0x2030: "\\211", 0x0160: "\\212",
+  0x2039: "\\213", 0x0152: "\\214", 0x017D: "\\216", 0x2018: "\\221", 0x2019: "\\222",
+  0x201C: "\\223", 0x201D: "\\224", 0x2022: "\\225", 0x2013: "\\226", 0x2014: "\\227",
+  0x02DC: "\\230", 0x2122: "\\231", 0x0161: "\\232", 0x203A: "\\233", 0x0153: "\\234",
+  0x017E: "\\236", 0x0178: "\\237",
+};
 function pdfStringEncode(str) {
   let out = "(";
   for (let i = 0; i < str.length; i++) {
@@ -186,21 +199,16 @@ function pdfStringEncode(str) {
     } else {
       // Typographic Unicode → WinAnsiEncoding substitutions
       // Values use PDF octal escapes to avoid UTF-8 double-encoding via TextEncoder
+      // WinAnsi 0x80-0x9F chars (euro, smart quotes, dashes, bullet, ellipsis,
+      // trademark, ...) come from PDF_WINANSI_HIGH; typoMap keeps ASCII fallbacks.
       const typoMap = {
-        0x2014: "\\227", // em dash (WinAnsi 0x97)
-        0x2013: "\\226", // en dash (WinAnsi 0x96)
-        0x201C: "\\223", // left double quote (WinAnsi 0x93)
-        0x201D: "\\224", // right double quote (WinAnsi 0x94)
-        0x2018: "\\221", // left single quote (WinAnsi 0x91)
-        0x2019: "\\222", // right single quote (WinAnsi 0x92)
-        0x2022: "\\267", // bullet → middle dot (WinAnsi 0xB7)
-        0x2026: "...",   // ellipsis
-        0x2122: "TM",    // trademark
         0x2192: "->",    // right arrow
         0x2190: "<-",    // left arrow
         0x21D2: "=>",    // double right arrow
       };
-      if (typoMap[c]) {
+      if (PDF_WINANSI_HIGH[c]) {
+        out += PDF_WINANSI_HIGH[c];
+      } else if (typoMap[c]) {
         out += typoMap[c];
       } else {
         // Emoji and other non-Latin chars: skip (rendered as images)
@@ -220,7 +228,8 @@ function isEmojiCodepoint(cp) {
   // Skin tone modifiers — not standalone visual
   if (cp >= 0x1F3FB && cp <= 0x1F3FF) return false;
   // Common typographic characters we handle as text substitutions
-  const textSubs = [0x2014,0x2013,0x201C,0x201D,0x2018,0x2019,0x2022,0x2026,0x2122,0x2192,0x2190,0x2191,0x2193,0x21D2];
+  if (PDF_WINANSI_HIGH[cp]) return false; // € ™ • – — quotes …: real WinAnsi text
+  const textSubs = [0x2192,0x2190,0x2191,0x2193,0x21D2];
   if (textSubs.includes(cp)) return false;
   return cp > 0xFF;
 }
