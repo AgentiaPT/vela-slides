@@ -547,6 +547,7 @@ def test_security():
         ("tests/test_modal_scroll.cjs",       "Modal scroll/overflow (CR3 release notes)"),
         ("tests/test_storage_warning.cjs",    "Artifact storage warning (CR2)"),
         ("tests/test_block_toolbar_clip.cjs", "Block toolbar clip (CR4)"),
+        ("tests/test_lists_branding_l.cjs",   "Gallery hide / brand line 0px / TOC delete (cluster L)"),
         ("tests/test_icon_picker_escape.cjs", "Icon picker Escape (CR5)"),
         ("tests/test_deck_key_allowlist.cjs", "Deck-ingress key allowlist (drop/survive/clamp/depth)"),
         ("tests/test_reducer.cjs",            "Reducer state transitions (62 actions + UNDO/REDO)"),
