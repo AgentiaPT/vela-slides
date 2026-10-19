@@ -1398,6 +1398,32 @@ const _productTourSetup = async () => {
   await _waitFor(() => window.__velaDemoTest?.deckFingerprint?.() === DEMO_DECK_FINGERPRINT, 3000);
   await _cr5Setup();
 };
+uiSuite("Vector PDF glyph spacing (CR5)", [
+  { name: "typographic dashes and quotes map to WinAnsi bytes", fn: async () => {
+    const got = pdfWinAnsiBytes("–—‘’“”").join(",");
+    if (got !== "150,151,145,146,147,148") throw new Error("WinAnsi bytes wrong: " + got);
+  }},
+  { name: "pdfStringEncode escapes the same bytes it writes", fn: async () => {
+    const got = pdfStringEncode("a–(b)");
+    if (got !== "(a\\226\\(b\\))") throw new Error("encoded string wrong: " + got);
+  }},
+  { name: "ellipsis expands to three glyphs; emoji and controls dropped", fn: async () => {
+    const got = pdfWinAnsiBytes("…").join(",") + "|" + pdfWinAnsiBytes("a\u0007\u{1F600}b").join(",");
+    if (got !== "46,46,46|97,98") throw new Error("byte expansion wrong: " + got);
+  }},
+  { name: "en dash run needs no extra spacing (old code over-spaced it)", fn: async () => {
+    const fd = { widths: new Array(224).fill(500) };
+    fd.widths[150 - 32] = 1000; // WinAnsi 0x96 glyph
+    const tc = pdfRunTc({ text: "a–b", w: 20, fontSize: 10, letterSpacing: 0 }, fd);
+    if (Math.abs(tc) > 0.01) throw new Error("expected Tc 0, got " + tc);
+  }},
+  { name: "ellipsis run spacing counts three glyphs", fn: async () => {
+    const fd = { widths: new Array(224).fill(500) };
+    const tc = pdfRunTc({ text: "a…", w: 23, fontSize: 10, letterSpacing: 0 }, fd);
+    if (Math.abs(tc - 1.0) > 0.01) throw new Error("expected Tc 1.0, got " + tc);
+  }},
+]);
+
 uiSuite("Product Tour", [
   { name: "Scene order, feature count, badges, and duration stay inside budget", fn: async () => {
     const api = window.__velaDemoTest;
