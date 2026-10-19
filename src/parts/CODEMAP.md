@@ -84,7 +84,7 @@ that symbol in the named part for the line. No line numbers here — they rot.
 
 ### part-slidepanel.jsx
 - CR6: block clipboard ({_velaBlock} envelope): VELA_BLOCK_CLIP_MAX_CHARS VELA_BLOCK_CLIP_MAX_BLOCKS _velaBlockClipMemo parseVelaBlockEnvelope velaClipboardWriteBlock VELA_CLIP_READ_TIMEOUT_MS velaClipReadPermission velaClipboardReadBlocks isVelaBlockEnvelopeText isEditableTarget velaGuardedRead planBlockPaste
-- CR7: "Review pending only" editor navigation: findPendingSlide findPendingAfterDelete SlidePanel
+- CR7: "Review pending only" editor navigation: findPendingSlide findPendingAfterDelete planReviewDeleteNav SlidePanel
 
 ### part-list.jsx
 - (file preamble): _velaDrag _setDrag _clearDrag
@@ -320,8 +320,8 @@ add_lane add_item batch_add_items remove_item remove_lane rename_item rename_lan
 - part-imports.jsx: 860-line unbannered stretch after line 522
 - part-blocks.jsx: 766-line unbannered stretch after line 800
 - part-canvas.jsx: 415-line unbannered stretch after line 24
-- part-slidepanel.jsx: 447-line unbannered stretch after line 564
-- part-slidepanel.jsx: 425-line unbannered stretch after line 1323
+- part-slidepanel.jsx: 452-line unbannered stretch after line 591
+- part-slidepanel.jsx: 425-line unbannered stretch after line 1355
 - part-uitest.jsx: 616-line unbannered stretch after line 1230
 - part-uitest2.jsx: 448-line unbannered stretch after line 2
 - part-uitest2.jsx: 593-line unbannered stretch after line 1395

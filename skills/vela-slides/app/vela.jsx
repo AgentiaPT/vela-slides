@@ -4961,7 +4961,22 @@ function innerReducer(state, a) {
       return loaded;
     }
     case "ADD_LANE": { if (state.lanes.find((l) => l.title.toLowerCase() === a.title.toLowerCase())) return state; return { ...state, lanes: [...state.lanes, { id: uid(), title: a.title, collapsed: false, items: [] }] }; }
-    case "REMOVE_LANE": { const rl = state.lanes.find((l) => l.id === a.id); if (rl) rl.items.forEach((i) => _deletedMods.add(i.id)); return { ...state, lanes: state.lanes.filter((l) => l.id !== a.id), selectedId: null }; }
+    case "REMOVE_LANE": { const rl = state.lanes.find((l) => l.id === a.id); if (rl) rl.items.forEach((i) => _deletedMods.add(i.id)); 
+      let selectedId = null, slideIndex = state.slideIndex;
+      // Pending-review mode (mirrors REMOVE_ITEM): deleting the lane that holds the
+      // selected module selects the nearest module outside it (next, else previous);
+      // deleting another lane keeps the selection. SlidePanel then picks the pending slide.
+      if (state.reviewPending && !state.fullscreen) {
+        const flat = state.lanes.flatMap((l) => (l.items || []).map((i) => ({ i, lane: l.id })));
+        if (!rl || !flat.some((x) => x.lane === a.id && x.i.id === state.selectedId)) selectedId = state.selectedId;
+        else {
+          const at = flat.findIndex((x) => x.lane === a.id);
+          const out = flat.filter((x) => x.lane !== a.id);
+          const nb = flat.slice(at).find((x) => x.lane !== a.id) || out[out.length - 1];
+          if (nb) { selectedId = nb.i.id; slideIndex = 0; }
+        }
+      }
+      return { ...state, lanes: state.lanes.filter((l) => l.id !== a.id), selectedId, slideIndex }; }
     case "RENAME_LANE": return { ...state, lanes: state.lanes.map((l) => l.id === a.id ? { ...l, title: a.title } : l) };
     case "SET_ITEM_NOTES": return mapItems((i) => i.id === a.id ? { ...i, notes: a.notes } : i);
     case "TOGGLE_LANE": return { ...state, lanes: state.lanes.map((l) => l.id === a.id ? { ...l, collapsed: !l.collapsed } : l) };
@@ -5005,7 +5020,21 @@ function innerReducer(state, a) {
       return { ...state, lanes, selectedId: newItems[0]?.id || state.selectedId, slideIndex: 0 };
     }
     case "BATCH_ADD": { const lane = state.lanes.find((l) => l.id === a.laneId); if (!lane) return state; let o = lane.items.length + 1; const items = a.items.map((it, i) => { const nid = uid(); const sl = ((typeof it === "object" && Array.isArray(it.slides)) ? it.slides : []).map(sanitizeSlide).filter(Boolean); if (sl.length) _dirtyMods.add(nid); return { id: nid, title: typeof it === "string" ? it : it.title, status: "todo", importance: (typeof it === "object" && it.importance) || "should", order: o + i, slides: sl, createdAt: now() }; }); return { ...state, lanes: state.lanes.map((l) => l.id === a.laneId ? { ...l, items: [...l.items, ...items] } : l) }; }
-    case "REMOVE_ITEM": _deletedMods.add(a.id); return { ...state, lanes: state.lanes.map((l) => ({ ...l, items: l.items.filter((i) => i.id !== a.id) })), selectedId: state.selectedId === a.id ? null : state.selectedId };
+    case "REMOVE_ITEM": {
+      _deletedMods.add(a.id);
+      const lanes = state.lanes.map((l) => ({ ...l, items: l.items.filter((i) => i.id !== a.id) }));
+      let selectedId = state.selectedId === a.id ? null : state.selectedId, slideIndex = state.slideIndex;
+      // W3-1: in editor pending-review mode, deleting the selected module keeps the
+      // editor open on the neighbour module (next, else previous). SlidePanel then
+      // moves to the next pending slide. Outside pending mode: unchanged (null).
+      if (selectedId === null && state.selectedId === a.id && state.reviewPending && !state.fullscreen) {
+        const flat = state.lanes.flatMap((l) => l.items || []);
+        const at = flat.findIndex((i) => i.id === a.id);
+        const nb = flat[at + 1] || flat[at - 1];
+        if (nb) { selectedId = nb.id; slideIndex = 0; }
+      }
+      return { ...state, lanes, selectedId, slideIndex };
+    }
     case "RENAME_ITEM": return mapItems((i) => i.id === a.id ? { ...i, title: a.title } : i);
     case "CYCLE_STATUS": return mapItems((i) => { if (i.id !== a.id) return i; const next = STATUS_META[i.status].next; if (!next) return i; return { ...i, status: next, ...(next === "signed-off" ? { signedOffAt: now() } : next === "todo" ? { signedOffAt: undefined } : {}) }; });
     case "SET_STATUS": case "SET_IMPORTANCE": return mapItems((i) => i.id === a.id ? { ...i, ...(a.status ? { status: a.status } : {}), ...(a.importance ? { importance: a.importance } : {}) } : i);
@@ -5281,7 +5310,8 @@ function reducer(hist, a) {
     // (CR5: also clear aiWork so a reverted slide never stays stuck shimmering).
     // CR2/D1: collapsedSections is view-only (in NO_HISTORY) — carry the CURRENT value
     // forward across UNDO so a content undo never silently re-folds/unfolds the TOC.
-    const cleaned = { ...prev, chatLoading: false, aiWork: null, collapsedSections: hist.present.collapsedSections, reviewPending: hist.present.reviewPending, _deckEpoch: hist.present._deckEpoch };
+    // W3-2: _histSeq counts undo/redo steps so SlidePanel can drop stale review messages.
+    const cleaned = { ...prev, chatLoading: false, aiWork: null, collapsedSections: hist.present.collapsedSections, reviewPending: hist.present.reviewPending, _deckEpoch: hist.present._deckEpoch, _histSeq: (hist.present._histSeq || 0) + 1 };
     // Clamp selectedId/slideIndex — restored state may reference modules/slides modified after snapshot
     if (cleaned.selectedId && cleaned.lanes) {
       let found = false;
@@ -5309,7 +5339,7 @@ function reducer(hist, a) {
     if (hist.future.length === 0) return hist;
     const next = hist.future[0];
     // CR2/D1: keep view-only collapsedSections unchanged across REDO (see UNDO above).
-    const cleaned = { ...next, chatLoading: false, aiWork: null, collapsedSections: hist.present.collapsedSections, reviewPending: hist.present.reviewPending, _deckEpoch: hist.present._deckEpoch };
+    const cleaned = { ...next, chatLoading: false, aiWork: null, collapsedSections: hist.present.collapsedSections, reviewPending: hist.present.reviewPending, _deckEpoch: hist.present._deckEpoch, _histSeq: (hist.present._histSeq || 0) + 1 };
     // Clamp selectedId/slideIndex
     if (cleaned.selectedId && cleaned.lanes) {
       let found = false;
@@ -8222,6 +8252,33 @@ function findPendingAfterDelete(lanes, modId, anchor) {
   return { target: null, total };
 }
 
+// Pending mode: decide where to go after a delete, from two snapshots of the
+// editor ({ id, slides, idx, lanes, histSeq }). Returns { what, r } (r from
+// findPendingAfterDelete) or null when the current slide was not deleted.
+// - Slide delete: surviving slides keep their object identity through
+//   REMOVE_SLIDE(S), so identity tells whether the current slide was deleted.
+// - Module delete (W3-1): REMOVE_ITEM of the selected module moves the selection
+//   to a neighbour module (reducer); the old module id is then gone from lanes.
+// - Undo/redo (histSeq change) restores an exact earlier state: no navigation.
+function planReviewDeleteNav(prev, cur) {
+  if (!prev || !cur || prev.histSeq !== cur.histSeq) return null;
+  if (prev.id !== cur.id) {
+    const flatIds = (ls) => (ls || []).flatMap((l) => (l.items || []).map((i) => i.id));
+    if (flatIds(cur.lanes).includes(prev.id)) return null;
+    const ids = flatIds(prev.lanes);
+    // Neighbour after the deleted module: start at its slide 0. Neighbour before it
+    // (deleted module was last): start past its end, so the search wraps.
+    const after = ids.indexOf(cur.id) > ids.indexOf(prev.id);
+    return { what: "Module", r: findPendingAfterDelete(cur.lanes, cur.id, after ? 0 : cur.slides.length) };
+  }
+  if (cur.slides.length >= prev.slides.length) return null;
+  const was = prev.slides[prev.idx];
+  if (!was || cur.slides.includes(was)) return null;
+  let removedBefore = 0;
+  for (let i = 0; i < prev.idx; i++) if (!cur.slides.includes(prev.slides[i])) removedBefore++;
+  return { what: "Slide", r: findPendingAfterDelete(cur.lanes, cur.id, prev.idx - removedBefore) };
+}
+
 function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, branding, guidelines, isMobile, fontScale, actionsRef, onRibbonUpdate }) {
   const deckEpochRef = useRef(state._deckEpoch);
   deckEpochRef.current = state._deckEpoch;
@@ -8643,26 +8700,31 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
     dispatch({ type: "SET_SLIDE_INDEX", index: r.target.index });
     flashReviewMsg(`${r.total} pending${r.wrapped ? " · wrapped" : ""}`);
   }, [lanes, concept.id, slideIndex, dispatch, flashReviewMsg]);
-  // Pending mode: when the CURRENT slide is deleted (editor, TOC or gallery —
-  // every path ends here as a shorter slides array), go to the next pending
-  // slide instead of the neighbour the delete path picked. Surviving slides
-  // keep their object identity through REMOVE_SLIDE(S), so identity tells
-  // whether the current slide was among the deleted ones.
+  // Pending mode: when the CURRENT slide or module is deleted (editor, TOC or
+  // gallery), go to the next pending slide instead of the neighbour the delete
+  // path picked. The decision is planReviewDeleteNav (pure, unit-tested).
   const delTrackRef = useRef(null);
   useEffect(() => {
     const prev = delTrackRef.current;
-    delTrackRef.current = { id: concept.id, slides, idx: slideIndex };
-    if (!state.reviewPending || fullscreen || !prev || prev.id !== concept.id || slides.length >= prev.slides.length) return;
-    const cur = prev.slides[prev.idx];
-    if (!cur || slides.includes(cur)) return;
-    let removedBefore = 0;
-    for (let i = 0; i < prev.idx; i++) if (!slides.includes(prev.slides[i])) removedBefore++;
-    const r = findPendingAfterDelete(lanes, concept.id, prev.idx - removedBefore);
-    if (!r.target) { flashReviewMsg("Slide deleted · all slides reviewed ✓"); return; }
+    const cur = { id: concept.id, slides, idx: slideIndex, lanes, histSeq: state._histSeq || 0 };
+    delTrackRef.current = cur;
+    if (!state.reviewPending || fullscreen) return;
+    const nav = planReviewDeleteNav(prev, cur);
+    if (!nav) return;
+    const { what, r } = nav;
+    if (!r.target) { flashReviewMsg(`${what} deleted · all slides reviewed ✓`); return; }
     if (r.target.id !== concept.id) dispatch({ type: "SELECT", id: r.target.id });
     dispatch({ type: "SET_SLIDE_INDEX", index: r.target.index });
-    flashReviewMsg(`Slide deleted · ${r.total} pending`);
-  }, [concept.id, slides, slideIndex, state.reviewPending, fullscreen, lanes, dispatch, flashReviewMsg]);
+    flashReviewMsg(`${what} deleted · ${r.total} pending`);
+  }, [concept.id, slides, slideIndex, state.reviewPending, state._histSeq, fullscreen, lanes, dispatch, flashReviewMsg]);
+  // W3-2: undo/redo changes the deck under the status pill: drop the stale message.
+  const histSeqSeenRef = useRef(state._histSeq);
+  useEffect(() => {
+    if (histSeqSeenRef.current === state._histSeq) return;
+    histSeqSeenRef.current = state._histSeq;
+    clearTimeout(reviewMsgTimer.current);
+    setReviewMsg(null);
+  }, [state._histSeq]);
   const toggleReviewed = useCallback(() => {
     const cur = slides[slideIndex];
     if (!cur) return;
