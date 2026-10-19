@@ -36,6 +36,7 @@ that symbol in the named part for the line. No line numbers here — they rot.
 - X-Ray Glossary Link — inline popover for [term](#key) refs: GlossaryLink EditableText
 - Block Helpers: stg COL_TOOLBAR_PAD patchItemAt removeItemAt setItemLink itemLinkOf addItemAt moveItemAt _noPin reorderCtl itemReorder blankItemFor PLACEHOLDER_FIELDS cloneGridCell clonePoint newItemFor
 - Add-Item Affordance — "+ add" button shown only in edit mode: AddItem ItemText IconBubble
+- Block-level text link badge: TEXT_LINK_BADGE_TYPES TextLinkBadge
 - Per-Item Chrome — hover toolbar (🔗 link + ✕ delete) for one item of a multi-item block: ItemHoverContext itemChromeBtn reorderArrowBtn ItemChrome
 - Icon Row Item (per-item link + delete): IconRowItem
 - Bullet Item (per-item link + delete): BulletItem
@@ -82,8 +83,8 @@ that symbol in the named part for the line. No line numbers here — they rot.
 - StudentPanel — dispatcher: static studyNotes first, else live Vera: StudentPanel TeacherPanel SectionPicker
 
 ### part-slidepanel.jsx
-- CR6: block clipboard ({_velaBlock} envelope): VELA_BLOCK_CLIP_MAX_CHARS VELA_BLOCK_CLIP_MAX_BLOCKS _velaBlockClipMemo parseVelaBlockEnvelope velaClipboardWriteBlock velaClipboardReadBlocks planBlockPaste
-- CR7: "Review pending only" editor navigation: findPendingSlide SlidePanel
+- CR6: block clipboard ({_velaBlock} envelope): VELA_BLOCK_CLIP_MAX_CHARS VELA_BLOCK_CLIP_MAX_BLOCKS _velaBlockClipMemo parseVelaBlockEnvelope velaClipboardWriteBlock VELA_CLIP_READ_TIMEOUT_MS velaClipboardReadBlocks isVelaBlockEnvelopeText isEditableTarget planBlockPaste
+- CR7: "Review pending only" editor navigation: findPendingSlide findPendingAfterDelete SlidePanel
 
 ### part-list.jsx
 - (file preamble): _velaDrag _setDrag _clearDrag
@@ -317,10 +318,10 @@ add_lane add_item batch_add_items remove_item remove_lane rename_item rename_lan
 ## Navigability debt (WARN — candidates for banners or splits)
 
 - part-imports.jsx: 860-line unbannered stretch after line 522
-- part-blocks.jsx: 764-line unbannered stretch after line 782
+- part-blocks.jsx: 766-line unbannered stretch after line 800
 - part-canvas.jsx: 415-line unbannered stretch after line 24
-- part-slidepanel.jsx: 365-line unbannered stretch after line 474
-- part-slidepanel.jsx: 423-line unbannered stretch after line 1151
+- part-slidepanel.jsx: 418-line unbannered stretch after line 531
+- part-slidepanel.jsx: 423-line unbannered stretch after line 1261
 - part-uitest.jsx: 616-line unbannered stretch after line 1230
 - part-uitest2.jsx: 448-line unbannered stretch after line 2
 - part-uitest2.jsx: 593-line unbannered stretch after line 1395

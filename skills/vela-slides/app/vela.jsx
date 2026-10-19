@@ -3076,6 +3076,22 @@ function IconBubble({ icon, size = 20, color, bg, shape, strokeWidth = 1.5 }) {
   return <div style={{ width: d, height: d, borderRadius: shape === "square" ? 8 : "50%", background: cssColor(bg), display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>{el}</div>;
 }
 
+// ━━━ Block-level text link badge ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// A text-like block with a block-level `link` renders its link badge INLINE as the
+// suffix of its last text run (RenderBlock `linkBadge` prop). It then sits right
+// after the last glyph, also when the text wraps or is centered / right-aligned.
+// An absolute badge on the block box lands far right of short text (the box is
+// full width) or over the last word. Other block types keep the corner badge
+// in part-canvas.jsx. The word joiner keeps the badge on the line of the last word.
+const TEXT_LINK_BADGE_TYPES = new Set(["heading", "text", "quote", "callout", "badge", "metric"]);
+function TextLinkBadge({ link, presenting, active }) {
+  const base = { display: "inline-flex", alignItems: "center", justifyContent: "center", verticalAlign: "middle", marginLeft: 6, lineHeight: 1, cursor: "pointer", fontStyle: "normal", fontWeight: 400, letterSpacing: 0, textTransform: "none", whiteSpace: "nowrap" };
+  const look = presenting
+    ? { height: 16, padding: "0 5px", borderRadius: 4, background: T.accent, fontSize: 9, color: "#fff", opacity: active ? 1 : 0.3, transition: "opacity 0.2s", boxShadow: "0 2px 6px rgba(0,0,0,0.4)" }
+    : { width: 14, height: 14, borderRadius: "50%", background: T.accent + "80", fontSize: 7 };
+  return <span data-no-pdf="">{"⁠"}<span data-testid="block-link-badge" onClick={(e) => { e.stopPropagation(); openExternalLink(link); }} title={link} style={{ ...base, ...look }}>🔗</span></span>;
+}
+
 // ━━━ Per-Item Chrome — hover toolbar (🔗 link + ✕ delete) for one item of a multi-item block ━━
 // In edit mode, hovering an item shows a small cluster to attach/edit a link or delete the item.
 // Out of edit mode, a linked item becomes clickable (and feeds PDF export via data-pdf-link).
@@ -3330,10 +3346,12 @@ function CodeBlock({ block, cls, st, editable, onChange, SIZES }) {
 }
 
 // ━━━ Callout Block (sub-component for useState reveal toggle) ━━━━
-function CalloutBlock({ block, cls, st, editable, onChange, SIZES }) {
+function CalloutBlock({ block, cls, st, editable, onChange, SIZES, linkBadge }) {
   // reveal: true → starts collapsed (open=false); reveal: false/omitted → always open
   const [open, setOpen] = useState(!block.reveal);
   const isReveal = !!block.reveal;
+  // Inline link badge goes after the last visible text run.
+  const badgeAt = open && block.text ? "text" : block.title ? "title" : "reveal";
   const chevron = isReveal ? (open ? "▾" : "▸") : null;
   return <div className={cls} style={{ display: "flex", gap: 10, padding: "14px 18px", borderRadius: 8, background: cssColor(block.bg) || `${st.accent}12`, borderLeft: `3px solid ${block.border || st.accent}`, alignItems: "flex-start", ...block.style }}>
     <EditableIcon editable={editable} value={block.icon} size={18} onPick={(name) => onChange?.({ icon: name })}>
@@ -3342,16 +3360,18 @@ function CalloutBlock({ block, cls, st, editable, onChange, SIZES }) {
     <div style={{ flex: 1 }}>
       {block.title && <div style={{ display: "flex", alignItems: "center", gap: 6, ...(isReveal ? { cursor: "pointer", userSelect: "none" } : {}) }} onClick={isReveal ? () => setOpen(!open) : undefined}>
         {chevron && <span style={{ fontSize: 14, color: block.border || st.accent, lineHeight: 1 }}>{chevron}</span>}
-        <EditableText text={block.title} editable={editable} onSave={(v) => onChange?.({ title: v })} style={{ fontFamily: FONT.display, fontSize: SIZES.sm, fontWeight: 700, color: block.border || st.accent, marginBottom: open ? 4 : 0 }} />
+        <EditableText text={block.title} editable={editable} onSave={(v) => onChange?.({ title: v })} style={{ fontFamily: FONT.display, fontSize: SIZES.sm, fontWeight: 700, color: block.border || st.accent, marginBottom: open ? 4 : 0 }} suffix={badgeAt === "title" ? linkBadge : undefined} />
       </div>}
-      {!block.title && isReveal && <div style={{ cursor: "pointer", userSelect: "none", fontSize: 14, color: block.border || st.accent, marginBottom: open ? 4 : 0 }} onClick={() => setOpen(!open)}>{chevron} {open ? "Ocultar" : "Revelar"}</div>}
-      {open && <EditableText text={block.text} editable={editable} onSave={(v) => onChange?.({ text: v })} multiline style={{ fontFamily: FONT.body, fontSize: SIZES[block.size || "md"], color: block.color || st.text, lineHeight: 1.5 }} />}
+      {!block.title && isReveal && <div style={{ cursor: "pointer", userSelect: "none", fontSize: 14, color: block.border || st.accent, marginBottom: open ? 4 : 0 }} onClick={() => setOpen(!open)}>{chevron} {open ? "Ocultar" : "Revelar"}{badgeAt === "reveal" ? linkBadge : null}</div>}
+      {open && <EditableText text={block.text} editable={editable} onSave={(v) => onChange?.({ text: v })} multiline style={{ fontFamily: FONT.body, fontSize: SIZES[block.size || "md"], color: block.color || st.text, lineHeight: 1.5 }} suffix={badgeAt === "text" ? linkBadge : undefined} />}
     </div>
   </div>;
 }
 
 // ━━━ Block Renderer ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChange, slideAlign, fontScale = 1, presenting = false }) {
+// linkBadge: optional inline link badge node (TextLinkBadge) that text-like blocks
+// (TEXT_LINK_BADGE_TYPES) render right after their last text run.
+function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChange, slideAlign, fontScale = 1, presenting = false, linkBadge }) {
   // Runtime guard: ensure .style is always a plain object
   const block = useMemo(() => {
     if (rawBlock.style && (typeof rawBlock.style !== "object" || Array.isArray(rawBlock.style))) {
@@ -3389,12 +3409,12 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
         <EditableIcon editable={textEditable} value={block.icon} size={24} onPick={(name) => onChange?.({ icon: name })}>
           {block.icon ? <span style={{ flexShrink: 0, display: "flex" }}>{getIcon(block.icon, { size: Math.round(parseFloat(SIZES[block.size || "2xl"]) * 16) || 24, color: block.iconColor || block.color || st.accent, strokeWidth: 2 })}</span> : null}
         </EditableIcon>
-        <EditableText text={headingText} editable={textEditable} onSave={(v) => onChange?.({ text: v })} style={headingIconSlot ? { flex: 1, textAlign: block.align } : undefined} />
+        <EditableText text={headingText} editable={textEditable} onSave={(v) => onChange?.({ text: v })} style={headingIconSlot ? { flex: 1, textAlign: block.align } : undefined} suffix={linkBadge} />
       </div>;
     }
 
     case "text":
-      return <EditableText className={cls} text={block.text} editable={textEditable} onSave={(v) => onChange?.({ text: v })} multiline
+      return <EditableText className={cls} text={block.text} editable={textEditable} onSave={(v) => onChange?.({ text: v })} multiline suffix={linkBadge}
         style={{ fontFamily: FONT.body, fontSize: SIZES[block.size || "md"], color: block.color || st.muted, lineHeight: 1.6, textAlign: block.align, maxWidth: block.maxWidth, margin: block.maxWidth && slideAlign === "center" ? "0 auto" : undefined, fontStyle: block.italic ? "italic" : "normal", fontWeight: block.bold ? 600 : 400, ...block.style }} />;
 
     case "bullets":
@@ -3466,22 +3486,22 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
       </div>;
 
     case "callout":
-      return <CalloutBlock block={block} cls={cls} st={st} editable={textEditable} onChange={onChange} SIZES={SIZES} />;
+      return <CalloutBlock block={block} cls={cls} st={st} editable={textEditable} onChange={onChange} SIZES={SIZES} linkBadge={linkBadge} />;
 
     case "metric":
       return <div className={cls} style={{ display: "flex", flexDirection: "column", alignItems: block.align === "left" ? "flex-start" : block.align === "right" ? "flex-end" : "center", ...block.style }}>
         <EditableIcon editable={textEditable} value={block.icon} size={28} onPick={(name) => onChange?.({ icon: name })}>
           {block.icon ? <div style={{ marginBottom: 8, display: "flex" }}>{getIcon(block.icon, { size: 28, color: block.iconColor || st.accent, strokeWidth: 1.5 })}</div> : null}
         </EditableIcon>
-        <EditableText text={block.value} editable={textEditable} onSave={(v) => onChange?.({ value: v })} style={{ fontFamily: FONT.display, fontSize: SIZES[block.size || "4xl"], fontWeight: 800, color: block.color || st.accent, lineHeight: 1, letterSpacing: "-0.03em" }} />
-        {block.label && <EditableText text={block.label} editable={textEditable} onSave={(v) => onChange?.({ label: v })} style={{ fontFamily: FONT.mono, fontSize: SIZES.xs, color: block.labelColor || st.textDim, marginTop: 6, letterSpacing: "0.05em", textTransform: "uppercase" }} />}
+        <EditableText text={block.value} editable={textEditable} onSave={(v) => onChange?.({ value: v })} style={{ fontFamily: FONT.display, fontSize: SIZES[block.size || "4xl"], fontWeight: 800, color: block.color || st.accent, lineHeight: 1, letterSpacing: "-0.03em" }} suffix={block.label ? undefined : linkBadge} />
+        {block.label && <EditableText text={block.label} editable={textEditable} onSave={(v) => onChange?.({ label: v })} suffix={linkBadge} style={{ fontFamily: FONT.mono, fontSize: SIZES.xs, color: block.labelColor || st.textDim, marginTop: 6, letterSpacing: "0.05em", textTransform: "uppercase" }} />}
       </div>;
 
     case "quote":
       return <div className={cls} style={{ display: "flex", flexDirection: "column", alignItems: "center", textAlign: "center", ...block.style }}>
-        <EditableText text={block.text} editable={textEditable} onSave={(v) => onChange?.({ text: v })} multiline prefix={"\u201C"} suffix={"\u201D"}
+        <EditableText text={block.text} editable={textEditable} onSave={(v) => onChange?.({ text: v })} multiline prefix={"\u201C"} suffix={<>{"\u201D"}{block.author ? null : linkBadge}</>}
           style={{ fontFamily: FONT.display, fontSize: SIZES[block.size || "xl"], fontWeight: 600, color: block.color || st.text, lineHeight: 1.4, fontStyle: "italic", maxWidth: "85%" }} />
-        {block.author && <EditableText text={block.author} editable={textEditable} onSave={(v) => onChange?.({ author: v })} prefix={"\u2014 "}
+        {block.author && <EditableText text={block.author} editable={textEditable} onSave={(v) => onChange?.({ author: v })} prefix={"\u2014 "} suffix={linkBadge}
           style={{ fontFamily: FONT.mono, fontSize: SIZES.xs, color: st.accent, marginTop: 14, letterSpacing: "0.05em" }} />}
       </div>;
 
@@ -3516,7 +3536,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
         <EditableIcon editable={textEditable} value={block.icon} size={14} onPick={(name) => onChange?.({ icon: name })}>
           {block.icon ? <span style={{ display: "flex" }}>{getIcon(block.icon, { size: badgeIconSize, color: block.color || st.accent, strokeWidth: 2 })}</span> : null}
         </EditableIcon>
-        <EditableText text={block.text} editable={textEditable} onSave={(v) => onChange?.({ text: v })} />
+        <EditableText text={block.text} editable={textEditable} onSave={(v) => onChange?.({ text: v })} suffix={linkBadge} />
       </div>;
     }
 
@@ -4627,7 +4647,9 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
 
   // Render a single block with all editable chrome (hover, edit popup, link, etc.)
   // ── Per-block editor chrome: hover toolbar, AI/link/comment popups, badges ──
-  const renderBlockItem = (b, i) => { const fl = flushOf(b, i); const popTop = fl.top ? 30 : null; return editable && onEdit ? (
+  const renderBlockItem = (b, i) => { const fl = flushOf(b, i); const popTop = fl.top ? 30 : null;
+    // Text-like blocks show the block link badge inline after their last word (TextLinkBadge).
+    const inlineLink = !!b.link && TEXT_LINK_BADGE_TYPES.has(b.type); return editable && onEdit ? (
     <div key={i} data-block-type={b.type} data-block-index={i} data-block-flush={fl.top || fl.right ? `${fl.top ? "top" : ""}${fl.top && fl.right ? " " : ""}${fl.right ? "right" : ""}` : undefined} style={{ position: "relative", ...(b.link ? { cursor: "pointer" } : {}), ...(b.hidden && !presenting ? { opacity: 0.4 } : {}) }}
       title={b.link ? linkPreview(b.link, b.text || b.value || b.title) : undefined}
       data-pdf-link={b.link || undefined}
@@ -4673,9 +4695,10 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
       </div>}
       {/* Comment count badge (edit mode, not review) */}
       {!reviewMode && !presenting && hoveredBlock !== i && externalDispatch && (() => { const cc = slideComments.filter((c) => c.blockIndex === i && c.status === "open"); return cc.length > 0 ? <div style={{ position: "absolute", top: -2, left: -2, minWidth: 14, height: 14, borderRadius: 7, background: T.amber, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 7, fontFamily: FONT.mono, fontWeight: 700, color: "#fff", padding: "0 3px", zIndex: 5, boxShadow: "0 2px 4px rgba(0,0,0,0.3)" }} title={`${cc.length} comment${cc.length > 1 ? "s" : ""}`}>💬{cc.length > 1 ? cc.length : ""}</div> : null; })()}
-      {b.link && hoveredBlock !== i && !presenting && <div onClick={(e) => { e.stopPropagation(); openExternalLink(b.link); }} style={{ position: "absolute", top: fl.top ? 6 : -2, right: fl.right ? 6 : -2, width: 14, height: 14, borderRadius: "50%", background: T.accent + "80", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 7, zIndex: 5, cursor: "pointer" }} title={b.link}>🔗</div>}
-      {b.link && presenting && <div style={{ position: "absolute", top: fl.top ? 6 : -2, right: fl.right ? 6 : -2, padding: "2px 5px", borderRadius: 4, background: T.accent, fontSize: 9, color: "#fff", zIndex: 12, pointerEvents: "none", opacity: hoveredBlock === i ? 1 : 0.3, transition: "opacity 0.2s", boxShadow: "0 2px 6px rgba(0,0,0,0.4)" }}>🔗</div>}
+      {b.link && !inlineLink && hoveredBlock !== i && !presenting && <div onClick={(e) => { e.stopPropagation(); openExternalLink(b.link); }} style={{ position: "absolute", top: fl.top ? 6 : -2, right: fl.right ? 6 : -2, width: 14, height: 14, borderRadius: "50%", background: T.accent + "80", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 7, zIndex: 5, cursor: "pointer" }} title={b.link}>🔗</div>}
+      {b.link && !inlineLink && presenting && <div style={{ position: "absolute", top: fl.top ? 6 : -2, right: fl.right ? 6 : -2, padding: "2px 5px", borderRadius: 4, background: T.accent, fontSize: 9, color: "#fff", zIndex: 12, pointerEvents: "none", opacity: hoveredBlock === i ? 1 : 0.3, transition: "opacity 0.2s", boxShadow: "0 2px 6px rgba(0,0,0,0.4)" }}>🔗</div>}
       <RenderBlock block={b} staggerIdx={i + 1} slideTheme={st} editable={b.link ? false : editable} slideAlign={align} fontScale={fontScale} presenting={presenting}
+        linkBadge={inlineLink ? <TextLinkBadge link={b.link} presenting={presenting} active={hoveredBlock === i} /> : undefined}
         onChange={onEdit ? (patch) => handleBlockChange(i, patch) : undefined} />
     </div>
   ) : (
@@ -5021,7 +5044,9 @@ function innerReducer(state, a) {
     // those zero-click. Sanitize the merged slide through the canonical sanitizeSlide (a
     // fresh object — no shared-ref mutation), matching the LOAD_LANES backstop.
     case "UPDATE_SLIDE": _dirtyMods.add(a.id); return mapItems((i) => i.id === a.id ? { ...i, slides: i.slides.map((s, idx) => { if (idx !== a.index) return s; const p = a.patch || {}; const updated = a.merge ? { ...s, ...p } : { title: s.title, duration: s.duration, ...p }; if (s.timeLock && !a.merge && !("timeLock" in p)) { updated.timeLock = true; updated.duration = s.duration; } return sanitizeSlide(updated) || s; }) } : i);
-    case "REMOVE_SLIDE": _dirtyMods.add(a.id); return mapItems((i) => i.id === a.id ? { ...i, slides: i.slides.filter((_, idx) => idx !== a.index) } : i);
+    // Clamp slideIndex when the selected module shrinks below it (a gallery
+    // delete of the module's last slide dispatches no index change).
+    case "REMOVE_SLIDE": { _dirtyMods.add(a.id); const next = mapItems((i) => i.id === a.id ? { ...i, slides: i.slides.filter((_, idx) => idx !== a.index) } : i); if (a.id !== state.selectedId) return next; let n = 0; for (const l of next.lanes) for (const it of l.items) if (it.id === a.id) n = (it.slides || []).length; return next.slideIndex >= n ? { ...next, slideIndex: Math.max(0, n - 1) } : next; }
     // Multi-slide delete as a SINGLE history-producing reduce (PowerPoint parity:
     // one gesture = one Ctrl+Z). Removes all `indices` from one module at once.
     case "REMOVE_SLIDES": { _dirtyMods.add(a.id); const drop = new Set(a.indices || []); if (!drop.size) return state; return mapItems((i) => i.id === a.id ? { ...i, slides: i.slides.filter((_, idx) => !drop.has(idx)) } : i); }
@@ -8065,26 +8090,56 @@ const velaClipboardWriteBlock = async (block) => {
   try { velaClipboard(text); } catch {}
   return true; // the same-tab memo still holds it
 };
+// readText() can stay pending forever when clipboard-read permission is not
+// granted (no prompt in a sandboxed frame). Race it against a short timeout so
+// paste always ends: on timeout, use the same-tab memo.
+const VELA_CLIP_READ_TIMEOUT_MS = 800;
 const velaClipboardReadBlocks = async () => {
   let text = "";
-  try { text = (await navigator.clipboard.readText()) || ""; } catch {}
+  try {
+    let timer;
+    const timeout = new Promise((resolve) => { timer = setTimeout(() => resolve(""), VELA_CLIP_READ_TIMEOUT_MS); });
+    text = (await Promise.race([Promise.resolve().then(() => navigator.clipboard.readText()), timeout])) || "";
+    clearTimeout(timer);
+  } catch {}
+  if (typeof text !== "string") text = "";
   if (text) return parseVelaBlockEnvelope(text);
   return parseVelaBlockEnvelope(_velaBlockClipMemo);
 };
+// True when clipboard text is a Vela block envelope. Used to stop the raw
+// envelope JSON from being pasted into a text field (input, textarea,
+// contentEditable). Detection only: nothing parsed here reaches state.
+function isVelaBlockEnvelopeText(text) {
+  if (typeof text !== "string" || !text || text.length > VELA_BLOCK_CLIP_MAX_CHARS) return false;
+  const t = text.trim();
+  if (t[0] !== "{" || !t.includes("\"_velaBlock\"")) return false;
+  try { const p = JSON.parse(t); return !!p && typeof p === "object" && !Array.isArray(p) && p._velaBlock === true; } catch { return false; }
+}
+const isEditableTarget = (el) => !!el && (el.isContentEditable || ["INPUT", "TEXTAREA"].includes(el.tagName));
 // Where a pasted block goes: after the selected block (in its own column for a
-// cols slide), else at the end of slide.blocks. Returns null when the target
-// column would exceed the 30-block cap that sanitizeSlide enforces.
+// cols slide). With no (or a stale) selection: end of the LAST column on a cols
+// slide (R, or L when the slide has no R), else end of slide.blocks. `selected`
+// tells the caller which rule applied, for the status message. Returns null
+// when the target column would exceed the 30-block cap that sanitizeSlide enforces.
 function planBlockPaste(slide, selIdx, count) {
   const b = (slide && slide.blocks) || [], L = (slide && slide.L) || [], R = (slide && slide.R) || [];
-  let key = "blocks", base = 0, at = b.length;
+  let key = null, base = 0, at = 0;
   if (Number.isInteger(selIdx) && selIdx >= 0) {
-    if (selIdx < b.length) at = selIdx + 1;
+    if (selIdx < b.length) { key = "blocks"; at = selIdx + 1; }
     else if (selIdx < b.length + L.length) { key = "L"; base = b.length; at = selIdx - b.length + 1; }
     else if (selIdx < b.length + L.length + R.length) { key = "R"; base = b.length + L.length; at = selIdx - b.length - L.length + 1; }
   }
+  const selected = key !== null;
+  if (!selected) {
+    // Same cols test as SlideContent: only then are L/R rendered.
+    const isCols = slide && slide.layout === "cols" && (Array.isArray(slide.L) || Array.isArray(slide.R));
+    if (isCols && Array.isArray(slide.R)) { key = "R"; base = b.length + L.length; at = R.length; }
+    else if (isCols) { key = "L"; base = b.length; at = L.length; }
+    else { key = "blocks"; at = b.length; }
+  }
   const col = key === "blocks" ? b : key === "L" ? L : R;
   if (col.length + count > VELA_BLOCK_CLIP_MAX_BLOCKS) return null;
-  return { key, at, newSelIdx: base + at + count - 1 };
+  return { key, at, newSelIdx: base + at + count - 1, selected };
 }
 
 // ── CR7: "Review pending only" editor navigation ──
@@ -8113,6 +8168,30 @@ function findPendingSlide(lanes, curId, curIdx, dir, markCurrent) {
     if (list[j].pending) return { target: list[j].isCur ? null : { id: list[j].id, index: list[j].index }, total, wrapped: raw !== j, onlyCurrent: list[j].isCur };
   }
   return { target: null, total, wrapped: false };
+}
+// After the CURRENT slide was deleted: first pending slide at or after the
+// deleted position (`anchor` = index in module `modId` where the next surviving
+// slide now sits), in TOC order, wrapping. Collapsed lanes are skipped.
+function findPendingAfterDelete(lanes, modId, anchor) {
+  const list = [];
+  let mo = 0, modOrd = -1;
+  for (const lane of (lanes || [])) {
+    if (lane.collapsed) continue;
+    for (const item of (lane.items || [])) {
+      if (item.id === modId) modOrd = mo;
+      (item.slides || []).forEach((s, i) => list.push({ id: item.id, index: i, mo, pending: !(s && s.reviewed) }));
+      mo++;
+    }
+  }
+  const total = list.filter((x) => x.pending).length;
+  if (total === 0) return { target: null, total: 0 };
+  let p = list.findIndex((x) => x.mo > modOrd || (x.mo === modOrd && x.index >= anchor));
+  if (p < 0 || modOrd < 0) p = 0;
+  for (let k = 0; k < list.length; k++) {
+    const x = list[(p + k) % list.length];
+    if (x.pending) return { target: { id: x.id, index: x.index }, total };
+  }
+  return { target: null, total };
 }
 
 function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, branding, guidelines, isMobile, fontScale, actionsRef, onRibbonUpdate }) {
@@ -8331,6 +8410,9 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
   const [newSlideImage, setNewSlideImage] = useState(null);
   const [newSlideGenerating, setNewSlideGenerating] = useState(false);
   const [showBranding, setShowBranding] = useState(false);
+  // W3: below this width the branding pane overlays the slide; above it the slide area reserves the pane width.
+  const [brandNarrow, setBrandNarrow] = useState(() => typeof window !== "undefined" && window.innerWidth < 900);
+  useEffect(() => { const f = () => setBrandNarrow(window.innerWidth < 900); window.addEventListener("resize", f); return () => window.removeEventListener("resize", f); }, []);
   const [showCinemaTip, setShowCinemaTip] = useState(false);
   const [previewRatio, setPreviewRatio] = useState("auto");
   const [alternatives, setAlternatives] = useState(null); // [{slide, label, emoji}] or null
@@ -8527,6 +8609,26 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
     dispatch({ type: "SET_SLIDE_INDEX", index: r.target.index });
     flashReviewMsg(`${r.total} pending${r.wrapped ? " · wrapped" : ""}`);
   }, [lanes, concept.id, slideIndex, dispatch, flashReviewMsg]);
+  // Pending mode: when the CURRENT slide is deleted (editor, TOC or gallery —
+  // every path ends here as a shorter slides array), go to the next pending
+  // slide instead of the neighbour the delete path picked. Surviving slides
+  // keep their object identity through REMOVE_SLIDE(S), so identity tells
+  // whether the current slide was among the deleted ones.
+  const delTrackRef = useRef(null);
+  useEffect(() => {
+    const prev = delTrackRef.current;
+    delTrackRef.current = { id: concept.id, slides, idx: slideIndex };
+    if (!state.reviewPending || fullscreen || !prev || prev.id !== concept.id || slides.length >= prev.slides.length) return;
+    const cur = prev.slides[prev.idx];
+    if (!cur || slides.includes(cur)) return;
+    let removedBefore = 0;
+    for (let i = 0; i < prev.idx; i++) if (!slides.includes(prev.slides[i])) removedBefore++;
+    const r = findPendingAfterDelete(lanes, concept.id, prev.idx - removedBefore);
+    if (!r.target) { flashReviewMsg("Slide deleted · all slides reviewed ✓"); return; }
+    if (r.target.id !== concept.id) dispatch({ type: "SELECT", id: r.target.id });
+    dispatch({ type: "SET_SLIDE_INDEX", index: r.target.index });
+    flashReviewMsg(`Slide deleted · ${r.total} pending`);
+  }, [concept.id, slides, slideIndex, state.reviewPending, fullscreen, lanes, dispatch, flashReviewMsg]);
   const toggleReviewed = useCallback(() => {
     const cur = slides[slideIndex];
     if (!cur) return;
@@ -8562,23 +8664,54 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
     if (!b) { flashReviewMsg("Click a block first, then copy"); return; }
     velaClipboardWriteBlock(b).then((ok) => flashReviewMsg(ok ? `Block copied (${b.type})` : "Copy failed"));
   }, [slides, slideIndex, selBlockIdx, flashReviewMsg]);
-  const pasteBlocks = useCallback((arr) => {
+  // `atIdx` (optional) overrides the selection: the block whose inline text
+  // editor got the paste.
+  const pasteBlocks = useCallback((arr, atIdx) => {
     const s = slides[slideIndex];
     if (!s || !arr || arr.length === 0) return;
-    const plan = planBlockPaste(s, selBlockIdx, arr.length);
+    const plan = planBlockPaste(s, Number.isInteger(atIdx) ? atIdx : selBlockIdx, arr.length);
     if (!plan) { flashReviewMsg("Slide is full (30 blocks max)"); return; }
     const col = [...(s[plan.key] || [])];
     const after = plan.at > 0 ? col[plan.at - 1] : null;
     col.splice(plan.at, 0, ...arr);
     dispatch({ type: "UPDATE_SLIDE", id: concept.id, index: slideIndex, patch: { [plan.key]: col }, merge: true });
     setSelBlock({ key: selKey, idx: plan.newSelIdx });
-    flashReviewMsg(selBlockIdx != null && after ? `Block pasted after ${after.type}` : "Block pasted at end of slide");
+    const where = plan.key === "R" ? "right column" : plan.key === "L" ? "left column" : "slide";
+    const colTag = plan.key === "R" ? " (right column)" : plan.key === "L" ? " (left column)" : "";
+    flashReviewMsg(plan.selected && after ? `Block pasted after ${after.type}${colTag}` : `No block selected: pasted at end of ${where}`);
   }, [slides, slideIndex, selBlockIdx, selKey, concept.id, dispatch, flashReviewMsg]);
   const pasteBlockFromClipboard = useCallback(() => {
     velaClipboardReadBlocks().then((arr) => { if (arr.length) pasteBlocks(arr); else flashReviewMsg("No copied block on the clipboard"); });
   }, [pasteBlocks, flashReviewMsg]);
   const editorKeysRef = useRef({});
   editorKeysRef.current = { selBlockIdx, copySelectedBlock, pasteBlocks, goPending };
+  // CR6: a copied block envelope must never land in a text field as raw JSON.
+  // Capture phase on window runs before React's and the field's own handlers.
+  useEffect(() => {
+    const onPasteCapture = (e) => {
+      if (!isEditableTarget(e.target) && !isEditableTarget(document.activeElement)) return;
+      let text = "";
+      try { text = e.clipboardData?.getData("text/plain") || ""; } catch {}
+      if (!isVelaBlockEnvelopeText(text)) return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      // Inline text editor of a block on the editor slide: paste the block
+      // after that block instead (parseVelaBlockEnvelope runs sanitizeBlock).
+      const t = e.target && e.target.closest ? e.target : document.activeElement;
+      const blockEl = !fullscreen && t && t.closest ? t.closest("[data-block-index]") : null;
+      const n = blockEl && blockEl.closest("[data-testid='slide-fx-wrapper']") ? parseInt(blockEl.getAttribute("data-block-index"), 10) : NaN;
+      if (Number.isInteger(n) && n >= 0) {
+        const arr = parseVelaBlockEnvelope(text);
+        // No blur here: a blur would commit the text edit from a stale slide
+        // and race the paste. The block goes AFTER the edited one, so the
+        // open editor keeps its index and commits later on fresh props.
+        if (arr.length) { editorKeysRef.current.pasteBlocks(arr, n); return; }
+      }
+      flashReviewMsg("A copied block can't go into a text field. Click outside the text, then paste");
+    };
+    window.addEventListener("paste", onPasteCapture, true);
+    return () => window.removeEventListener("paste", onPasteCapture, true);
+  }, [flashReviewMsg, fullscreen]);
 
   // Touch swipe for mobile slide navigation (crosses module boundaries like keyboard)
   useSwipe(containerRef, {
@@ -8842,7 +8975,9 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       }
       // Ctrl+V → paste slide(s) from system clipboard, inserted sequentially after
       // the active slide (order preserved). Accepts old single-slide clipboards too.
-      if ((e.ctrlKey || e.metaKey) && e.key === "v" && !["INPUT", "TEXTAREA"].includes(document.activeElement?.tagName)) {
+      // Not while a text field (incl. contentEditable inline edit) has focus:
+      // there Ctrl+V is a text paste, never a block/slide paste.
+      if ((e.ctrlKey || e.metaKey) && e.key === "v" && !isEditableTarget(document.activeElement)) {
         // CR6: a {_velaBlock} clipboard pastes into the current slide (editor
         // only); anything else falls through to the slide paste below.
         (fullscreen ? Promise.resolve([]) : velaClipboardReadBlocks()).then((blocks) => {
@@ -9339,7 +9474,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
   );
 
   return (
-    <div ref={containerRef} tabIndex={0} className="fade-in" style={{ flex: 1, display: "flex", flexDirection: "column", background: T.bg, borderLeft: isMobile ? "none" : `1px solid ${T.border}`, outline: "none", minWidth: 0 }}>
+    <div ref={containerRef} data-testid="slide-panel-root" tabIndex={0} className="fade-in" style={{ flex: 1, display: "flex", flexDirection: "column", background: T.bg, borderLeft: isMobile ? "none" : `1px solid ${T.border}`, outline: "none", minWidth: 0, boxSizing: "border-box", paddingRight: showBranding && !isMobile && !brandNarrow ? 360 : 0 }}>
       {measureHarness}
 
 
@@ -9423,7 +9558,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
                       <button data-testid="slide-reviewed-toggle" aria-pressed={isRev} onClick={toggleReviewed} title={isRev ? "Reviewed — click to mark as pending" : "Mark this slide as reviewed"} style={pill(isRev, "#10b981")}>{isRev ? "✓ Reviewed" : "○ Review"}</button>
                       <button data-testid="review-pending-toggle" aria-pressed={!!state.reviewPending} onClick={toggleReviewPending} title="Review pending only: arrow keys and Space skip reviewed slides (editor only)" style={pill(!!state.reviewPending, T.accent)}>{state.reviewPending ? `Pending only · ${pendingCount} left` : `Pending: ${pendingCount}`}</button>
                       <button data-testid="block-copy-btn" disabled={selBlockIdx == null} onClick={copySelectedBlock} title={selBlockIdx == null ? "Click a block on the slide to select it, then copy (Ctrl/⌘+C)" : "Copy the selected block (Ctrl/⌘+C)"} style={{ ...pill(false, T.accent), opacity: selBlockIdx == null ? 0.5 : 1, cursor: selBlockIdx == null ? "default" : "pointer" }}>⧉ Copy block</button>
-                      <button data-testid="block-paste-btn" onClick={pasteBlockFromClipboard} title={selBlockIdx == null ? "Paste a copied block at the end of this slide (Ctrl/⌘+V)" : "Paste a copied block after the selected block (Ctrl/⌘+V)"} style={pill(false, T.accent)}>📋 Paste block</button>
+                      <button data-testid="block-paste-btn" onClick={pasteBlockFromClipboard} title={selBlockIdx == null ? "Paste a copied block at the end of this slide (end of the right column on a columns slide) (Ctrl/⌘+V)" : "Paste a copied block after the selected block (Ctrl/⌘+V)"} style={pill(false, T.accent)}>📋 Paste block</button>
                       {reviewMsg && <span data-testid="review-status-msg" role="status" style={{ ...pill(true, "rgba(0,0,0,0.78)"), cursor: "default" }}>{reviewMsg}</span>}
                     </div>;
                   })()}
