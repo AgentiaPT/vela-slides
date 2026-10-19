@@ -62,15 +62,15 @@ imports → icons → blocks → reducer → engine → slides → list → chat
 
 ### Why Modular Parts?
 
-The Vela app is ~18,421 lines / ~1.3MB. Editing a monolith that large carries real risks:
+The Vela app is ~24,408 lines / ~1.7MB. Editing a monolith that large carries real risks:
 
 | Concern | Monolith | Modular Parts |
 |---|---|---|
-| str_replace collision risk | High — many similar patterns across 18,421L | Low — part files are ~290–3950L |
+| str_replace collision risk | High — many similar patterns across 24,408L | Low — part files are ~290–3950L |
 | Context needed to edit | Must read entire 1.3MB file | Read only relevant part |
 | Accidental side effects | Easy to break distant code | Edits are scoped to one module |
 | Rewriting a subsystem | Dangerous at monolith scale | Replace a single part file safely |
-| Finding what to edit | Grep through 18,421 lines | File name tells you where to look |
+| Finding what to edit | Grep through 24,408 lines | File name tells you where to look |
 
 ### Why Not Split + Bundler (Vite/Parcel)?
 
