@@ -412,7 +412,18 @@ function extractSlideText(slide) {
   return parts.join(" ").toLowerCase().trim();
 }
 
-// Apply startup patch to loaded deck data
+// Deck content that local mode (serve.py / desktop) writes back to the deck
+// file. null = nothing safe to write (never overwrite the file with an empty or
+// slide-less transient deck). App compares JSON of this against the content
+// it loaded, so an unchanged deck is never written back on open.
+function localSyncPayload(source) {
+  if (!source || !Array.isArray(source.lanes) || !source.lanes.length) return null;
+  const totalSlides = source.lanes.reduce((n, l) => n + (l?.items || []).reduce((m, i) => m + (i?.slides?.length || 0), 0), 0);
+  if (!totalSlides) return null;
+  return { deckTitle: source.deckTitle, lanes: source.lanes, branding: source.branding, guidelines: source.guidelines };
+}
+
+// Apply startup patch to loaded deck data. Returns true when it replaced the deck (LOAD).
 function applyStartupPatch(loadedDeck, dispatch) {
   if (!STARTUP_PATCH) return;
   dbg("[PATCH] Applying startup patch...");
@@ -423,6 +434,7 @@ function applyStartupPatch(loadedDeck, dispatch) {
     try {
       const sanitized = validateAndSanitizeDeck(STARTUP_PATCH);
       dispatch({ type: "LOAD", payload: { ...sanitized, deckTitle: sanitizeDeckTitle(STARTUP_PATCH.deckTitle) } });
+      return true;
     } catch (e) {
       // Fail closed: never load an unsanitized deck. validateAndSanitizeDeck only throws
       // on fundamentally invalid input (not an object / no lanes array) now that the
@@ -1728,15 +1740,33 @@ function sanitizeSlide(slide) {
   return clean;
 }
 
-function sanitizeItem(item) {
+// Lane/module ids from a deck are kept across ingress so that opening an
+// unchanged deck does not change it (and the local-sync autosave does not
+// rewrite the file). They are still untrusted: ids end up in storage keys
+// (MOD_PREFIX + id), React keys, and plain-object lookups, so only a short
+// strict-charset string is kept (type-check first, never coerce), names that
+// shadow Object.prototype members are refused, and a deck-wide `used` set
+// keeps ids unique. Anything else gets a fresh uid() — fail closed.
+const SAFE_DECK_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,39}$/;
+function keepDeckId(id, used) {
+  let out = typeof id === "string" && SAFE_DECK_ID.test(id) && !(id in Object.prototype) && !used.has(id) ? id : null;
+  while (!out || used.has(out)) out = uid();
+  used.add(out);
+  return out;
+}
+
+function sanitizeItem(item, used) {
   if (!item || typeof item !== "object") return null;
+  // `used` must be a Set: a bare `.map(sanitizeItem)` would pass the index here.
+  const id = keepDeckId(item.id, used instanceof Set ? used : new Set());
   const comments = Array.isArray(item.comments) ? item.comments.slice(0, MAX_COMMENTS).map(sanitizeComment).filter(Boolean) : [];
-  // Migrate legacy notes to a module-level comment if no comments exist
+  // Migrate legacy notes to a module-level comment if no comments exist.
+  // Deterministic id (derived from the module id) so a re-open gives the same deck.
   if (comments.length === 0 && typeof item.notes === "string" && item.notes.trim()) {
-    comments.push({ id: "c_" + uid(), text: sanitizeString(item.notes.trim(), 1000), anchor: null, blockIndex: null, status: "open", createdAt: now(), resolvedAt: null });
+    comments.push({ id: "c_n_" + id, text: sanitizeString(item.notes.trim(), 1000), anchor: null, blockIndex: null, status: "open", createdAt: typeof item.createdAt === "string" ? item.createdAt.slice(0, 30) : now(), resolvedAt: null });
   }
   return {
-    id: uid(),
+    id,
     title: sanitizeString(item.title || "Untitled", 200),
     notes: typeof item.notes === "string" ? sanitizeString(item.notes, 2000) : "",
     comments,
@@ -1744,7 +1774,9 @@ function sanitizeItem(item) {
     importance: VALID_IMPORTANCES.has(item.importance) ? item.importance : "should",
     order: typeof item.order === "number" ? item.order : 0,
     slides: Array.isArray(item.slides) ? item.slides.slice(0, 100).map(sanitizeSlide).filter(Boolean) : [],
-    createdAt: typeof item.createdAt === "string" ? item.createdAt.slice(0, 30) : now(),
+    // Keep an existing createdAt; never mint now() at ingress (it changed the
+    // deck on every open). New modules get createdAt from the reducer/engine.
+    ...(typeof item.createdAt === "string" ? { createdAt: item.createdAt.slice(0, 30) } : {}),
     ...(item.presentCard ? { presentCard: true } : {}),
   };
 }
@@ -1817,10 +1849,12 @@ function validateAndSanitizeDeck(raw) {
   if (!Array.isArray(raw.lanes)) throw new Error("Missing lanes array");
   // Clamp rather than throw: a >50-lane deck must not be able to trip an exception
   // that a fail-open caller would catch and then load raw, unsanitized (sanitizer off-switch).
+  const usedIds = new Set(); // one id namespace for the whole deck (lanes + modules)
   const lanes = raw.lanes.slice(0, 50).map((lane) => {
     if (!lane || typeof lane !== "object") return null;
-    const items = Array.isArray(lane.items) ? lane.items.slice(0, 200).map(sanitizeItem).filter(Boolean) : [];
-    return { id: uid(), title: sanitizeString(lane.title || "Untitled", 100), collapsed: !!lane.collapsed, items };
+    const id = keepDeckId(lane.id, usedIds);
+    const items = Array.isArray(lane.items) ? lane.items.slice(0, 200).map((it) => sanitizeItem(it, usedIds)).filter(Boolean) : [];
+    return { id, title: sanitizeString(lane.title || "Untitled", 100), collapsed: !!lane.collapsed, items };
   }).filter(Boolean);
   const rawBranding = raw.branding && typeof raw.branding === "object" ? raw.branding : {};
   const importedBranding = {

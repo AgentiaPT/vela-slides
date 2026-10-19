@@ -549,6 +549,7 @@ def test_security():
         ("tests/test_block_toolbar_clip.cjs", "Block toolbar clip (CR4)"),
         ("tests/test_icon_picker_escape.cjs", "Icon picker Escape (CR5)"),
         ("tests/test_deck_key_allowlist.cjs", "Deck-ingress key allowlist (drop/survive/clamp/depth)"),
+        ("tests/test_ingress_id_stability.cjs", "Deck-ingress id/timestamp stability (no change on open)"),
         ("tests/test_reducer.cjs",            "Reducer state transitions (62 actions + UNDO/REDO)"),
         ("tests/test_engine_tools.cjs",       "Vera engine tools + ReAct caps (G1/G3/G4)"),
         ("tests/test_block_render.cjs",       "Block renderers (27 types via renderToStaticMarkup)"),

@@ -47,6 +47,12 @@ export default function App() {
   const localSyncTimer = useRef(null);
   const _localSyncIncoming = useRef(false);
   const _localSyncState = useRef(null);
+  // JSON of the deck content as it last came from / went to the file. A flush
+  // whose payload equals it is skipped, so opening an unchanged deck never
+  // rewrites the file. `_localSyncArmBaseline` makes the next sync-out effect
+  // run (the render after a file LOAD) record the baseline instead of saving.
+  const _localSyncBaseline = useRef(null);
+  const _localSyncArmBaseline = useRef(false);
   const postDemoFlushTimer = useRef(null);
   const postDemoFlushRequest = useRef(null);
   const postDemoFlushModes = useRef({ local: false, storage: false });
@@ -65,14 +71,14 @@ export default function App() {
     if (!loaded.current || demoSaveLocked() || (!allowIncoming && _localSyncIncoming.current)) return false;
     const source = request ? stateForPostDemoFlush(request) : _localSyncState.current;
     if (!source || !window.__velaSendDeckUpdate) return false;
-    const save = extractSave(source);
     // Never let an empty or transient deck overwrite the local source file.
-    const totalSlides = (save.lanes || []).reduce((n, l) => n + (l.items || []).reduce((m, i) => m + (i.slides?.length || 0), 0), 0);
-    if (!save.lanes?.length || !totalSlides) return false;
-    delete save.chatMessages; delete save.chatLoading; delete save.fullscreen;
-    delete save.lastDebug; delete save._bootstrap; delete save._version;
+    const payload = localSyncPayload(source);
+    if (!payload) return false;
+    const fingerprint = JSON.stringify(payload);
+    if (fingerprint === _localSyncBaseline.current) return false; // unchanged: no write
     try {
-      window.__velaSendDeckUpdate({ deckTitle: source.deckTitle, lanes: save.lanes, branding: save.branding, guidelines: save.guidelines });
+      window.__velaSendDeckUpdate(payload);
+      _localSyncBaseline.current = fingerprint;
       return true;
     } catch (error) {
       dbg("Local save error:", error);
@@ -376,6 +382,13 @@ export default function App() {
     // a deck switch (the _localSyncIncoming guard skips setting a new timer
     // but must still kill the old one).
     clearTimeout(localSyncTimer.current);
+    if (VELA_LOCAL_MODE && loaded.current && _localSyncArmBaseline.current) {
+      // First render after a file LOAD: this content IS the file. Record it, do not write it back.
+      _localSyncArmBaseline.current = false;
+      const payload = localSyncPayload(state);
+      _localSyncBaseline.current = payload ? JSON.stringify(payload) : null;
+      return;
+    }
     if (!VELA_LOCAL_MODE || !loaded.current || _localSyncIncoming.current ||
         document.documentElement.dataset.velaDemoRunning === "true") return;
     localSyncTimer.current = setTimeout(() => flushLocalStateRef.current?.(null), 600);
@@ -391,14 +404,21 @@ export default function App() {
       try {
         const cur = _localSyncState.current;
         const sanitized = validateAndSanitizeDeck(deck);
-        // Preserve lane/item IDs so selection stays valid
+        // Preserve lane/item IDs so selection stays valid. Ingress now keeps the
+        // file's own ids, so only adopt a positional current id when no other
+        // entity in the incoming deck already holds it (ids must stay unique).
         if (cur.lanes && sanitized.lanes && cur.lanes.length === sanitized.lanes.length) {
+          const used = new Set(sanitized.lanes.flatMap((l) => [l.id, ...(l.items || []).map((i) => i.id)]));
+          const adopt = (target, want) => {
+            if (typeof want !== "string" || want === target.id || used.has(want)) return;
+            used.delete(target.id); target.id = want; used.add(want);
+          };
           for (let li = 0; li < sanitized.lanes.length; li++) {
-            sanitized.lanes[li].id = cur.lanes[li].id;
+            adopt(sanitized.lanes[li], cur.lanes[li].id);
             if (sanitized.lanes[li].items && cur.lanes[li].items) {
               const minItems = Math.min(sanitized.lanes[li].items.length, cur.lanes[li].items.length);
               for (let ii = 0; ii < minItems; ii++) {
-                sanitized.lanes[li].items[ii].id = cur.lanes[li].items[ii].id;
+                adopt(sanitized.lanes[li].items[ii], cur.lanes[li].items[ii].id);
               }
             }
           }
@@ -416,6 +436,7 @@ export default function App() {
           // Reset selection when switching to a different deck so auto-select picks the first module
           ...(isDifferentDeck ? { selectedId: null, slideIndex: 0 } : {}),
         };
+        _localSyncArmBaseline.current = true; // the file now holds this content
         dispatch({ type: "LOAD", payload });
       } catch (e) {
         // Fail closed: a malicious .vela edited on disk is pushed here over the serve.py
@@ -649,7 +670,7 @@ export default function App() {
         if (VELA_LOCAL_MODE) {
           // Local/folder mode: file on disk is always authoritative — apply directly
           // (localStorage may contain a different deck from the same origin)
-          try { applyStartupPatch(loadedDeck || { lanes: [] }, dispatch); } catch (err) { dbg("[PATCH] Error:", err); }
+          try { if (applyStartupPatch(loadedDeck || { lanes: [] }, dispatch) === true) _localSyncArmBaseline.current = true; } catch (err) { dbg("[PATCH] Error:", err); }
         } else if (!loadedDeck) {
           // First run — no saved data, apply patch directly
           try { applyStartupPatch({ lanes: [] }, dispatch); } catch (err) { dbg("[PATCH] Error:", err); }
