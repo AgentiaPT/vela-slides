@@ -298,6 +298,9 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
   const [newSlideImage, setNewSlideImage] = useState(null);
   const [newSlideGenerating, setNewSlideGenerating] = useState(false);
   const [showBranding, setShowBranding] = useState(false);
+  // W3: below this width the branding pane overlays the slide; above it the slide area reserves the pane width.
+  const [brandNarrow, setBrandNarrow] = useState(() => typeof window !== "undefined" && window.innerWidth < 900);
+  useEffect(() => { const f = () => setBrandNarrow(window.innerWidth < 900); window.addEventListener("resize", f); return () => window.removeEventListener("resize", f); }, []);
   const [showCinemaTip, setShowCinemaTip] = useState(false);
   const [previewRatio, setPreviewRatio] = useState("auto");
   const [alternatives, setAlternatives] = useState(null); // [{slide, label, emoji}] or null
@@ -1306,7 +1309,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
   );
 
   return (
-    <div ref={containerRef} tabIndex={0} className="fade-in" style={{ flex: 1, display: "flex", flexDirection: "column", background: T.bg, borderLeft: isMobile ? "none" : `1px solid ${T.border}`, outline: "none", minWidth: 0 }}>
+    <div ref={containerRef} data-testid="slide-panel-root" tabIndex={0} className="fade-in" style={{ flex: 1, display: "flex", flexDirection: "column", background: T.bg, borderLeft: isMobile ? "none" : `1px solid ${T.border}`, outline: "none", minWidth: 0, boxSizing: "border-box", paddingRight: showBranding && !isMobile && !brandNarrow ? 360 : 0 }}>
       {measureHarness}
 
 

@@ -99,5 +99,39 @@ console.log("CR9 — branding side pane");
   check((app.match(/slideActionsRef\.current\?\.closeBranding\?\.\(\)/g) || []).length >= 2, "opening chat or comments closes the branding pane");
 }
 
+console.log("W3 — branding pane reserves space");
+{
+  check(/data-testid="slide-panel-root"[^\n]*paddingRight: showBranding && !isMobile && !brandNarrow \? 360 : 0/.test(panel), "slide area reserves the 360px pane width when branding is open (>= 900 wide)");
+  check(/window\.innerWidth < 900/.test(panel), "narrow widths (< 900) fall back to overlay");
+  check(/branding-side-pane-close/.test(panel), "overlay mode keeps the close button");
+}
+
+// Browser geometry check (optional: runs when a headless render dir is given).
+const renderDir = process.env.VELA_RENDER_DIR;
+if (renderDir) {
+  let pw; try { pw = require("playwright"); } catch (e) { pw = require("/home/user/vela-slides/node_modules/playwright"); }
+  const { chromium } = pw;
+  (async () => {
+    const b = await chromium.launch({ executablePath: "/opt/pw-browsers/chromium-1194/chrome-linux/chrome" });
+    for (const w of [1280, 1440]) {
+      const pg = await b.newPage({ viewport: { width: w, height: 800 } });
+      await pg.goto("file://" + renderDir + "/render.html");
+      await pg.waitForFunction(() => window.__velaBooted, null, { timeout: 30000 });
+      await pg.click('[data-testid="brand-toggle"]');
+      await pg.waitForSelector('[data-testid="branding-side-pane"]');
+      const r = await pg.evaluate(() => {
+        const q = (s) => document.querySelector(s).getBoundingClientRect();
+        const p = q('[data-testid="branding-side-pane"]'), v = q('[data-testid="slide-fx-wrapper"]');
+        return { pl: p.left, vr: v.right };
+      });
+      check(r.vr <= r.pl + 0.5, `${w}px: slide viewport does not intersect branding pane`, JSON.stringify(r));
+      await pg.close();
+    }
+    await b.close();
+    console.log(`\n${pass} passed, ${fail} failed`);
+    process.exit(fail ? 1 : 0);
+  })();
+} else {
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
+}
