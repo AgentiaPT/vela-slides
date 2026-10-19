@@ -7569,7 +7569,7 @@ function GalleryView({ lanes, currentConceptId, slideIndex, dispatch, onClose, b
             // and they are excluded from drag hit-testing / reorder (virtual, not real).
             const cardKey = s.isTitleCard ? s.itemId + "|tc" : s.itemId + "|" + s.slideIdx;
             return (
-              <div key={"s-" + cardKey} data-testid={s.isTitleCard ? "gallery-title-card" : "gallery-slide"} ref={s.isTitleCard ? null : (el) => { cardRefs.current[cardKey] = el; if (isCurrent && el) activeRef.current = el; }}
+              <div key={"s-" + cardKey} data-testid={s.isTitleCard ? "gallery-title-card" : "gallery-slide"} data-hidden={!s.isTitleCard && s.slide.hidden ? "true" : "false"} ref={s.isTitleCard ? null : (el) => { cardRefs.current[cardKey] = el; if (isCurrent && el) activeRef.current = el; }}
                 onMouseDown={s.isTitleCard ? undefined : (e) => handleMouseDown(e, s)}
                 onClick={() => { if (!dragActive) jump(s.itemId, s.slideIdx); }}
                 style={{ width: thumbWidth, cursor: dragActive ? "grabbing" : "pointer", transition: dragActive ? "none" : "all 0.15s", opacity: isDragSrc ? 0.3 : 1, position: "relative" }}>
@@ -7591,13 +7591,14 @@ function GalleryView({ lanes, currentConceptId, slideIndex, dispatch, onClose, b
                 <div style={{ borderRadius: "0 0 8px 8px", border: cardBorder, borderTop: "none", boxShadow: cardShadow, background: T.bgCard, overflow: "hidden" }}
                   onMouseEnter={(e) => { if (!isCurrent && !dragSrc) { e.currentTarget.style.borderColor = T.borderLight; } }}
                   onMouseLeave={(e) => { if (!isCurrent) { e.currentTarget.style.borderColor = T.border; } }}>
-                  <GalleryThumb slide={s.slide} slideIdx={s.slideIdx} total={realSlideTotal} branding={branding} />
+                  {/* D5: a hidden slide is dimmed (thumb + labels); its hide button stays at full opacity. */}
+                  <div data-testid="gallery-thumb-wrap" style={{ opacity: !s.isTitleCard && s.slide.hidden ? 0.5 : 1 }}><GalleryThumb slide={s.slide} slideIdx={s.slideIdx} total={realSlideTotal} branding={branding} /></div>
                   <div style={{ padding: "6px 10px", background: isCurrent ? T.accent + "15" : T.isDark ? "rgba(255,255,255,0.04)" : "rgba(0,0,0,0.03)", display: "flex", alignItems: "center", gap: 6 }}>
                     <span title={s.isTitleCard ? "Section title card" : undefined} style={{ fontFamily: FONT.mono, fontSize: 10, color: isCurrent ? T.accent : T.textDim, fontWeight: 700 }}>{s.isTitleCard ? "🎬" : s.slideIdx + 1}</span>
                     {(() => { const oc = (s.slide.comments || []).filter((c) => c.status === "open").length; return oc > 0 ? <span style={{ width: 8, height: 8, borderRadius: 4, background: T.amber, flexShrink: 0 }} title={`${oc} comment${oc > 1 ? "s" : ""}`} /> : null; })()}
                     {s.slide?.studyNotes?.text ? <span title="Has offline study notes" data-study-marker style={{ fontSize: 11, lineHeight: 1, flexShrink: 0, filter: `drop-shadow(0 0 2px ${T.accent}80)` }}>🎓</span> : null}
-                    <span style={{ fontSize: 13, color: isCurrent ? T.text : T.textMuted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1, fontFamily: FONT.body }}>{getSlideTitle(s.slide, s.slideIdx)}</span>
-                    {!s.isTitleCard && <button data-testid="gallery-hide-slide" data-hidden={s.slide.hidden ? "true" : "false"} onClick={(e) => { e.stopPropagation(); dispatch({ type: "TOGGLE_SLIDE_HIDDEN", id: s.itemId, index: s.slideIdx }); }} title={s.slide.hidden ? "Hidden — click to show" : "Hide slide"} style={{ background: "none", border: "none", cursor: "pointer", padding: "2px 4px", fontSize: 13, lineHeight: 1, borderRadius: 3, opacity: s.slide.hidden ? 0.9 : 0.4, transition: "opacity 0.15s" }}>{s.slide.hidden ? "🙈" : "👁"}</button>}
+                    <span style={{ fontSize: 13, color: isCurrent ? T.text : T.textMuted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1, fontFamily: FONT.body, opacity: !s.isTitleCard && s.slide.hidden ? 0.5 : 1 }}>{getSlideTitle(s.slide, s.slideIdx)}</span>
+                    {!s.isTitleCard && <button data-testid="gallery-hide-slide" data-hidden={s.slide.hidden ? "true" : "false"} onClick={(e) => { e.stopPropagation(); dispatch({ type: "TOGGLE_SLIDE_HIDDEN", id: s.itemId, index: s.slideIdx }); }} title={s.slide.hidden ? "Hidden — click to show" : "Hide slide"} style={{ background: "none", border: "none", cursor: "pointer", padding: "2px 4px", fontSize: 13, lineHeight: 1, borderRadius: 3, opacity: s.slide.hidden ? 1 : 0.4, transition: "opacity 0.15s" }}>{s.slide.hidden ? "🙈" : "👁"}</button>}
                     {!s.isTitleCard && <button data-testid="gallery-delete-slide" onClick={(e) => { e.stopPropagation(); dispatch({ type: "REMOVE_SLIDE", id: s.itemId, index: s.slideIdx }); }} title="Delete slide" style={{ background: "none", border: "none", cursor: "pointer", padding: "2px 4px", fontSize: 13, color: T.textDim, borderRadius: 3, opacity: 0.4, transition: "opacity 0.15s, color 0.15s" }} onMouseEnter={(e) => { e.currentTarget.style.opacity = "1"; e.currentTarget.style.color = "#ef4444"; }} onMouseLeave={(e) => { e.currentTarget.style.opacity = "0.4"; e.currentTarget.style.color = T.textDim; }}>✕</button>}
                   </div>
                 </div>
@@ -8094,7 +8095,23 @@ const velaClipboardWriteBlock = async (block) => {
 // granted (no prompt in a sandboxed frame). Race it against a short timeout so
 // paste always ends: on timeout, use the same-tab memo.
 const VELA_CLIP_READ_TIMEOUT_MS = 800;
+// D3: "granted" | "other" | null (permission API missing or failed: unknown).
+const velaClipReadPermission = async () => {
+  try {
+    if (!navigator.permissions || typeof navigator.permissions.query !== "function") return null;
+    let timer;
+    const timeout = new Promise((resolve) => { timer = setTimeout(() => resolve(null), 150); });
+    const st = await Promise.race([navigator.permissions.query({ name: "clipboard-read" }), timeout]);
+    clearTimeout(timer);
+    if (!st || typeof st.state !== "string") return null;
+    return st.state === "granted" ? "granted" : "other";
+  } catch { return null; }
+};
 const velaClipboardReadBlocks = async () => {
+  // D3: with a same-tab copy and no clipboard-read grant, readText() would
+  // only stall (or prompt). Use the memo at once, so no delayed paste races
+  // the user's next key. Unknown permission state keeps the timeout race.
+  if (_velaBlockClipMemo && (await velaClipReadPermission()) === "other") return parseVelaBlockEnvelope(_velaBlockClipMemo);
   let text = "";
   try {
     let timer;
@@ -8116,6 +8133,17 @@ function isVelaBlockEnvelopeText(text) {
   try { const p = JSON.parse(t); return !!p && typeof p === "object" && !Array.isArray(p) && p._velaBlock === true; } catch { return false; }
 }
 const isEditableTarget = (el) => !!el && (el.isContentEditable || ["INPUT", "TEXTAREA"].includes(el.tagName));
+// D3: run an async clipboard read; resolve null (cancelled) when a newer read
+// started or the live { lanes, selKey } changed while it was pending.
+function velaGuardedRead(tokRef, liveRef, read) {
+  const tok = ++tokRef.current;
+  const start = liveRef.current;
+  return read().then((arr) => {
+    const live = liveRef.current;
+    if (tok !== tokRef.current || !live || !start || live.lanes !== start.lanes || live.selKey !== start.selKey) return null;
+    return arr;
+  });
+}
 // Where a pasted block goes: after the selected block (in its own column for a
 // cols slide). With no (or a stale) selection: end of the LAST column on a cols
 // slide (R, or L when the slide has no R), else end of slide.blocks. `selected`
@@ -8410,9 +8438,12 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
   const [newSlideImage, setNewSlideImage] = useState(null);
   const [newSlideGenerating, setNewSlideGenerating] = useState(false);
   const [showBranding, setShowBranding] = useState(false);
-  // W3: below this width the branding pane overlays the slide; above it the slide area reserves the pane width.
-  const [brandNarrow, setBrandNarrow] = useState(() => typeof window !== "undefined" && window.innerWidth < 900);
-  useEffect(() => { const f = () => setBrandNarrow(window.innerWidth < 900); window.addEventListener("resize", f); return () => window.removeEventListener("resize", f); }, []);
+  // W3/D2: below this width the branding pane overlays the slide (it has its
+  // own close button); at or above it the slide area reserves the pane width.
+  // A lower limit squeezed the slide to an unusable size (237 px at 900 wide).
+  const BRAND_RESERVE_MIN_W = 1100;
+  const [brandNarrow, setBrandNarrow] = useState(() => typeof window !== "undefined" && window.innerWidth < BRAND_RESERVE_MIN_W);
+  useEffect(() => { const f = () => setBrandNarrow(window.innerWidth < BRAND_RESERVE_MIN_W); window.addEventListener("resize", f); return () => window.removeEventListener("resize", f); }, []);
   const [showCinemaTip, setShowCinemaTip] = useState(false);
   const [previewRatio, setPreviewRatio] = useState("auto");
   const [alternatives, setAlternatives] = useState(null); // [{slide, label, emoji}] or null
@@ -8551,10 +8582,13 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       closeBranding: () => setShowBranding(false),
       // CR13: top-bar Editor | Gallery | Present view switch.
       showGallery, setGallery: (v) => setGallery(!!v),
+      // D1: one view state (editor | gallery | present). Each segment closes
+      // the others, so the gallery overlay never stays over Present.
+      setView: (v) => { if (v === "present") actionsRef.current.present(); else setGallery(v === "gallery"); },
       toggleBatchEdit: () => improving ? stopAll() : setShowImproveInput((v) => !v),
       toggleTiming: () => estimating ? stopEstimate() : setShowTimingScope((v) => !v),
       setPreviewRatio,
-      present: () => { stopAll(); dispatch({ type: "SET_FULLSCREEN", value: true }); },
+      present: () => { stopAll(); setGallery(false); dispatch({ type: "SET_FULLSCREEN", value: true }); },
       getLayoutStats: () => computeSlideLayoutStats(slideRef.current),
     };
     onRibbonUpdate?.();
@@ -8680,11 +8714,39 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
     const colTag = plan.key === "R" ? " (right column)" : plan.key === "L" ? " (left column)" : "";
     flashReviewMsg(plan.selected && after ? `Block pasted after ${after.type}${colTag}` : `No block selected: pasted at end of ${where}`);
   }, [slides, slideIndex, selBlockIdx, selKey, concept.id, dispatch, flashReviewMsg]);
+  // D3: a clipboard read is async. A newer paste, any deck change (edit,
+  // undo, redo) or a slide change while it is pending cancels it, so a late
+  // paste never lands on top of the user's next action. Resolves null when
+  // cancelled.
+  const pasteLiveRef = useRef(null);
+  pasteLiveRef.current = { lanes, selKey };
+  const pasteTokRef = useRef(0);
+  const readBlocksGuarded = useCallback(() => velaGuardedRead(pasteTokRef, pasteLiveRef, velaClipboardReadBlocks), []);
+  // Chip buttons keep focus after a click; give it back to the panel root so
+  // Ctrl/⌘+Z and Ctrl/⌘+Shift+Z work at once.
+  const refocusPanel = () => { try { containerRef.current?.focus({ preventScroll: true }); } catch {} };
   const pasteBlockFromClipboard = useCallback(() => {
-    velaClipboardReadBlocks().then((arr) => { if (arr.length) pasteBlocks(arr); else flashReviewMsg("No copied block on the clipboard"); });
-  }, [pasteBlocks, flashReviewMsg]);
+    refocusPanel();
+    readBlocksGuarded().then((arr) => {
+      if (arr === null) { flashReviewMsg("Paste cancelled: the deck changed"); return; }
+      if (arr.length) pasteBlocks(arr); else flashReviewMsg("No copied block on the clipboard");
+      refocusPanel();
+    });
+  }, [pasteBlocks, flashReviewMsg, readBlocksGuarded]);
   const editorKeysRef = useRef({});
-  editorKeysRef.current = { selBlockIdx, copySelectedBlock, pasteBlocks, goPending };
+  editorKeysRef.current = { selBlockIdx, copySelectedBlock, pasteBlocks, goPending, readBlocksGuarded };
+  // D4: the review/clipboard chip strip stays one row. On a narrow slide the
+  // chips drop their labels (icon + count only; titles keep the full text).
+  const [stripCompact, setStripCompact] = useState(false);
+  const stripRoRef = useRef(null);
+  const stripRef = useCallback((el) => {
+    if (stripRoRef.current) { stripRoRef.current.disconnect(); stripRoRef.current = null; }
+    const host = el && el.parentElement;
+    if (!host || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(() => setStripCompact(host.clientWidth < 520));
+    ro.observe(host);
+    stripRoRef.current = ro;
+  }, []);
   // CR6: a copied block envelope must never land in a text field as raw JSON.
   // Capture phase on window runs before React's and the field's own handlers.
   useEffect(() => {
@@ -8980,7 +9042,8 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       if ((e.ctrlKey || e.metaKey) && e.key === "v" && !isEditableTarget(document.activeElement)) {
         // CR6: a {_velaBlock} clipboard pastes into the current slide (editor
         // only); anything else falls through to the slide paste below.
-        (fullscreen ? Promise.resolve([]) : velaClipboardReadBlocks()).then((blocks) => {
+        (fullscreen ? Promise.resolve([]) : editorKeysRef.current.readBlocksGuarded()).then((blocks) => {
+        if (blocks === null) return; // D3: cancelled by a newer action
         if (blocks.length) { editorKeysRef.current.pasteBlocks(blocks); return; }
         velaClipboardReadSlides().then((arr) => {
           if (!arr || arr.length === 0) return;
@@ -9554,11 +9617,12 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
                   {!fullscreen && slides[slideIndex] && (() => {
                     const isRev = !!slides[slideIndex].reviewed;
                     const pill = (active, color) => ({ height: 22, borderRadius: 11, padding: "0 8px", display: "flex", alignItems: "center", gap: 4, fontFamily: FONT.mono, fontSize: 10, fontWeight: 700, cursor: "pointer", border: `1px solid ${active ? color : "rgba(255,255,255,0.25)"}`, background: active ? color : "rgba(15,17,23,0.72)", color: "#fff", boxShadow: "0 2px 8px rgba(0,0,0,0.3)", whiteSpace: "nowrap" });
-                    return <div data-review-strip data-testid="slide-review-strip" onClick={(e) => e.stopPropagation()} style={{ position: "absolute", top: 8, left: slides[slideIndex]?.studyNotes?.text ? 38 : 8, zIndex: 10, display: "flex", gap: 4, alignItems: "center", flexWrap: "wrap", maxWidth: "calc(100% - 60px)" }}>
-                      <button data-testid="slide-reviewed-toggle" aria-pressed={isRev} onClick={toggleReviewed} title={isRev ? "Reviewed — click to mark as pending" : "Mark this slide as reviewed"} style={pill(isRev, "#10b981")}>{isRev ? "✓ Reviewed" : "○ Review"}</button>
-                      <button data-testid="review-pending-toggle" aria-pressed={!!state.reviewPending} onClick={toggleReviewPending} title="Review pending only: arrow keys and Space skip reviewed slides (editor only)" style={pill(!!state.reviewPending, T.accent)}>{state.reviewPending ? `Pending only · ${pendingCount} left` : `Pending: ${pendingCount}`}</button>
-                      <button data-testid="block-copy-btn" disabled={selBlockIdx == null} onClick={copySelectedBlock} title={selBlockIdx == null ? "Click a block on the slide to select it, then copy (Ctrl/⌘+C)" : "Copy the selected block (Ctrl/⌘+C)"} style={{ ...pill(false, T.accent), opacity: selBlockIdx == null ? 0.5 : 1, cursor: selBlockIdx == null ? "default" : "pointer" }}>⧉ Copy block</button>
-                      <button data-testid="block-paste-btn" onClick={pasteBlockFromClipboard} title={selBlockIdx == null ? "Paste a copied block at the end of this slide (end of the right column on a columns slide) (Ctrl/⌘+V)" : "Paste a copied block after the selected block (Ctrl/⌘+V)"} style={pill(false, T.accent)}>📋 Paste block</button>
+                    const cmp = stripCompact;
+                    return <div ref={stripRef} data-review-strip data-testid="slide-review-strip" data-compact={cmp ? "true" : "false"} onClick={(e) => e.stopPropagation()} style={{ position: "absolute", top: 8, left: slides[slideIndex]?.studyNotes?.text ? 38 : 8, zIndex: 10, display: "flex", gap: 4, alignItems: "center", flexWrap: "nowrap", overflowX: "auto", scrollbarWidth: "none", maxWidth: "calc(100% - 60px)" }}>
+                      <button data-testid="slide-reviewed-toggle" aria-pressed={isRev} onClick={toggleReviewed} title={isRev ? "Reviewed — click to mark as pending" : "Mark this slide as reviewed"} aria-label={isRev ? "Reviewed" : "Review"} style={{ ...pill(isRev, "#10b981"), flexShrink: 0 }}>{isRev ? (cmp ? "✓" : "✓ Reviewed") : (cmp ? "○" : "○ Review")}</button>
+                      <button data-testid="review-pending-toggle" aria-pressed={!!state.reviewPending} onClick={toggleReviewPending} title="Review pending only: arrow keys and Space skip reviewed slides (editor only)" style={{ ...pill(!!state.reviewPending, T.accent), flexShrink: 0 }}>{state.reviewPending ? (cmp ? `${pendingCount} left` : `Pending only · ${pendingCount} left`) : (cmp ? `⏳ ${pendingCount}` : `Pending: ${pendingCount}`)}</button>
+                      <button data-testid="block-copy-btn" disabled={selBlockIdx == null} onClick={() => { copySelectedBlock(); refocusPanel(); }} title={selBlockIdx == null ? "Click a block on the slide to select it, then copy (Ctrl/⌘+C)" : "Copy the selected block (Ctrl/⌘+C)"} aria-label="Copy block" style={{ ...pill(false, T.accent), flexShrink: 0, opacity: selBlockIdx == null ? 0.5 : 1, cursor: selBlockIdx == null ? "default" : "pointer" }}>{cmp ? "⧉" : "⧉ Copy block"}</button>
+                      <button data-testid="block-paste-btn" onClick={pasteBlockFromClipboard} title={selBlockIdx == null ? "Paste a copied block at the end of this slide (end of the right column on a columns slide) (Ctrl/⌘+V)" : "Paste a copied block after the selected block (Ctrl/⌘+V)"} aria-label="Paste block" style={{ ...pill(false, T.accent), flexShrink: 0 }}>{cmp ? "📋" : "📋 Paste block"}</button>
                       {reviewMsg && <span data-testid="review-status-msg" role="status" style={{ ...pill(true, "rgba(0,0,0,0.78)"), cursor: "default" }}>{reviewMsg}</span>}
                     </div>;
                   })()}
@@ -9695,7 +9759,8 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
         </div>}
 
         {/* ── SLIDE TOOLBAR — centered strip between preview & notes ── */}
-        {slides.length > 0 && <div data-testid="slide-toolbar" style={{ flexShrink: 0, borderTop: `1px solid ${T.border}`, background: T.bgPanel, padding: "4px 12px", display: "flex", justifyContent: "center", alignItems: "center", gap: 3 }}>
+        {/* D2b: wraps to a second row when narrow (e.g. branding pane open), so every button stays reachable. */}
+        {slides.length > 0 && <div data-testid="slide-toolbar" style={{ flexShrink: 0, borderTop: `1px solid ${T.border}`, background: T.bgPanel, padding: "4px 12px", display: "flex", flexWrap: "wrap", justifyContent: "center", alignItems: "center", gap: 3, minWidth: 0 }}>
           <button data-testid="quick-edit-open" onClick={() => { if (aiOk) setShowQuickEdit((v) => !v); }} disabled={!aiOk} title={aiOk ? "AI Edit slide (E)" : VELA_AI_UNAVAILABLE_MSG} style={S.btn({ padding: "5px 12px", fontSize: 14, color: !aiOk ? T.textDim + "60" : showQuickEdit ? T.accent : T.textDim, background: showQuickEdit ? T.accent + "20" : "transparent", borderRadius: 4, display: "flex", alignItems: "center", gap: 5, cursor: aiOk ? "pointer" : "not-allowed" })}>⚡{!isMobile && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>AI Edit</span>}</button>
           <button onClick={() => improving ? stopAll() : runImproveRef.current?.(null, "slide")} disabled={!aiOk || slides.length === 0 || altLoading} title={aiOk ? "Auto-improve this slide (⇧I)" : VELA_AI_UNAVAILABLE_MSG} style={S.btn({ padding: "5px 12px", fontSize: 14, color: !aiOk ? T.textDim + "60" : improving ? T.red : T.textDim, background: improving ? T.accent + "20" : "transparent", borderRadius: 4, display: "flex", alignItems: "center", gap: 5, opacity: !aiOk || slides.length === 0 ? 0.35 : 1, cursor: aiOk ? "pointer" : "not-allowed" })}>{improving ? "⏹" : "✨"}{!isMobile && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>{improving ? "Stop" : "Improve"}</span>}</button>
           <button onClick={() => altLoading ? stopAlternatives() : runAlternatives()} disabled={!aiOk || slides.length === 0 || improving} title={aiOk ? "Generate design variants — click a tile to apply, ↩ Original to revert, Esc to close" : VELA_AI_UNAVAILABLE_MSG} style={S.btn({ padding: "5px 12px", fontSize: 14, color: !aiOk ? T.textDim + "60" : altLoading ? T.red : (alternatives ? T.accent : T.textDim), background: altLoading || alternatives ? T.accent + "20" : "transparent", borderRadius: 4, display: "flex", alignItems: "center", gap: 5, opacity: !aiOk || slides.length === 0 ? 0.35 : 1, cursor: aiOk ? "pointer" : "not-allowed" })}>{altLoading ? "⏹" : "🎲"}{!isMobile && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>{altLoading ? "Stop" : "Variants"}</span>}</button>
@@ -24676,9 +24741,9 @@ export default function App() {
                 const galleryOn = !!sa?.showGallery;
                 const seg = (active) => ({ display: "flex", alignItems: "center", gap: 5, padding: "4px 10px", border: "none", borderRadius: 5, background: active ? T.accent + "22" : "transparent", color: !has ? T.textDim : active ? T.accent : T.textMuted, fontFamily: FONT.mono, fontSize: 13, fontWeight: active ? 700 : 500, cursor: has ? "pointer" : "default" });
                 return <div data-testid="view-switch" role="group" aria-label="View" style={{ display: "flex", alignItems: "center", gap: 2, padding: 2, border: `1px solid ${T.border}`, borderRadius: 7, background: T.bgInput || "transparent", opacity: has ? 1 : 0.5 }}>
-                  <button data-testid="view-switch-editor" aria-pressed={has && !galleryOn} onClick={() => sa?.setGallery?.(false)} disabled={!has} title="Editor view" style={seg(has && !galleryOn)}>{getIcon("edit", { size: 14, color: "currentColor" })} Editor</button>
-                  <button data-testid="view-switch-gallery" aria-pressed={has && galleryOn} onClick={() => sa?.setGallery?.(true)} disabled={!has} title="Gallery view — all slides (G)" style={seg(has && galleryOn)}>{getIcon("grid", { size: 14, color: "currentColor" })} Gallery</button>
-                  <button data-testid="view-switch-present" aria-pressed={false} onClick={() => sa?.present?.()} disabled={!has} title="Present — fullscreen (F)" style={{ display: "flex", alignItems: "center", gap: 5, padding: "4px 12px", background: has ? T.green : T.border, color: has ? "#fff" : T.textDim, border: "none", borderRadius: 5, cursor: has ? "pointer" : "default", fontFamily: FONT.mono, fontSize: 13, fontWeight: 700 }}>{"▶"} Present</button>
+                  <button data-testid="view-switch-editor" aria-pressed={has && !galleryOn} onClick={() => sa?.setView?.("editor")} disabled={!has} title="Editor view" style={seg(has && !galleryOn)}>{getIcon("edit", { size: 14, color: "currentColor" })} Editor</button>
+                  <button data-testid="view-switch-gallery" aria-pressed={has && galleryOn} onClick={() => sa?.setView?.("gallery")} disabled={!has} title="Gallery view — all slides (G)" style={seg(has && galleryOn)}>{getIcon("grid", { size: 14, color: "currentColor" })} Gallery</button>
+                  <button data-testid="view-switch-present" aria-pressed={false} onClick={() => sa?.setView?.("present")} disabled={!has} title="Present — fullscreen (F)" style={{ display: "flex", alignItems: "center", gap: 5, padding: "4px 12px", background: has ? T.green : T.border, color: has ? "#fff" : T.textDim, border: "none", borderRadius: 5, cursor: has ? "pointer" : "default", fontFamily: FONT.mono, fontSize: 13, fontWeight: 700 }}>{"▶"} Present</button>
                 </div>;
               })()}
             </>;

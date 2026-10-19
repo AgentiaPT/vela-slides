@@ -83,7 +83,7 @@ that symbol in the named part for the line. No line numbers here — they rot.
 - StudentPanel — dispatcher: static studyNotes first, else live Vera: StudentPanel TeacherPanel SectionPicker
 
 ### part-slidepanel.jsx
-- CR6: block clipboard ({_velaBlock} envelope): VELA_BLOCK_CLIP_MAX_CHARS VELA_BLOCK_CLIP_MAX_BLOCKS _velaBlockClipMemo parseVelaBlockEnvelope velaClipboardWriteBlock VELA_CLIP_READ_TIMEOUT_MS velaClipboardReadBlocks isVelaBlockEnvelopeText isEditableTarget planBlockPaste
+- CR6: block clipboard ({_velaBlock} envelope): VELA_BLOCK_CLIP_MAX_CHARS VELA_BLOCK_CLIP_MAX_BLOCKS _velaBlockClipMemo parseVelaBlockEnvelope velaClipboardWriteBlock VELA_CLIP_READ_TIMEOUT_MS velaClipReadPermission velaClipboardReadBlocks isVelaBlockEnvelopeText isEditableTarget velaGuardedRead planBlockPaste
 - CR7: "Review pending only" editor navigation: findPendingSlide findPendingAfterDelete SlidePanel
 
 ### part-list.jsx
@@ -320,8 +320,8 @@ add_lane add_item batch_add_items remove_item remove_lane rename_item rename_lan
 - part-imports.jsx: 860-line unbannered stretch after line 522
 - part-blocks.jsx: 766-line unbannered stretch after line 800
 - part-canvas.jsx: 415-line unbannered stretch after line 24
-- part-slidepanel.jsx: 418-line unbannered stretch after line 531
-- part-slidepanel.jsx: 423-line unbannered stretch after line 1261
+- part-slidepanel.jsx: 447-line unbannered stretch after line 564
+- part-slidepanel.jsx: 425-line unbannered stretch after line 1323
 - part-uitest.jsx: 616-line unbannered stretch after line 1230
 - part-uitest2.jsx: 448-line unbannered stretch after line 2
 - part-uitest2.jsx: 593-line unbannered stretch after line 1395
