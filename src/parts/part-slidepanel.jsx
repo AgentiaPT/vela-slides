@@ -32,26 +32,56 @@ const velaClipboardWriteBlock = async (block) => {
   try { velaClipboard(text); } catch {}
   return true; // the same-tab memo still holds it
 };
+// readText() can stay pending forever when clipboard-read permission is not
+// granted (no prompt in a sandboxed frame). Race it against a short timeout so
+// paste always ends: on timeout, use the same-tab memo.
+const VELA_CLIP_READ_TIMEOUT_MS = 800;
 const velaClipboardReadBlocks = async () => {
   let text = "";
-  try { text = (await navigator.clipboard.readText()) || ""; } catch {}
+  try {
+    let timer;
+    const timeout = new Promise((resolve) => { timer = setTimeout(() => resolve(""), VELA_CLIP_READ_TIMEOUT_MS); });
+    text = (await Promise.race([Promise.resolve().then(() => navigator.clipboard.readText()), timeout])) || "";
+    clearTimeout(timer);
+  } catch {}
+  if (typeof text !== "string") text = "";
   if (text) return parseVelaBlockEnvelope(text);
   return parseVelaBlockEnvelope(_velaBlockClipMemo);
 };
+// True when clipboard text is a Vela block envelope. Used to stop the raw
+// envelope JSON from being pasted into a text field (input, textarea,
+// contentEditable). Detection only: nothing parsed here reaches state.
+function isVelaBlockEnvelopeText(text) {
+  if (typeof text !== "string" || !text || text.length > VELA_BLOCK_CLIP_MAX_CHARS) return false;
+  const t = text.trim();
+  if (t[0] !== "{" || !t.includes("\"_velaBlock\"")) return false;
+  try { const p = JSON.parse(t); return !!p && typeof p === "object" && !Array.isArray(p) && p._velaBlock === true; } catch { return false; }
+}
+const isEditableTarget = (el) => !!el && (el.isContentEditable || ["INPUT", "TEXTAREA"].includes(el.tagName));
 // Where a pasted block goes: after the selected block (in its own column for a
-// cols slide), else at the end of slide.blocks. Returns null when the target
-// column would exceed the 30-block cap that sanitizeSlide enforces.
+// cols slide). With no (or a stale) selection: end of the LAST column on a cols
+// slide (R, or L when the slide has no R), else end of slide.blocks. `selected`
+// tells the caller which rule applied, for the status message. Returns null
+// when the target column would exceed the 30-block cap that sanitizeSlide enforces.
 function planBlockPaste(slide, selIdx, count) {
   const b = (slide && slide.blocks) || [], L = (slide && slide.L) || [], R = (slide && slide.R) || [];
-  let key = "blocks", base = 0, at = b.length;
+  let key = null, base = 0, at = 0;
   if (Number.isInteger(selIdx) && selIdx >= 0) {
-    if (selIdx < b.length) at = selIdx + 1;
+    if (selIdx < b.length) { key = "blocks"; at = selIdx + 1; }
     else if (selIdx < b.length + L.length) { key = "L"; base = b.length; at = selIdx - b.length + 1; }
     else if (selIdx < b.length + L.length + R.length) { key = "R"; base = b.length + L.length; at = selIdx - b.length - L.length + 1; }
   }
+  const selected = key !== null;
+  if (!selected) {
+    // Same cols test as SlideContent: only then are L/R rendered.
+    const isCols = slide && slide.layout === "cols" && (Array.isArray(slide.L) || Array.isArray(slide.R));
+    if (isCols && Array.isArray(slide.R)) { key = "R"; base = b.length + L.length; at = R.length; }
+    else if (isCols) { key = "L"; base = b.length; at = L.length; }
+    else { key = "blocks"; at = b.length; }
+  }
   const col = key === "blocks" ? b : key === "L" ? L : R;
   if (col.length + count > VELA_BLOCK_CLIP_MAX_BLOCKS) return null;
-  return { key, at, newSelIdx: base + at + count - 1 };
+  return { key, at, newSelIdx: base + at + count - 1, selected };
 }
 
 // ── CR7: "Review pending only" editor navigation ──
@@ -80,6 +110,30 @@ function findPendingSlide(lanes, curId, curIdx, dir, markCurrent) {
     if (list[j].pending) return { target: list[j].isCur ? null : { id: list[j].id, index: list[j].index }, total, wrapped: raw !== j, onlyCurrent: list[j].isCur };
   }
   return { target: null, total, wrapped: false };
+}
+// After the CURRENT slide was deleted: first pending slide at or after the
+// deleted position (`anchor` = index in module `modId` where the next surviving
+// slide now sits), in TOC order, wrapping. Collapsed lanes are skipped.
+function findPendingAfterDelete(lanes, modId, anchor) {
+  const list = [];
+  let mo = 0, modOrd = -1;
+  for (const lane of (lanes || [])) {
+    if (lane.collapsed) continue;
+    for (const item of (lane.items || [])) {
+      if (item.id === modId) modOrd = mo;
+      (item.slides || []).forEach((s, i) => list.push({ id: item.id, index: i, mo, pending: !(s && s.reviewed) }));
+      mo++;
+    }
+  }
+  const total = list.filter((x) => x.pending).length;
+  if (total === 0) return { target: null, total: 0 };
+  let p = list.findIndex((x) => x.mo > modOrd || (x.mo === modOrd && x.index >= anchor));
+  if (p < 0 || modOrd < 0) p = 0;
+  for (let k = 0; k < list.length; k++) {
+    const x = list[(p + k) % list.length];
+    if (x.pending) return { target: { id: x.id, index: x.index }, total };
+  }
+  return { target: null, total };
 }
 
 function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, branding, guidelines, isMobile, fontScale, actionsRef, onRibbonUpdate }) {
@@ -494,6 +548,26 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
     dispatch({ type: "SET_SLIDE_INDEX", index: r.target.index });
     flashReviewMsg(`${r.total} pending${r.wrapped ? " · wrapped" : ""}`);
   }, [lanes, concept.id, slideIndex, dispatch, flashReviewMsg]);
+  // Pending mode: when the CURRENT slide is deleted (editor, TOC or gallery —
+  // every path ends here as a shorter slides array), go to the next pending
+  // slide instead of the neighbour the delete path picked. Surviving slides
+  // keep their object identity through REMOVE_SLIDE(S), so identity tells
+  // whether the current slide was among the deleted ones.
+  const delTrackRef = useRef(null);
+  useEffect(() => {
+    const prev = delTrackRef.current;
+    delTrackRef.current = { id: concept.id, slides, idx: slideIndex };
+    if (!state.reviewPending || fullscreen || !prev || prev.id !== concept.id || slides.length >= prev.slides.length) return;
+    const cur = prev.slides[prev.idx];
+    if (!cur || slides.includes(cur)) return;
+    let removedBefore = 0;
+    for (let i = 0; i < prev.idx; i++) if (!slides.includes(prev.slides[i])) removedBefore++;
+    const r = findPendingAfterDelete(lanes, concept.id, prev.idx - removedBefore);
+    if (!r.target) { flashReviewMsg("Slide deleted · all slides reviewed ✓"); return; }
+    if (r.target.id !== concept.id) dispatch({ type: "SELECT", id: r.target.id });
+    dispatch({ type: "SET_SLIDE_INDEX", index: r.target.index });
+    flashReviewMsg(`Slide deleted · ${r.total} pending`);
+  }, [concept.id, slides, slideIndex, state.reviewPending, fullscreen, lanes, dispatch, flashReviewMsg]);
   const toggleReviewed = useCallback(() => {
     const cur = slides[slideIndex];
     if (!cur) return;
@@ -529,23 +603,54 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
     if (!b) { flashReviewMsg("Click a block first, then copy"); return; }
     velaClipboardWriteBlock(b).then((ok) => flashReviewMsg(ok ? `Block copied (${b.type})` : "Copy failed"));
   }, [slides, slideIndex, selBlockIdx, flashReviewMsg]);
-  const pasteBlocks = useCallback((arr) => {
+  // `atIdx` (optional) overrides the selection: the block whose inline text
+  // editor got the paste.
+  const pasteBlocks = useCallback((arr, atIdx) => {
     const s = slides[slideIndex];
     if (!s || !arr || arr.length === 0) return;
-    const plan = planBlockPaste(s, selBlockIdx, arr.length);
+    const plan = planBlockPaste(s, Number.isInteger(atIdx) ? atIdx : selBlockIdx, arr.length);
     if (!plan) { flashReviewMsg("Slide is full (30 blocks max)"); return; }
     const col = [...(s[plan.key] || [])];
     const after = plan.at > 0 ? col[plan.at - 1] : null;
     col.splice(plan.at, 0, ...arr);
     dispatch({ type: "UPDATE_SLIDE", id: concept.id, index: slideIndex, patch: { [plan.key]: col }, merge: true });
     setSelBlock({ key: selKey, idx: plan.newSelIdx });
-    flashReviewMsg(selBlockIdx != null && after ? `Block pasted after ${after.type}` : "Block pasted at end of slide");
+    const where = plan.key === "R" ? "right column" : plan.key === "L" ? "left column" : "slide";
+    const colTag = plan.key === "R" ? " (right column)" : plan.key === "L" ? " (left column)" : "";
+    flashReviewMsg(plan.selected && after ? `Block pasted after ${after.type}${colTag}` : `No block selected: pasted at end of ${where}`);
   }, [slides, slideIndex, selBlockIdx, selKey, concept.id, dispatch, flashReviewMsg]);
   const pasteBlockFromClipboard = useCallback(() => {
     velaClipboardReadBlocks().then((arr) => { if (arr.length) pasteBlocks(arr); else flashReviewMsg("No copied block on the clipboard"); });
   }, [pasteBlocks, flashReviewMsg]);
   const editorKeysRef = useRef({});
   editorKeysRef.current = { selBlockIdx, copySelectedBlock, pasteBlocks, goPending };
+  // CR6: a copied block envelope must never land in a text field as raw JSON.
+  // Capture phase on window runs before React's and the field's own handlers.
+  useEffect(() => {
+    const onPasteCapture = (e) => {
+      if (!isEditableTarget(e.target) && !isEditableTarget(document.activeElement)) return;
+      let text = "";
+      try { text = e.clipboardData?.getData("text/plain") || ""; } catch {}
+      if (!isVelaBlockEnvelopeText(text)) return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      // Inline text editor of a block on the editor slide: paste the block
+      // after that block instead (parseVelaBlockEnvelope runs sanitizeBlock).
+      const t = e.target && e.target.closest ? e.target : document.activeElement;
+      const blockEl = !fullscreen && t && t.closest ? t.closest("[data-block-index]") : null;
+      const n = blockEl && blockEl.closest("[data-testid='slide-fx-wrapper']") ? parseInt(blockEl.getAttribute("data-block-index"), 10) : NaN;
+      if (Number.isInteger(n) && n >= 0) {
+        const arr = parseVelaBlockEnvelope(text);
+        // No blur here: a blur would commit the text edit from a stale slide
+        // and race the paste. The block goes AFTER the edited one, so the
+        // open editor keeps its index and commits later on fresh props.
+        if (arr.length) { editorKeysRef.current.pasteBlocks(arr, n); return; }
+      }
+      flashReviewMsg("A copied block can't go into a text field. Click outside the text, then paste");
+    };
+    window.addEventListener("paste", onPasteCapture, true);
+    return () => window.removeEventListener("paste", onPasteCapture, true);
+  }, [flashReviewMsg, fullscreen]);
 
   // Touch swipe for mobile slide navigation (crosses module boundaries like keyboard)
   useSwipe(containerRef, {
@@ -809,7 +914,9 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       }
       // Ctrl+V → paste slide(s) from system clipboard, inserted sequentially after
       // the active slide (order preserved). Accepts old single-slide clipboards too.
-      if ((e.ctrlKey || e.metaKey) && e.key === "v" && !["INPUT", "TEXTAREA"].includes(document.activeElement?.tagName)) {
+      // Not while a text field (incl. contentEditable inline edit) has focus:
+      // there Ctrl+V is a text paste, never a block/slide paste.
+      if ((e.ctrlKey || e.metaKey) && e.key === "v" && !isEditableTarget(document.activeElement)) {
         // CR6: a {_velaBlock} clipboard pastes into the current slide (editor
         // only); anything else falls through to the slide paste below.
         (fullscreen ? Promise.resolve([]) : velaClipboardReadBlocks()).then((blocks) => {
@@ -1390,7 +1497,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
                       <button data-testid="slide-reviewed-toggle" aria-pressed={isRev} onClick={toggleReviewed} title={isRev ? "Reviewed — click to mark as pending" : "Mark this slide as reviewed"} style={pill(isRev, "#10b981")}>{isRev ? "✓ Reviewed" : "○ Review"}</button>
                       <button data-testid="review-pending-toggle" aria-pressed={!!state.reviewPending} onClick={toggleReviewPending} title="Review pending only: arrow keys and Space skip reviewed slides (editor only)" style={pill(!!state.reviewPending, T.accent)}>{state.reviewPending ? `Pending only · ${pendingCount} left` : `Pending: ${pendingCount}`}</button>
                       <button data-testid="block-copy-btn" disabled={selBlockIdx == null} onClick={copySelectedBlock} title={selBlockIdx == null ? "Click a block on the slide to select it, then copy (Ctrl/⌘+C)" : "Copy the selected block (Ctrl/⌘+C)"} style={{ ...pill(false, T.accent), opacity: selBlockIdx == null ? 0.5 : 1, cursor: selBlockIdx == null ? "default" : "pointer" }}>⧉ Copy block</button>
-                      <button data-testid="block-paste-btn" onClick={pasteBlockFromClipboard} title={selBlockIdx == null ? "Paste a copied block at the end of this slide (Ctrl/⌘+V)" : "Paste a copied block after the selected block (Ctrl/⌘+V)"} style={pill(false, T.accent)}>📋 Paste block</button>
+                      <button data-testid="block-paste-btn" onClick={pasteBlockFromClipboard} title={selBlockIdx == null ? "Paste a copied block at the end of this slide (end of the right column on a columns slide) (Ctrl/⌘+V)" : "Paste a copied block after the selected block (Ctrl/⌘+V)"} style={pill(false, T.accent)}>📋 Paste block</button>
                       {reviewMsg && <span data-testid="review-status-msg" role="status" style={{ ...pill(true, "rgba(0,0,0,0.78)"), cursor: "default" }}>{reviewMsg}</span>}
                     </div>;
                   })()}
