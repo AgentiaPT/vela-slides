@@ -23,7 +23,8 @@ Complete reference for all Vela v12 slide block types (27 total).
   "contentFlex": 1,                             // flex ratio for left column (cols/split layouts)
   "imageFlex": 1,                               // flex ratio for right column (cols/split layouts)
   "splitGap": 32,                               // gap between columns in px (cols/split layouts)
-  "imageCols": 3                                // pin the column count for a run of adjacent image blocks (integer 1-6; omit = auto)
+  "imageCols": 3,                               // pin the column count for a run of adjacent image blocks (integer 1-6; omit = auto)
+  "reviewed": true                              // editor review checkmark (boolean; omit = not reviewed). Set by the editor, not authored
 }
 ```
 

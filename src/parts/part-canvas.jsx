@@ -462,7 +462,7 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
   // Render a single block with all editable chrome (hover, edit popup, link, etc.)
   // ── Per-block editor chrome: hover toolbar, AI/link/comment popups, badges ──
   const renderBlockItem = (b, i) => { const fl = flushOf(b, i); const popTop = fl.top ? 30 : null; return editable && onEdit ? (
-    <div key={i} data-block-type={b.type} data-block-flush={fl.top || fl.right ? `${fl.top ? "top" : ""}${fl.top && fl.right ? " " : ""}${fl.right ? "right" : ""}` : undefined} style={{ position: "relative", ...(b.link ? { cursor: "pointer" } : {}), ...(b.hidden && !presenting ? { opacity: 0.4 } : {}) }}
+    <div key={i} data-block-type={b.type} data-block-index={i} data-block-flush={fl.top || fl.right ? `${fl.top ? "top" : ""}${fl.top && fl.right ? " " : ""}${fl.right ? "right" : ""}` : undefined} style={{ position: "relative", ...(b.link ? { cursor: "pointer" } : {}), ...(b.hidden && !presenting ? { opacity: 0.4 } : {}) }}
       title={b.link ? linkPreview(b.link, b.text || b.value || b.title) : undefined}
       data-pdf-link={b.link || undefined}
       onClick={b.link ? (e) => { e.stopPropagation(); openExternalLink(b.link); } : undefined}
