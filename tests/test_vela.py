@@ -561,6 +561,7 @@ def test_security():
         ("tests/test_ai_slide_selection.cjs", "AI slide adder selection race (atomic SELECT + stale-deck isolation)"),
         ("tests/test_view_switch.cjs",        "View switch + presenter chrome + branding pane (CR9-11, CR13)"),
         ("tests/test_review_clipboard.cjs",   "Slide review checkmark + block copy/paste (CR7, CR6)"),
+        ("tests/test_canvas_chrome_e2e.cjs",  "Canvas chrome placement (flush toolbar, link badge, side image; SKIP w/o Chromium)"),
     ]:
         script = os.path.join(REPO_ROOT, fname)
         if os.path.exists(script):
@@ -2899,6 +2900,14 @@ def test_cli_commands():
         ok(f"CLI exit-code suite ({m.group(1)} checks)")
     else:
         fail("CLI exit-code suite (tests/test_cli.py)", (r.stdout + r.stderr)[-400:])
+
+    # validate.py gradient-in-bg suite (own subprocess, exit code is the verdict).
+    r = subprocess.run([sys.executable, os.path.join(REPO_ROOT, "tests", "test_validate_bg.py")],
+                       capture_output=True, text=True)
+    if r.returncode == 0:
+        ok("validate.py bg gradient suite (tests/test_validate_bg.py)")
+    else:
+        fail("validate.py bg gradient suite (tests/test_validate_bg.py)", (r.stdout + r.stderr)[-400:])
 
 
 # ━━━ Main ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

@@ -138,8 +138,9 @@ const velaClipboardReadSlides = async () => {
   return [];
 };
 
-const VELA_VERSION = "13.74";
+const VELA_VERSION = "13.75";
 const VELA_CHANGELOG = [
+  { v: "13.75", d: ["Editor: view switch Editor | Gallery | Present, with branding in the right side pane.", "Review: slides can be marked reviewed; pending-review mode; block copy and paste.", "Canvas: block toolbar stays inside flush blocks; link badge sits inline; side images are centered.", "Gallery: hide button; brand bar can be 0px; delete slides from the TOC.", "Export: vector PDF keeps characters like the euro sign; fixed duplicate shim in standalone HTML export.", "Desktop: window title shows the deck title; focus returns after Alt+Tab; fixed stale AI handshake cache.", "Reliability: stable ids on open and no autosave when nothing changed.", "CLI: validate reports a gradient used in slide bg."] },
   { v: "13.74", d: ["Security: CLI output now neutralizes terminal control sequences in deck text (CWE-150 class), closing a display-spoofing channel.", "Security: the machine-readable --json output is fully escaped for the same class.", "Added one canonical output encoder, a CI gate keeping every CLI output path routed through it, and regression tests."] },
   { v: "13.73", d: ["Security (High): hardened the deck-injection build path — trusted app source is now transformed before untrusted deck data is injected.", "Security: added a fail-closed integrity check that refuses to write an artifact whose trusted bytes changed.", "Local preview server: same injection-last ordering applied to its HTML build path.", "Tests: added build-pipeline trust-boundary regression coverage."] },
   { v: "13.72", d: "Demo: synchronized the bundled product-tour deck and its content fingerprint." },

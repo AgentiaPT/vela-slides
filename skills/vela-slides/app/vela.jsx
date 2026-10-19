@@ -138,8 +138,9 @@ const velaClipboardReadSlides = async () => {
   return [];
 };
 
-const VELA_VERSION = "13.74";
+const VELA_VERSION = "13.75";
 const VELA_CHANGELOG = [
+  { v: "13.75", d: ["Editor: view switch Editor | Gallery | Present, with branding in the right side pane.", "Review: slides can be marked reviewed; pending-review mode; block copy and paste.", "Canvas: block toolbar stays inside flush blocks; link badge sits inline; side images are centered.", "Gallery: hide button; brand bar can be 0px; delete slides from the TOC.", "Export: vector PDF keeps characters like the euro sign; fixed duplicate shim in standalone HTML export.", "Desktop: window title shows the deck title; focus returns after Alt+Tab; fixed stale AI handshake cache.", "Reliability: stable ids on open and no autosave when nothing changed.", "CLI: validate reports a gradient used in slide bg."] },
   { v: "13.74", d: ["Security: CLI output now neutralizes terminal control sequences in deck text (CWE-150 class), closing a display-spoofing channel.", "Security: the machine-readable --json output is fully escaped for the same class.", "Added one canonical output encoder, a CI gate keeping every CLI output path routed through it, and regression tests."] },
   { v: "13.73", d: ["Security (High): hardened the deck-injection build path — trusted app source is now transformed before untrusted deck data is injected.", "Security: added a fail-closed integrity check that refuses to write an artifact whose trusted bytes changed.", "Local preview server: same injection-last ordering applied to its HTML build path.", "Tests: added build-pipeline trust-boundary regression coverage."] },
   { v: "13.72", d: "Demo: synchronized the bundled product-tour deck and its content fingerprint." },
@@ -412,7 +413,18 @@ function extractSlideText(slide) {
   return parts.join(" ").toLowerCase().trim();
 }
 
-// Apply startup patch to loaded deck data
+// Deck content that local mode (serve.py / desktop) writes back to the deck
+// file. null = nothing safe to write (never overwrite the file with an empty or
+// slide-less transient deck). App compares JSON of this against the content
+// it loaded, so an unchanged deck is never written back on open.
+function localSyncPayload(source) {
+  if (!source || !Array.isArray(source.lanes) || !source.lanes.length) return null;
+  const totalSlides = source.lanes.reduce((n, l) => n + (l?.items || []).reduce((m, i) => m + (i?.slides?.length || 0), 0), 0);
+  if (!totalSlides) return null;
+  return { deckTitle: source.deckTitle, lanes: source.lanes, branding: source.branding, guidelines: source.guidelines };
+}
+
+// Apply startup patch to loaded deck data. Returns true when it replaced the deck (LOAD).
 function applyStartupPatch(loadedDeck, dispatch) {
   if (!STARTUP_PATCH) return;
   dbg("[PATCH] Applying startup patch...");
@@ -423,6 +435,7 @@ function applyStartupPatch(loadedDeck, dispatch) {
     try {
       const sanitized = validateAndSanitizeDeck(STARTUP_PATCH);
       dispatch({ type: "LOAD", payload: { ...sanitized, deckTitle: sanitizeDeckTitle(STARTUP_PATCH.deckTitle) } });
+      return true;
     } catch (e) {
       // Fail closed: never load an unsanitized deck. validateAndSanitizeDeck only throws
       // on fundamentally invalid input (not an object / no lanes array) now that the
@@ -1397,7 +1410,7 @@ const SAFE_SLIDE_KEYS = new Set([
   "align", "verticalAlign", "padding", "gap",
   "splitGap", "contentFlex", "imageFlex", "imageCols",
   // presentation metadata
-  "duration", "timeLock", "hidden", "notes", "speakerNotes", "studyNotes",
+  "duration", "timeLock", "hidden", "reviewed", "notes", "speakerNotes", "studyNotes",
   "comments", "image",
 ]);
 const SAFE_BLOCK_KEYS = new Set([
@@ -1692,6 +1705,9 @@ function sanitizeSlide(slide) {
   }
   // `hidden` (slide excluded from presentation/counts) — strict boolean only.
   if ("hidden" in clean) { if (clean.hidden === true) clean.hidden = true; else delete clean.hidden; }
+  // `reviewed` (editor review checkmark, CR7) — strict boolean only; any other
+  // value is dropped so it can never reach render/nav logic as a non-boolean.
+  if ("reviewed" in clean) { if (clean.reviewed === true) clean.reviewed = true; else delete clean.reviewed; }
   // NOTE: wrap the sanitizeBlock calls — a bare `.map(sanitizeBlock)` would pass
   // the array INDEX into the recursion-depth parameter.
   if (Array.isArray(clean.blocks)) clean.blocks = clean.blocks.slice(0, 30).map((b) => sanitizeBlock(b)).filter(Boolean);
@@ -1728,15 +1744,33 @@ function sanitizeSlide(slide) {
   return clean;
 }
 
-function sanitizeItem(item) {
+// Lane/module ids from a deck are kept across ingress so that opening an
+// unchanged deck does not change it (and the local-sync autosave does not
+// rewrite the file). They are still untrusted: ids end up in storage keys
+// (MOD_PREFIX + id), React keys, and plain-object lookups, so only a short
+// strict-charset string is kept (type-check first, never coerce), names that
+// shadow Object.prototype members are refused, and a deck-wide `used` set
+// keeps ids unique. Anything else gets a fresh uid() — fail closed.
+const SAFE_DECK_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,39}$/;
+function keepDeckId(id, used) {
+  let out = typeof id === "string" && SAFE_DECK_ID.test(id) && !(id in Object.prototype) && !used.has(id) ? id : null;
+  while (!out || used.has(out)) out = uid();
+  used.add(out);
+  return out;
+}
+
+function sanitizeItem(item, used) {
   if (!item || typeof item !== "object") return null;
+  // `used` must be a Set: a bare `.map(sanitizeItem)` would pass the index here.
+  const id = keepDeckId(item.id, used instanceof Set ? used : new Set());
   const comments = Array.isArray(item.comments) ? item.comments.slice(0, MAX_COMMENTS).map(sanitizeComment).filter(Boolean) : [];
-  // Migrate legacy notes to a module-level comment if no comments exist
+  // Migrate legacy notes to a module-level comment if no comments exist.
+  // Deterministic id (derived from the module id) so a re-open gives the same deck.
   if (comments.length === 0 && typeof item.notes === "string" && item.notes.trim()) {
-    comments.push({ id: "c_" + uid(), text: sanitizeString(item.notes.trim(), 1000), anchor: null, blockIndex: null, status: "open", createdAt: now(), resolvedAt: null });
+    comments.push({ id: "c_n_" + id, text: sanitizeString(item.notes.trim(), 1000), anchor: null, blockIndex: null, status: "open", createdAt: typeof item.createdAt === "string" ? item.createdAt.slice(0, 30) : now(), resolvedAt: null });
   }
   return {
-    id: uid(),
+    id,
     title: sanitizeString(item.title || "Untitled", 200),
     notes: typeof item.notes === "string" ? sanitizeString(item.notes, 2000) : "",
     comments,
@@ -1744,7 +1778,9 @@ function sanitizeItem(item) {
     importance: VALID_IMPORTANCES.has(item.importance) ? item.importance : "should",
     order: typeof item.order === "number" ? item.order : 0,
     slides: Array.isArray(item.slides) ? item.slides.slice(0, 100).map(sanitizeSlide).filter(Boolean) : [],
-    createdAt: typeof item.createdAt === "string" ? item.createdAt.slice(0, 30) : now(),
+    // Keep an existing createdAt; never mint now() at ingress (it changed the
+    // deck on every open). New modules get createdAt from the reducer/engine.
+    ...(typeof item.createdAt === "string" ? { createdAt: item.createdAt.slice(0, 30) } : {}),
     ...(item.presentCard ? { presentCard: true } : {}),
   };
 }
@@ -1817,10 +1853,12 @@ function validateAndSanitizeDeck(raw) {
   if (!Array.isArray(raw.lanes)) throw new Error("Missing lanes array");
   // Clamp rather than throw: a >50-lane deck must not be able to trip an exception
   // that a fail-open caller would catch and then load raw, unsanitized (sanitizer off-switch).
+  const usedIds = new Set(); // one id namespace for the whole deck (lanes + modules)
   const lanes = raw.lanes.slice(0, 50).map((lane) => {
     if (!lane || typeof lane !== "object") return null;
-    const items = Array.isArray(lane.items) ? lane.items.slice(0, 200).map(sanitizeItem).filter(Boolean) : [];
-    return { id: uid(), title: sanitizeString(lane.title || "Untitled", 100), collapsed: !!lane.collapsed, items };
+    const id = keepDeckId(lane.id, usedIds);
+    const items = Array.isArray(lane.items) ? lane.items.slice(0, 200).map((it) => sanitizeItem(it, usedIds)).filter(Boolean) : [];
+    return { id, title: sanitizeString(lane.title || "Untitled", 100), collapsed: !!lane.collapsed, items };
   }).filter(Boolean);
   const rawBranding = raw.branding && typeof raw.branding === "object" ? raw.branding : {};
   const importedBranding = {
@@ -3021,11 +3059,11 @@ function AddItem({ onAdd, label = "Add", accent, variant = "row", style }) {
 }
 
 // Editable text wired to patch an item property
-function ItemText({ block, onChange, editable, idx, prop, style }) {
+function ItemText({ block, onChange, editable, idx, prop, style, suffix }) {
   const items = block.items || [];
   const val = items[idx]?.[prop] || "";
   return <EditableText text={val} editable={editable}
-    onSave={(v) => patchItemAt(block, onChange, idx, { [prop]: v })} style={style} />;
+    onSave={(v) => patchItemAt(block, onChange, idx, { [prop]: v })} style={style} suffix={suffix} />;
 }
 
 // Icon in a circle/square container
@@ -3055,7 +3093,11 @@ const reorderArrowBtn = (enabled) => ({ ...itemChromeBtn(T.bgPanel, T.border, en
 
 // noLinkBadge: keep link click-through + PDF export but render no link UI (badge/popup/button)
 // — used by grid, where the inner block already owns the link-editing chrome.
-function ItemChrome({ editable, presenting, onDelete, link, onSetLink, children, className, wrapStyle, linkLabel, anchor, badgeAnchor, noLinkBadge, reorder }) {
+// inlineBadge: the idle link badge is NOT absolutely anchored to the item box (which
+// lands on the widest line: over the last title word, or far right of a wider
+// subtitle). Instead `children` is a function (badge) => node and the item renders
+// `badge` as the suffix of its title/text, so it sits right after the last glyph.
+function ItemChrome({ editable, presenting, onDelete, link, onSetLink, children, className, wrapStyle, linkLabel, anchor, badgeAnchor, noLinkBadge, reorder, inlineBadge }) {
   const [hovered, setHovered] = useState(false);
   const [editingLink, setEditingLink] = useState(false);
   const notifyHover = React.useContext(ItemHoverContext);
@@ -3073,6 +3115,13 @@ function ItemChrome({ editable, presenting, onDelete, link, onSetLink, children,
   // stays focused instead of the neighbour now under the cursor. The pin clears on
   // the next mouse move, handing control back to plain hover.
   const clusterVisible = reorder && reorder.anyPinned ? reorder.pinned : hovered;
+  // Inline badge stays in the layout while the hover cluster shows (visibility only),
+  // so the text never reflows on hover.
+  const inlineBadgeEl = inlineBadge && link && !noLinkBadge && ((editMode && showLinkUI) || presenting)
+    ? (presenting
+      ? <span data-testid="item-link-badge" data-no-pdf="" onClick={(e) => { e.stopPropagation(); openExternalLink(link); }} style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", verticalAlign: "middle", marginLeft: 6, height: 16, padding: "0 5px", borderRadius: 4, background: T.accent, fontSize: 9, lineHeight: 1, color: "#fff", cursor: "pointer", opacity: hovered ? 1 : 0.3, transition: "opacity 0.2s", boxShadow: "0 2px 6px rgba(0,0,0,0.4)", fontStyle: "normal", fontWeight: 400, letterSpacing: 0, textTransform: "none" }}>🔗</span>
+      : <span data-testid="item-link-badge" data-no-pdf="" onClick={(e) => { e.stopPropagation(); setEditingLink(true); }} style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", verticalAlign: "middle", marginLeft: 6, width: 14, height: 14, borderRadius: "50%", background: T.accent + "80", fontSize: 7, lineHeight: 1, cursor: "pointer", visibility: clusterVisible ? "hidden" : "visible", fontStyle: "normal", fontWeight: 400, letterSpacing: 0, textTransform: "none" }} title={link}>🔗</span>)
+    : null;
   return (
     <div className={className} style={{ position: "relative", ...(clickable ? { cursor: "pointer" } : {}), ...wrapStyle }}
       title={link ? linkPreview(link, linkLabel) : undefined}
@@ -3080,11 +3129,11 @@ function ItemChrome({ editable, presenting, onDelete, link, onSetLink, children,
       data-pdf-link={link || undefined}
       onClick={clickable ? (e) => { e.stopPropagation(); openExternalLink(link); } : undefined}
       onMouseEnter={enter} onMouseLeave={leave}>
-      {children}
+      {typeof children === "function" ? children(inlineBadgeEl) : children}
       {/* Idle link badge — edit mode, cluster not shown */}
-      {link && showLinkUI && !clusterVisible && editMode && <div onClick={(e) => { e.stopPropagation(); setEditingLink(true); }} style={{ position: "absolute", ...ba, width: 14, height: 14, borderRadius: "50%", background: T.accent + "80", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 7, zIndex: 5, cursor: "pointer" }} title={link}>🔗</div>}
+      {link && showLinkUI && !clusterVisible && editMode && !inlineBadge && <div onClick={(e) => { e.stopPropagation(); setEditingLink(true); }} style={{ position: "absolute", ...ba, width: 14, height: 14, borderRadius: "50%", background: T.accent + "80", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 7, zIndex: 5, cursor: "pointer" }} title={link}>🔗</div>}
       {/* Idle link badge — presenter */}
-      {link && presenting && !noLinkBadge && <div onClick={(e) => { e.stopPropagation(); openExternalLink(link); }} style={{ position: "absolute", ...ba, padding: "2px 5px", borderRadius: 4, background: T.accent, fontSize: 9, color: "#fff", zIndex: 12, cursor: "pointer", opacity: hovered ? 1 : 0.3, transition: "opacity 0.2s", boxShadow: "0 2px 6px rgba(0,0,0,0.4)" }}>🔗</div>}
+      {link && presenting && !noLinkBadge && !inlineBadge && <div onClick={(e) => { e.stopPropagation(); openExternalLink(link); }} style={{ position: "absolute", ...ba, padding: "2px 5px", borderRadius: 4, background: T.accent, fontSize: 9, color: "#fff", zIndex: 12, cursor: "pointer", opacity: hovered ? 1 : 0.3, transition: "opacity 0.2s", boxShadow: "0 2px 6px rgba(0,0,0,0.4)" }}>🔗</div>}
       {/* Hover cluster — edit mode (or pinned after a reorder move) */}
       {clusterVisible && editMode && (showLinkUI || deletable || reorder) && <div style={{ position: "absolute", ...a, display: "flex", alignItems: "center", gap: 3, zIndex: 11 }}>
         {reorder && <button onClick={(e) => { e.stopPropagation(); reorder.onUp?.(); }} disabled={!reorder.onUp} style={reorderArrowBtn(!!reorder.onUp)} title="Move up">▲</button>}
@@ -3110,17 +3159,19 @@ function IconRowItem({ item, index, block, editable, onChange, st, SIZES, stagge
     <ItemChrome editable={editable} presenting={presenting}
       className={stg(staggerIdx, index)}
       wrapStyle={{ display: "flex", width: link ? "fit-content" : undefined, gap: 14, alignItems: "center" }}
-      link={link} linkLabel={item.title}
+      link={link} linkLabel={item.title} inlineBadge
       reorder={itemReorder(block, onChange, index, pin)}
       onSetLink={onChange ? (url) => setItemLink(block, onChange, index, url) : undefined}
       onDelete={onChange ? () => removeItemAt(block, onChange, index) : undefined}>
-      <EditableIcon editable={editMode} value={item.icon} size={20} onPick={onChange ? (name) => patchItemAt(block, onChange, index, { icon: name }) : undefined}>
-        <IconBubble icon={item.icon} size={20} color={item.iconColor || block.iconColor || st.accent} bg={item.iconBg || block.iconBg || `${st.accent}15`} shape={block.iconShape} />
-      </EditableIcon>
-      <div style={{ flex: 1 }}>
-        <ItemText block={block} onChange={editMode ? onChange : undefined} editable={editMode} idx={index} prop="title" style={{ fontFamily: FONT.display, fontSize: SIZES[block.titleSize || "sm"], fontWeight: 600, color: item.color || block.color || st.text, lineHeight: 1.3 }} />
-        {item.text && <ItemText block={block} onChange={editMode ? onChange : undefined} editable={editMode} idx={index} prop="text" style={{ fontFamily: FONT.body, fontSize: SIZES[block.textSize || "sm"], color: block.textColor || st.muted, lineHeight: 1.5 }} />}
-      </div>
+      {(badge) => <>
+        <EditableIcon editable={editMode} value={item.icon} size={20} onPick={onChange ? (name) => patchItemAt(block, onChange, index, { icon: name }) : undefined}>
+          <IconBubble icon={item.icon} size={20} color={item.iconColor || block.iconColor || st.accent} bg={item.iconBg || block.iconBg || `${st.accent}15`} shape={block.iconShape} />
+        </EditableIcon>
+        <div style={{ flex: 1 }}>
+          <ItemText block={block} onChange={editMode ? onChange : undefined} editable={editMode} idx={index} prop="title" suffix={badge} style={{ fontFamily: FONT.display, fontSize: SIZES[block.titleSize || "sm"], fontWeight: 600, color: item.color || block.color || st.text, lineHeight: 1.3 }} />
+          {item.text && <ItemText block={block} onChange={editMode ? onChange : undefined} editable={editMode} idx={index} prop="text" style={{ fontFamily: FONT.body, fontSize: SIZES[block.textSize || "sm"], color: block.textColor || st.muted, lineHeight: 1.5 }} />}
+        </div>
+      </>}
     </ItemChrome>
   );
 }
@@ -3142,11 +3193,11 @@ function BulletItem({ item, index, block, editable, onChange, st, SIZES, stagger
     <ItemChrome editable={editable} presenting={presenting}
       className={stg(staggerIdx, index)}
       wrapStyle={{ display: "flex", gap: 12, alignItems: "center" }}
-      link={link} linkLabel={text}
+      link={link} linkLabel={text} inlineBadge
       reorder={itemReorder(block, onChange, index, pin)}
       onSetLink={onChange ? (url) => setItemLink(block, onChange, index, url) : undefined}
       onDelete={onChange ? () => removeItemAt(block, onChange, index) : undefined}>
-      {icon
+      {(badge) => <>{icon
         ? <EditableIcon editable={editMode} value={icon} size={16} onPick={pickIcon}><span style={{ flexShrink: 0, display: "flex" }}>{getIcon(icon, { size: 16, color: cssColor(block.dotColor) || st.accent, strokeWidth: 2 })}</span></EditableIcon>
         : (editMode
           ? <EditableIcon editable value={undefined} size={14} onPick={pickIcon} />
@@ -3155,7 +3206,7 @@ function BulletItem({ item, index, block, editable, onChange, st, SIZES, stagger
         const ni = [...(block.items || [])];
         ni[index] = typeof item === "string" ? v : { ...item, text: v };
         onChange?.({ items: ni });
-      }} style={{ fontFamily: FONT.body, fontSize: SIZES[block.size || "md"], color: block.color || st.muted, lineHeight: 1.6, flex: 1, ...(link ? { textDecoration: "underline", textDecorationColor: (block.dotColor || st.accent) + "60", textUnderlineOffset: "3px" } : {}) }} />
+      }} suffix={badge} style={{ fontFamily: FONT.body, fontSize: SIZES[block.size || "md"], color: block.color || st.muted, lineHeight: 1.6, flex: 1, ...(link ? { textDecoration: "underline", textDecorationColor: (block.dotColor || st.accent) + "60", textUnderlineOffset: "3px" } : {}) }} /></>}
     </ItemChrome>
   );
 }
@@ -3658,18 +3709,18 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
           const dotCol = isActive ? (cssColor(block.numberColor) || st.accent) : `${st.textDim}60`;
           return <ItemChrome key={i} editable={editable} presenting={presenting} className={stg(staggerIdx, i)}
             wrapStyle={{ display: "flex", gap: 16, alignItems: "flex-start", paddingBottom: i < items.length - 1 ? 20 : 0 }}
-            link={itemLinkOf(item)} linkLabel={item.title}
+            link={itemLinkOf(item)} linkLabel={item.title} inlineBadge
             reorder={itemReorder(block, onChange, i, _pin)}
             onSetLink={onChange ? (url) => setItemLink(block, onChange, i, url) : undefined}
             onDelete={onChange ? () => removeItemAt(block, onChange, i) : undefined}>
-            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", flexShrink: 0, width: 28 }}>
+            {(badge) => <><div style={{ display: "flex", flexDirection: "column", alignItems: "center", flexShrink: 0, width: 28 }}>
               <div style={{ width: 28, height: 28, borderRadius: "50%", background: isActive ? dotCol : "transparent", border: `2px solid ${dotCol}`, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: FONT.mono, fontSize: 11, fontWeight: 700, color: isActive ? "#fff" : st.textDim, flexShrink: 0, zIndex: 1 }}>{i + 1}</div>
               {i < items.length - 1 && <div style={{ width: 2, flex: 1, minHeight: 16, background: lineCol, marginTop: 4 }} />}
             </div>
             <div style={{ flex: 1, paddingTop: 3 }}>
-              <ItemText block={block} onChange={onChange} editable={textEditable} idx={i} prop="title" style={{ fontFamily: FONT.display, fontSize: SIZES[block.titleSize || "md"], fontWeight: 600, color: block.titleColor || st.text, lineHeight: 1.3 }} />
+              <ItemText block={block} onChange={onChange} editable={textEditable} idx={i} prop="title" suffix={badge} style={{ fontFamily: FONT.display, fontSize: SIZES[block.titleSize || "md"], fontWeight: 600, color: block.titleColor || st.text, lineHeight: 1.3 }} />
               {item.text && <ItemText block={block} onChange={onChange} editable={textEditable} idx={i} prop="text" style={{ fontFamily: FONT.body, fontSize: SIZES[block.textSize || "sm"], color: block.textColor || st.muted, lineHeight: 1.5, marginTop: 3 }} />}
-            </div>
+            </div></>}
           </ItemChrome>;
         })}
         {canEdit && <AddItem label="Add step" accent={st.accent} onAdd={() => addItemAt(block, onChange, newItemFor(block,"steps"))} />}
@@ -3689,14 +3740,14 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
               : { background: col, border: "1px solid transparent", color: "#fff" };
           return <ItemChrome key={i} editable={editable} presenting={presenting} className={stg(staggerIdx, i)}
             wrapStyle={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "4px 12px", borderRadius: 20, fontFamily: FONT.mono, fontSize: SIZES[block.size || "xs"], fontWeight: 600, letterSpacing: "0.02em", ...vs, ...(item.style && typeof item.style === "object" && !Array.isArray(item.style) ? item.style : {}) }}
-            link={itemLinkOf(item)} linkLabel={item.text}
+            link={itemLinkOf(item)} linkLabel={item.text} inlineBadge
             reorder={itemReorder(block, onChange, i, _pin)}
             onSetLink={onChange ? (url) => setItemLink(block, onChange, i, url) : undefined}
             onDelete={onChange ? () => removeItemAt(block, onChange, i) : undefined}>
-            <EditableIcon editable={editable && !presenting} value={item.icon} size={12} onPick={onChange ? (name) => patchItemAt(block, onChange, i, { icon: name }) : undefined}>
+            {(badge) => <><EditableIcon editable={editable && !presenting} value={item.icon} size={12} onPick={onChange ? (name) => patchItemAt(block, onChange, i, { icon: name }) : undefined}>
               {item.icon ? <span style={{ display: "flex", flexShrink: 0 }}>{getIcon(item.icon, { size: 12, color: variant === "filled" ? "#fff" : col, strokeWidth: 2 })}</span> : null}
             </EditableIcon>
-            <ItemText block={block} onChange={onChange} editable={textEditable} idx={i} prop="text" />
+            <ItemText block={block} onChange={onChange} editable={textEditable} idx={i} prop="text" suffix={badge} /></>}
           </ItemChrome>;
         })}
         {canEdit && <AddItem variant="chip" label="Add" accent={st.accent} onAdd={() => addItemAt(block, onChange, newItemFor(block,"tag-group"))} />}
@@ -3714,19 +3765,19 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
           {items.map((item, i) => (
             <ItemChrome key={i} editable={editable} presenting={presenting} className={stg(staggerIdx, i)}
               wrapStyle={{ display: "flex", gap: 16, alignItems: "flex-start", paddingBottom: i < items.length - 1 ? 24 : 0 }}
-              link={itemLinkOf(item)} linkLabel={item.title}
+              link={itemLinkOf(item)} linkLabel={item.title} inlineBadge
               reorder={itemReorder(block, onChange, i, _pin)}
               onSetLink={onChange ? (url) => setItemLink(block, onChange, i, url) : undefined}
               onDelete={onChange ? () => removeItemAt(block, onChange, i) : undefined}>
-              <div style={{ display: "flex", flexDirection: "column", alignItems: "center", flexShrink: 0, width: 14 }}>
+              {(badge) => <><div style={{ display: "flex", flexDirection: "column", alignItems: "center", flexShrink: 0, width: 14 }}>
                 <div style={{ width: 10, height: 10, borderRadius: "50%", background: dotCol, border: `2px solid ${dotCol}`, flexShrink: 0, zIndex: 1, marginTop: 4 }} />
                 {i < items.length - 1 && <div style={{ width: 2, flex: 1, minHeight: 20, background: lineCol, marginTop: 4 }} />}
               </div>
               <div style={{ flex: 1 }}>
                 {item.date && <ItemText block={block} onChange={onChange} editable={textEditable} idx={i} prop="date" style={{ fontFamily: FONT.mono, fontSize: SIZES.xs, color: block.dateColor || st.accent, fontWeight: 700, letterSpacing: "0.05em", textTransform: "uppercase", marginBottom: 3 }} />}
-                <ItemText block={block} onChange={onChange} editable={textEditable} idx={i} prop="title" style={{ fontFamily: FONT.display, fontSize: SIZES[block.titleSize || "md"], fontWeight: 600, color: block.titleColor || st.text, lineHeight: 1.3 }} />
+                <ItemText block={block} onChange={onChange} editable={textEditable} idx={i} prop="title" suffix={badge} style={{ fontFamily: FONT.display, fontSize: SIZES[block.titleSize || "md"], fontWeight: 600, color: block.titleColor || st.text, lineHeight: 1.3 }} />
                 {item.text && <ItemText block={block} onChange={onChange} editable={textEditable} idx={i} prop="text" style={{ fontFamily: FONT.body, fontSize: SIZES[block.textSize || "sm"], color: block.textColor || st.muted, lineHeight: 1.5, marginTop: 3 }} />}
-              </div>
+              </div></>}
             </ItemChrome>
           ))}
           {canEdit && <AddItem label="Add event" accent={st.accent} onAdd={() => addItemAt(block, onChange, newItemFor(block,"timeline"))} />}
@@ -3740,14 +3791,14 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
           {items.map((item, i) => (
             <ItemChrome key={i} editable={editable} presenting={presenting} className={stg(staggerIdx, i)}
               wrapStyle={{ flex: "1 1 0", display: "flex", flexDirection: "column", alignItems: "center", minWidth: 0 }}
-              link={itemLinkOf(item)} linkLabel={item.title}
+              link={itemLinkOf(item)} linkLabel={item.title} inlineBadge
               reorder={itemReorder(block, onChange, i, _pin)}
               onSetLink={onChange ? (url) => setItemLink(block, onChange, i, url) : undefined}
               onDelete={onChange ? () => removeItemAt(block, onChange, i) : undefined}>
-              <div style={{ width: 10, height: 10, borderRadius: "50%", background: dotCol, flexShrink: 0, zIndex: 1, marginBottom: 10 }} />
+              {(badge) => <><div style={{ width: 10, height: 10, borderRadius: "50%", background: dotCol, flexShrink: 0, zIndex: 1, marginBottom: 10 }} />
               {item.date && <ItemText block={block} onChange={onChange} editable={textEditable} idx={i} prop="date" style={{ fontFamily: FONT.mono, fontSize: SIZES.xs, color: block.dateColor || st.accent, fontWeight: 700, letterSpacing: "0.04em", textTransform: "uppercase", textAlign: "center", marginBottom: 4 }} />}
-              <ItemText block={block} onChange={onChange} editable={textEditable} idx={i} prop="title" style={{ fontFamily: FONT.display, fontSize: SIZES[block.titleSize || "sm"], fontWeight: 600, color: block.titleColor || st.text, textAlign: "center", lineHeight: 1.3 }} />
-              {item.text && <ItemText block={block} onChange={onChange} editable={textEditable} idx={i} prop="text" style={{ fontFamily: FONT.body, fontSize: SIZES.xs, color: block.textColor || st.muted, textAlign: "center", lineHeight: 1.4, marginTop: 3 }} />}
+              <ItemText block={block} onChange={onChange} editable={textEditable} idx={i} prop="title" suffix={badge} style={{ fontFamily: FONT.display, fontSize: SIZES[block.titleSize || "sm"], fontWeight: 600, color: block.titleColor || st.text, textAlign: "center", lineHeight: 1.3 }} />
+              {item.text && <ItemText block={block} onChange={onChange} editable={textEditable} idx={i} prop="text" style={{ fontFamily: FONT.body, fontSize: SIZES.xs, color: block.textColor || st.muted, textAlign: "center", lineHeight: 1.4, marginTop: 3 }} />}</>}
             </ItemChrome>
           ))}
         </div>
@@ -3798,12 +3849,12 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
             {(left.items || []).map((pt, pi) => (
               <ItemChrome key={pi} editable={editable} presenting={presenting}
                 wrapStyle={{ display: "flex", alignItems: "start", gap: 8, fontSize: SIZES[block.size || "sm"], fontFamily: FONT.body, color: st.text, lineHeight: 1.5 }}
-                link={itemLinkOf(pt)} linkLabel={typeof pt === "string" ? pt : pt.text}
+                link={itemLinkOf(pt)} linkLabel={typeof pt === "string" ? pt : pt.text} inlineBadge
                 reorder={pointReorder(0, left.items, pi)}
                 onSetLink={onChange ? (url) => linkPoint(0, pi, url) : undefined}
                 onDelete={onChange ? () => deletePoint(0, pi) : undefined}>
-                <span style={{ width: 6, height: 6, borderRadius: "50%", background: leftColor, flexShrink: 0, marginTop: 7 }} />
-                <span>{typeof pt === "string" ? pt : pt.text || ""}</span>
+                {(badge) => <><span style={{ width: 6, height: 6, borderRadius: "50%", background: leftColor, flexShrink: 0, marginTop: 7 }} />
+                <span>{typeof pt === "string" ? pt : pt.text || ""}{badge}</span></>}
               </ItemChrome>
             ))}
             {canEdit && <AddItem variant="chip" label="Add point" accent={leftColor} onAdd={() => addPoint(0)} />}
@@ -3823,12 +3874,12 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
             {(right.items || []).map((pt, pi) => (
               <ItemChrome key={pi} editable={editable} presenting={presenting}
                 wrapStyle={{ display: "flex", alignItems: "start", gap: 8, fontSize: SIZES[block.size || "sm"], fontFamily: FONT.body, color: st.text, lineHeight: 1.5 }}
-                link={itemLinkOf(pt)} linkLabel={typeof pt === "string" ? pt : pt.text}
+                link={itemLinkOf(pt)} linkLabel={typeof pt === "string" ? pt : pt.text} inlineBadge
                 reorder={pointReorder(1, right.items, pi)}
                 onSetLink={onChange ? (url) => linkPoint(1, pi, url) : undefined}
                 onDelete={onChange ? () => deletePoint(1, pi) : undefined}>
-                <span style={{ width: 6, height: 6, borderRadius: "50%", background: rightColor, flexShrink: 0, marginTop: 7 }} />
-                <span>{typeof pt === "string" ? pt : pt.text || ""}</span>
+                {(badge) => <><span style={{ width: 6, height: 6, borderRadius: "50%", background: rightColor, flexShrink: 0, marginTop: 7 }} />
+                <span>{typeof pt === "string" ? pt : pt.text || ""}{badge}</span></>}
               </ItemChrome>
             ))}
             {canEdit && <AddItem variant="chip" label="Add point" accent={rightColor} onAdd={() => addPoint(1)} />}
@@ -4005,11 +4056,11 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
                 {(qd.items || []).map((pt, pi) => (
                   <ItemChrome key={pi} editable={editable} presenting={presenting}
                     wrapStyle={{ fontSize: SIZES.xs, fontFamily: FONT.body, color: st.text, marginBottom: 6, display: "flex", gap: 6 }}
-                    link={itemLinkOf(pt)} linkLabel={typeof pt === "string" ? pt : pt.text}
+                    link={itemLinkOf(pt)} linkLabel={typeof pt === "string" ? pt : pt.text} inlineBadge
                     reorder={qPointReorder(qi, qd.items, pi)}
                     onSetLink={onChange ? (url) => linkQPoint(qi, pi, url) : undefined}
                     onDelete={onChange ? () => deleteQPoint(qi, pi) : undefined}>
-                    <span style={{ color: qc }}>•</span> {typeof pt === "string" ? pt : pt.text || ""}
+                    {(badge) => <><span style={{ color: qc }}>•</span> <span>{typeof pt === "string" ? pt : pt.text || ""}{badge}</span></>}
                   </ItemChrome>
                 ))}
                 {canEdit && <AddItem variant="chip" label="Add point" accent={qc} style={{ marginTop: 4 }} onAdd={() => addQPoint(qi)} />}
@@ -4044,16 +4095,16 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
           const labelColor = status === "done" ? "#22c55e" : status === "partial" ? "#f59e0b" : status === "blocked" ? "#ef4444" : st.muted;
           return <ItemChrome key={i} editable={editable} presenting={presenting} className={stg(staggerIdx, i)}
             wrapStyle={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 16px", background: `${labelColor}08`, borderRadius: 8 }}
-            link={itemLinkOf(item)} linkLabel={typeof item === "string" ? item : item.text}
+            link={itemLinkOf(item)} linkLabel={typeof item === "string" ? item : item.text} inlineBadge
             reorder={itemReorder(block, onChange, i, _pin)}
             onSetLink={onChange ? (url) => setItemLink(block, onChange, i, url) : undefined}
             onDelete={onChange ? () => removeItemAt(block, onChange, i) : undefined}>
-            <div style={{ width: 22, height: 22, borderRadius: "50%", background: status === "done" ? cfg.bg : status === "blocked" ? cfg.bg : "transparent", border: status === "pending" ? `2px solid ${st.muted}` : status === "partial" ? `2px solid #f59e0b` : "none", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, position: "relative", overflow: "hidden" }}>
+            {(badge) => <><div style={{ width: 22, height: 22, borderRadius: "50%", background: status === "done" ? cfg.bg : status === "blocked" ? cfg.bg : "transparent", border: status === "pending" ? `2px solid ${st.muted}` : status === "partial" ? `2px solid #f59e0b` : "none", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, position: "relative", overflow: "hidden" }}>
               {status === "partial" && <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, height: "50%", background: "#f59e0b" }} />}
               {cfg.icon && <span style={{ display: "flex", zIndex: 1 }}>{getIcon(cfg.icon, { size: 12, color: status === "done" ? "#fff" : "#ef4444", strokeWidth: 3 })}</span>}
             </div>
-            <span style={{ fontFamily: FONT.body, fontSize: SIZES[block.size || "sm"], color: cfg.textColor, flex: 1 }}>{typeof item === "string" ? item : item.text || ""}</span>
-            {block.showLabels !== false && <span style={{ marginLeft: "auto", fontFamily: FONT.mono, fontSize: SIZES.xs, fontWeight: 600, color: labelColor }}>{cfg.label}</span>}
+            <span style={{ fontFamily: FONT.body, fontSize: SIZES[block.size || "sm"], color: cfg.textColor, flex: 1 }}>{typeof item === "string" ? item : item.text || ""}{badge}</span>
+            {block.showLabels !== false && <span style={{ marginLeft: "auto", fontFamily: FONT.mono, fontSize: SIZES.xs, fontWeight: 600, color: labelColor }}>{cfg.label}</span>}</>}
           </ItemChrome>;
         })}
         {canEdit && <AddItem label="Add item" accent={st.accent} onAdd={() => addItemAt(block, onChange, newItemFor(block,"checklist"))} />}
@@ -4226,6 +4277,7 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
   const [colsImageFit, setColsImageFit] = useState(null);
   const [hoveredBlock, setHoveredBlock] = useState(null);
   const [itemHovered, setItemHovered] = useState(false); // an inner item's chrome is hovered → hide block toolbar
+  const [flushMap, setFlushMap] = useState({}); // block index → { top, right }: block sits flush to the slide edge (chrome clamps inward)
   const [editingLink, setEditingLink] = useState(null);
   const [editingBlockIdx, setEditingBlockIdx] = useState(null);
   const [blockPrompt, setBlockPrompt] = useState("");
@@ -4557,18 +4609,34 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
   const isSoloImage = blocks.length === 1 && blocks[0].type === "image";
   const pad = isSoloImage ? "0px" : String(rawPad).split(/\s+/).map((v) => Math.max(parseInt(v) || 24, 24) + "px").join(" ");
 
+  // Flush-edge regime (see the design note at the top of this file): a block with
+  // less top/right room than the toolbar's outward escape (plus a top accent bar)
+  // gets its chrome clamped INSIDE the block. Measured on hover in slide px.
+  const accentH = branding?.enabled && branding.accentBar ? (Number(branding.accentHeight) || 4) : 0;
+  const measureFlush = (el, i) => {
+    const outer = outerRef.current;
+    if (!el || !outer) return;
+    const o = outer.getBoundingClientRect(), r = el.getBoundingClientRect();
+    const scale = outer.offsetWidth ? o.width / outer.offsetWidth : 1;
+    const next = { top: (r.top - o.top) / scale < 12 + accentH, right: (o.right - r.right) / scale < 12 };
+    setFlushMap((m) => (m[i] && m[i].top === next.top && m[i].right === next.right) ? m : { ...m, [i]: next });
+  };
+  const flushOf = (b, i) => b._solo ? { top: true, right: true } : (flushMap[i] || { top: false, right: false });
+  const flushChromeActive = editable && onEdit && !presenting && [hoveredBlock, editingBlockIdx, editingLink, commentingBlockIdx]
+    .some((k) => k != null && (flushMap[k]?.top || flushMap[k]?.right || (isSoloImage && k === 0)));
+
   // Render a single block with all editable chrome (hover, edit popup, link, etc.)
   // ── Per-block editor chrome: hover toolbar, AI/link/comment popups, badges ──
-  const renderBlockItem = (b, i) => editable && onEdit ? (
-    <div key={i} data-block-type={b.type} style={{ position: "relative", ...(b.link ? { cursor: "pointer" } : {}), ...(b.hidden && !presenting ? { opacity: 0.4 } : {}) }}
+  const renderBlockItem = (b, i) => { const fl = flushOf(b, i); const popTop = fl.top ? 30 : null; return editable && onEdit ? (
+    <div key={i} data-block-type={b.type} data-block-index={i} data-block-flush={fl.top || fl.right ? `${fl.top ? "top" : ""}${fl.top && fl.right ? " " : ""}${fl.right ? "right" : ""}` : undefined} style={{ position: "relative", ...(b.link ? { cursor: "pointer" } : {}), ...(b.hidden && !presenting ? { opacity: 0.4 } : {}) }}
       title={b.link ? linkPreview(b.link, b.text || b.value || b.title) : undefined}
       data-pdf-link={b.link || undefined}
       onClick={b.link ? (e) => { e.stopPropagation(); openExternalLink(b.link); } : undefined}
-      onMouseEnter={() => setHoveredBlock(i)} onMouseLeave={() => { setHoveredBlock(null); setItemHovered(false); }}>
-      {b.hidden && !presenting && <div style={{ position: "absolute", top: -6, left: -6, zIndex: 11, fontSize: 9, fontFamily: FONT.mono, fontWeight: 700, background: st.accent, color: "#fff", borderRadius: 4, padding: "0 4px", lineHeight: "14px", pointerEvents: "none" }} title="Hidden in presentation">🙈 hidden</div>}
+      onMouseEnter={(e) => { measureFlush(e.currentTarget, i); setHoveredBlock(i); }} onMouseLeave={() => { setHoveredBlock(null); setItemHovered(false); }}>
+      {b.hidden && !presenting && <div style={{ position: "absolute", top: fl.top ? 6 : -6, left: fl.top ? 6 : -6, zIndex: 11, fontSize: 9, fontFamily: FONT.mono, fontWeight: 700, background: st.accent, color: "#fff", borderRadius: 4, padding: "0 4px", lineHeight: "14px", pointerEvents: "none" }} title="Hidden in presentation">🙈 hidden</div>}
       {editingBlockIdx === i && !presenting && <div style={{ position: "absolute", inset: -3, border: `2px solid ${st.accent}`, borderRadius: 6, pointerEvents: "none", zIndex: 10, boxShadow: `0 0 12px ${st.accent}40` }} />}
       {hoveredBlock === i && editingBlockIdx !== i && !presenting && <div style={{ position: "absolute", inset: -2, border: `1.5px dashed ${T.red}60`, borderRadius: 4, pointerEvents: "none", zIndex: 10 }} />}
-      {hoveredBlock === i && !itemHovered && !presenting && <div style={{ position: "absolute", top: -8, right: -8, display: "flex", gap: 3, zIndex: 11 }}>
+      {hoveredBlock === i && !itemHovered && !presenting && <div data-testid="block-toolbar" data-toolbar-inset={fl.top || fl.right ? "true" : undefined} style={{ position: "absolute", ...(fl.top || fl.right ? { top: fl.top ? 6 : -8, right: fl.right ? 6 : -8, padding: 3, borderRadius: 12, background: "rgba(10,15,28,0.75)", boxShadow: "0 2px 8px rgba(0,0,0,0.4)" } : { top: -8, right: -8 }), display: "flex", gap: 3, zIndex: 11 }}>
         {onBlockEdit && <button onClick={(e) => { e.stopPropagation(); setEditingBlockIdx(editingBlockIdx === i ? null : i); setBlockPrompt(""); setEditingLink(null); }} style={{ width: 18, height: 18, borderRadius: "50%", background: editingBlockIdx === i ? st.accent : T.bgPanel, border: `1px solid ${editingBlockIdx === i ? st.accent : T.border}`, color: editingBlockIdx === i ? "#fff" : T.textDim, fontSize: 9, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", lineHeight: 1, padding: 0, boxShadow: "0 2px 6px rgba(0,0,0,0.4)" }} title="Edit this block with AI">🎯</button>}
         <button onClick={(e) => { e.stopPropagation(); setEditingLink(editingLink === i ? null : i); setEditingBlockIdx(null); setCommentingBlockIdx(null); }} style={{ width: 18, height: 18, borderRadius: "50%", background: b.link ? T.accent : T.bgPanel, border: `1px solid ${b.link ? T.accent : T.border}`, color: b.link ? "#fff" : T.textDim, fontSize: 9, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", lineHeight: 1, padding: 0, boxShadow: "0 2px 6px rgba(0,0,0,0.4)" }} title={b.link ? `Link: ${b.link}` : "Add link"}>🔗</button>
         {externalDispatch && <button onClick={(e) => { e.stopPropagation(); setCommentingBlockIdx(commentingBlockIdx === i ? null : i); setCommentText(""); setEditingBlockIdx(null); setEditingLink(null); }} style={{ width: 18, height: 18, borderRadius: "50%", background: commentingBlockIdx === i ? T.amber : T.bgPanel, border: `1px solid ${commentingBlockIdx === i ? T.amber : T.border}`, color: commentingBlockIdx === i ? "#fff" : T.textDim, fontSize: 9, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", lineHeight: 1, padding: 0, boxShadow: "0 2px 6px rgba(0,0,0,0.4)" }} title="Add comment">💬</button>}
@@ -4576,7 +4644,7 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
         <button onClick={(e) => { e.stopPropagation(); handleBlockRemove(i); }} style={{ width: 18, height: 18, borderRadius: "50%", background: T.red, border: "none", color: "#fff", fontSize: 10, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", lineHeight: 1, padding: 0, boxShadow: "0 2px 6px rgba(0,0,0,0.4)" }}>✕</button>
       </div>}
       {/* Block edit popup */}
-      {editingBlockIdx === i && !presenting && <div onClick={(e) => e.stopPropagation()} style={{ position: "absolute", top: -36, right: 0, zIndex: 12, display: "flex", gap: 4, alignItems: "center", background: "rgba(10,15,28,0.95)", border: `1px solid ${st.accent}50`, borderRadius: 8, padding: "4px 8px", boxShadow: `0 4px 16px rgba(0,0,0,0.6), 0 0 0 1px ${st.accent}20`, backdropFilter: "blur(12px)" }}>
+      {editingBlockIdx === i && !presenting && <div data-testid="block-ai-popup" onClick={(e) => e.stopPropagation()} style={{ position: "absolute", top: popTop ?? -36, right: fl.right ? 6 : 0, zIndex: 12, display: "flex", gap: 4, alignItems: "center", background: "rgba(10,15,28,0.95)", border: `1px solid ${st.accent}50`, borderRadius: 8, padding: "4px 8px", boxShadow: `0 4px 16px rgba(0,0,0,0.6), 0 0 0 1px ${st.accent}20`, backdropFilter: "blur(12px)" }}>
         <span style={{ fontSize: 9, color: st.accent, flexShrink: 0 }}>🎯</span>
         <input autoFocus value={blockPrompt} onChange={(e) => setBlockPrompt(e.target.value)}
           onKeyDown={(e) => { e.stopPropagation(); if (e.key === "Enter" && blockPrompt.trim() && !blockEditing) { e.preventDefault(); onBlockEdit(i, blockPrompt.trim()); } if (e.key === "Escape") { setEditingBlockIdx(null); setBlockPrompt(""); } }}
@@ -4588,13 +4656,13 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
           : <button onClick={() => { if (blockPrompt.trim()) onBlockEdit(i, blockPrompt.trim()); }} disabled={!blockPrompt.trim()} style={{ padding: "2px 8px", fontSize: 9, fontFamily: FONT.mono, fontWeight: 700, background: blockPrompt.trim() ? st.accent : "rgba(255,255,255,0.1)", color: "#fff", border: "none", borderRadius: 4, cursor: blockPrompt.trim() ? "pointer" : "default", opacity: blockPrompt.trim() ? 1 : 0.4, flexShrink: 0 }}>Go</button>}
         <button onClick={() => { setEditingBlockIdx(null); setBlockPrompt(""); }} style={{ background: "none", border: "none", color: "rgba(255,255,255,0.4)", cursor: "pointer", fontSize: 10, padding: 0, flexShrink: 0 }}>✕</button>
       </div>}
-      {editingLink === i && !presenting && <div onClick={(e) => e.stopPropagation()} style={{ position: "absolute", top: -32, right: 0, zIndex: 12, display: "flex", gap: 4, alignItems: "center", background: T.bgPanel, border: `1px solid ${T.border}`, borderRadius: 6, padding: "3px 6px", boxShadow: "0 4px 12px rgba(0,0,0,0.5)" }}>
+      {editingLink === i && !presenting && <div data-testid="block-link-popup" onClick={(e) => e.stopPropagation()} style={{ position: "absolute", top: popTop ?? -32, right: fl.right ? 6 : 0, zIndex: 12, display: "flex", gap: 4, alignItems: "center", background: T.bgPanel, border: `1px solid ${T.border}`, borderRadius: 6, padding: "3px 6px", boxShadow: "0 4px 12px rgba(0,0,0,0.5)" }}>
         <span style={{ fontSize: 9, color: T.textDim }}>🔗</span>
         <input autoFocus defaultValue={b.link || ""} placeholder="https://..." onKeyDown={(e) => { e.stopPropagation(); if (e.key === "Enter") { const url = e.target.value.trim(); handleBlockChange(i, { link: url || undefined }); setEditingLink(null); } if (e.key === "Escape") setEditingLink(null); }} onBlur={(e) => { const url = e.target.value.trim(); handleBlockChange(i, { link: url || undefined }); setEditingLink(null); }} style={{ width: 200, padding: "2px 6px", fontSize: 10, fontFamily: FONT.mono, background: T.bg, color: T.text, border: `1px solid ${T.border}`, borderRadius: 4, outline: "none" }} />
         {b.link && <button onClick={() => { handleBlockChange(i, { link: undefined }); setEditingLink(null); }} style={{ background: "none", border: "none", color: T.red, fontSize: 10, cursor: "pointer", padding: 0 }}>✕</button>}
       </div>}
       {/* Block comment popup */}
-      {commentingBlockIdx === i && !presenting && externalDispatch && <div onClick={(e) => e.stopPropagation()} style={{ position: "absolute", top: -36, right: 0, zIndex: 12, display: "flex", gap: 4, alignItems: "center", background: "rgba(10,15,28,0.95)", border: `1px solid ${T.amber}50`, borderRadius: 8, padding: "4px 8px", boxShadow: `0 4px 16px rgba(0,0,0,0.6), 0 0 0 1px ${T.amber}20`, backdropFilter: "blur(12px)" }}>
+      {commentingBlockIdx === i && !presenting && externalDispatch && <div data-testid="block-comment-popup" onClick={(e) => e.stopPropagation()} style={{ position: "absolute", top: popTop ?? -36, right: fl.right ? 6 : 0, zIndex: 12, display: "flex", gap: 4, alignItems: "center", background: "rgba(10,15,28,0.95)", border: `1px solid ${T.amber}50`, borderRadius: 8, padding: "4px 8px", boxShadow: `0 4px 16px rgba(0,0,0,0.6), 0 0 0 1px ${T.amber}20`, backdropFilter: "blur(12px)" }}>
         <span style={{ fontSize: 9, flexShrink: 0 }}>💬</span>
         <input autoFocus value={commentText} onChange={(e) => setCommentText(e.target.value)}
           onKeyDown={(e) => { e.stopPropagation(); if (e.key === "Enter" && commentText.trim()) { e.preventDefault(); externalDispatch({ type: "ADD_COMMENT", itemId, slideIndex: index, text: commentText.trim(), blockIndex: i }); setCommentText(""); setCommentingBlockIdx(null); } if (e.key === "Escape") { setCommentingBlockIdx(null); setCommentText(""); } }}
@@ -4605,8 +4673,8 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
       </div>}
       {/* Comment count badge (edit mode, not review) */}
       {!reviewMode && !presenting && hoveredBlock !== i && externalDispatch && (() => { const cc = slideComments.filter((c) => c.blockIndex === i && c.status === "open"); return cc.length > 0 ? <div style={{ position: "absolute", top: -2, left: -2, minWidth: 14, height: 14, borderRadius: 7, background: T.amber, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 7, fontFamily: FONT.mono, fontWeight: 700, color: "#fff", padding: "0 3px", zIndex: 5, boxShadow: "0 2px 4px rgba(0,0,0,0.3)" }} title={`${cc.length} comment${cc.length > 1 ? "s" : ""}`}>💬{cc.length > 1 ? cc.length : ""}</div> : null; })()}
-      {b.link && hoveredBlock !== i && !presenting && <div onClick={(e) => { e.stopPropagation(); openExternalLink(b.link); }} style={{ position: "absolute", top: -2, right: -2, width: 14, height: 14, borderRadius: "50%", background: T.accent + "80", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 7, zIndex: 5, cursor: "pointer" }} title={b.link}>🔗</div>}
-      {b.link && presenting && <div style={{ position: "absolute", top: -2, right: -2, padding: "2px 5px", borderRadius: 4, background: T.accent, fontSize: 9, color: "#fff", zIndex: 12, pointerEvents: "none", opacity: hoveredBlock === i ? 1 : 0.3, transition: "opacity 0.2s", boxShadow: "0 2px 6px rgba(0,0,0,0.4)" }}>🔗</div>}
+      {b.link && hoveredBlock !== i && !presenting && <div onClick={(e) => { e.stopPropagation(); openExternalLink(b.link); }} style={{ position: "absolute", top: fl.top ? 6 : -2, right: fl.right ? 6 : -2, width: 14, height: 14, borderRadius: "50%", background: T.accent + "80", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 7, zIndex: 5, cursor: "pointer" }} title={b.link}>🔗</div>}
+      {b.link && presenting && <div style={{ position: "absolute", top: fl.top ? 6 : -2, right: fl.right ? 6 : -2, padding: "2px 5px", borderRadius: 4, background: T.accent, fontSize: 9, color: "#fff", zIndex: 12, pointerEvents: "none", opacity: hoveredBlock === i ? 1 : 0.3, transition: "opacity 0.2s", boxShadow: "0 2px 6px rgba(0,0,0,0.4)" }}>🔗</div>}
       <RenderBlock block={b} staggerIdx={i + 1} slideTheme={st} editable={b.link ? false : editable} slideAlign={align} fontScale={fontScale} presenting={presenting}
         onChange={onEdit ? (patch) => handleBlockChange(i, patch) : undefined} />
     </div>
@@ -4615,7 +4683,7 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
       <RenderBlock block={b} staggerIdx={i + 1} slideTheme={st} editable={b.link ? false : editable} slideAlign={align} fontScale={fontScale} presenting={presenting}
         onChange={onEdit ? (patch) => handleBlockChange(i, patch) : undefined} />
     </div>
-  );
+  ); };
 
   // Slide comments — always computed for badges, inline cards only in review mode
   const slideComments = slide?.comments ? slide.comments.filter(Boolean) : [];
@@ -4772,7 +4840,7 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
   return (
     <SlideErrorBoundary>
       <div ref={outerRef} style={{ height: "100%", padding: pad, position: "relative", overflow: "visible", boxSizing: "border-box", display: "flex", flexDirection: "column", ...bgStyle }}>
-        <div ref={innerRef} style={{ position: "relative", zIndex: 2, display: "flex", flexDirection: isSplit ? "row" : "column", justifyContent: isSplit ? "stretch" : fitJustify, alignItems: isSplit ? "stretch" : (align === "center" ? "center" : "stretch"), textAlign: align, gap: isSplit ? (slide.splitGap || 32) : (slide.gap || 12), transform: fitScale < 1 ? `scale(${fitScale})` : "none", transformOrigin: "top left", width: fitScale < 1 ? `${100 / fitScale}%` : "100%", height: fitScale < 1 ? `${100 / fitScale}%` : "100%", maxWidth: fitScale < 1 ? `${100 / fitScale}%` : "100%", flex: fitScale < 1 ? undefined : 1, flexShrink: fitScale < 1 && (isSplit || isCols) ? 0 : undefined, boxSizing: "border-box" }}>
+        <div ref={innerRef} style={{ position: "relative", zIndex: flushChromeActive ? 6 : 2, display: "flex", flexDirection: isSplit ? "row" : "column", justifyContent: isSplit ? "stretch" : fitJustify, alignItems: isSplit ? "stretch" : (align === "center" ? "center" : "stretch"), textAlign: align, gap: isSplit ? (slide.splitGap || 32) : (slide.gap || 12), transform: fitScale < 1 ? `scale(${fitScale})` : "none", transformOrigin: "top left", width: fitScale < 1 ? `${100 / fitScale}%` : "100%", height: fitScale < 1 ? `${100 / fitScale}%` : "100%", maxWidth: fitScale < 1 ? `${100 / fitScale}%` : "100%", flex: fitScale < 1 ? undefined : 1, flexShrink: fitScale < 1 && (isSplit || isCols) ? 0 : undefined, boxSizing: "border-box" }}>
           <ItemHoverContext.Provider value={setItemHovered}>
             {renderBlocks()}
           </ItemHoverContext.Provider>
@@ -4800,7 +4868,7 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
 // ModuleList local useState (CR2) so the TOC disclosure keys and the collapsed-header
 // current-slide marker can read/act on it.
 // aiWork (CR5): ephemeral UI signal (which slide Vera is actively editing) — never persisted.
-const init = { deckTitle: "Untitled", guidelines: "", lanes: [], selectedId: null, slideIndex: 0, selectedSlideIndices: [], collapsedSections: [], fullscreen: VELA_PRESENTATION_MODE, fontScale: 1, chatOpen: false, reviewMode: false, commentsPanelOpen: false, chatMessages: [{ role: "assistant", content: "Welcome aboard Vela. Paste your agenda or tell me where we're sailing. ⛵🖖", ts: now() }], chatLoading: false, lastDebug: "", branding: { ...defaultBranding }, veraMode: "editor", teacherHistory: {}, teacherLoading: false, aiWork: null, _deckEpoch: 0 };
+const init = { deckTitle: "Untitled", guidelines: "", lanes: [], selectedId: null, slideIndex: 0, selectedSlideIndices: [], collapsedSections: [], reviewPending: false, fullscreen: VELA_PRESENTATION_MODE, fontScale: 1, chatOpen: false, reviewMode: false, commentsPanelOpen: false, chatMessages: [{ role: "assistant", content: "Welcome aboard Vela. Paste your agenda or tell me where we're sailing. ⛵🖖", ts: now() }], chatLoading: false, lastDebug: "", branding: { ...defaultBranding }, veraMode: "editor", teacherHistory: {}, teacherLoading: false, aiWork: null, _deckEpoch: 0 };
 let _activeDeckEpoch = init._deckEpoch;
 const velaPrepareDeckReplacement = () => { _activeDeckEpoch += 1; };
 const velaSyncDeckEpoch = (epoch) => {
@@ -4814,7 +4882,7 @@ const nextDeckEpoch = (state) => Number.isSafeInteger(state?._deckEpoch) && stat
 // CR5: SET_AI_WORK is an ephemeral UI signal (which slide Vera is actively
 // editing) — never part of undo/redo history. CR2 TOGGLE/SET_SECTION_COLLAPSE
 // are view-only too.
-const NO_HISTORY = new Set(["SELECT", "SET_SLIDE_INDEX", "SET_SLIDE_SELECTION", "SET_FULLSCREEN", "SET_FONT_SCALE", "DESELECT", "SET_CHAT", "ADD_MSG", "SET_LOADING", "SET_DEBUG", "TOGGLE_LANE", "LOAD", "SET_TITLE", "STREAM_TOOL", "FINALIZE_STREAM", "RESET_CHAT", "RESTORE_CHAT_STATE", "RESTORE_DEMO_STATE", "NEW_DECK", "CLEAR_BOOTSTRAP", "SET_VERA_MODE", "TEACHER_MSG", "TEACHER_LOADING", "TEACHER_CLEAR", "SET_REVIEW_MODE", "SET_COMMENTS_PANEL", "TOGGLE_SECTION_COLLAPSE", "SET_SECTION_COLLAPSED", "SET_AI_WORK"]);
+const NO_HISTORY = new Set(["SELECT", "SET_SLIDE_INDEX", "SET_SLIDE_SELECTION", "SET_FULLSCREEN", "SET_FONT_SCALE", "DESELECT", "SET_CHAT", "ADD_MSG", "SET_LOADING", "SET_DEBUG", "TOGGLE_LANE", "LOAD", "SET_TITLE", "STREAM_TOOL", "FINALIZE_STREAM", "RESET_CHAT", "RESTORE_CHAT_STATE", "RESTORE_DEMO_STATE", "NEW_DECK", "CLEAR_BOOTSTRAP", "SET_VERA_MODE", "TEACHER_MSG", "TEACHER_LOADING", "TEACHER_CLEAR", "SET_REVIEW_MODE", "SET_COMMENTS_PANEL", "TOGGLE_SECTION_COLLAPSE", "SET_SECTION_COLLAPSED", "SET_AI_WORK", "SET_REVIEW_PENDING"]);
 const MAX_HISTORY = 50;
 
 function innerReducer(state, a) {
@@ -4960,6 +5028,9 @@ function innerReducer(state, a) {
     // Multi-slide insert (paste) as a SINGLE reduce — splices K sanitized slides in
     // at `index`, order preserved. Single-slide paste can route through this too.
     case "INSERT_SLIDES": { _dirtyMods.add(a.id); const add = (Array.isArray(a.slides) ? a.slides : []).map(sanitizeSlide).filter(Boolean); if (!add.length) return state; return mapItems((i) => { if (i.id !== a.id) return i; const ns = [...i.slides]; ns.splice(a.index, 0, ...add); return { ...i, slides: ns }; }); }
+    // CR7: editor review checkmark. Persistent deck field (undoable); strict
+    // boolean like `hidden` — the key is deleted, never set to false.
+    case "TOGGLE_SLIDE_REVIEWED": _dirtyMods.add(a.id); return mapItems((i) => i.id === a.id ? { ...i, slides: i.slides.map((s, idx) => idx === a.index ? (s.reviewed ? (() => { const c = { ...s }; delete c.reviewed; return c; })() : { ...s, reviewed: true }) : s) } : i);
     case "TOGGLE_SLIDE_HIDDEN": _dirtyMods.add(a.id); return mapItems((i) => i.id === a.id ? { ...i, slides: i.slides.map((s, idx) => idx === a.index ? (s.hidden ? (() => { const c = { ...s }; delete c.hidden; return c; })() : { ...s, hidden: true }) : s) } : i);
     case "DUPLICATE_SLIDE": _dirtyMods.add(a.id); return mapItems((i) => { if (i.id !== a.id || !i.slides[a.index]) return i; const dup = JSON.parse(JSON.stringify(i.slides[a.index])); const ns = [...i.slides]; ns.splice(a.index + 1, 0, dup); return { ...i, slides: ns }; });
     case "MOVE_SLIDE": _dirtyMods.add(a.id); return mapItems((i) => { if (i.id !== a.id) return i; const ns = [...i.slides]; const t = a.from + a.dir; if (t < 0 || t >= ns.length) return i; [ns[a.from], ns[t]] = [ns[t], ns[a.from]]; return { ...i, slides: ns }; });
@@ -5068,6 +5139,9 @@ function innerReducer(state, a) {
       }) })) };
     }
     case "SET_REVIEW_MODE": return { ...state, reviewMode: a.value };
+    // CR7: "Review pending only" editor nav filter (view-only; NO_HISTORY). Not
+    // the Comments review mode above.
+    case "SET_REVIEW_PENDING": return { ...state, reviewPending: !!a.value };
     case "SET_COMMENTS_PANEL": return { ...state, commentsPanelOpen: a.open };
     case "SET_CHAT": return { ...state, chatOpen: a.open };
     case "RESET_CHAT": return { ...state, chatMessages: [{ role: "assistant", content: "Chat cleared. What's next? ⛵🖖", ts: now() }], chatLoading: false };
@@ -5182,7 +5256,7 @@ function reducer(hist, a) {
     // (CR5: also clear aiWork so a reverted slide never stays stuck shimmering).
     // CR2/D1: collapsedSections is view-only (in NO_HISTORY) — carry the CURRENT value
     // forward across UNDO so a content undo never silently re-folds/unfolds the TOC.
-    const cleaned = { ...prev, chatLoading: false, aiWork: null, collapsedSections: hist.present.collapsedSections, _deckEpoch: hist.present._deckEpoch };
+    const cleaned = { ...prev, chatLoading: false, aiWork: null, collapsedSections: hist.present.collapsedSections, reviewPending: hist.present.reviewPending, _deckEpoch: hist.present._deckEpoch };
     // Clamp selectedId/slideIndex — restored state may reference modules/slides modified after snapshot
     if (cleaned.selectedId && cleaned.lanes) {
       let found = false;
@@ -5210,7 +5284,7 @@ function reducer(hist, a) {
     if (hist.future.length === 0) return hist;
     const next = hist.future[0];
     // CR2/D1: keep view-only collapsedSections unchanged across REDO (see UNDO above).
-    const cleaned = { ...next, chatLoading: false, aiWork: null, collapsedSections: hist.present.collapsedSections, _deckEpoch: hist.present._deckEpoch };
+    const cleaned = { ...next, chatLoading: false, aiWork: null, collapsedSections: hist.present.collapsedSections, reviewPending: hist.present.reviewPending, _deckEpoch: hist.present._deckEpoch };
     // Clamp selectedId/slideIndex
     if (cleaned.selectedId && cleaned.lanes) {
       let found = false;
@@ -7959,6 +8033,88 @@ function SectionPicker({ mods, onPick, autoFocus = true, emptyLabel = "No other 
 }
 // © 2025-present Rui Quintino. Vela Slides — licensed under ELv2. See LICENSE.
 // ━━━ Slide Panel — editor slide view, fullscreen/presenter nav, per-slide AI actions ━━━
+
+// ── CR6: block clipboard ({_velaBlock} envelope) ──
+// The clipboard is untrusted deck ingress (another deck, another app, or a
+// hand-crafted string). Paste checks the envelope shape and size, then runs
+// EVERY block through sanitizeBlock — the same allowlist sanitizer as file
+// import. Do not insert parsed clipboard data into state any other way.
+const VELA_BLOCK_CLIP_MAX_CHARS = 4000000;
+const VELA_BLOCK_CLIP_MAX_BLOCKS = 30;
+// Same-tab fallback when the system clipboard cannot be read (permission denied
+// in a sandboxed frame). It holds only text this tab wrote, and is parsed and
+// sanitized like any other clipboard text.
+let _velaBlockClipMemo = "";
+function parseVelaBlockEnvelope(text) {
+  if (typeof text !== "string" || !text || text.length > VELA_BLOCK_CLIP_MAX_CHARS) return [];
+  let parsed;
+  try { parsed = JSON.parse(text.trim()); } catch { return []; }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed) || parsed._velaBlock !== true) return [];
+  const raw = Array.isArray(parsed.data) ? parsed.data : [parsed.data];
+  // Wrap the call: a bare .map(sanitizeBlock) passes the index as `depth`.
+  return raw.slice(0, VELA_BLOCK_CLIP_MAX_BLOCKS)
+    .filter((b) => b && typeof b === "object" && !Array.isArray(b))
+    .map((b) => sanitizeBlock(b)).filter(Boolean);
+}
+const velaClipboardWriteBlock = async (block) => {
+  const clean = block && typeof block === "object" ? sanitizeBlock(JSON.parse(JSON.stringify(block))) : null;
+  if (!clean) return false;
+  const text = JSON.stringify({ _velaBlock: true, v: 1, data: clean });
+  _velaBlockClipMemo = text;
+  try { if (navigator.clipboard?.writeText) { await navigator.clipboard.writeText(text); return true; } } catch {}
+  try { velaClipboard(text); } catch {}
+  return true; // the same-tab memo still holds it
+};
+const velaClipboardReadBlocks = async () => {
+  let text = "";
+  try { text = (await navigator.clipboard.readText()) || ""; } catch {}
+  if (text) return parseVelaBlockEnvelope(text);
+  return parseVelaBlockEnvelope(_velaBlockClipMemo);
+};
+// Where a pasted block goes: after the selected block (in its own column for a
+// cols slide), else at the end of slide.blocks. Returns null when the target
+// column would exceed the 30-block cap that sanitizeSlide enforces.
+function planBlockPaste(slide, selIdx, count) {
+  const b = (slide && slide.blocks) || [], L = (slide && slide.L) || [], R = (slide && slide.R) || [];
+  let key = "blocks", base = 0, at = b.length;
+  if (Number.isInteger(selIdx) && selIdx >= 0) {
+    if (selIdx < b.length) at = selIdx + 1;
+    else if (selIdx < b.length + L.length) { key = "L"; base = b.length; at = selIdx - b.length + 1; }
+    else if (selIdx < b.length + L.length + R.length) { key = "R"; base = b.length + L.length; at = selIdx - b.length - L.length + 1; }
+  }
+  const col = key === "blocks" ? b : key === "L" ? L : R;
+  if (col.length + count > VELA_BLOCK_CLIP_MAX_BLOCKS) return null;
+  return { key, at, newSelIdx: base + at + count - 1 };
+}
+
+// ── CR7: "Review pending only" editor navigation ──
+// Next/previous slide (dir = 1 / -1) that is NOT reviewed, across modules in
+// TOC order, wrapping at the ends. `markCurrent` treats the current slide as
+// reviewed (used right after it is marked, before the new state arrives).
+function findPendingSlide(lanes, curId, curIdx, dir, markCurrent) {
+  const list = [];
+  for (const lane of (lanes || [])) {
+    if (lane.collapsed) continue;
+    for (const item of (lane.items || [])) {
+      (item.slides || []).forEach((s, i) => {
+        const isCur = item.id === curId && i === curIdx;
+        list.push({ id: item.id, index: i, isCur, pending: !(s && s.reviewed) && !(markCurrent && isCur) });
+      });
+    }
+  }
+  const total = list.filter((x) => x.pending).length;
+  if (total === 0) return { target: null, total: 0, wrapped: false };
+  const pos = list.findIndex((x) => x.isCur);
+  const n = list.length;
+  const start = pos < 0 ? (dir > 0 ? -1 : n) : pos;
+  for (let k = 1; k <= n; k++) {
+    const raw = start + dir * k;
+    const j = ((raw % n) + n) % n;
+    if (list[j].pending) return { target: list[j].isCur ? null : { id: list[j].id, index: list[j].index }, total, wrapped: raw !== j, onlyCurrent: list[j].isCur };
+  }
+  return { target: null, total, wrapped: false };
+}
+
 function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, branding, guidelines, isMobile, fontScale, actionsRef, onRibbonUpdate }) {
   const deckEpochRef = useRef(state._deckEpoch);
   deckEpochRef.current = state._deckEpoch;
@@ -8348,6 +8504,82 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
 
   useEffect(() => () => clearTimeout(navToastTimer.current), []);
 
+  // ── CR7 review checkmark / CR6 block clipboard (editor only) ──
+  // navToast renders only in fullscreen, so the editor gets its own status pill.
+  const [reviewMsg, setReviewMsg] = useState(null);
+  const reviewMsgTimer = useRef(null);
+  const flashReviewMsg = useCallback((msg) => {
+    clearTimeout(reviewMsgTimer.current);
+    setReviewMsg(msg);
+    reviewMsgTimer.current = setTimeout(() => setReviewMsg(null), 2200);
+  }, []);
+  useEffect(() => () => clearTimeout(reviewMsgTimer.current), []);
+  const pendingCount = useMemo(() => {
+    let n = 0;
+    for (const l of (lanes || [])) { if (l.collapsed) continue; for (const it of (l.items || [])) for (const s of (it.slides || [])) if (!(s && s.reviewed)) n++; }
+    return n;
+  }, [lanes]);
+  const goPending = useCallback((dir, markCurrent) => {
+    const r = findPendingSlide(lanes, concept.id, slideIndex, dir, markCurrent);
+    if (r.total === 0) { flashReviewMsg("All slides reviewed ✓"); return; }
+    if (!r.target) { flashReviewMsg("This is the only pending slide"); return; }
+    if (r.target.id !== concept.id) dispatch({ type: "SELECT", id: r.target.id });
+    dispatch({ type: "SET_SLIDE_INDEX", index: r.target.index });
+    flashReviewMsg(`${r.total} pending${r.wrapped ? " · wrapped" : ""}`);
+  }, [lanes, concept.id, slideIndex, dispatch, flashReviewMsg]);
+  const toggleReviewed = useCallback(() => {
+    const cur = slides[slideIndex];
+    if (!cur) return;
+    dispatch({ type: "TOGGLE_SLIDE_REVIEWED", id: concept.id, index: slideIndex });
+    // Marking reviewed in pending mode removes the slide from the cycle: advance.
+    if (!cur.reviewed && state.reviewPending) goPending(1, true);
+  }, [slides, slideIndex, concept.id, dispatch, state.reviewPending, goPending]);
+  const toggleReviewPending = useCallback(() => {
+    const on = !state.reviewPending;
+    dispatch({ type: "SET_REVIEW_PENDING", value: on });
+    if (!on) { flashReviewMsg("Showing all slides"); return; }
+    if (pendingCount === 0) { flashReviewMsg("All slides reviewed ✓"); return; }
+    if (slides[slideIndex]?.reviewed) goPending(1, false);
+    else flashReviewMsg(`${pendingCount} pending`);
+  }, [state.reviewPending, dispatch, flashReviewMsg, pendingCount, slides, slideIndex, goPending]);
+
+  // Selected block = last block clicked on the editor slide (data-block-index
+  // from renderBlockItem). Keyed to module+slide so it never leaks across slides.
+  const [selBlock, setSelBlock] = useState(null);
+  const selKey = `${concept.id}:${slideIndex}`;
+  const selBlockIdx = selBlock && selBlock.key === selKey ? selBlock.idx : null;
+  const onSlideClickCapture = useCallback((e) => {
+    const t = e.target;
+    if (!t || !t.closest || t.closest("[data-review-strip]")) return;
+    const el = t.closest("[data-block-index]");
+    const n = el ? parseInt(el.getAttribute("data-block-index"), 10) : NaN;
+    setSelBlock(Number.isInteger(n) && n >= 0 ? { key: selKey, idx: n } : null);
+  }, [selKey]);
+  const copySelectedBlock = useCallback(() => {
+    const s = slides[slideIndex];
+    const flat = s ? [...(s.blocks || []), ...(s.L || []), ...(s.R || [])] : [];
+    const b = selBlockIdx != null ? flat[selBlockIdx] : null;
+    if (!b) { flashReviewMsg("Click a block first, then copy"); return; }
+    velaClipboardWriteBlock(b).then((ok) => flashReviewMsg(ok ? `Block copied (${b.type})` : "Copy failed"));
+  }, [slides, slideIndex, selBlockIdx, flashReviewMsg]);
+  const pasteBlocks = useCallback((arr) => {
+    const s = slides[slideIndex];
+    if (!s || !arr || arr.length === 0) return;
+    const plan = planBlockPaste(s, selBlockIdx, arr.length);
+    if (!plan) { flashReviewMsg("Slide is full (30 blocks max)"); return; }
+    const col = [...(s[plan.key] || [])];
+    const after = plan.at > 0 ? col[plan.at - 1] : null;
+    col.splice(plan.at, 0, ...arr);
+    dispatch({ type: "UPDATE_SLIDE", id: concept.id, index: slideIndex, patch: { [plan.key]: col }, merge: true });
+    setSelBlock({ key: selKey, idx: plan.newSelIdx });
+    flashReviewMsg(selBlockIdx != null && after ? `Block pasted after ${after.type}` : "Block pasted at end of slide");
+  }, [slides, slideIndex, selBlockIdx, selKey, concept.id, dispatch, flashReviewMsg]);
+  const pasteBlockFromClipboard = useCallback(() => {
+    velaClipboardReadBlocks().then((arr) => { if (arr.length) pasteBlocks(arr); else flashReviewMsg("No copied block on the clipboard"); });
+  }, [pasteBlocks, flashReviewMsg]);
+  const editorKeysRef = useRef({});
+  editorKeysRef.current = { selBlockIdx, copySelectedBlock, pasteBlocks, goPending };
+
   // Touch swipe for mobile slide navigation (crosses module boundaries like keyboard)
   useSwipe(containerRef, {
     onLeft: useCallback(() => {
@@ -8501,6 +8733,14 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       // (editor nav keeps reaching them so they can be edited/unhidden).
       const nextVisible = (from) => { for (let i = from + 1; i < navSlides.length; i++) if (!fullscreen || !navSlides[i].hidden) return i; return -1; };
       const prevVisible = (from) => { for (let i = from - 1; i >= 0; i--) if (!fullscreen || !navSlides[i].hidden) return i; return -1; };
+      // CR7: "Review pending only" — EDITOR nav skips reviewed slides. Fullscreen,
+      // presenter and gallery keep their normal nav (the filter is editor-only).
+      if (state.reviewPending && !fullscreen && !showGalleryRef.current && (e.key === "ArrowRight" || e.key === "ArrowDown" || e.key === " " || e.key === "ArrowLeft" || e.key === "ArrowUp")) {
+        e.preventDefault();
+        stopAlternatives();
+        editorKeysRef.current.goPending(e.key === "ArrowLeft" || e.key === "ArrowUp" ? -1 : 1, false);
+        return;
+      }
       if (e.key === "ArrowRight" || e.key === "ArrowDown" || e.key === " ") {
         e.preventDefault();
         stopAlternatives(); // keep a running Improve alive across navigation
@@ -8583,6 +8823,14 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       // Ctrl+C → copy ALL selected slides (multi-select) to system clipboard,
       // in slide order. Falls back to the active slide when nothing is multi-selected.
       if ((e.ctrlKey || e.metaKey) && e.key === "c" && slidesRef.current.length > 0 && !["INPUT", "TEXTAREA"].includes(document.activeElement?.tagName) && !window.getSelection()?.toString()) {
+        // CR6: a clicked block on the editor slide is copied as a block (unless
+        // several slides are multi-selected in the TOC — then copy those slides).
+        if (!fullscreen && editorKeysRef.current.selBlockIdx != null && !(state.selectedSlideIndices && state.selectedSlideIndices.length > 1)) {
+          e.preventDefault();
+          editorKeysRef.current.copySelectedBlock();
+          return;
+        }
+        _velaBlockClipMemo = ""; // a slide copy supersedes the same-tab block fallback
         const curSlides = slidesRef.current;
         const realIdx = fullscreen && presOffset ? slideIndex - presOffset : slideIndex;
         const multi = (state.selectedSlideIndices && state.selectedSlideIndices.length) ? [...state.selectedSlideIndices].sort((a, b) => a - b) : [realIdx];
@@ -8595,6 +8843,10 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       // Ctrl+V → paste slide(s) from system clipboard, inserted sequentially after
       // the active slide (order preserved). Accepts old single-slide clipboards too.
       if ((e.ctrlKey || e.metaKey) && e.key === "v" && !["INPUT", "TEXTAREA"].includes(document.activeElement?.tagName)) {
+        // CR6: a {_velaBlock} clipboard pastes into the current slide (editor
+        // only); anything else falls through to the slide paste below.
+        (fullscreen ? Promise.resolve([]) : velaClipboardReadBlocks()).then((blocks) => {
+        if (blocks.length) { editorKeysRef.current.pasteBlocks(blocks); return; }
         velaClipboardReadSlides().then((arr) => {
           if (!arr || arr.length === 0) return;
           const realIdx = fullscreen && presOffset ? slideIndex - presOffset : slideIndex;
@@ -8602,6 +8854,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
           dispatch({ type: "INSERT_SLIDES", id: concept.id, index: insertAt, slides: arr });
           dispatch({ type: "SET_SLIDE_INDEX", index: insertAt + arr.length - 1 });
           showNavToast(arr.length > 1 ? `${arr.length} slides pasted` : "Slide pasted");
+        });
         });
       }
       // Delete key → remove current slide (not in input/textarea)
@@ -8614,7 +8867,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       if (e.key === "I" && e.shiftKey && !e.metaKey && !e.ctrlKey && slides.length > 0 && !improving && !altLoading && aiOk) { e.preventDefault(); runImproveRef.current?.(null, "slide"); }
     };
     window.addEventListener("keydown", handler); return () => window.removeEventListener("keydown", handler);
-  }, [slideIndex, slides, presSlides, fullscreen, dispatch, concept.id, flatModules, showNavToast, stopAll, altLoading, alternatives, altOriginal, fontScale, state.selectedSlideIndices]);
+  }, [slideIndex, slides, presSlides, fullscreen, dispatch, concept.id, flatModules, showNavToast, stopAll, altLoading, alternatives, altOriginal, fontScale, state.selectedSlideIndices, state.reviewPending]);
 
   // ── Browser back button → exit fullscreen instead of leaving the page ──
   useEffect(() => {
@@ -9143,7 +9396,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
                 // custom property can only ever carry a strict color token, never a
                 // deck-supplied string; see part-imports.jsx getCss() for the paired
                 // @property type registration (belt + suspenders on the same value).
-                return <div key={revealKey || "static"} data-testid="slide-fx-wrapper" data-ai-working={aiWorkingHere ? "1" : undefined} className={revealKey ? "magic-reveal" : (improving || aiWorkingHere || quickEditing || blockEditing || newSlideGenerating || altLoading) ? "vera-thinking" : ""} style={{ borderRadius: 6, width: "100%", height: "100%", "--vera-accent": cssColor(displaySlide?.accent) || T.accent }}>
+                return <div key={revealKey || "static"} data-testid="slide-fx-wrapper" onClickCapture={fullscreen ? undefined : onSlideClickCapture} data-ai-working={aiWorkingHere ? "1" : undefined} className={revealKey ? "magic-reveal" : (improving || aiWorkingHere || quickEditing || blockEditing || newSlideGenerating || altLoading) ? "vera-thinking" : ""} style={{ borderRadius: 6, width: "100%", height: "100%", "--vera-accent": cssColor(displaySlide?.accent) || T.accent }}>
                   {/* CR3: always letterbox-fit to a fixed aspect box (960×540 for the
                       default "auto"/Fit ratio) so the editor viewport height is
                       content-independent and the toolbar below stays put. Elastic
@@ -9161,6 +9414,19 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
                   )}
                   {/* Review mode visual border indicator */}
                   {state.reviewMode && !fullscreen && <div style={{ position: "absolute", inset: 0, zIndex: 8, border: `2px solid ${T.amber}40`, borderRadius: 6, pointerEvents: "none" }} />}
+                  {/* CR7 review checkmark + pending filter, CR6 block copy/paste — editor
+                      chrome only (static labels; no deck value is rendered here). */}
+                  {!fullscreen && slides[slideIndex] && (() => {
+                    const isRev = !!slides[slideIndex].reviewed;
+                    const pill = (active, color) => ({ height: 22, borderRadius: 11, padding: "0 8px", display: "flex", alignItems: "center", gap: 4, fontFamily: FONT.mono, fontSize: 10, fontWeight: 700, cursor: "pointer", border: `1px solid ${active ? color : "rgba(255,255,255,0.25)"}`, background: active ? color : "rgba(15,17,23,0.72)", color: "#fff", boxShadow: "0 2px 8px rgba(0,0,0,0.3)", whiteSpace: "nowrap" });
+                    return <div data-review-strip data-testid="slide-review-strip" onClick={(e) => e.stopPropagation()} style={{ position: "absolute", top: 8, left: slides[slideIndex]?.studyNotes?.text ? 38 : 8, zIndex: 10, display: "flex", gap: 4, alignItems: "center", flexWrap: "wrap", maxWidth: "calc(100% - 60px)" }}>
+                      <button data-testid="slide-reviewed-toggle" aria-pressed={isRev} onClick={toggleReviewed} title={isRev ? "Reviewed — click to mark as pending" : "Mark this slide as reviewed"} style={pill(isRev, "#10b981")}>{isRev ? "✓ Reviewed" : "○ Review"}</button>
+                      <button data-testid="review-pending-toggle" aria-pressed={!!state.reviewPending} onClick={toggleReviewPending} title="Review pending only: arrow keys and Space skip reviewed slides (editor only)" style={pill(!!state.reviewPending, T.accent)}>{state.reviewPending ? `Pending only · ${pendingCount} left` : `Pending: ${pendingCount}`}</button>
+                      <button data-testid="block-copy-btn" disabled={selBlockIdx == null} onClick={copySelectedBlock} title={selBlockIdx == null ? "Click a block on the slide to select it, then copy (Ctrl/⌘+C)" : "Copy the selected block (Ctrl/⌘+C)"} style={{ ...pill(false, T.accent), opacity: selBlockIdx == null ? 0.5 : 1, cursor: selBlockIdx == null ? "default" : "pointer" }}>⧉ Copy block</button>
+                      <button data-testid="block-paste-btn" onClick={pasteBlockFromClipboard} title={selBlockIdx == null ? "Paste a copied block at the end of this slide (Ctrl/⌘+V)" : "Paste a copied block after the selected block (Ctrl/⌘+V)"} style={pill(false, T.accent)}>📋 Paste block</button>
+                      {reviewMsg && <span data-testid="review-status-msg" role="status" style={{ ...pill(true, "rgba(0,0,0,0.78)"), cursor: "default" }}>{reviewMsg}</span>}
+                    </div>;
+                  })()}
                   {/* Comment popover */}
                   {showCommentPopover && !fullscreen && <CommentPopover itemId={concept.id} slideIndex={slideIndex} slide={slides[slideIndex]} dispatch={dispatch} onClose={() => setShowCommentPopover(false)} anchor="right" />}
                 </div>;
@@ -18052,6 +18318,19 @@ function buildShadingDict(gradient, coords) {
 // ━━━ PDF Text encoding ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // For standard fonts, PDF uses WinAnsiEncoding (Latin-1 subset)
 // Characters outside this range get replaced with ?
+// WinAnsiEncoding bytes 0x80-0x9F hold these non-Latin-1 code points (same table
+// as the font-width map in part-pdf-vector.jsx). One table, shared by the
+// encoder AND isEmojiCodepoint: a char here is real text (correct size and
+// baseline), never the emoji raster path. Values are octal byte escapes so the
+// output stays ASCII (TextEncoder would otherwise UTF-8 encode them).
+const PDF_WINANSI_HIGH = {
+  0x20AC: "\\200", 0x201A: "\\202", 0x0192: "\\203", 0x201E: "\\204", 0x2026: "\\205",
+  0x2020: "\\206", 0x2021: "\\207", 0x02C6: "\\210", 0x2030: "\\211", 0x0160: "\\212",
+  0x2039: "\\213", 0x0152: "\\214", 0x017D: "\\216", 0x2018: "\\221", 0x2019: "\\222",
+  0x201C: "\\223", 0x201D: "\\224", 0x2022: "\\225", 0x2013: "\\226", 0x2014: "\\227",
+  0x02DC: "\\230", 0x2122: "\\231", 0x0161: "\\232", 0x203A: "\\233", 0x0153: "\\234",
+  0x017E: "\\236", 0x0178: "\\237",
+};
 function pdfStringEncode(str) {
   let out = "(";
   for (let i = 0; i < str.length; i++) {
@@ -18073,21 +18352,16 @@ function pdfStringEncode(str) {
     } else {
       // Typographic Unicode → WinAnsiEncoding substitutions
       // Values use PDF octal escapes to avoid UTF-8 double-encoding via TextEncoder
+      // WinAnsi 0x80-0x9F chars (euro, smart quotes, dashes, bullet, ellipsis,
+      // trademark, ...) come from PDF_WINANSI_HIGH; typoMap keeps ASCII fallbacks.
       const typoMap = {
-        0x2014: "\\227", // em dash (WinAnsi 0x97)
-        0x2013: "\\226", // en dash (WinAnsi 0x96)
-        0x201C: "\\223", // left double quote (WinAnsi 0x93)
-        0x201D: "\\224", // right double quote (WinAnsi 0x94)
-        0x2018: "\\221", // left single quote (WinAnsi 0x91)
-        0x2019: "\\222", // right single quote (WinAnsi 0x92)
-        0x2022: "\\267", // bullet → middle dot (WinAnsi 0xB7)
-        0x2026: "...",   // ellipsis
-        0x2122: "TM",    // trademark
         0x2192: "->",    // right arrow
         0x2190: "<-",    // left arrow
         0x21D2: "=>",    // double right arrow
       };
-      if (typoMap[c]) {
+      if (PDF_WINANSI_HIGH[c]) {
+        out += PDF_WINANSI_HIGH[c];
+      } else if (typoMap[c]) {
         out += typoMap[c];
       } else {
         // Emoji and other non-Latin chars: skip (rendered as images)
@@ -18107,7 +18381,8 @@ function isEmojiCodepoint(cp) {
   // Skin tone modifiers — not standalone visual
   if (cp >= 0x1F3FB && cp <= 0x1F3FF) return false;
   // Common typographic characters we handle as text substitutions
-  const textSubs = [0x2014,0x2013,0x201C,0x201D,0x2018,0x2019,0x2022,0x2026,0x2122,0x2192,0x2190,0x2191,0x2193,0x21D2];
+  if (PDF_WINANSI_HIGH[cp]) return false; // € ™ • – — quotes …: real WinAnsi text
+  const textSubs = [0x2192,0x2190,0x2191,0x2193,0x21D2];
   if (textSubs.includes(cp)) return false;
   return cp > 0xFF;
 }
@@ -20777,6 +21052,31 @@ function flipPresentationMode(jsx) {
   return jsx.replace(decl, "const VELA_PRESENTATION_MODE = true;");
 }
 
+// Undo host-runtime preprocessing so the export starts from the pristine
+// template shape. Neutralino serves vela.jsx already run through
+// vela-neutralino/scripts/sync-vela.py: it prepends its own UMD shim (the same
+// hook/icon `const`s buildStandaloneHtml adds -> "Identifier 'useState' has
+// already been declared") and flips VELA_LOCAL_MODE to true; serve.py also
+// flips VELA_LOCAL_MODE and sets VELA_CHANNEL_PORT. The exported file is a
+// self-contained viewer, so it must never boot in local/channel mode.
+// Runs BEFORE spliceStartupPatch (template transform first, deck last). Each
+// pattern is anchored where deck content cannot reach: the shim only at offset
+// 0, the flags only at line start (injected deck JSON is mid-line, no newline).
+const NEUTRALINO_SHIM_HEAD = "// --- Neutralino UMD shim (generated by sync-vela.py)";
+function normalizeHostPreprocessedJsx(jsx) {
+  let out = jsx;
+  if (out.startsWith(NEUTRALINO_SHIM_HEAD)) {
+    const end = out.match(/\n\/\/ -{10,}\n/);
+    if (!end) throw new Error("Neutralino UMD shim end marker not found in source");
+    out = out.slice(end.index + end[0].length);
+  }
+  // Replacer functions rebuild the decl from its captured prefix, so this file
+  // never holds the literal "<flag> = false" text that serve.py tests look for.
+  out = out.replace(/^(const VELA_LOCAL_MODE = )true;/m, (_, head) => head + "false;");
+  out = out.replace(/^(const VELA_CHANNEL_PORT = )\d+;/m, (_, head) => head + "0;");
+  return out;
+}
+
 const MADE_WITH_VELA_FOOTER_HTML =
   "<div id=\"vela-standalone-footer\" style=\"position:fixed;right:10px;bottom:8px;z-index:99999;" +
   "font:600 11px -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#e2e8f0;" +
@@ -20794,7 +21094,8 @@ function escapeHtmlText(s) {
 function buildStandaloneHtml(jsxSource, deckObj, opts = {}) {
   const { footer = false, babel } = opts;
   if (!babel || typeof babel.transform !== "function") throw new Error("buildStandaloneHtml requires a Babel-standalone instance");
-  let jsx = stripEsmImportsForStandalone(jsxSource);
+  let jsx = normalizeHostPreprocessedJsx(jsxSource);
+  jsx = stripEsmImportsForStandalone(jsx);
   jsx = spliceStartupPatch(jsx, deckObj);
   jsx = flipPresentationMode(jsx);
   const shim =
@@ -23289,6 +23590,12 @@ export default function App() {
   const localSyncTimer = useRef(null);
   const _localSyncIncoming = useRef(false);
   const _localSyncState = useRef(null);
+  // JSON of the deck content as it last came from / went to the file. A flush
+  // whose payload equals it is skipped, so opening an unchanged deck never
+  // rewrites the file. `_localSyncArmBaseline` makes the next sync-out effect
+  // run (the render after a file LOAD) record the baseline instead of saving.
+  const _localSyncBaseline = useRef(null);
+  const _localSyncArmBaseline = useRef(false);
   const postDemoFlushTimer = useRef(null);
   const postDemoFlushRequest = useRef(null);
   const postDemoFlushModes = useRef({ local: false, storage: false });
@@ -23307,14 +23614,14 @@ export default function App() {
     if (!loaded.current || demoSaveLocked() || (!allowIncoming && _localSyncIncoming.current)) return false;
     const source = request ? stateForPostDemoFlush(request) : _localSyncState.current;
     if (!source || !window.__velaSendDeckUpdate) return false;
-    const save = extractSave(source);
     // Never let an empty or transient deck overwrite the local source file.
-    const totalSlides = (save.lanes || []).reduce((n, l) => n + (l.items || []).reduce((m, i) => m + (i.slides?.length || 0), 0), 0);
-    if (!save.lanes?.length || !totalSlides) return false;
-    delete save.chatMessages; delete save.chatLoading; delete save.fullscreen;
-    delete save.lastDebug; delete save._bootstrap; delete save._version;
+    const payload = localSyncPayload(source);
+    if (!payload) return false;
+    const fingerprint = JSON.stringify(payload);
+    if (fingerprint === _localSyncBaseline.current) return false; // unchanged: no write
     try {
-      window.__velaSendDeckUpdate({ deckTitle: source.deckTitle, lanes: save.lanes, branding: save.branding, guidelines: save.guidelines });
+      window.__velaSendDeckUpdate(payload);
+      _localSyncBaseline.current = fingerprint;
       return true;
     } catch (error) {
       dbg("Local save error:", error);
@@ -23618,6 +23925,13 @@ export default function App() {
     // a deck switch (the _localSyncIncoming guard skips setting a new timer
     // but must still kill the old one).
     clearTimeout(localSyncTimer.current);
+    if (VELA_LOCAL_MODE && loaded.current && _localSyncArmBaseline.current) {
+      // First render after a file LOAD: this content IS the file. Record it, do not write it back.
+      _localSyncArmBaseline.current = false;
+      const payload = localSyncPayload(state);
+      _localSyncBaseline.current = payload ? JSON.stringify(payload) : null;
+      return;
+    }
     if (!VELA_LOCAL_MODE || !loaded.current || _localSyncIncoming.current ||
         document.documentElement.dataset.velaDemoRunning === "true") return;
     localSyncTimer.current = setTimeout(() => flushLocalStateRef.current?.(null), 600);
@@ -23633,14 +23947,21 @@ export default function App() {
       try {
         const cur = _localSyncState.current;
         const sanitized = validateAndSanitizeDeck(deck);
-        // Preserve lane/item IDs so selection stays valid
+        // Preserve lane/item IDs so selection stays valid. Ingress now keeps the
+        // file's own ids, so only adopt a positional current id when no other
+        // entity in the incoming deck already holds it (ids must stay unique).
         if (cur.lanes && sanitized.lanes && cur.lanes.length === sanitized.lanes.length) {
+          const used = new Set(sanitized.lanes.flatMap((l) => [l.id, ...(l.items || []).map((i) => i.id)]));
+          const adopt = (target, want) => {
+            if (typeof want !== "string" || want === target.id || used.has(want)) return;
+            used.delete(target.id); target.id = want; used.add(want);
+          };
           for (let li = 0; li < sanitized.lanes.length; li++) {
-            sanitized.lanes[li].id = cur.lanes[li].id;
+            adopt(sanitized.lanes[li], cur.lanes[li].id);
             if (sanitized.lanes[li].items && cur.lanes[li].items) {
               const minItems = Math.min(sanitized.lanes[li].items.length, cur.lanes[li].items.length);
               for (let ii = 0; ii < minItems; ii++) {
-                sanitized.lanes[li].items[ii].id = cur.lanes[li].items[ii].id;
+                adopt(sanitized.lanes[li].items[ii], cur.lanes[li].items[ii].id);
               }
             }
           }
@@ -23658,6 +23979,7 @@ export default function App() {
           // Reset selection when switching to a different deck so auto-select picks the first module
           ...(isDifferentDeck ? { selectedId: null, slideIndex: 0 } : {}),
         };
+        _localSyncArmBaseline.current = true; // the file now holds this content
         dispatch({ type: "LOAD", payload });
       } catch (e) {
         // Fail closed: a malicious .vela edited on disk is pushed here over the serve.py
@@ -23891,7 +24213,7 @@ export default function App() {
         if (VELA_LOCAL_MODE) {
           // Local/folder mode: file on disk is always authoritative — apply directly
           // (localStorage may contain a different deck from the same origin)
-          try { applyStartupPatch(loadedDeck || { lanes: [] }, dispatch); } catch (err) { dbg("[PATCH] Error:", err); }
+          try { if (applyStartupPatch(loadedDeck || { lanes: [] }, dispatch) === true) _localSyncArmBaseline.current = true; } catch (err) { dbg("[PATCH] Error:", err); }
         } else if (!loadedDeck) {
           // First run — no saved data, apply patch directly
           try { applyStartupPatch({ lanes: [] }, dispatch); } catch (err) { dbg("[PATCH] Error:", err); }

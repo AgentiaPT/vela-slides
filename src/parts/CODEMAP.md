@@ -11,12 +11,12 @@ that symbol in the named part for the line. No line numbers here — they rot.
 - (untitled): __DEBUG dbg VELA_LOCAL_MODE VELA_CHANNEL_PORT VELA_CHANNEL_TOKEN VELA_PRESENTATION_MODE
 - AI Capability Detection: velaAIAvailable VELA_AI_UNAVAILABLE_MSG velaIsArtifactMode useAIAvailable velaClipboard velaClipboardWriteSlide velaClipboardReadSlide velaClipboardWriteSlides velaClipboardReadSlides VELA_VERSION VELA_CHANGELOG
 - Session Cost Tracker: VELA_PRICING velaSessionStats MASTER_KEY MOD_PREFIX uid
-- Startup Patch System: STARTUP_PATCH VELA_TEST_STARTUP_PATCH levenshtein extractSlideText applyStartupPatch
+- Startup Patch System: STARTUP_PATCH VELA_TEST_STARTUP_PATCH levenshtein extractSlideText localSyncPayload applyStartupPatch
 - Distributed Storage: dirty tracking: _dirtyMods _deletedMods _loadedMods _autoEditItemId _fullRewrite now
 - Validation Constants: MAX_IMPORT_SIZE VALID_STATUSES VALID_IMPORTANCES SAFE_BLOCK_TYPES defaultBranding linkPreview
 - Sanitizers: sanitizeString sanitizeDeckTitle sanitizeUrl openExternalLink SVG_ALLOWED_TAGS SVG_URL_REF_ATTRS CSS_FETCH_SCHEME SVG_VALUE_FNS SVG_STYLE_PROPS SVG_ROOT_BLOCKED isSvgStyleSafe isSvgInlineStyleSafe sanitizeSvgMarkup SAFE_RASTER_DATA_IMAGE sanitizeImageDataUri SAFE_STYLE_KEYS STYLE_VALUE_REJECT sanitizeStyle CSS_COLOR_KEY scrubCssFields scrubColorFields CSS_LAYOUT_KEY scrubLayoutFields CSS_PAINT_KEY cssKeyStem scrubPaintFields velaTestSurfaceEnabled MAX_SUBOBJECT_DEPTH scrubSubObject cssUrl CSS_COLOR_OK cssColor CSS_GRADIENT_OK cssGradient
 - Deck-ingress key allowlists: SAFE_SLIDE_KEYS SAFE_BLOCK_KEYS SLIDE_NUMERIC_BOUNDS clampDeckNumber MAX_BLOCK_DEPTH sanitizeBlock VALID_COMMENT_STATUSES MAX_COMMENTS sanitizeComment
-- Offline Study Notes sanitizer: sanitizeStudyNotes sanitizeSlide sanitizeItem resanitizeLoadedLanes resanitizeLoadedBranding validateAndSanitizeDeck
+- Offline Study Notes sanitizer: sanitizeStudyNotes sanitizeSlide SAFE_DECK_ID keepDeckId sanitizeItem resanitizeLoadedLanes resanitizeLoadedBranding validateAndSanitizeDeck
 - Image Compression: compressImage IMG_SETTINGS compressSlideImage imageAspect PASTE_TITLE_BLOCKS pasteImageLayout gridColsFor
 - Status & Importance Meta: STATUSES STATUS_META IMP
 - Themes: themes T statusColor FONT buildTitleCardSlide
@@ -82,7 +82,8 @@ that symbol in the named part for the line. No line numbers here — they rot.
 - StudentPanel — dispatcher: static studyNotes first, else live Vera: StudentPanel TeacherPanel SectionPicker
 
 ### part-slidepanel.jsx
-- Slide Panel — editor slide view, fullscreen/presenter nav, per-slide AI actions: SlidePanel
+- CR6: block clipboard ({_velaBlock} envelope): VELA_BLOCK_CLIP_MAX_CHARS VELA_BLOCK_CLIP_MAX_BLOCKS _velaBlockClipMemo parseVelaBlockEnvelope velaClipboardWriteBlock velaClipboardReadBlocks planBlockPaste
+- CR7: "Review pending only" editor navigation: findPendingSlide SlidePanel
 
 ### part-list.jsx
 - (file preamble): _velaDrag _setDrag _clearDrag
@@ -146,7 +147,7 @@ that symbol in the named part for the line. No line numbers here — they rot.
 - Check if slide has image blocks: slideHasImages
 - Color parsing: _compositeBg compositeColor _isExportHidden parseColor
 - CSS linear-gradient parsing: parseLinearGradient gradientLineCoords buildShadingDict
-- PDF Text encoding: pdfStringEncode
+- PDF Text encoding: PDF_WINANSI_HIGH pdfStringEncode
 - Emoji detection and rendering: isEmojiCodepoint emojiCanvasCache renderEmojiToImage extractEmojiImages extractLogoImages
 - Font metrics for standard PDF fonts: CHAR_WIDTHS measureText
 - DOM Element Extraction: extractBoxes getTextLines getVisualScale extractTextRuns extractLinks
@@ -165,7 +166,7 @@ that symbol in the named part for the line. No line numbers here — they rot.
 
 ### part-export-md.jsx
 - Markdown Export: deckToMarkdown exportMarkdown
-- Standalone HTML Export: VELA_STANDALONE_LIBS escapeForScriptContext stripEsmImportsForStandalone spliceStartupPatch flipPresentationMode MADE_WITH_VELA_FOOTER_HTML escapeHtmlText buildStandaloneHtml getStandaloneJsxSource velaStandaloneExportGateReason
+- Standalone HTML Export: VELA_STANDALONE_LIBS escapeForScriptContext stripEsmImportsForStandalone spliceStartupPatch flipPresentationMode NEUTRALINO_SHIM_HEAD normalizeHostPreprocessedJsx MADE_WITH_VELA_FOOTER_HTML escapeHtmlText buildStandaloneHtml getStandaloneJsxSource velaStandaloneExportGateReason
 - Standalone HTML Export Modal: StandaloneHtmlModal
 
 ### part-pptx.jsx
@@ -258,6 +259,7 @@ keyboard ternaries) or are currently unused — check before assuming a UI exist
 - SET_ITEM_NOTES: (no direct dispatch site)
 - SET_LOADING: part-chat.jsx
 - SET_REVIEW_MODE: part-app-modals.jsx part-app.jsx part-demo.jsx part-slidepanel.jsx
+- SET_REVIEW_PENDING: part-slidepanel.jsx
 - SET_SECTION_COLLAPSED: part-demo.jsx part-list.jsx
 - SET_SLIDES: part-slidepanel.jsx
 - SET_SLIDE_INDEX: part-app.jsx part-chat.jsx part-list.jsx part-slidepanel.jsx part-slides.jsx
@@ -274,6 +276,7 @@ keyboard ternaries) or are currently unused — check before assuming a UI exist
 - TOGGLE_PRESENT_CARD: part-list.jsx
 - TOGGLE_SECTION_COLLAPSE: part-list.jsx
 - TOGGLE_SLIDE_HIDDEN: part-list.jsx part-slides.jsx
+- TOGGLE_SLIDE_REVIEWED: part-slidepanel.jsx
 - UNDO: (no direct dispatch site)
 - UPDATE_COMMENT: (no direct dispatch site)
 - UPDATE_SLIDE: part-app.jsx part-imports.jsx part-list.jsx part-slidepanel.jsx
@@ -313,11 +316,11 @@ add_lane add_item batch_add_items remove_item remove_lane rename_item rename_lan
 
 ## Navigability debt (WARN — candidates for banners or splits)
 
-- part-imports.jsx: 860-line unbannered stretch after line 509
-- part-blocks.jsx: 764-line unbannered stretch after line 769
-- part-canvas.jsx: 414-line unbannered stretch after line 24
-- part-slidepanel.jsx: 454-line unbannered stretch after line 206
-- part-slidepanel.jsx: 410-line unbannered stretch after line 972
+- part-imports.jsx: 860-line unbannered stretch after line 522
+- part-blocks.jsx: 764-line unbannered stretch after line 782
+- part-canvas.jsx: 415-line unbannered stretch after line 24
+- part-slidepanel.jsx: 365-line unbannered stretch after line 474
+- part-slidepanel.jsx: 423-line unbannered stretch after line 1151
 - part-uitest.jsx: 616-line unbannered stretch after line 1230
 - part-uitest2.jsx: 448-line unbannered stretch after line 2
 - part-uitest2.jsx: 593-line unbannered stretch after line 1395
