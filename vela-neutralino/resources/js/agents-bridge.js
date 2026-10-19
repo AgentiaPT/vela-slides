@@ -79,12 +79,22 @@ async function extFetch(pathname, body, timeoutMs) {
   try {
     // host literal "localhost" — the desktop CSP allows http://localhost:* and
     // it resolves to the loopback the gatekeeper binds.
-    const r = await fetch(`http://localhost:${hs.port}${pathname}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "x-vela-token": hs.token },
-      body: JSON.stringify(body || {}),
-      signal: controller.signal,
-    });
+    let r;
+    try {
+      r = await fetch(`http://localhost:${hs.port}${pathname}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-vela-token": hs.token },
+        body: JSON.stringify(body || {}),
+        signal: controller.signal,
+      });
+    } catch (e) {
+      // Transport failure: the cached port/token points at a gatekeeper that is
+      // not listening (stale handshake files from an earlier build). Drop the
+      // cache so the next call re-reads the files. Without this, every later
+      // call, including a rescan, reuses the dead port until the app restarts.
+      handshake = null;
+      throw e;
+    }
     if (r.status === 401) { handshake = null; throw new Error("AI agent auth failed"); }
     const data = await r.json().catch(() => ({}));
     if (!r.ok || !data.ok) throw new Error(data.error || `agent error ${r.status}`);
@@ -110,6 +120,9 @@ function availableList() {
 // transient "not up yet", retryable. A gatekeeper that answers with no agent
 // installed is a real negative that should stop the retry.
 async function detect() {
+  // A probe (boot retry or user rescan) must not reuse a cached handshake. The
+  // gatekeeper may have been restarted since, with a new port and token.
+  handshake = null;
   let gatekeeperUp = false;
   try {
     const data = await extFetch("/detect", {}, 15000);

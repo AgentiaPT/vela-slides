@@ -14880,6 +14880,32 @@ const _productTourSetup = async () => {
   await _waitFor(() => window.__velaDemoTest?.deckFingerprint?.() === DEMO_DECK_FINGERPRINT, 3000);
   await _cr5Setup();
 };
+uiSuite("Vector PDF glyph spacing (CR5)", [
+  { name: "typographic dashes and quotes map to WinAnsi bytes", fn: async () => {
+    const got = pdfWinAnsiBytes("–—‘’“”").join(",");
+    if (got !== "150,151,145,146,147,148") throw new Error("WinAnsi bytes wrong: " + got);
+  }},
+  { name: "pdfStringEncode escapes the same bytes it writes", fn: async () => {
+    const got = pdfStringEncode("a–(b)");
+    if (got !== "(a\\226\\(b\\))") throw new Error("encoded string wrong: " + got);
+  }},
+  { name: "ellipsis expands to three glyphs; emoji and controls dropped", fn: async () => {
+    const got = pdfWinAnsiBytes("…").join(",") + "|" + pdfWinAnsiBytes("a\u0007\u{1F600}b").join(",");
+    if (got !== "46,46,46|97,98") throw new Error("byte expansion wrong: " + got);
+  }},
+  { name: "en dash run needs no extra spacing (old code over-spaced it)", fn: async () => {
+    const fd = { widths: new Array(224).fill(500) };
+    fd.widths[150 - 32] = 1000; // WinAnsi 0x96 glyph
+    const tc = pdfRunTc({ text: "a–b", w: 20, fontSize: 10, letterSpacing: 0 }, fd);
+    if (Math.abs(tc) > 0.01) throw new Error("expected Tc 0, got " + tc);
+  }},
+  { name: "ellipsis run spacing counts three glyphs", fn: async () => {
+    const fd = { widths: new Array(224).fill(500) };
+    const tc = pdfRunTc({ text: "a…", w: 23, fontSize: 10, letterSpacing: 0 }, fd);
+    if (Math.abs(tc - 1.0) > 0.01) throw new Error("expected Tc 1.0, got " + tc);
+  }},
+]);
+
 uiSuite("Product Tour", [
   { name: "Scene order, feature count, badges, and duration stay inside budget", fn: async () => {
     const api = window.__velaDemoTest;
@@ -18128,47 +18154,60 @@ function buildShadingDict(gradient, coords) {
 // ━━━ PDF Text encoding ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // For standard fonts, PDF uses WinAnsiEncoding (Latin-1 subset)
 // Characters outside this range get replaced with ?
-function pdfStringEncode(str) {
-  let out = "(";
+// Single source of truth for the WinAnsi byte codes a PDF string holds. Both
+// pdfStringEncode (the bytes written) and the vector text-run spacing (the
+// glyph widths summed) read this, so the two can never disagree. A second
+// mapping here caused stretched/thin dashes and quotes in vector PDF text.
+function pdfWinAnsiBytes(str) {
+  // Typographic Unicode → WinAnsi byte(s). Values are byte-chars (one char per
+  // output byte), so a multi-char value emits several glyphs.
+  const typoMap = {
+    0x2014: "\u0097", // em dash (WinAnsi 0x97)
+    0x2013: "\u0096", // en dash (WinAnsi 0x96)
+    0x201C: "\u0093", // left double quote (WinAnsi 0x93)
+    0x201D: "\u0094", // right double quote (WinAnsi 0x94)
+    0x2018: "\u0091", // left single quote (WinAnsi 0x91)
+    0x2019: "\u0092", // right single quote (WinAnsi 0x92)
+    0x2022: "·", // bullet → middle dot (WinAnsi 0xB7)
+    0x2026: "...",    // ellipsis
+    0x2122: "TM",     // trademark
+    0x2192: "->",     // right arrow
+    0x2190: "<-",     // left arrow
+    0x21D2: "=>",     // double right arrow
+  };
+  const out = [];
   for (let i = 0; i < str.length; i++) {
     const c = str.codePointAt(i);
-    const ch = str[i];
     // Skip low surrogates (already handled by codePointAt on the high surrogate)
     if (c >= 0xDC00 && c <= 0xDFFF) continue;
     // Skip high surrogates after processing (advance past the pair)
     if (c > 0xFFFF) { i++; } // skip the low surrogate on next iteration
-    if (ch === "(" || ch === ")" || ch === "\\") {
-      out += "\\" + ch;
-    } else if (c >= 32 && c <= 126) {
+    if ((c >= 32 && c <= 126) || (c >= 128 && c <= 255)) {
+      // Printable ASCII and Latin-1 (©, ·, ×, etc.) map 1:1 to WinAnsi bytes
+      out.push(c);
+    } else if (typoMap[c]) {
+      const sub = typoMap[c];
+      for (let k = 0; k < sub.length; k++) out.push(sub.charCodeAt(k));
+    }
+    // Emoji and other non-Latin chars: skipped (rendered as images).
+    // This avoids misaligned text substitutions.
+  }
+  return out;
+}
+
+function pdfStringEncode(str) {
+  let out = "(";
+  for (const b of pdfWinAnsiBytes(str)) {
+    if (b === 0x28 || b === 0x29 || b === 0x5C) {
+      // ( ) \ must be escaped inside a PDF literal string
+      out += "\\" + String.fromCharCode(b);
+    } else if (b >= 32 && b <= 126) {
       // Printable ASCII — safe to include directly
-      out += ch;
-    } else if (c >= 128 && c <= 255) {
-      // Latin-1 chars (©, ·, ×, etc.) — must use octal escape to avoid
-      // UTF-8 double-encoding when TextEncoder converts to bytes
-      out += "\\" + c.toString(8).padStart(3, "0");
+      out += String.fromCharCode(b);
     } else {
-      // Typographic Unicode → WinAnsiEncoding substitutions
-      // Values use PDF octal escapes to avoid UTF-8 double-encoding via TextEncoder
-      const typoMap = {
-        0x2014: "\\227", // em dash (WinAnsi 0x97)
-        0x2013: "\\226", // en dash (WinAnsi 0x96)
-        0x201C: "\\223", // left double quote (WinAnsi 0x93)
-        0x201D: "\\224", // right double quote (WinAnsi 0x94)
-        0x2018: "\\221", // left single quote (WinAnsi 0x91)
-        0x2019: "\\222", // right single quote (WinAnsi 0x92)
-        0x2022: "\\267", // bullet → middle dot (WinAnsi 0xB7)
-        0x2026: "...",   // ellipsis
-        0x2122: "TM",    // trademark
-        0x2192: "->",    // right arrow
-        0x2190: "<-",    // left arrow
-        0x21D2: "=>",    // double right arrow
-      };
-      if (typoMap[c]) {
-        out += typoMap[c];
-      } else {
-        // Emoji and other non-Latin chars: skip (rendered as images)
-        // This avoids misaligned text substitutions
-      }
+      // Latin-1 and WinAnsi bytes use an octal escape so TextEncoder
+      // never re-encodes them as UTF-8
+      out += "\\" + b.toString(8).padStart(3, "0");
     }
   }
   return out + ")";
@@ -19203,6 +19242,27 @@ const FONT_FILES = [
 ];
 
 // ━━━ Build vector PDF ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Character spacing (Tc, PDF units) that makes the PDF run as wide as the DOM
+// run. Widths are summed over the same WinAnsi bytes the Tj operator writes
+// (pdfWinAnsiBytes), because Tc applies once per written glyph. Summing over
+// Unicode code units gave the wrong width for typographic dashes and quotes.
+function pdfRunTc(run, fd) {
+  let tc = run.letterSpacing;
+  const bytes = pdfWinAnsiBytes(run.text);
+  const n = bytes.length;
+  if (n > 1 && run.w > 0 && fd && fd.widths) {
+    let rawW = 0;
+    for (const code of bytes) rawW += fd.widths[code - 32] || 0;
+    const rawPdfW = rawW * run.fontSize / 1000;
+    // tc such that: rawPdfW + tc * (n-1) ≈ domW
+    tc = (run.w - rawPdfW) / (n - 1);
+    // Cap: don't compress more than 15% of average char width
+    const maxShrink = -(rawPdfW / n) * 0.15;
+    if (tc < maxShrink) tc = maxShrink;
+  }
+  return tc;
+}
+
 function buildVectorPdf(pages, pageW, pageH, fonts, showBranding) {
   const enc = new TextEncoder();
   const parts = [];
@@ -19512,21 +19572,7 @@ function buildVectorPdf(pages, pageW, pageH, fonts, showBranding) {
         // Adjust character spacing so PDF text width matches DOM width
         // DOM width (run.w) already includes CSS letter-spacing + browser kerning
         // PDF doesn't apply kerning, so compute Tc to compensate
-        let tc = run.letterSpacing;
-        const n = run.text.length;
-        if (n > 1 && run.w > 0 && fd && fd.widths) {
-          let rawW = 0;
-          for (let ci = 0; ci < n; ci++) {
-            const code = run.text.charCodeAt(ci);
-            rawW += (code >= 32 && code <= 255) ? (fd.widths[code - 32] || 0) : 500;
-          }
-          const rawPdfW = rawW * run.fontSize / 1000;
-          // tc such that: rawPdfW + tc * (n-1) ≈ domW
-          tc = (run.w - rawPdfW) / (n - 1);
-          // Cap: don't compress more than 15% of average char width
-          const maxShrink = -(rawPdfW / n) * 0.15;
-          if (tc < maxShrink) tc = maxShrink;
-        }
+        const tc = pdfRunTc(run, fd);
         if (Math.abs(tc) > 0.01) {
           content += `${tc.toFixed(2)} Tc\n`;
         }

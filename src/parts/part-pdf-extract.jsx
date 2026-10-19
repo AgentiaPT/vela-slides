@@ -165,47 +165,60 @@ function buildShadingDict(gradient, coords) {
 // ━━━ PDF Text encoding ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // For standard fonts, PDF uses WinAnsiEncoding (Latin-1 subset)
 // Characters outside this range get replaced with ?
-function pdfStringEncode(str) {
-  let out = "(";
+// Single source of truth for the WinAnsi byte codes a PDF string holds. Both
+// pdfStringEncode (the bytes written) and the vector text-run spacing (the
+// glyph widths summed) read this, so the two can never disagree. A second
+// mapping here caused stretched/thin dashes and quotes in vector PDF text.
+function pdfWinAnsiBytes(str) {
+  // Typographic Unicode → WinAnsi byte(s). Values are byte-chars (one char per
+  // output byte), so a multi-char value emits several glyphs.
+  const typoMap = {
+    0x2014: "\u0097", // em dash (WinAnsi 0x97)
+    0x2013: "\u0096", // en dash (WinAnsi 0x96)
+    0x201C: "\u0093", // left double quote (WinAnsi 0x93)
+    0x201D: "\u0094", // right double quote (WinAnsi 0x94)
+    0x2018: "\u0091", // left single quote (WinAnsi 0x91)
+    0x2019: "\u0092", // right single quote (WinAnsi 0x92)
+    0x2022: "·", // bullet → middle dot (WinAnsi 0xB7)
+    0x2026: "...",    // ellipsis
+    0x2122: "TM",     // trademark
+    0x2192: "->",     // right arrow
+    0x2190: "<-",     // left arrow
+    0x21D2: "=>",     // double right arrow
+  };
+  const out = [];
   for (let i = 0; i < str.length; i++) {
     const c = str.codePointAt(i);
-    const ch = str[i];
     // Skip low surrogates (already handled by codePointAt on the high surrogate)
     if (c >= 0xDC00 && c <= 0xDFFF) continue;
     // Skip high surrogates after processing (advance past the pair)
     if (c > 0xFFFF) { i++; } // skip the low surrogate on next iteration
-    if (ch === "(" || ch === ")" || ch === "\\") {
-      out += "\\" + ch;
-    } else if (c >= 32 && c <= 126) {
+    if ((c >= 32 && c <= 126) || (c >= 128 && c <= 255)) {
+      // Printable ASCII and Latin-1 (©, ·, ×, etc.) map 1:1 to WinAnsi bytes
+      out.push(c);
+    } else if (typoMap[c]) {
+      const sub = typoMap[c];
+      for (let k = 0; k < sub.length; k++) out.push(sub.charCodeAt(k));
+    }
+    // Emoji and other non-Latin chars: skipped (rendered as images).
+    // This avoids misaligned text substitutions.
+  }
+  return out;
+}
+
+function pdfStringEncode(str) {
+  let out = "(";
+  for (const b of pdfWinAnsiBytes(str)) {
+    if (b === 0x28 || b === 0x29 || b === 0x5C) {
+      // ( ) \ must be escaped inside a PDF literal string
+      out += "\\" + String.fromCharCode(b);
+    } else if (b >= 32 && b <= 126) {
       // Printable ASCII — safe to include directly
-      out += ch;
-    } else if (c >= 128 && c <= 255) {
-      // Latin-1 chars (©, ·, ×, etc.) — must use octal escape to avoid
-      // UTF-8 double-encoding when TextEncoder converts to bytes
-      out += "\\" + c.toString(8).padStart(3, "0");
+      out += String.fromCharCode(b);
     } else {
-      // Typographic Unicode → WinAnsiEncoding substitutions
-      // Values use PDF octal escapes to avoid UTF-8 double-encoding via TextEncoder
-      const typoMap = {
-        0x2014: "\\227", // em dash (WinAnsi 0x97)
-        0x2013: "\\226", // en dash (WinAnsi 0x96)
-        0x201C: "\\223", // left double quote (WinAnsi 0x93)
-        0x201D: "\\224", // right double quote (WinAnsi 0x94)
-        0x2018: "\\221", // left single quote (WinAnsi 0x91)
-        0x2019: "\\222", // right single quote (WinAnsi 0x92)
-        0x2022: "\\267", // bullet → middle dot (WinAnsi 0xB7)
-        0x2026: "...",   // ellipsis
-        0x2122: "TM",    // trademark
-        0x2192: "->",    // right arrow
-        0x2190: "<-",    // left arrow
-        0x21D2: "=>",    // double right arrow
-      };
-      if (typoMap[c]) {
-        out += typoMap[c];
-      } else {
-        // Emoji and other non-Latin chars: skip (rendered as images)
-        // This avoids misaligned text substitutions
-      }
+      // Latin-1 and WinAnsi bytes use an octal escape so TextEncoder
+      // never re-encodes them as UTF-8
+      out += "\\" + b.toString(8).padStart(3, "0");
     }
   }
   return out + ")";

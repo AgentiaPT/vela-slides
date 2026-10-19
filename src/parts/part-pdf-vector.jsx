@@ -457,6 +457,27 @@ const FONT_FILES = [
 ];
 
 // ━━━ Build vector PDF ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Character spacing (Tc, PDF units) that makes the PDF run as wide as the DOM
+// run. Widths are summed over the same WinAnsi bytes the Tj operator writes
+// (pdfWinAnsiBytes), because Tc applies once per written glyph. Summing over
+// Unicode code units gave the wrong width for typographic dashes and quotes.
+function pdfRunTc(run, fd) {
+  let tc = run.letterSpacing;
+  const bytes = pdfWinAnsiBytes(run.text);
+  const n = bytes.length;
+  if (n > 1 && run.w > 0 && fd && fd.widths) {
+    let rawW = 0;
+    for (const code of bytes) rawW += fd.widths[code - 32] || 0;
+    const rawPdfW = rawW * run.fontSize / 1000;
+    // tc such that: rawPdfW + tc * (n-1) ≈ domW
+    tc = (run.w - rawPdfW) / (n - 1);
+    // Cap: don't compress more than 15% of average char width
+    const maxShrink = -(rawPdfW / n) * 0.15;
+    if (tc < maxShrink) tc = maxShrink;
+  }
+  return tc;
+}
+
 function buildVectorPdf(pages, pageW, pageH, fonts, showBranding) {
   const enc = new TextEncoder();
   const parts = [];
@@ -766,21 +787,7 @@ function buildVectorPdf(pages, pageW, pageH, fonts, showBranding) {
         // Adjust character spacing so PDF text width matches DOM width
         // DOM width (run.w) already includes CSS letter-spacing + browser kerning
         // PDF doesn't apply kerning, so compute Tc to compensate
-        let tc = run.letterSpacing;
-        const n = run.text.length;
-        if (n > 1 && run.w > 0 && fd && fd.widths) {
-          let rawW = 0;
-          for (let ci = 0; ci < n; ci++) {
-            const code = run.text.charCodeAt(ci);
-            rawW += (code >= 32 && code <= 255) ? (fd.widths[code - 32] || 0) : 500;
-          }
-          const rawPdfW = rawW * run.fontSize / 1000;
-          // tc such that: rawPdfW + tc * (n-1) ≈ domW
-          tc = (run.w - rawPdfW) / (n - 1);
-          // Cap: don't compress more than 15% of average char width
-          const maxShrink = -(rawPdfW / n) * 0.15;
-          if (tc < maxShrink) tc = maxShrink;
-        }
+        const tc = pdfRunTc(run, fd);
         if (Math.abs(tc) > 0.01) {
           content += `${tc.toFixed(2)} Tc\n`;
         }

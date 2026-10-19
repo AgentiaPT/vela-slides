@@ -24,6 +24,7 @@ import { trust } from "./trust.js";
 import { checkForUpdate } from "./update-check.js";
 import { fsGuard } from "./fs-guard.js";
 import { showDeckWarning } from "./deck-warning.js";
+import { nativeWindowTitle, bindRegainFocus } from "./window-host.js";
 
 const $ = (id) => document.getElementById(id);
 const loadingMsg = $("vela-loading-msg");
@@ -67,6 +68,22 @@ function focusWindow() {
   setTimeout(tryFocus, 400);
 }
 
+// Mirror the app's document.title into the native title bar as
+// "Vela Slides - <deck title>". The app updates document.title on every deck
+// change, and Neutralino does not follow it on its own.
+function installNativeTitleSync() {
+  let last = null;
+  const sync = () => {
+    const t = nativeWindowTitle(document.title);
+    if (t === last) return;
+    last = t;
+    try { Promise.resolve(Neutralino.window.setTitle(t)).catch(() => {}); } catch { /* window.* not ready */ }
+  };
+  sync();
+  const titleEl = document.querySelector("title");
+  if (titleEl) new MutationObserver(sync).observe(titleEl, { childList: true, characterData: true, subtree: true });
+}
+
 async function boot() {
   setMsg("Starting Neutralino…");
   try {
@@ -75,6 +92,10 @@ async function boot() {
     return showError("Neutralino.init() failed: " + e.message);
   }
   focusWindow();
+  // Alt-tab back into the window: take keyboard focus again at once, so the
+  // presenter, editor and gallery shortcuts work without a click.
+  bindRegainFocus(window, document, focusWindow);
+  installNativeTitleSync();
   // Wrap Neutralino.filesystem.* so every path must resolve inside an allowed
   // root (the decks folder + ~/.vela, registered by deck-io/config-store).
   // Installed before any module touches the filesystem.
