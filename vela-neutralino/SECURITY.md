@@ -66,7 +66,8 @@ acknowledgment before the deck mounts.
    `window.setTitle` is granted so the OS window title can show the open deck
    (`resources/js/window-sync.js`). It takes a string, not a path, so it adds
    no file capability. The deck title is untrusted, so the shell strips
-   control, zero-width and bidi characters, caps the length, and always
+   every control and format character (zero-width, bidi marks/overrides/
+   isolates, tag characters), caps the length, and always
    prefixes the fixed `Vela Slides - ` text — a deck cannot set the whole
    title bar text. `windowFocus` / `windowBlur` (focus restore after Alt+Tab)
    use the already granted `events.on` and `window.focus`.
@@ -140,6 +141,14 @@ acknowledgment before the deck mounts.
      the port + a random per-launch token to `~/.vela/agent-ext.{port,token}`.
      Every request must carry the token (constant-time compared), so other
      local processes cannot drive the user's agents.
+   - **Stale-port check (webview side).** The handshake port can be stale
+     (the gatekeeper is gone and another local server owns the port). Before
+     each request that carries the token, the webview makes a token-free
+     identity probe; if it fails, the token is not sent. Any non-OK,
+     non-JSON or wrong-shape reply drops the cached handshake, so the next
+     attempt re-reads the handshake files. The probe is coarse (a local
+     server can mimic it); it limits accidental token disclosure, it is not
+     authentication of the gatekeeper.
    - **Fixed binary, locked args.** The binary is a constant chosen from a
      two-entry allowlist; the prompt is data only — passed on **stdin**
      (claude) or as a single argv element (copilot) — and run via `os/exec`

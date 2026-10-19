@@ -10,13 +10,22 @@ export const APP_NAME = "Vela Slides";
 // The suffix that part-app.jsx appends to document.title ("<deck> \u2014 Vela Slides").
 const DOC_SUFFIX = " \u2014 " + APP_NAME;
 const MAX_TITLE_CHARS = 100;
-// C0/C1 controls, zero-width marks, line/paragraph separators, bidi
-// overrides/isolates and BOM. The deck title is untrusted deck data; these
-// characters could break the OS title bar or spoof its text direction.
-const CONTROL_RE = /[\u0000-\u001F\u007F-\u009F\u200b-\u200f\u2028-\u202e\u2060-\u2069\ufeff]/g;
-// "Vela Slides" at the start, with any separator after it. Removed so the
-// window never says "Vela Slides - "Vela Slides - \u2026"".
-const LEADING_APP_RE = /^vela\s+slides(?:[\s\-\u2013\u2014:|"]+|$)/i;
+// Every control (Cc) and format (Cf) code point, line/paragraph separators
+// and lone surrogates. Cf covers zero-width marks, bidi marks/overrides/
+// isolates (incl. U+061C ALM), U+180E, soft hyphen, BOM, interlinear and tag
+// characters. The deck title is untrusted deck data; these characters could
+// break the OS title bar or spoof its text direction.
+const CONTROL_RE = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\p{Cs}]/gu;
+// Punctuation that may wrap or follow the product name: quotes and dashes.
+const P = "[\\s\"'\\-\\u2013\\u2014:]*";
+// The whole title is only the product name, e.g. `"Vela Slides"`, `Vela Slides -`.
+const ONLY_APP_RE = new RegExp(`^${P}vela\\s+slides${P}$`, "i");
+// The product name, then a dash/colon separator, then the real name, e.g.
+// `Vela Slides - "X"`. A title that only begins with the words, such as
+// `Vela Slides Roadmap`, has no separator and is kept intact.
+const APP_PREFIX_RE = /^vela\s+slides\s*[-\u2013\u2014:]\s*(.+)$/i;
+const unquote = (s) =>
+  s.length >= 2 && s.startsWith('"') && s.endsWith('"') ? s.slice(1, -1).trim() : s;
 
 // Compute the native window title from the current document.title.
 // Returns `Vela Slides` when there is no usable deck title, otherwise
@@ -25,15 +34,18 @@ export function windowTitleFor(docTitle) {
   let name = typeof docTitle === "string" ? docTitle : "";
   if (name.endsWith(DOC_SUFFIX)) name = name.slice(0, -DOC_SUFFIX.length);
   name = name.replace(CONTROL_RE, " ").replace(/\s+/g, " ").trim();
-  // Strip repeated leading "Vela Slides" prefixes (also a bare "Vela Slides").
-  for (let i = 0; i < 3 && LEADING_APP_RE.test(name); i++) {
-    name = name.replace(LEADING_APP_RE, "").trim();
-    // A leftover closing quote from a copied `Vela Slides - "X"` title.
-    if (/^[^"]*"$/.test(name)) name = name.slice(0, -1).trim();
+  // Never repeat the product name: drop a title that is only the name, and a
+  // `Vela Slides - <name>` / `Vela Slides: <name>` prefix (up to 3 levels).
+  for (let i = 0; i < 3; i++) {
+    if (ONLY_APP_RE.test(name)) { name = ""; break; }
+    const m = APP_PREFIX_RE.exec(name);
+    if (!m) break;
+    // A copied `Vela Slides - "X"` title: drop the wrapping quote pair only.
+    name = unquote(m[1].trim());
   }
   // We add our own quotes; drop one wrapping pair so they are not doubled.
-  if (name.length >= 2 && name.startsWith('"') && name.endsWith('"')) name = name.slice(1, -1).trim();
-  if (!name || name.toLowerCase() === "untitled") return APP_NAME;
+  name = unquote(name);
+  if (!name || name.toLowerCase() === "untitled" || ONLY_APP_RE.test(name)) return APP_NAME;
   const chars = Array.from(name); // count code points, never split a surrogate pair
   if (chars.length > MAX_TITLE_CHARS) name = chars.slice(0, MAX_TITLE_CHARS - 1).join("").trimEnd() + "\u2026";
   return `${APP_NAME} - "${name}"`;
@@ -68,7 +80,10 @@ export function installTitleSync(doc, Observer) {
 // click. On activation we (1) ask the native window to focus the webview if
 // the document has no focus, rate-limited so that our own focus call cannot
 // loop through another windowFocus event, and (2) put DOM focus back on the
-// element that had it before the blur, unless something else has it now.
+// element that had it at the LAST blur, unless something else has it now.
+// If the app root (body) had focus at that blur, nothing is refocused: focus
+// stays on the root, so the window-level keydown handlers (slide navigation)
+// get Arrow/Space instead of a stale input.
 export function installFocusRestore(win, doc, opts = {}) {
   const now = opts.now || (() => Date.now());
   const minGapMs = opts.minGapMs != null ? opts.minGapMs : 1000;
@@ -77,9 +92,18 @@ export function installFocusRestore(win, doc, opts = {}) {
 
   const isIdle = (el) => !el || el === doc.body || el === doc.documentElement;
 
+  // Always overwrite: an older element must not survive a blur at the root.
   const remember = () => {
     const a = doc.activeElement;
-    if (!isIdle(a)) lastActive = a;
+    lastActive = isIdle(a) ? null : a;
+  };
+
+  // A real deactivation ends the echo window: the rate limit only stops our
+  // own native focus call from looping through its windowFocus echo (no blur
+  // between), never a second real Alt+Tab back within minGapMs.
+  const onNativeBlur = () => {
+    lastNativeFocus = -Infinity;
+    remember();
   };
 
   const restoreDom = () => {
@@ -103,7 +127,7 @@ export function installFocusRestore(win, doc, opts = {}) {
     restoreDom();
   };
 
-  try { Neutralino.events.on("windowBlur", remember); } catch {}
+  try { Neutralino.events.on("windowBlur", onNativeBlur); } catch {}
   try { Neutralino.events.on("windowFocus", onNativeFocus); } catch {}
   win.addEventListener("blur", remember);
   win.addEventListener("focus", restoreDom);

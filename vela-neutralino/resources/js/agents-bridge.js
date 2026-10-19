@@ -78,9 +78,39 @@ async function ensureHandshake() {
   return handshake;
 }
 
-async function extFetch(pathname, body, timeoutMs) {
+const isObj = (v) => !!v && typeof v === "object" && !Array.isArray(v);
+
+// Identity check, done before EVERY request that carries the token. The port
+// (in the handshake file, or cached) can be stale: the gatekeeper is gone and
+// another local HTTP server now owns that port. The gatekeeper's
+// unauthenticated GET /health answers 200 with a JSON {ok:true} object;
+// anything else is not our gatekeeper, so the token must not go there. A
+// loopback GET is cheap next to an agent call. This is a coarse check (any
+// server can mimic it); the per-reply shape checks in extFetch are the second
+// layer.
+async function verifyGatekeeper(hs) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 5000);
+  try {
+    // No custom headers, no body, no token: a plain GET.
+    const r = await fetch(`http://localhost:${hs.port}/health`, { method: "GET", signal: controller.signal });
+    if (r.status !== 200) return false;
+    const data = await r.json();
+    return isObj(data) && data.ok === true;
+  } catch {
+    return false; // refused / abort / non-JSON
+  } finally { clearTimeout(timer); }
+}
+
+// `shapeOk(data)` checks the success reply has the fields the caller needs.
+async function extFetch(pathname, body, timeoutMs, shapeOk) {
   const hs = await ensureHandshake();
   if (!hs) throw new Error("AI agent is not available");
+  // Any failure below drops the cached handshake so the next call (boot retry
+  // or Rescan) re-reads the handshake files, instead of pinning AI "offline"
+  // on a stale port until a restart.
+  const drop = () => { if (handshake === hs) dropHandshake(); };
+  if (!(await verifyGatekeeper(hs))) { drop(); throw new Error("AI agent is not reachable"); }
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
@@ -95,15 +125,20 @@ async function extFetch(pathname, body, timeoutMs) {
         signal: controller.signal,
       });
     } catch (e) {
-      // Transport failure (refused / CORS / abort): the cached port may belong
-      // to a gatekeeper that is gone. Drop it so the next call re-reads the
-      // handshake files, instead of pinning AI "offline" until a restart.
-      if (handshake === hs) dropHandshake();
+      drop(); // transport failure (refused / CORS / abort)
       throw new Error("AI agent is not reachable");
     }
-    if (r.status === 401) { if (handshake === hs) dropHandshake(); throw new Error("AI agent auth failed"); }
-    const data = await r.json().catch(() => ({}));
-    if (!r.ok || !data.ok) throw new Error(data.error || `agent error ${r.status}`);
+    if (r.status === 401) { drop(); throw new Error("AI agent auth failed"); }
+    let data = null;
+    try { data = await r.json(); } catch { data = null; }
+    // Non-OK, non-JSON or wrong shape: drop. A gatekeeper agent error (500 +
+    // {ok:false,error}) is also dropped; the re-read is cheap and the next
+    // call re-verifies the same port.
+    if (!r.ok || !isObj(data) || data.ok !== true || (shapeOk && !shapeOk(data))) {
+      drop();
+      const msg = isObj(data) && typeof data.error === "string" && data.error ? data.error : `agent error ${r.status}`;
+      throw new Error(msg);
+    }
     return data;
   } finally { clearTimeout(timer); }
 }
@@ -129,9 +164,9 @@ async function detect(opts) {
   if (opts && opts.fresh) dropHandshake(); // manual Rescan: always re-read
   let gatekeeperUp = false;
   try {
-    const data = await extFetch("/detect", {}, 15000);
+    const data = await extFetch("/detect", {}, 15000, (d) => isObj(d.providers));
     gatekeeperUp = true;
-    detected = data.providers || {};
+    detected = data.providers;
   } catch {
     detected = {};
   }
@@ -181,7 +216,8 @@ export const agents = {
   async send(payload) {
     if (!activeId) throw new Error("No AI provider selected");
     const timeoutMs = Math.max(30000, payload?._callType === "create" ? 300000 : 200000);
-    const data = await extFetch("/send", { provider: activeId, ...payload }, timeoutMs);
+    const data = await extFetch("/send", { provider: activeId, ...payload }, timeoutMs,
+      (d) => typeof d.text === "string");
     if (data.stats?.model) lastModel = data.stats.model;
     return { text: data.text || "", request_id: data.request_id, stats: data.stats || {} };
   },

@@ -55,11 +55,24 @@ function build({ files, servers, nlPort, logs }) {
     },
   };
   const fetchCalls = [];
+  const tokensSent = []; // [port, token] for every request that carried a token
   const fetchMock = async (url, init) => {
-    const port = String(new URL(url).port);
+    const u = new URL(url);
+    const port = String(u.port);
     fetchCalls.push(port);
+    const tok = init && init.headers && init.headers["x-vela-token"];
+    if (tok != null) tokensSent.push([port, tok]);
     const srv = servers[port];
     if (!srv) throw new TypeError("Failed to fetch"); // connection refused
+    // Another local HTTP server now owns the port: same reply for every path.
+    if (srv.foreign) {
+      const f = srv.foreign;
+      return { status: f.status, ok: f.status >= 200 && f.status < 300,
+        json: async () => { if (f.body === undefined) throw new SyntaxError("not json"); return f.body; } };
+    }
+    if (u.pathname === "/health") {
+      return { status: 200, ok: true, json: async () => ({ ok: true }) };
+    }
     if (init.headers["x-vela-token"] !== srv.token) {
       return { status: 401, ok: false, json: async () => ({ ok: false, error: "unauthorized" }) };
     }
@@ -76,7 +89,7 @@ function build({ files, servers, nlPort, logs }) {
   // eslint-disable-next-line no-new-func
   const mod = new Function("Neutralino", "fetch", "window", "fsGuard", "configStore", "console", body)(
     Neutralino, fetchMock, windowMock, fsGuard, configStore, consoleMock);
-  return { ...mod, reads, fetchCalls };
+  return { ...mod, reads, fetchCalls, tokensSent };
 }
 
 const PROVIDERS = { "claude-code": { id: "claude-code", label: "Claude Code", available: true, version: "1" } };
@@ -146,19 +159,85 @@ const keyed = (nl, port, token) => ({
     assert(await m.agents.detect() === true);
   });
 
-  await test("agent error from a live gatekeeper keeps the handshake (no needless re-read)", async () => {
+  await test("agent error (non-OK) drops the handshake; next call re-reads and still works (W4)", async () => {
     const files = { ...keyed(4242, "2222", "tk") };
     const servers = { "2222": { token: "tk", providers: PROVIDERS } };
     const m = build({ files, servers, nlPort: 4242, logs: [] });
     assert(await m.agents.detect() === true);
     servers["2222"].status = 500;
     const before = m.reads.length;
+    let err = "";
+    try { await m.agents.send({ messages: [] }); } catch (e) { err = String(e && e.message); }
+    assert(err === "agent failed", "send must surface the gatekeeper's error text, got: " + err);
+    servers["2222"].status = 200;
+    const r = await m.agents.send({ messages: [] });
+    assert(r.text === "hi", "send must work after the re-read");
+    assert(m.reads.length > before, "handshake files must be re-read after a non-OK reply");
+  });
+
+  // W4 (CR19 follow-up): the stale cached port now serves ANOTHER local HTTP
+  // server. Any non-OK / non-JSON / wrong-shape reply must drop the cache so a
+  // plain boot retry recovers, and the token must never reach that server.
+  const FOREIGN = [
+    ["404 JSON", { status: 404, body: { error: "not found" } }],
+    ["500 JSON", { status: 500, body: { ok: false } }],
+    ["200 non-JSON", { status: 200, body: undefined }],
+    ["200 wrong shape", { status: 200, body: { hello: "world" } }],
+    ["200 array", { status: 200, body: [1, 2] }],
+  ];
+  for (const [label, reply] of FOREIGN) {
+    await test(`foreign server on the stale port (${label}) -> cache dropped, token never sent, retry recovers`, async () => {
+      const files = { ...keyed(4242, "2222", "tk") };
+      const servers = { "2222": { token: "tk", providers: PROVIDERS } };
+      const m = build({ files, servers, nlPort: 4242, logs: [] });
+      assert(await m.agents.detect() === true, "first detect reaches the gatekeeper");
+      // The gatekeeper exits; an unrelated server takes port 2222.
+      servers["2222"] = { foreign: reply };
+      const sentBefore = m.tokensSent.length;
+      assert(await m.agents.detect() === false, "foreign server is not the gatekeeper");
+      assert(!m.agents.available(), "AI must be offline while the gatekeeper is gone");
+      // A new gatekeeper writes a new keyed handshake; a plain retry recovers.
+      Object.assign(files, keyed(4242, "3333", "tk2"));
+      servers["3333"] = { token: "tk2", providers: PROVIDERS };
+      assert(await m.agents.detect() === true, "plain retry must re-read the handshake files");
+      const leaked = m.tokensSent.slice(sentBefore).filter(([p]) => p === "2222");
+      assert(leaked.length === 0, "token sent to the foreign server: " + leaked.length);
+    });
+  }
+
+  await test("authed reply with the wrong shape drops the cache (W4)", async () => {
+    // Identity probe passes ({ok:true} for every path) but /detect has no providers.
+    const files = { ...keyed(4242, "2222", "tk") };
+    const servers = { "2222": { foreign: { status: 200, body: { ok: true } } } };
+    const m = build({ files, servers, nlPort: 4242, logs: [] });
+    assert(await m.agents.detect() === false, "wrong shape is not a gatekeeper answer");
+    Object.assign(files, keyed(4242, "3333", "tk2"));
+    servers["3333"] = { token: "tk2", providers: PROVIDERS };
+    assert(await m.agents.detect() === true, "retry must re-read after a wrong-shape reply");
+  });
+
+  await test("identity probe runs before every token-bearing call and carries no token (W4)", async () => {
+    const files = { ...keyed(4242, "2222", "tk") };
+    const servers = { "2222": { token: "tk", providers: PROVIDERS } };
+    const m = build({ files, servers, nlPort: 4242, logs: [] });
+    assert(await m.agents.detect() === true);
+    await m.agents.send({ messages: [] });
+    await m.agents.send({ messages: [] });
+    assert(m.fetchCalls.length === 6, "3 probes + 3 authed calls, got " + m.fetchCalls.length);
+    assert(m.tokensSent.length === 3, "probe must not carry the token");
+  });
+
+  await test("port taken over after a good detect: token not sent on the next send (W4)", async () => {
+    const files = { ...keyed(4242, "2222", "tk") };
+    const servers = { "2222": { token: "tk", providers: PROVIDERS } };
+    const m = build({ files, servers, nlPort: 4242, logs: [] });
+    assert(await m.agents.detect() === true);
+    servers["2222"] = { foreign: { status: 404, body: { error: "nope" } } };
+    const before = m.tokensSent.length;
     let threw = false;
     try { await m.agents.send({ messages: [] }); } catch { threw = true; }
-    assert(threw, "send must surface the agent error");
-    servers["2222"].status = 200;
-    await m.agents.send({ messages: [] });
-    assert(m.reads.length === before, "handshake files must not be re-read");
+    assert(threw, "send must fail");
+    assert(m.tokensSent.length === before, "token must not reach the foreign server");
   });
 
   await test("tokens and handshake are never written to the console", async () => {
