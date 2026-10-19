@@ -148,6 +148,7 @@ class NeutralinoConfigInvariants(unittest.TestCase):
         expected = {
             "window.setFullScreen", "window.exitFullScreen", "window.maximize",
             "window.unmaximize", "window.isMaximized", "window.focus",
+            "window.setTitle",
         }
         self.assertEqual(window_entries, expected)
 

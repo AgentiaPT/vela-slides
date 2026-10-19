@@ -58,7 +58,9 @@ run_gate() {
     server)   python3 -m unittest tests.test_serve -v ;;
     secrets)  python3 -m unittest tests.test_secure_file -v &&
               python3 tools/vela-dev/scripts/check-secret-writes.py ;;
-    desktop)  python3 -m unittest tests.test_desktop -v ;;
+    desktop)  python3 -m unittest tests.test_desktop -v &&
+              node tests/test_agents_bridge.cjs &&
+              node tests/test_window_host.cjs ;;
     go)       gotest ;;
     concat)   concat_check ;;
     e2e)      node tests/test_review_ui.cjs ;;
