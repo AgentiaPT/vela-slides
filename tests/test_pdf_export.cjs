@@ -45,6 +45,8 @@ const PDF_INJECTION_LINK = "https://a.example/)/S/JavaScript/JS(app.alert)/Dummy
 // render/finalize loop (~350-450ms/slide × 2 paths) shrinks ~9×. Keeps a heading
 // ("Vela") and body ("slide") so the vector text-layer assertion still finds
 // extractable words. Full format (lanes/items/slides) so expectedPageCount reads it.
+// Euro plus the other WinAnsi chars that are outside Latin-1 (and £ ¥ inside it).
+const WINANSI_TEXT = "Price \u20AC 9 \u00A3 5 \u00A5 7 \u2122 \u2022 \u2013 \u2014 \u201C \u201D \u2018 \u2019 \u2026";
 const DECK = (() => {
   const deck = {
     deckTitle: "PDF Export Smoke",
@@ -52,6 +54,8 @@ const DECK = (() => {
       { bg: "#0f172a", color: "#e2e8f0", accent: "#3b82f6", blocks: [{ type: "heading", text: "Vela Slides", link: PDF_INJECTION_LINK }] },
       { bg: "#0f172a", color: "#e2e8f0", accent: "#3b82f6", blocks: [{ type: "text", text: "A slide with body text for the vector text layer." }] },
       { bg: "#0f172a", color: "#e2e8f0", accent: "#10b981", blocks: [{ type: "metric", value: "42", label: "Answer" }] },
+      // CR5: WinAnsi 0x80-0x9F chars must export as real vector text, not emoji images.
+      { bg: "#0f172a", color: "#e2e8f0", accent: "#f59e0b", blocks: [{ type: "text", text: WINANSI_TEXT }] },
     ] }] }],
   };
   // Unique per-process path so concurrent runs (parallel CI stacks / devs) can't
@@ -275,6 +279,14 @@ function assertPdf(label, buf, expectedPages, { vector }) {
     }
     check(`[${label}] extractable slide text present in a "(…) Tj" run`, !!hit,
       hit ? `matched "${hit}"` : `none of ${JSON.stringify(words)}`);
+    // CR5: the WinAnsi slide text is real text. Euro is WinAnsi byte 0x80
+    // ("\\200" octal escape) inside a "(…) Tj" run, and the deck has no emoji or
+    // images, so NO image XObject may exist (before the fix € was rasterized as
+    // an emoji image with the wrong size/baseline).
+    const euroRun = /\((?:[^()\\]|\\.)*Price \\200 9 \\243 5 \\245 7 \\231 \\225 \\226 \\227 \\223 \\224 \\221 \\222 \\205(?:[^()\\]|\\.)*\)\s*Tj/;
+    check(`[${label}] euro + WinAnsi chars exported as WinAnsi bytes in one "(…) Tj" text run`, euroRun.test(text));
+    check(`[${label}] no image XObject (euro/WinAnsi chars not rasterized as emoji)`,
+      !/\/Subtype\s*\/Image/.test(text), 'found /Subtype /Image in a deck with no images/emoji');
     // Sanity: an embedded TrueType or fallback font must back that text.
     check(`[${label}] declares at least one /Font resource`, /\/Type\s*\/Font\b/.test(text));
   } else {
@@ -288,10 +300,38 @@ function assertPdf(label, buf, expectedPages, { vector }) {
   }
 }
 
+// ── Unit: pdfStringEncode / isEmojiCodepoint (real source, no browser) ──────
+// Runs the REAL functions from part-pdf-extract.jsx (between the "PDF Text
+// encoding" banner and renderEmojiToImage) in a vm sandbox, so this part runs
+// even when Chromium is unavailable.
+function unitWinAnsi() {
+  const vm = require('vm');
+  const src = fs.readFileSync(path.join(ROOT, 'src', 'parts', 'part-pdf-extract.jsx'), 'utf8');
+  const m = src.match(/\/\/ \u2501+ PDF Text encoding[\s\S]*?(?=\/\/ Render a single emoji string)/);
+  if (!m) { check('unit: located pdfStringEncode/isEmojiCodepoint block in part-pdf-extract.jsx', false); return; }
+  const sb = { out: null };
+  vm.createContext(sb);
+  vm.runInContext(m[0] + '\nout = { pdfStringEncode, isEmojiCodepoint };', sb);
+  const { pdfStringEncode, isEmojiCodepoint } = sb.out;
+  const cases = [
+    [0x20AC, '\\200'], [0x2122, '\\231'], [0x2022, '\\225'], [0x2013, '\\226'], [0x2014, '\\227'],
+    [0x201C, '\\223'], [0x201D, '\\224'], [0x2018, '\\221'], [0x2019, '\\222'], [0x2026, '\\205'],
+    [0x0152, '\\214'], [0x0178, '\\237'], [0x00A3, '\\243'], [0x00A5, '\\245'],
+  ];
+  const bad = cases.filter(([cp, esc]) => pdfStringEncode(String.fromCodePoint(cp)) !== '(' + esc + ')' || isEmojiCodepoint(cp));
+  check('unit: WinAnsi chars (euro, TM, bullet, dashes, quotes, ellipsis, ...) encode to their WinAnsi byte and are not emoji',
+    bad.length === 0, 'bad=' + JSON.stringify(bad.map(([cp]) => cp.toString(16))));
+  check('unit: real emoji still go to the image path (not encoded as text)',
+    isEmojiCodepoint(0x1F680) && pdfStringEncode('\u{1F680}') === '()');
+  check('unit: output stays ASCII and literal metacharacters stay escaped',
+    /^[\x20-\x7e]*$/.test(pdfStringEncode('a(\u20AC)\\b\u2014')) && pdfStringEncode('a(b)\\') === '(a\\(b\\)\\\\)');
+}
+
 // ── Main ─────────────────────────────────────────────────────────────────────
 (async () => {
   const t0 = Date.now();
 
+  unitWinAnsi();
   const expectedPages = expectedPageCount(DECK);
   console.log(`Deck-derived expected page count: ${expectedPages}\n`);
 

@@ -393,6 +393,37 @@ async function driveExport(page) {
           wrapMode.multi === 'square', JSON.stringify(wrapMode));
       }
 
+      // CR5 parity check: euro and the other WinAnsi-only chars must stay real
+      // text in ONE run of the same font size (PPTX has no emoji raster path, but
+      // prove it): extractor keeps them in the box text, emitter writes them as
+      // UTF-8 inside <a:t>, and no picture element is emitted for them.
+      const euro = await page.evaluate(() => {
+        if (typeof pptxTextSp !== 'function' || typeof pptxExtractTextBoxes !== 'function') return null;
+        const s = 'Price € 9 £ 5 ¥ 7 ™ • – — “” ‘’ …';
+        const host = document.createElement('div');
+        host.style.cssText = 'position:absolute;left:0;top:0;width:600px';
+        const p = document.createElement('div');
+        p.style.cssText = 'color:#fff;font-size:20px';
+        p.textContent = s;
+        host.appendChild(p);
+        document.body.appendChild(host);
+        let boxes = [];
+        try { boxes = pptxExtractTextBoxes(host, host.getBoundingClientRect()) || []; } catch (e) {}
+        document.body.removeChild(host);
+        const hits = boxes.filter((b) => String(b.text).indexOf('€') >= 0);
+        const box = hits[0];
+        const xml = box ? pptxTextSp(6, box) : '';
+        const szs = [...xml.matchAll(/ sz="(\d+)"/g)].map((m) => m[1]);
+        return { boxes: hits.length, full: !!(box && String(box.text).trim() === s), inAT: xml.indexOf('>' + s + '</a:t>') >= 0,
+          oneSize: new Set(szs).size === 1, noPic: !/<p:pic/.test(xml) };
+      });
+      if (euro === null) {
+        check('euro unit: pptxTextSp/pptxExtractTextBoxes reachable in page scope', false, 'fns not global');
+      } else {
+        check('euro + WinAnsi chars export as real PPTX text (one box, full text in <a:t>, one font size, no picture)',
+          euro.boxes === 1 && euro.full && euro.inAT && euro.oneSize && euro.noPic, JSON.stringify(euro));
+      }
+
       // Regression: table cell fonts must carry the fitScale shrink-to-fit factor
       // (same as text boxes). Geometry from getBoundingClientRect is already scaled,
       // but getComputedStyle().fontSize is NOT — so an unscaled cell font oversizes
