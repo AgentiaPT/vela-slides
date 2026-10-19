@@ -30,20 +30,22 @@ const prelude = `
   var dbg = function () {};
   var crypto = (typeof globalThis !== "undefined" && globalThis.crypto) ? globalThis.crypto : {};
   var __clip = { text: "", deny: false, hang: false };
+  var __perm = { api: true, state: "granted", throws: false };
   var navigator = { clipboard: {
     writeText: async function (t) { if (__clip.deny) throw new Error("denied"); __clip.text = t; },
-    readText: function () { if (__clip.hang) return new Promise(function () {}); if (__clip.deny) return Promise.reject(new Error("denied")); return Promise.resolve(__clip.text); } } };
+    readText: function () { __clip.reads = (__clip.reads || 0) + 1; if (__clip.hang) return new Promise(function () {}); if (__clip.deny) return Promise.reject(new Error("denied")); return Promise.resolve(__clip.text); } },
+    get permissions() { return __perm.api ? { query: async function () { if (__perm.throws) throw new TypeError("unsupported"); return { state: __perm.state }; } } : undefined; } };
   var velaClipboard = function () {};
 `;
 const combined = prelude + importsSrc.slice(sliceStart, sliceEnd) + "\n" + reducerSrc + "\n" +
   panelSrc.slice(hStart, hEnd) +
   "\n; return { reducer, init, NO_HISTORY, sanitizeSlide, sanitizeBlock, parseVelaBlockEnvelope," +
-  " velaClipboardWriteBlock, velaClipboardReadBlocks, planBlockPaste, findPendingSlide, __clip," +
+  " velaClipboardWriteBlock, velaClipboardReadBlocks, planBlockPaste, findPendingSlide, __clip, __perm, velaGuardedRead," +
   " VELA_BLOCK_CLIP_MAX_CHARS, VELA_CLIP_READ_TIMEOUT_MS, isVelaBlockEnvelopeText, isEditableTarget, findPendingAfterDelete };";
 let API;
 try { API = Function(combined)(); } catch (e) { console.error("FATAL: sandbox eval failed:", e && e.stack || e); process.exit(1); }
 const { reducer, init, NO_HISTORY, sanitizeSlide, parseVelaBlockEnvelope, velaClipboardWriteBlock,
-  velaClipboardReadBlocks, planBlockPaste, findPendingSlide, __clip, VELA_BLOCK_CLIP_MAX_CHARS,
+  velaClipboardReadBlocks, planBlockPaste, findPendingSlide, __clip, __perm, velaGuardedRead, VELA_BLOCK_CLIP_MAX_CHARS,
   VELA_CLIP_READ_TIMEOUT_MS, isVelaBlockEnvelopeText, isEditableTarget, findPendingAfterDelete } = API;
 
 let pass = 0, fail = 0;
@@ -142,6 +144,48 @@ const deck = (slidesA, slidesB) => [{ id: "L1", title: "Lane", collapsed: false,
   eq("hanging readText falls back to the same-tab memo", hung.map((b) => b.text), ["copy me"]);
   check(VELA_CLIP_READ_TIMEOUT_MS <= 1000 && dt < VELA_CLIP_READ_TIMEOUT_MS + 700, `hanging readText resolves near the timeout (${dt} ms)`);
   __clip.hang = false;
+
+  console.log("D3 — chip paste does not leave a delayed read racing user input");
+  // Memo holds "copy me" (written above). Without a clipboard-read grant the
+  // memo is used at once: readText() is not called, so nothing waits 800 ms.
+  for (const st of ["prompt", "denied"]) {
+    __perm.state = st; __clip.hang = true; __clip.reads = 0;
+    const t1 = Date.now();
+    const r = await velaClipboardReadBlocks();
+    const d1 = Date.now() - t1;
+    eq(`permission ${st} + same-tab memo -> memo`, r.map((b) => b.text), ["copy me"]);
+    check(d1 < 200 && __clip.reads === 0, `permission ${st}: no readText() wait (${d1} ms, ${__clip.reads} reads)`);
+  }
+  __clip.hang = false;
+  __perm.state = "granted"; __clip.text = JSON.stringify({ _velaBlock: true, v: 1, data: { type: "text", text: "from system" } });
+  eq("permission granted -> system clipboard is read", (await velaClipboardReadBlocks()).map((b) => b.text), ["from system"]);
+  __perm.throws = true;
+  eq("permission query throws (unknown) -> timeout race path reads the clipboard", (await velaClipboardReadBlocks()).map((b) => b.text), ["from system"]);
+  __perm.throws = false; __perm.api = false;
+  eq("no permission API -> timeout race path reads the clipboard", (await velaClipboardReadBlocks()).map((b) => b.text), ["from system"]);
+  __perm.api = true;
+  // Token / live-state guard around the async read.
+  const L0 = [{}], tokRef = { current: 0 };
+  const liveRef = { current: { lanes: L0, selKey: "A:0" } };
+  const later = () => { let res; const p = new Promise((r) => { res = r; }); return { read: () => p, done: (v) => res(v) }; };
+  let g = later(); let pr = velaGuardedRead(tokRef, liveRef, g.read); g.done([1]);
+  eq("guard: nothing changed -> paste goes through", await pr, [1]);
+  g = later(); pr = velaGuardedRead(tokRef, liveRef, g.read); liveRef.current = { lanes: [{}], selKey: "A:0" }; g.done([1]);
+  check((await pr) === null, "guard: a deck change (e.g. Ctrl+Z) while pending cancels the paste");
+  g = later(); pr = velaGuardedRead(tokRef, liveRef, g.read); liveRef.current = { ...liveRef.current, selKey: "A:1" }; g.done([1]);
+  check((await pr) === null, "guard: a slide change while pending cancels the paste");
+  const gA = later(), gB = later();
+  const p1 = velaGuardedRead(tokRef, liveRef, gA.read), p2 = velaGuardedRead(tokRef, liveRef, gB.read);
+  gB.done([2]); gA.done([1]);
+  check((await p1) === null && JSON.stringify(await p2) === "[2]", "guard: a newer paste supersedes the older one");
+  check(/readBlocksGuarded\(\)\.then/.test(panelSrc) && /editorKeysRef\.current\.readBlocksGuarded\(\)/.test(panelSrc), "chip paste and Ctrl+V both use the guarded read");
+  check(/pasteLiveRef\.current = \{ lanes, selKey \}/.test(panelSrc), "guard tracks the live lanes + slide key");
+  check(/onClick=\{\(\) => \{ copySelectedBlock\(\); refocusPanel\(\); \}\}/.test(panelSrc) && /const pasteBlockFromClipboard = useCallback\(\(\) => \{\n    refocusPanel\(\);/.test(panelSrc), "chip copy/paste give focus back to the panel root");
+
+  console.log("D4 — chip strip is one compact row");
+  const strip = panelSrc.slice(panelSrc.indexOf('data-testid="slide-review-strip"'), panelSrc.indexOf('data-testid="review-status-msg"'));
+  check(/flexWrap: "nowrap", overflowX: "auto"/.test(strip) && !/flexWrap: "wrap"/.test(strip), "strip does not wrap; it scrolls");
+  check(/setStripCompact\(host\.clientWidth < 520\)/.test(panelSrc) && /cmp \? "⧉" : "⧉ Copy block"/.test(strip), "narrow slide collapses chip labels");
 
   console.log("CR6 — envelope never lands in a text field (W2-2)");
   check(isVelaBlockEnvelopeText(JSON.stringify({ _velaBlock: true, v: 1, data: { type: "text", text: "x" } })), "copied envelope is detected");

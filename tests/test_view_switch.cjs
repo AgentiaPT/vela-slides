@@ -56,9 +56,12 @@ console.log("CR13 — top-bar view switch");
   }
   const iE = sw.indexOf("view-switch-editor"), iG = sw.indexOf("view-switch-gallery"), iP = sw.indexOf("view-switch-present");
   check(iE >= 0 && iE < iG && iG < iP, "segment order is Editor | Gallery | Present");
-  check(/view-switch-editor[^\n]*setGallery\?\.\(false\)/.test(sw), "Editor segment closes the gallery");
-  check(/view-switch-gallery[^\n]*setGallery\?\.\(true\)/.test(sw), "Gallery segment opens the gallery");
-  check(/view-switch-present[^\n]*present\?\.\(\)/.test(sw), "Present segment enters fullscreen");
+  check(/view-switch-editor[^\n]*setView\?\.\("editor"\)/.test(sw), "Editor segment sets view editor");
+  check(/view-switch-gallery[^\n]*setView\?\.\("gallery"\)/.test(sw), "Gallery segment sets view gallery");
+  check(/view-switch-present[^\n]*setView\?\.\("present"\)/.test(sw), "Present segment sets view present");
+  // D1: one view state — Present closes the gallery overlay first.
+  check(/setView: \(v\) => \{ if \(v === "present"\) actionsRef\.current\.present\(\); else setGallery\(v === "gallery"\); \}/.test(panel), "setView maps editor|gallery|present onto one state");
+  check(/present: \(\) => \{ stopAll\(\); setGallery\(false\); dispatch\(\{ type: "SET_FULLSCREEN", value: true \}\); \}/.test(panel), "present() closes the gallery before fullscreen (D1)");
   check(/view-switch-gallery[^\n]*aria-pressed=\{has && galleryOn\}/.test(sw), "Gallery segment shows active state");
   check(/showGallery,\s*setGallery:/.test(panel), "SlidePanel exposes showGallery + setGallery to the top bar");
   check(/\[slides\.length,[^\]]*showGallery\]\);/.test(panel), "ribbon effect re-runs when showGallery changes");
@@ -101,9 +104,18 @@ console.log("CR9 — branding side pane");
 
 console.log("W3 — branding pane reserves space");
 {
-  check(/data-testid="slide-panel-root"[^\n]*paddingRight: showBranding && !isMobile && !brandNarrow \? 360 : 0/.test(panel), "slide area reserves the 360px pane width when branding is open (>= 900 wide)");
-  check(/window\.innerWidth < 900/.test(panel), "narrow widths (< 900) fall back to overlay");
+  check(/data-testid="slide-panel-root"[^\n]*paddingRight: showBranding && !isMobile && !brandNarrow \? 360 : 0/.test(panel), "slide area reserves the 360px pane width when branding is open (>= 1100 wide)");
+  check(/BRAND_RESERVE_MIN_W = 1100/.test(panel) && /window\.innerWidth < BRAND_RESERVE_MIN_W/.test(panel), "widths < 1100 fall back to overlay (D2)");
+  check(/data-testid="slide-toolbar"[^\n]*flexWrap: "wrap"/.test(panel), "slide toolbar wraps so no button is clipped (D2b)");
   check(/branding-side-pane-close/.test(panel), "overlay mode keeps the close button");
+}
+
+console.log("D5 — hidden slide in gallery is dimmed");
+{
+  const slidesSrc = read("part-slides.jsx");
+  check(/data-testid=\{s\.isTitleCard \? "gallery-title-card" : "gallery-slide"\} data-hidden=\{!s\.isTitleCard && s\.slide\.hidden \? "true" : "false"\}/.test(slidesSrc), "gallery card carries data-hidden");
+  check(/data-testid="gallery-thumb-wrap" style=\{\{ opacity: !s\.isTitleCard && s\.slide\.hidden \? 0\.5 : 1 \}\}/.test(slidesSrc), "hidden card thumbnail is dimmed to 0.5");
+  check(/gallery-hide-slide[^\n]*opacity: s\.slide\.hidden \? 1 : 0\.4/.test(slidesSrc), "hide button stays at full opacity when hidden");
 }
 
 // Browser geometry check (optional: runs when a headless render dir is given).
@@ -113,18 +125,71 @@ if (renderDir) {
   const { chromium } = pw;
   (async () => {
     const b = await chromium.launch({ executablePath: "/opt/pw-browsers/chromium-1194/chrome-linux/chrome" });
-    for (const w of [1280, 1440]) {
-      const pg = await b.newPage({ viewport: { width: w, height: 800 } });
+    const boot = async (w, h) => {
+      const pg = await b.newPage({ viewport: { width: w, height: h || 800 } });
       await pg.goto("file://" + renderDir + "/render.html");
       await pg.waitForFunction(() => window.__velaBooted, null, { timeout: 30000 });
+      return pg;
+    };
+    // W3 + D2 + D2b: reserve only at >= 1100; overlay below; toolbar reachable.
+    for (const w of [800, 900, 1100, 1280, 1440]) {
+      const pg = await boot(w);
       await pg.click('[data-testid="brand-toggle"]');
       await pg.waitForSelector('[data-testid="branding-side-pane"]');
+      await pg.waitForTimeout(300);
       const r = await pg.evaluate(() => {
         const q = (s) => document.querySelector(s).getBoundingClientRect();
         const p = q('[data-testid="branding-side-pane"]'), v = q('[data-testid="slide-fx-wrapper"]');
-        return { pl: p.left, vr: v.right };
+        const tb = [...document.querySelectorAll('[data-testid="slide-toolbar"] button')].map((e) => e.getBoundingClientRect());
+        return { pl: p.left, vr: v.right, vw: Math.round(v.width), pr: getComputedStyle(document.querySelector('[data-testid="slide-panel-root"]')).paddingRight,
+          tbMin: Math.min(...tb.map((x) => x.left)), tbMax: Math.max(...tb.map((x) => x.right)), close: !!document.querySelector('[data-testid="branding-side-pane-close"]') };
       });
-      check(r.vr <= r.pl + 0.5, `${w}px: slide viewport does not intersect branding pane`, JSON.stringify(r));
+      const d = JSON.stringify(r);
+      if (w >= 1100) {
+        check(r.pr === "360px" && r.vr <= r.pl + 0.5, `${w}px: slide area reserves the pane width (no overlap)`, d);
+        check(r.tbMin >= 0 && r.tbMax <= r.pl + 0.5, `${w}px: every slide-toolbar button is visible left of the pane`, d);
+        check(r.vw >= 320, `${w}px: reserved slide stays usable (>= 320 px wide)`, d);
+      } else {
+        check(r.pr === "0px" && r.close, `${w}px: pane overlays the slide (no reserve) and has a close button`, d);
+        check(r.vw >= 400, `${w}px: slide is not squeezed (>= 400 px wide)`, d);
+      }
+      await pg.close();
+    }
+    // D1: Gallery then Present -> slide shown, gallery closed (also after exit).
+    {
+      const pg = await boot(1280);
+      await pg.click('[data-testid="view-switch-gallery"]');
+      await pg.waitForSelector('[data-testid="gallery-close"]');
+      // The gallery overlay covers the top bar, so click via the DOM (as the validator did).
+      await pg.evaluate(() => document.querySelector('[data-testid="view-switch-present"]').click());
+      await pg.waitForSelector('[data-testid="present-exit"]');
+      await pg.waitForTimeout(300);
+      const inPresent = await pg.evaluate(() => !document.querySelector('[data-testid="gallery-close"]'));
+      check(inPresent, "D1: Present from Gallery closes the gallery overlay");
+      await pg.click('[data-testid="present-exit"]');
+      await pg.waitForTimeout(400);
+      const after = await pg.evaluate(() => ({ g: !!document.querySelector('[data-testid="gallery-close"]'), ed: document.querySelector('[data-testid="view-switch-editor"]')?.getAttribute("aria-pressed") }));
+      check(!after.g && after.ed === "true", "D1: after exit the editor shows, gallery stays closed", JSON.stringify(after));
+      // D5: hide a slide from the gallery -> card dimmed, hide button full opacity.
+      await pg.click('[data-testid="view-switch-gallery"]');
+      await pg.waitForSelector('[data-testid="gallery-hide-slide"]');
+      await pg.evaluate(() => document.querySelector('[data-testid="gallery-slide"] [data-testid="gallery-hide-slide"]').click());
+      await pg.waitForTimeout(300);
+      const hc = await pg.evaluate(() => {
+        const c = document.querySelector('[data-testid="gallery-slide"][data-hidden="true"]');
+        if (!c) return null;
+        return { thumb: getComputedStyle(c.querySelector('[data-testid="gallery-thumb-wrap"]')).opacity, btn: getComputedStyle(c.querySelector('[data-testid="gallery-hide-slide"]')).opacity, btnHidden: c.querySelector('[data-testid="gallery-hide-slide"]').getAttribute("data-hidden") };
+      });
+      check(hc && hc.thumb === "0.5" && hc.btn === "1" && hc.btnHidden === "true", "D5: hidden card is dimmed, hide button stays at full opacity", JSON.stringify(hc));
+      await pg.close();
+    }
+    // D4: Comments pane open at 800 px -> chip strip is one row.
+    {
+      const pg = await boot(800);
+      await pg.click('[data-testid="comments-toggle"]');
+      await pg.waitForTimeout(500);
+      const st = await pg.evaluate(() => { const e = document.querySelector('[data-testid="slide-review-strip"]'); if (!e) return null; const r = e.getBoundingClientRect(); return { h: Math.round(r.height), compact: e.getAttribute("data-compact") }; });
+      check(st && st.h <= 26, "D4: chip strip is a single row at 800 px with Comments open", JSON.stringify(st));
       await pg.close();
     }
     await b.close();
