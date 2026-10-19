@@ -47,23 +47,30 @@ async function readHandshake() {
   let dir;
   try { dir = await velaDir(); } catch { return null; }
   // Each Vela window's gatekeeper keys its handshake by Neutralino's NL_PORT, so
-  // multiple windows never share one channel. Prefer the keyed file; fall back
-  // to the unkeyed name (older gatekeeper / standalone run).
-  const suffixes = [];
-  if (typeof window !== "undefined" && window.NL_PORT != null) suffixes.push(`-${window.NL_PORT}`);
-  suffixes.push("");
+  // multiple windows never share one channel. Wait for the keyed file for the
+  // WHOLE poll window, and read the unkeyed name (older gatekeeper / missed
+  // stdin handshake) only after that. The unkeyed file is often a leftover
+  // from an earlier run whose gatekeeper is gone; reading it in the same pass
+  // let a slow first launch (new build, AV scan) pin a dead port.
+  const read = async (sfx) => {
+    try {
+      const port = (await Neutralino.filesystem.readFile(`${dir}/agent-ext${sfx}.port`)).trim();
+      const token = (await Neutralino.filesystem.readFile(`${dir}/agent-ext${sfx}.token`)).trim();
+      if (port && token) return { port, token };
+    } catch { /* not written yet */ }
+    return null;
+  };
+  const keyed = typeof window !== "undefined" && window.NL_PORT != null ? `-${window.NL_PORT}` : null;
   for (let i = 0; i < 20; i++) {
-    for (const sfx of suffixes) {
-      try {
-        const port = (await Neutralino.filesystem.readFile(`${dir}/agent-ext${sfx}.port`)).trim();
-        const token = (await Neutralino.filesystem.readFile(`${dir}/agent-ext${sfx}.token`)).trim();
-        if (port && token) return { port, token };
-      } catch { /* not written yet */ }
-    }
+    const hs = await read(keyed != null ? keyed : "");
+    if (hs) return hs;
     await sleep(150);
   }
-  return null;
+  return keyed != null ? read("") : null;
 }
+
+// Forget the cached handshake so the next call re-reads the files.
+function dropHandshake() { handshake = null; }
 
 async function ensureHandshake() {
   if (handshake) return handshake;
@@ -79,13 +86,22 @@ async function extFetch(pathname, body, timeoutMs) {
   try {
     // host literal "localhost" — the desktop CSP allows http://localhost:* and
     // it resolves to the loopback the gatekeeper binds.
-    const r = await fetch(`http://localhost:${hs.port}${pathname}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "x-vela-token": hs.token },
-      body: JSON.stringify(body || {}),
-      signal: controller.signal,
-    });
-    if (r.status === 401) { handshake = null; throw new Error("AI agent auth failed"); }
+    let r;
+    try {
+      r = await fetch(`http://localhost:${hs.port}${pathname}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-vela-token": hs.token },
+        body: JSON.stringify(body || {}),
+        signal: controller.signal,
+      });
+    } catch (e) {
+      // Transport failure (refused / CORS / abort): the cached port may belong
+      // to a gatekeeper that is gone. Drop it so the next call re-reads the
+      // handshake files, instead of pinning AI "offline" until a restart.
+      if (handshake === hs) dropHandshake();
+      throw new Error("AI agent is not reachable");
+    }
+    if (r.status === 401) { if (handshake === hs) dropHandshake(); throw new Error("AI agent auth failed"); }
     const data = await r.json().catch(() => ({}));
     if (!r.ok || !data.ok) throw new Error(data.error || `agent error ${r.status}`);
     return data;
@@ -109,7 +125,8 @@ function availableList() {
 // a new-hash exe), so an early attempt sees no handshake files yet — that is a
 // transient "not up yet", retryable. A gatekeeper that answers with no agent
 // installed is a real negative that should stop the retry.
-async function detect() {
+async function detect(opts) {
+  if (opts && opts.fresh) dropHandshake(); // manual Rescan: always re-read
   let gatekeeperUp = false;
   try {
     const data = await extFetch("/detect", {}, 15000);
@@ -129,7 +146,8 @@ async function detect() {
 
 export const agents = {
   // Re-probe availability (after install, or on manual refresh).
-  async detect() { return detect(); },
+  // `{ fresh: true }` discards the cached handshake first (manual Rescan).
+  async detect(opts) { return detect(opts); },
 
   // Available providers only (for the picker UI).
   list() { return availableList(); },

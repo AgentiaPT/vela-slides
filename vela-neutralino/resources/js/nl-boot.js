@@ -24,6 +24,7 @@ import { trust } from "./trust.js";
 import { checkForUpdate } from "./update-check.js";
 import { fsGuard } from "./fs-guard.js";
 import { showDeckWarning } from "./deck-warning.js";
+import { installTitleSync, installFocusRestore } from "./window-sync.js";
 
 const $ = (id) => document.getElementById(id);
 const loadingMsg = $("vela-loading-msg");
@@ -75,6 +76,11 @@ async function boot() {
     return showError("Neutralino.init() failed: " + e.message);
   }
   focusWindow();
+  // Keyboard must work at once when the window is activated again (Alt+Tab):
+  // restore webview + DOM focus on windowFocus (see window-sync.js).
+  installFocusRestore(window, document);
+  // OS window title follows the deck title: `Vela Slides - "Deck Title"`.
+  installTitleSync(document, window.MutationObserver);
   // Wrap Neutralino.filesystem.* so every path must resolve inside an allowed
   // root (the decks folder + ~/.vela, registered by deck-io/config-store).
   // Installed before any module touches the filesystem.
@@ -438,7 +444,9 @@ function installAgentsBridge() {
     activeId: () => agents.activeId(),
     pick: (id) => selectProvider(id),
     refresh: async () => {
-      await agents.detect();
+      // Manual Rescan: discard any cached gatekeeper handshake and re-read the
+      // files, so a stale port/token from an earlier run cannot pin AI offline.
+      await agents.detect({ fresh: true });
       window.__velaAgentInfo = agents.info();
       window.__velaAgentReady = agents.available();
       window.__velaAgentActive = window.__velaAgentInfo.model || window.__velaAgentInfo.id;

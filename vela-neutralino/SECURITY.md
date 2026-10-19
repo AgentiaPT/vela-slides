@@ -63,6 +63,14 @@ acknowledgment before the deck mounts.
    Any method in the allowlist that no longer appears in that list should be
    removed.
 
+   `window.setTitle` is granted so the OS window title can show the open deck
+   (`resources/js/window-sync.js`). It takes a string, not a path, so it adds
+   no file capability. The deck title is untrusted, so the shell strips
+   control, zero-width and bidi characters, caps the length, and always
+   prefixes the fixed `Vela Slides - ` text — a deck cannot set the whole
+   title bar text. `windowFocus` / `windowBlur` (focus restore after Alt+Tab)
+   use the already granted `events.on` and `window.focus`.
+
    **`os.spawnProcess` is intentionally NOT granted to the webview.** Process
    spawn is the host command-execution primitive and the single largest
    XSS→RCE risk, so it stays out of the allowlist. The AI integration does not

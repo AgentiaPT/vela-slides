@@ -148,6 +148,9 @@ class NeutralinoConfigInvariants(unittest.TestCase):
         expected = {
             "window.setFullScreen", "window.exitFullScreen", "window.maximize",
             "window.unmaximize", "window.isMaximized", "window.focus",
+            # CR16: OS window title shows the deck title (window-sync.js). Takes a
+            # string, not a path — no file capability (SECURITY.md layer 2).
+            "window.setTitle",
         }
         self.assertEqual(window_entries, expected)
 
@@ -307,8 +310,10 @@ class AgentsBridgeInvariants(unittest.TestCase):
     def test_handshake_prefers_window_nlport_suffix(self):
         # Must prefer the NL_PORT-keyed handshake file over the legacy
         # unsuffixed name, matching the gatekeeper's own keying (main.go).
+        # The keyed file is waited for before the unkeyed one (CR19); the
+        # behaviour itself is pinned by tests/test_agents_handshake.cjs.
         self.assertIn("window.NL_PORT", self.js)
-        self.assertIn("suffixes.push", self.js)
+        self.assertIn('return keyed != null ? read("") : null;', self.js)
 
     def test_401_resets_cached_handshake(self):
         # A stale/rotated token must not be cached forever — 401 must clear it
@@ -319,6 +324,31 @@ class AgentsBridgeInvariants(unittest.TestCase):
         # send() must refuse to call the extension with no provider selected,
         # rather than defaulting to some provider id.
         self.assertIn('throw new Error("No AI provider selected")', self.js)
+
+
+class WindowSyncAndHandshakeBehaviour(unittest.TestCase):
+    """CR16/CR18/CR19 behaviour, run against the real shell JS with mocks."""
+
+    def _node(self, rel):
+        import shutil
+        import subprocess
+        node = shutil.which("node")
+        self.assertIsNotNone(node, "node is required for the desktop behaviour tests")
+        r = subprocess.run([node, os.path.join(ROOT, rel)], capture_output=True, text=True, timeout=60)
+        self.assertEqual(r.returncode, 0, f"{rel} failed:\n{r.stdout}\n{r.stderr}")
+        self.assertRegex(r.stdout, r"\d+ passed, 0 failed")
+
+    def test_window_title_and_focus_restore(self):
+        self._node("tests/test_window_sync.cjs")
+
+    def test_stale_handshake_is_discarded(self):
+        self._node("tests/test_agents_handshake.cjs")
+
+    def test_boot_wires_title_sync_focus_restore_and_fresh_rescan(self):
+        boot = read("vela-neutralino", "resources", "js", "nl-boot.js")
+        self.assertIn("installFocusRestore(window, document)", boot)
+        self.assertIn("installTitleSync(document, window.MutationObserver)", boot)
+        self.assertIn("agents.detect({ fresh: true })", boot)
 
 
 class TrustGateInvariants(unittest.TestCase):
