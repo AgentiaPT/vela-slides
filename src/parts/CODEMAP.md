@@ -273,7 +273,7 @@ keyboard ternaries) or are currently unused — check before assuming a UI exist
 - TOGGLE_LANE: (no direct dispatch site)
 - TOGGLE_PRESENT_CARD: part-list.jsx
 - TOGGLE_SECTION_COLLAPSE: part-list.jsx
-- TOGGLE_SLIDE_HIDDEN: part-list.jsx
+- TOGGLE_SLIDE_HIDDEN: part-list.jsx part-slides.jsx
 - UNDO: (no direct dispatch site)
 - UPDATE_COMMENT: (no direct dispatch site)
 - UPDATE_SLIDE: part-app.jsx part-imports.jsx part-list.jsx part-slidepanel.jsx
