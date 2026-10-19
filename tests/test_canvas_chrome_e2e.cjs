@@ -90,6 +90,36 @@ const slides = [
 ];
 const deck = { deckTitle: "Canvas chrome", branding: { enabled: true, accentBar: true, accentHeight: 6 },
   lanes: [{ id: "l1", title: "L", items: [{ id: "i1", title: "Chrome", status: "todo", slides }] }] };
+// Present-mode width sweep (section 5): linked text-like blocks whose last line
+// ends close to the line box edge at some widths.
+const sweepSlides = [
+  { bg: "#0f172a", blocks: [
+    { type: "heading", text: "A long linked heading that wraps onto a second line in present mode", link: L },
+    { type: "text", text: "A linked paragraph of body text whose last word lands near the right edge at some widths of the viewport", link: L },
+  ] },
+  { bg: "#0f172a", blocks: [
+    { type: "callout", title: "Linked callout", text: "Callout body text that is long enough to wrap and end near the edge of its box at one width or another", link: L },
+    { type: "quote", text: "A linked quote whose closing mark and badge must stay together on the last line", link: L },
+  ] },
+  { bg: "#0f172a", blocks: [
+    { type: "heading", text: "Centered heading with **bold last words** linked here", align: "center", link: L },
+    { type: "badge", text: "Linked badge", link: L },
+    { type: "metric", value: "42%", label: "Linked metric label", link: L },
+    { type: "quote", text: "Quote with an author", author: "Someone With A Long Name", link: L },
+    { type: "text", text: "日本語のテキストはスペースなしで折り返すため、リンクのバッジは最後の文字と同じ行に残る必要があります", link: L },
+    { type: "text", text: "Ends with a long word: Supercalifragilisticexpialidocious", link: L },
+  ] },
+];
+// Generated slides: 3 headings + 1 callout of word lists. Seeds 2, 4, 9 and 12 put
+// the badge alone on a new line at 1024 px and 1440 px with the old word-joiner fix.
+const W8 = "alpha beta gamma delta epsilon zeta theta kappa lambda sigma omega".split(" ");
+const words = (n, f) => Array.from({ length: n }, (_, k) => W8[f(k) % W8.length]).join(" ");
+for (const i of [2, 4, 9, 12]) {
+  const blocks = [0, 1, 2].map((j) => { const t = words(4 + i + j * 7, (k) => k * 7 + i + j); return { type: "heading", text: t[0].toUpperCase() + t.slice(1), link: L }; });
+  blocks.push({ type: "callout", title: "C", text: words(10 + i * 3, (k) => k * 5 + i), link: L });
+  sweepSlides.push({ bg: "#0f172a", blocks });
+}
+const sweepDeck = { deckTitle: "Badge sweep", lanes: [{ id: "l1", title: "L", items: [{ id: "i1", title: "Sweep", status: "todo", slides: sweepSlides }] }] };
 
 (async () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "vela-canvas-chrome-"));
@@ -99,6 +129,52 @@ const deck = { deckTitle: "Canvas chrome", branding: { enabled: true, accentBar:
   execFileSync("node", [path.join(REPO, ".hyper-sprint", "render-offline.js"), deckPath, outDir, "--repo-root", REPO], { stdio: "pipe" });
   let browser;
   try { browser = await launchChromium(chromium); } catch (e) { console.log("SKIP: chromium not available — " + e.message); process.exit(0); }
+  // 5. PRESENT mode width sweep: the block link badge of a text-like block stays on
+  //    the line of the last word at every viewport width (never wraps alone).
+  //    Runs on its own page in parallel with sections 1-4 (keeps the test fast).
+  const sweepTask = (async () => {
+    const sweepPath = path.join(tmp, "sweep.vela");
+    fs.writeFileSync(sweepPath, JSON.stringify(sweepDeck));
+    const sweepOut = path.join(tmp, "sweep-out");
+    execFileSync("node", [path.join(REPO, ".hyper-sprint", "render-offline.js"), sweepPath, sweepOut, "--repo-root", REPO], { stdio: "pipe" });
+    const widths = [1024, 1440]; for (let w = 1000; w <= 1700; w += 37) widths.push(w);
+    const page = await browser.newPage({ viewport: { width: 1440, height: 800 } });
+    const errors = []; page.on("pageerror", (e) => errors.push(e.message));
+    await page.goto("file://" + path.join(sweepOut, "render.html"));
+    await page.waitForFunction(() => window.__velaBooted, null, { timeout: 60000 });
+    await page.waitForTimeout(800);
+    await page.locator('[data-testid="view-switch-present"]').click();
+    await page.waitForTimeout(800);
+    const inPresent = await page.evaluate(() => !!document.querySelector('[data-testid="block-link-badge"]') && !document.querySelector('[data-testid="view-switch-present"]'));
+    const bad = [], gaps = []; let seen = 0;
+    for (const vw of widths) {
+      await page.setViewportSize({ width: vw, height: 800 });
+      for (let k = 0; k < sweepSlides.length; k++) await page.keyboard.press("ArrowLeft");
+      for (let n = 0; n < sweepSlides.length; n++) {
+        if (n) await page.keyboard.press("ArrowRight");
+        await page.waitForTimeout(100);
+        const res = await page.evaluate(() => [...document.querySelectorAll("[data-block-index][data-pdf-link]")].map((host) => {
+          const b = host.querySelector('[data-testid="block-link-badge"]');
+          if (!b) return { type: host.dataset.blockType, missing: true };
+          const br = b.getBoundingClientRect();
+          // last visible character before the badge (skip the badge, joiners and spaces)
+          let lastNode = null; const tw = document.createTreeWalker(host, NodeFilter.SHOW_TEXT);
+          while (tw.nextNode()) { const tn = tw.currentNode; if (b.contains(tn)) continue; if (/[^\s⁠]/.test(tn.textContent)) lastNode = tn; }
+          if (!lastNode) return { type: host.dataset.blockType, noText: true };
+          const s = lastNode.textContent; let i = s.length - 1; while (i >= 0 && /[\s⁠]/.test(s[i])) i--;
+          const range = document.createRange(); range.setStart(lastNode, i); range.setEnd(lastNode, i + 1);
+          const rs = [...range.getClientRects()].filter((r) => r.width); const c = rs[rs.length - 1];
+          if (!c) return { type: host.dataset.blockType, noRect: true };
+          return { type: host.dataset.blockType, text: host.textContent.slice(0, 20), g: Math.round(br.left - c.right), dy: Math.round(br.top - c.top), lh: Math.round(c.height),
+            ok: Math.abs((br.top + br.bottom) / 2 - (c.top + c.bottom) / 2) < c.height / 2 && Math.abs(br.top - c.top) < c.height && br.left - c.right >= -1 && br.left - c.right <= 24 };
+        }));
+        for (const r of res) { seen++; if (r.g != null) gaps.push(r.g); if (!r.ok) bad.push({ vw, slide: n + 1, ...r }); }
+      }
+    }
+    await page.close();
+    return { inPresent, bad, gaps, seen, widths, errors };
+  })();
+
   for (const vw of [1600, 1440, 1100, 1024]) {
     console.log(`viewport ${vw}px`);
     const page = await browser.newPage({ viewport: { width: vw, height: 1000 } });
@@ -189,6 +265,16 @@ const deck = { deckTitle: "Canvas chrome", branding: { enabled: true, accentBar:
     }
     check("no page errors", errors.length === 0, errors);
     await page.close();
+  }
+
+  {
+    const { inPresent, bad, gaps, seen, widths, errors } = await sweepTask;
+    console.log("present-mode width sweep");
+    check("sweep: present mode entered", inPresent);
+    const repro = bad.filter((b) => b.vw === 1024 || b.vw === 1440);
+    check("sweep: repro widths 1024 px and 1440 px — no badge alone on a line", repro.length === 0, repro.slice(0, 6));
+    check(`sweep: ${seen} present-mode badges over ${widths.length} widths — each on the line of the last character (gap ${Math.min(...gaps)}..${Math.max(...gaps)} px)`, seen >= widths.length * 26 && bad.length === 0, bad.slice(0, 12));
+    check("sweep: no page errors", errors.length === 0, errors);
   }
   await browser.close();
   fs.rmSync(tmp, { recursive: true, force: true });

@@ -199,6 +199,41 @@ function GlossaryLink({ label, term, entry }) {
   );
 }
 
+// Glue an inline suffix (e.g. the link badge) to the last word of parsed inline
+// content: the last word and the suffix share one `white-space: nowrap` span, so
+// the suffix can never wrap alone onto a new line. A word joiner is not enough
+// (Chrome still breaks before an atomic inline at some widths). Recurses into the
+// styled spans of parseInline; links and other elements are glued whole. A long
+// word (or a CJK run, which breaks between characters) glues only its last
+// characters, so the rest of the word can still break.
+const GLUE_CJK = /[⺀-鿿가-힯豈-﫿＀-￯]/;
+function glueSuffix(node, suffix) {
+  if (suffix == null || suffix === false) return node;
+  const glue = (tail) => <span key="glue" style={{ whiteSpace: "nowrap" }}>{tail}{suffix}</span>;
+  if (node == null || node === false || node === "") return suffix;
+  if (typeof node === "string" || typeof node === "number") {
+    const s = String(node).replace(/\s+$/, "");
+    if (!s) return suffix;
+    const cut = Math.max(s.lastIndexOf(" "), s.lastIndexOf("\n"), s.lastIndexOf("\t")) + 1;
+    let chars = Array.from(s.slice(cut));
+    if (chars.some((c) => GLUE_CJK.test(c))) chars = chars.slice(-2);
+    else if (chars.length > 16) chars = chars.slice(-4);
+    const tail = chars.join("");
+    return [s.slice(0, s.length - tail.length), glue(tail)];
+  }
+  if (Array.isArray(node)) {
+    let i = node.length - 1;
+    while (i >= 0 && (node[i] == null || node[i] === false || (typeof node[i] === "string" && !node[i].trim()) || (React.isValidElement(node[i]) && node[i].type === "br"))) i--;
+    if (i < 0) return suffix;
+    const last = glueSuffix(node[i], suffix);
+    return [...node.slice(0, i), ...(Array.isArray(last) ? last : [last])];
+  }
+  if (React.isValidElement(node) && node.type === "span" && node.props.children != null) {
+    return React.cloneElement(node, undefined, glueSuffix(node.props.children, suffix));
+  }
+  return glue(node);
+}
+
 function EditableText({ text, onSave, editable, style, multiline, className, prefix, suffix }) {
   const [editing, setEditing] = useState(false);
   const [hovered, setHovered] = useState(false);
@@ -250,7 +285,7 @@ function EditableText({ text, onSave, editable, style, multiline, className, pre
 
   const baseStyle = { ...style, whiteSpace: "pre-line" };
 
-  if (!editable || !onSave) return <div className={className} style={baseStyle}>{prefix}{parseInline(text)}{suffix}</div>;
+  if (!editable || !onSave) return <div className={className} style={baseStyle}>{prefix}{glueSuffix(parseInline(text), suffix)}</div>;
 
   const commit = () => {
     const el = ref.current;
@@ -288,7 +323,7 @@ function EditableText({ text, onSave, editable, style, multiline, className, pre
       style={{ ...baseStyle, cursor: "pointer", borderRadius: 2,
         outline: hovered ? `1px dashed ${T.accent}60` : "1px dashed transparent",
         outlineOffset: 2, transition: "outline 0.15s ease" }}
-    >{prefix}{parseInline(localText)}{suffix}</div>
+    >{prefix}{glueSuffix(parseInline(localText), suffix)}</div>
   );
 }
 
@@ -511,7 +546,7 @@ function IconBubble({ icon, size = 20, color, bg, shape, strokeWidth = 1.5 }) {
 // after the last glyph, also when the text wraps or is centered / right-aligned.
 // An absolute badge on the block box lands far right of short text (the box is
 // full width) or over the last word. Other block types keep the corner badge
-// in part-canvas.jsx. The word joiner keeps the badge on the line of the last word.
+// in part-canvas.jsx. EditableText glues the badge to the last word (glueSuffix).
 const TEXT_LINK_BADGE_TYPES = new Set(["heading", "text", "quote", "callout", "badge", "metric"]);
 function TextLinkBadge({ link, presenting, active }) {
   const base = { display: "inline-flex", alignItems: "center", justifyContent: "center", verticalAlign: "middle", marginLeft: 6, lineHeight: 1, cursor: "pointer", fontStyle: "normal", fontWeight: 400, letterSpacing: 0, textTransform: "none", whiteSpace: "nowrap" };
@@ -791,7 +826,7 @@ function CalloutBlock({ block, cls, st, editable, onChange, SIZES, linkBadge }) 
         {chevron && <span style={{ fontSize: 14, color: block.border || st.accent, lineHeight: 1 }}>{chevron}</span>}
         <EditableText text={block.title} editable={editable} onSave={(v) => onChange?.({ title: v })} style={{ fontFamily: FONT.display, fontSize: SIZES.sm, fontWeight: 700, color: block.border || st.accent, marginBottom: open ? 4 : 0 }} suffix={badgeAt === "title" ? linkBadge : undefined} />
       </div>}
-      {!block.title && isReveal && <div style={{ cursor: "pointer", userSelect: "none", fontSize: 14, color: block.border || st.accent, marginBottom: open ? 4 : 0 }} onClick={() => setOpen(!open)}>{chevron} {open ? "Ocultar" : "Revelar"}{badgeAt === "reveal" ? linkBadge : null}</div>}
+      {!block.title && isReveal && <div style={{ cursor: "pointer", userSelect: "none", fontSize: 14, color: block.border || st.accent, marginBottom: open ? 4 : 0 }} onClick={() => setOpen(!open)}>{chevron} {glueSuffix(open ? "Ocultar" : "Revelar", badgeAt === "reveal" ? linkBadge : null)}</div>}
       {open && <EditableText text={block.text} editable={editable} onSave={(v) => onChange?.({ text: v })} multiline style={{ fontFamily: FONT.body, fontSize: SIZES[block.size || "md"], color: block.color || st.text, lineHeight: 1.5 }} suffix={badgeAt === "text" ? linkBadge : undefined} />}
     </div>
   </div>;
