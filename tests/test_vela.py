@@ -1055,6 +1055,20 @@ def test_known_bugs():
 
 # ━━━ Editor UX Bug Tests (CR1–CR3) ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+def test_branding_accent_zero():
+    print("\n── Branding accent bar 0px (CR8) ──")
+    branding = open(os.path.join(PARTS_DIR, "part-branding.jsx"), encoding="utf-8").read()
+    # 0 is a valid height. A bare `||` default turns it into 4px.
+    if "accentHeight || 4" in branding:
+        fail("accent bar: 0px height not replaced by default", "`accentHeight || 4` found in part-branding.jsx")
+    else:
+        ok("accent bar: 0px height not replaced by default")
+    if "accentH > 0" in branding and "typeof b.accentHeight === \"number\"" in branding:
+        ok("accent bar: zero height guarded and nullish-checked")
+    else:
+        fail("accent bar: zero height guarded and nullish-checked", "guard missing in part-branding.jsx")
+
+
 def test_editor_ux_bugs():
     print("\n── Editor UX Bug Tests (CR1–CR3) ──")
 
@@ -4816,6 +4830,7 @@ if __name__ == "__main__":
         test_audit_2025_05_fixes()
         test_known_bugs()
         test_editor_ux_bugs()
+        test_branding_accent_zero()
         test_slide_editor_ux_features()
         test_toc_nav_and_gallery_titlecards()
         test_product_tour()
