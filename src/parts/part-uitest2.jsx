@@ -540,6 +540,81 @@ uiSuite("Gallery View", [
   }},
 ]);
 
+// ── Lumen C3: gallery hide, TOC delete, presenter icons, mode switch, review cycle ──
+uiSuite("Lumen C3 Gallery, Review and Mode Switch", [
+  { name: "Mode switch sits in the top bar and opens the gallery", fn: async () => {
+    if (!await _waitFor(() => _$("[data-testid='mode-switch']"), 2000)) throw new Error("mode-switch not found");
+    _click(_$("[data-testid='editor-gallery-toggle']"));
+    await _waitFor(() => _$text("GALLERY"), 2000);
+    if (_$("[data-testid='editor-gallery-toggle']")?.getAttribute("aria-pressed") !== "true") throw new Error("gallery mode not pressed while gallery is open");
+    _click(_$("[data-testid='gallery-close']"));
+    await _wait(150);
+    if (_$("[data-testid='mode-editor']")?.getAttribute("aria-pressed") !== "true") throw new Error("editor mode not pressed after closing gallery");
+  }},
+  { name: "Gallery thumbnail hide option sits next to delete and toggles", fn: async () => {
+    _click(_$("[data-testid='editor-gallery-toggle']"));
+    const hideBtn = await _waitFor(() => _$("[data-testid='gallery-hide-slide']"), 2000);
+    if (!hideBtn) throw new Error("gallery-hide-slide not found");
+    const del = _$("[data-testid='gallery-delete-slide']");
+    if (!del || del.parentElement !== hideBtn.parentElement) throw new Error("hide option is not beside delete");
+    const before = hideBtn.title;
+    _click(hideBtn);
+    await _wait(150);
+    const after = _$("[data-testid='gallery-hide-slide']");
+    if (!after || after.title === before) throw new Error("hide option did not change the slide");
+    _click(after); // restore
+    await _wait(150);
+    _click(_$("[data-testid='gallery-close']"));
+    await _wait(150);
+  }},
+  { name: "Every TOC slide row has a delete icon beside hide/unhide", fn: async () => {
+    const dels = await _waitFor(() => { const d = _$$("[data-testid='toc-delete-slide']"); return d.length ? d : null; }, 2000);
+    if (!dels) throw new Error("toc-delete-slide not found");
+    const hides = _$$("span").filter((s) => /^(Hide slide|Hidden —)/.test(s.title || ""));
+    if (hides.length !== dels.length) throw new Error(`delete icons (${dels.length}) do not match hide icons (${hides.length})`);
+  }},
+  { name: "Presenter gallery and edit icons render as SVG", fn: async () => {
+    _key("f");
+    const g = await _waitFor(() => _$("[data-testid='gallery-toggle']"), 2000);
+    if (!g) throw new Error("gallery-toggle not found in Present view");
+    if (!g.querySelector("svg")) throw new Error("gallery icon is not an SVG");
+    const e = _$("[data-testid='present-edit-toggle']");
+    if (!e || !e.querySelector("svg")) throw new Error("present-edit-toggle icon missing or not an SVG");
+    _key("f");
+    await _waitFor(() => _$("header"), 2000);
+  }},
+  { name: "Review mode shows an approve check that toggles the slide", fn: async () => {
+    _click(_$("[data-testid='comments-toggle']"));
+    const ap = await _waitFor(() => _$("[data-testid='slide-approve-toggle']"), 2000);
+    if (!ap) throw new Error("slide-approve-toggle not shown in review mode");
+    const was = ap.getAttribute("aria-pressed");
+    _click(ap);
+    await _wait(150);
+    if (_$("[data-testid='slide-approve-toggle']")?.getAttribute("aria-pressed") === was) throw new Error("approve check did not toggle");
+    _key("z", { ctrlKey: true }); // undo the approval
+    await _wait(150);
+    _click(_$("[data-testid='comments-toggle']"));
+    await _wait(150);
+  }},
+  { name: "Review cycle skips an approved slide in the editor", fn: async () => {
+    _click(_$("[data-testid='comments-toggle']"));
+    await _waitFor(() => _$("[data-testid='slide-approve-toggle']"), 2000);
+    _key("ArrowRight");
+    await _wait(150);
+    _click(_$("[data-testid='slide-approve-toggle']"));
+    await _wait(150);
+    _key("ArrowLeft");
+    await _wait(150);
+    _key("ArrowRight");
+    await _wait(150);
+    if (_$("[data-testid='slide-approve-toggle']")?.getAttribute("aria-pressed") !== "false") throw new Error("review cycle landed on an approved slide");
+    _key("z", { ctrlKey: true }); // undo the approval
+    await _wait(150);
+    _click(_$("[data-testid='comments-toggle']"));
+    await _wait(150);
+  }},
+], { setup: _selectFirstModule });
+
 // ── CR-12: Gallery reachable from the editor (not just Present mode) ──
 uiSuite("Gallery From Editor", [
   { name: "Editor is not in fullscreen/Present", fn: async () => {

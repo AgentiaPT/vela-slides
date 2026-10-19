@@ -350,10 +350,11 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       toggleTiming: () => estimating ? stopEstimate() : setShowTimingScope((v) => !v),
       setPreviewRatio,
       present: () => { stopAll(); dispatch({ type: "SET_FULLSCREEN", value: true }); },
+      showGallery, setGallery,
       getLayoutStats: () => computeSlideLayoutStats(slideRef.current),
     };
     onRibbonUpdate?.();
-  }, [slides.length, moduleTime, previewRatio, showBranding, showTimingScope, estimating, showImproveInput, improving]);
+  }, [slides.length, moduleTime, previewRatio, showBranding, showTimingScope, estimating, showImproveInput, improving, showGallery]);
 
   // Build flat ordered list of modules across all lanes
   const flatModules = useCallback(() => {
@@ -364,7 +365,10 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
         const sl = item.slides || [];
         let firstVisible = -1, lastVisible = -1;
         for (let i = 0; i < sl.length; i++) if (!sl[i].hidden) { if (firstVisible < 0) firstVisible = i; lastVisible = i; }
-        list.push({ id: item.id, title: item.title, slideCount: sl.length, laneTitle: lane.title, laneId: lane.id, presentCard: !!item.presentCard, firstVisible, lastVisible });
+        // Review cycle (editor only): first/last slide not yet approved.
+        let firstOpen = -1, lastOpen = -1;
+        for (let i = 0; i < sl.length; i++) if (!sl[i].approved) { if (firstOpen < 0) firstOpen = i; lastOpen = i; }
+        list.push({ id: item.id, title: item.title, slideCount: sl.length, laneTitle: lane.title, laneId: lane.id, presentCard: !!item.presentCard, firstVisible, lastVisible, firstOpen, lastOpen });
       }
     }
     return list;
@@ -532,8 +536,11 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       const navSlides = fullscreen ? presSlides : slides;
       // In fullscreen, step over hidden slides so a draft never appears on screen
       // (editor nav keeps reaching them so they can be edited/unhidden).
-      const nextVisible = (from) => { for (let i = from + 1; i < navSlides.length; i++) if (!fullscreen || !navSlides[i].hidden) return i; return -1; };
-      const prevVisible = (from) => { for (let i = from - 1; i >= 0; i--) if (!fullscreen || !navSlides[i].hidden) return i; return -1; };
+      // Review cycle (editor only): approved slides are skipped while review mode is on.
+      const reviewCycle = !fullscreen && !!state.reviewMode;
+      const navSkip = (s) => fullscreen ? !!s.hidden : (reviewCycle && !!s.approved);
+      const nextVisible = (from) => { for (let i = from + 1; i < navSlides.length; i++) if (!navSkip(navSlides[i])) return i; return -1; };
+      const prevVisible = (from) => { for (let i = from - 1; i >= 0; i--) if (!navSkip(navSlides[i])) return i; return -1; };
       if (e.key === "ArrowRight" || e.key === "ArrowDown" || e.key === " ") {
         e.preventDefault();
         stopAlternatives(); // keep a running Improve alive across navigation
@@ -546,10 +553,11 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
           // module never flashes on screen, and land on the first VISIBLE slide.
           let ti = curIdx + 1;
           if (fullscreen) while (ti < mods.length && !mods[ti].presentCard && mods[ti].firstVisible < 0) ti++;
+          else if (reviewCycle) while (ti < mods.length && mods[ti].firstOpen < 0) ti++;
           if (ti >= 0 && ti < mods.length) {
             const next = mods[ti];
             dispatch({ type: "SELECT", id: next.id });
-            const target = fullscreen ? (next.presentCard ? 0 : Math.max(0, next.firstVisible)) : 0;
+            const target = fullscreen ? (next.presentCard ? 0 : Math.max(0, next.firstVisible)) : (reviewCycle ? Math.max(0, next.firstOpen) : 0);
             dispatch({ type: "SET_SLIDE_INDEX", index: target });
             const changedLane = next.laneId !== mods[curIdx].laneId;
             showNavToast(next.title, changedLane ? next.laneTitle : null);
@@ -565,6 +573,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
         } else {
           let ti = curIdx - 1;
           if (fullscreen) while (ti >= 0 && !mods[ti].presentCard && mods[ti].lastVisible < 0) ti--;
+          else if (reviewCycle) while (ti >= 0 && mods[ti].lastOpen < 0) ti--;
           if (ti >= 0) {
             const prev = mods[ti];
             dispatch({ type: "SELECT", id: prev.id });
@@ -573,7 +582,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
             // title card if the module has only a card. Editor: the real last slide.
             const target = fullscreen
               ? (prev.lastVisible >= 0 ? prev.lastVisible + prevPresOffset : 0)
-              : Math.max(0, (prev.slideCount || 1) - 1);
+              : (reviewCycle ? Math.max(0, prev.lastOpen) : Math.max(0, (prev.slideCount || 1) - 1));
             dispatch({ type: "SET_SLIDE_INDEX", index: Math.max(0, target) });
             const changedLane = prev.laneId !== mods[curIdx].laneId;
             showNavToast(prev.title, changedLane ? prev.laneTitle : null);
@@ -647,7 +656,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       if (e.key === "I" && e.shiftKey && !e.metaKey && !e.ctrlKey && slides.length > 0 && !improving && !altLoading && aiOk) { e.preventDefault(); runImproveRef.current?.(null, "slide"); }
     };
     window.addEventListener("keydown", handler); return () => window.removeEventListener("keydown", handler);
-  }, [slideIndex, slides, presSlides, fullscreen, dispatch, concept.id, flatModules, showNavToast, stopAll, altLoading, alternatives, altOriginal, fontScale, state.selectedSlideIndices]);
+  }, [slideIndex, slides, presSlides, fullscreen, dispatch, concept.id, flatModules, showNavToast, stopAll, altLoading, alternatives, altOriginal, fontScale, state.selectedSlideIndices, state.reviewMode]);
 
   // ── Browser back button → exit fullscreen instead of leaving the page ──
   useEffect(() => {
@@ -1076,13 +1085,13 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
         </div>}
         <div className="slide-nav-btn" onClick={() => dispatch({ type: "SET_FULLSCREEN", value: false })} style={{ position: "absolute", top: isMobile ? 8 : 16, right: isMobile ? 8 : 16, padding: isMobile ? 12 : 8 }}><Minimize2 size={isMobile ? 22 : 18} color="#fff" /></div>
         {!isMobile && <div data-testid="student-toggle" className="slide-nav-btn" onClick={() => dispatch({ type: "SET_VERA_MODE", mode: isStudent ? "editor" : "student" })} title={isStudent ? "Exit student mode" : "Student mode — Vera teaches"} style={{ position: "absolute", top: 16, right: 52, padding: 8, background: isStudent ? T.accent + "30" : "transparent", borderRadius: 6 }}><span style={{ fontSize: 16 }}>🎓</span></div>}
-        {!isMobile && <div data-testid="gallery-toggle" className="slide-nav-btn" onClick={() => setGallery((v) => !v)} title="Gallery view (G)" style={{ position: "absolute", top: 16, right: 88, padding: 8, background: showGallery ? T.accent + "30" : "transparent", borderRadius: 6 }}><span style={{ fontSize: 16 }}>🗂</span></div>}
+        {!isMobile && <div data-testid="gallery-toggle" className="slide-nav-btn" onClick={() => setGallery((v) => !v)} title="Gallery view (G)" style={{ position: "absolute", top: 16, right: 88, padding: 8, background: showGallery ? T.accent + "30" : "rgba(0,0,0,0.45)", borderRadius: 6, lineHeight: 0 }}>{getIcon("grid", { size: 18, color: "#fff" })}</div>}
         {!isMobile && <div data-testid="presenter-toggle" className="slide-nav-btn" onClick={() => setPresenterView((v) => !v)} title={showPresenterView ? "Exit presenter view (S)" : "Presenter view — notes, next slide, timer (S)"} style={{ position: "absolute", top: 16, right: 124, padding: 8, background: showPresenterView ? T.accent + "30" : "transparent", borderRadius: 6 }}><span style={{ fontSize: 16 }}>🖥️</span></div>}
         {/* Present Edit toggle (Shift+E): restore inline click-to-edit while
             presenting. Uses the Lucide pencil (SVG), NOT the ✏ emoji, so the
             CR-03 "no edit chrome" test still passes when edit mode is off.
             Hidden in student mode, where editing is disabled by design. */}
-        {!isMobile && !isStudent && <div data-testid="present-edit-toggle" className="slide-nav-btn" onClick={() => setPresentEdit((v) => !v)} title={presentEdit ? "Editing on — click text/icons to edit (Shift+E)" : "Edit mode — click text/icons to edit while presenting (Shift+E)"} style={{ position: "absolute", top: 16, right: 160, padding: 8, background: presentEdit ? T.accent + "30" : "transparent", borderRadius: 6 }}>{getIcon("edit", { size: 18, color: "#fff" })}</div>}
+        {!isMobile && !isStudent && <div data-testid="present-edit-toggle" className="slide-nav-btn" onClick={() => setPresentEdit((v) => !v)} title={presentEdit ? "Editing on — click text/icons to edit (Shift+E)" : "Edit mode — click text/icons to edit while presenting (Shift+E)"} style={{ position: "absolute", top: 16, right: 160, padding: 8, background: presentEdit ? T.accent + "30" : "rgba(0,0,0,0.45)", borderRadius: 6, lineHeight: 0 }}>{getIcon("edit", { size: 18, color: "#fff" })}</div>}
         {/* Browser fullscreen toggle removed — Vela fullscreen (F key / minimize button) is sufficient */}
         {!isMobile && !VELA_LOCAL_MODE && <>
           <div className="slide-nav-btn" onClick={() => setShowCinemaTip((v) => !v)} title="Cinema mode — fullscreen in browser" style={{ position: "absolute", top: 16, right: 196, padding: 8 }}><VelaIcon size={18} /></div>
@@ -1314,7 +1323,8 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
 
         {/* ── SLIDE TOOLBAR — centered strip between preview & notes ── */}
         {slides.length > 0 && <div data-testid="slide-toolbar" style={{ flexShrink: 0, borderTop: `1px solid ${T.border}`, background: T.bgPanel, padding: "4px 12px", display: "flex", justifyContent: "center", alignItems: "center", gap: 3 }}>
-          <button data-testid="quick-edit-open" onClick={() => { if (aiOk) setShowQuickEdit((v) => !v); }} disabled={!aiOk} title={aiOk ? "AI Edit slide (E)" : VELA_AI_UNAVAILABLE_MSG} style={S.btn({ padding: "5px 12px", fontSize: 14, color: !aiOk ? T.textDim + "60" : showQuickEdit ? T.accent : T.textDim, background: showQuickEdit ? T.accent + "20" : "transparent", borderRadius: 4, display: "flex", alignItems: "center", gap: 5, cursor: aiOk ? "pointer" : "not-allowed" })}>⚡{!isMobile && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>AI Edit</span>}</button>
+          {state.reviewMode && (() => { const approved = !!slides[slideIndex]?.approved; return <button data-testid="slide-approve-toggle" aria-pressed={approved} onClick={() => dispatch({ type: "TOGGLE_SLIDE_APPROVED", id: concept.id, index: slideIndex })} title={approved ? "Approved — click to unmark (review cycle skips approved slides)" : "Mark slide approved (review cycle skips it)"} style={S.btn({ padding: "5px 12px", fontSize: 14, color: approved ? T.green : T.textDim, background: approved ? T.green + "20" : "transparent", borderRadius: 4, display: "flex", alignItems: "center", gap: 5 })}>{getIcon("check", { size: 14 })}{!isMobile && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>{approved ? "Approved" : "Approve"}</span>}</button>; })()}
+          <button data-testid="quick-edit-open"onClick={() => { if (aiOk) setShowQuickEdit((v) => !v); }} disabled={!aiOk} title={aiOk ? "AI Edit slide (E)" : VELA_AI_UNAVAILABLE_MSG} style={S.btn({ padding: "5px 12px", fontSize: 14, color: !aiOk ? T.textDim + "60" : showQuickEdit ? T.accent : T.textDim, background: showQuickEdit ? T.accent + "20" : "transparent", borderRadius: 4, display: "flex", alignItems: "center", gap: 5, cursor: aiOk ? "pointer" : "not-allowed" })}>⚡{!isMobile && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>AI Edit</span>}</button>
           <button onClick={() => improving ? stopAll() : runImproveRef.current?.(null, "slide")} disabled={!aiOk || slides.length === 0 || altLoading} title={aiOk ? "Auto-improve this slide (⇧I)" : VELA_AI_UNAVAILABLE_MSG} style={S.btn({ padding: "5px 12px", fontSize: 14, color: !aiOk ? T.textDim + "60" : improving ? T.red : T.textDim, background: improving ? T.accent + "20" : "transparent", borderRadius: 4, display: "flex", alignItems: "center", gap: 5, opacity: !aiOk || slides.length === 0 ? 0.35 : 1, cursor: aiOk ? "pointer" : "not-allowed" })}>{improving ? "⏹" : "✨"}{!isMobile && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>{improving ? "Stop" : "Improve"}</span>}</button>
           <button onClick={() => altLoading ? stopAlternatives() : runAlternatives()} disabled={!aiOk || slides.length === 0 || improving} title={aiOk ? "Generate design variants — click a tile to apply, ↩ Original to revert, Esc to close" : VELA_AI_UNAVAILABLE_MSG} style={S.btn({ padding: "5px 12px", fontSize: 14, color: !aiOk ? T.textDim + "60" : altLoading ? T.red : (alternatives ? T.accent : T.textDim), background: altLoading || alternatives ? T.accent + "20" : "transparent", borderRadius: 4, display: "flex", alignItems: "center", gap: 5, opacity: !aiOk || slides.length === 0 ? 0.35 : 1, cursor: aiOk ? "pointer" : "not-allowed" })}>{altLoading ? "⏹" : "🎲"}{!isMobile && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>{altLoading ? "Stop" : "Variants"}</span>}</button>
           <div style={{ width: 1, height: 22, background: T.border + "60" }} />
@@ -1322,8 +1332,6 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
           <button onClick={() => { dispatch({ type: "DUPLICATE_SLIDE", id: concept.id, index: slideIndex }); dispatch({ type: "SET_SLIDE_INDEX", index: slideIndex + 1 }); }} title="Duplicate slide" style={S.btn({ padding: "5px 12px", fontSize: 14, color: T.textDim, borderRadius: 4, display: "flex", alignItems: "center", gap: 5 })}>📋{!isMobile && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>Duplicate</span>}</button>
           <button ref={moveRef} onClick={() => setShowMoveToModule((v) => !v)} title="Move to module" style={S.btn({ padding: "5px 12px", fontSize: 14, color: showMoveToModule ? T.accent : T.textDim, background: showMoveToModule ? T.accent + "20" : "transparent", borderRadius: 4, display: "flex", alignItems: "center", gap: 5 })}>📦{!isMobile && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>Move</span>}</button>
           <button onClick={() => { dispatch({ type: "REMOVE_SLIDE", id: concept.id, index: slideIndex }); dispatch({ type: "SET_SLIDE_INDEX", index: Math.max(0, slideIndex - 1) }); }} title="Delete slide (Del)" style={S.btn({ padding: "5px 12px", fontSize: 14, color: T.red + "90", borderRadius: 4, display: "flex", alignItems: "center", gap: 5 })}>🗑{!isMobile && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>Delete</span>}</button>
-          <div style={{ width: 1, height: 22, background: T.border + "60" }} />
-          <button data-testid="editor-gallery-toggle" onClick={() => setGallery((v) => !v)} title="Overview — all slides (G)" style={S.btn({ padding: "5px 12px", fontSize: 14, color: showGallery ? T.accent : T.textDim, background: showGallery ? T.accent + "20" : "transparent", borderRadius: 4, display: "flex", alignItems: "center", gap: 5 })}>🗂{!isMobile && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>Overview</span>}</button>
         </div>}
 
         {/* ── NOTES BAR ──────────────────────────────────────── */}
