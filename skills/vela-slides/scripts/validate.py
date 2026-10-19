@@ -182,6 +182,11 @@ def validate(path):
                 # Numeric layout fields (imageCols, gap, splitGap, flex ratios)
                 check_slide_numerics(slide, loc, errors)
 
+                # `reviewed` (editor review checkmark) — the app keeps it only
+                # when it is the boolean true; any other value is dropped.
+                if "reviewed" in slide and not isinstance(slide["reviewed"], bool):
+                    warnings.append(f"{loc}: 'reviewed' must be true or false — the app ignores other values")
+
                 # studyNotes (offline student content) check
                 sn = slide.get("studyNotes")
                 if sn is not None:
