@@ -389,10 +389,20 @@ function escapeHtmlText(s) {
 // (window.Babel in-browser, or the vendored babel.min.js required in a Node
 // test) — passed in rather than read off a global so this can be unit-tested
 // outside the browser. Returns the full standalone HTML document string.
+// The Neutralino source (resources/vela.jsx, written by sync-vela.py) already carries
+// a UMD shim that declares the same React hooks and lucide icons. Drop that block
+// from the template before this function prepends its own shim: two top-level
+// `const { useState } = React` declarations in one script is a SyntaxError.
+// Runs on the template only, before spliceStartupPatch injects deck bytes.
+const NEUTRALINO_UMD_SHIM_RE = /^\/\/ --- Neutralino UMD shim[^\n]*\n[\s\S]*?^\/\/ -{3,}[^\n]*\n\n?/m;
+function stripNeutralinoUmdShim(jsx) {
+  return jsx.replace(NEUTRALINO_UMD_SHIM_RE, "");
+}
+
 function buildStandaloneHtml(jsxSource, deckObj, opts = {}) {
   const { footer = false, babel } = opts;
   if (!babel || typeof babel.transform !== "function") throw new Error("buildStandaloneHtml requires a Babel-standalone instance");
-  let jsx = stripEsmImportsForStandalone(jsxSource);
+  let jsx = stripEsmImportsForStandalone(stripNeutralinoUmdShim(jsxSource));
   jsx = spliceStartupPatch(jsx, deckObj);
   jsx = flipPresentationMode(jsx);
   const shim =

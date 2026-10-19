@@ -1728,7 +1728,20 @@ function sanitizeSlide(slide) {
   return clean;
 }
 
-function sanitizeItem(item) {
+// Lane/module ids are identity, not content. Keep a deck-supplied id when it is a
+// short plain token and not already used in this deck; otherwise mint a fresh one.
+// Regenerating every id on each open churned the source file and the per-module
+// storage keys. Type-check first, then the strict token pattern: ids reach keys
+// and DOM attributes, so nothing but [A-Za-z0-9_-] may pass.
+const DECK_ID_TOKEN = /^[A-Za-z0-9_-]{1,40}$/;
+function ingressDeckId(raw, seen) {
+  let id = typeof raw === "string" && DECK_ID_TOKEN.test(raw) && !seen.has(raw) ? raw : uid();
+  while (seen.has(id)) id = uid();
+  seen.add(id);
+  return id;
+}
+
+function sanitizeItem(item, seenIds = new Set()) {
   if (!item || typeof item !== "object") return null;
   const comments = Array.isArray(item.comments) ? item.comments.slice(0, MAX_COMMENTS).map(sanitizeComment).filter(Boolean) : [];
   // Migrate legacy notes to a module-level comment if no comments exist
@@ -1736,7 +1749,7 @@ function sanitizeItem(item) {
     comments.push({ id: "c_" + uid(), text: sanitizeString(item.notes.trim(), 1000), anchor: null, blockIndex: null, status: "open", createdAt: now(), resolvedAt: null });
   }
   return {
-    id: uid(),
+    id: ingressDeckId(item.id, seenIds),
     title: sanitizeString(item.title || "Untitled", 200),
     notes: typeof item.notes === "string" ? sanitizeString(item.notes, 2000) : "",
     comments,
@@ -1817,10 +1830,12 @@ function validateAndSanitizeDeck(raw) {
   if (!Array.isArray(raw.lanes)) throw new Error("Missing lanes array");
   // Clamp rather than throw: a >50-lane deck must not be able to trip an exception
   // that a fail-open caller would catch and then load raw, unsanitized (sanitizer off-switch).
+  const seenIds = new Set();
   const lanes = raw.lanes.slice(0, 50).map((lane) => {
     if (!lane || typeof lane !== "object") return null;
-    const items = Array.isArray(lane.items) ? lane.items.slice(0, 200).map(sanitizeItem).filter(Boolean) : [];
-    return { id: uid(), title: sanitizeString(lane.title || "Untitled", 100), collapsed: !!lane.collapsed, items };
+    const laneId = ingressDeckId(lane.id, seenIds);
+    const items = Array.isArray(lane.items) ? lane.items.slice(0, 200).map((i) => sanitizeItem(i, seenIds)).filter(Boolean) : [];
+    return { id: laneId, title: sanitizeString(lane.title || "Untitled", 100), collapsed: !!lane.collapsed, items };
   }).filter(Boolean);
   const rawBranding = raw.branding && typeof raw.branding === "object" ? raw.branding : {};
   const importedBranding = {
@@ -20762,10 +20777,20 @@ function escapeHtmlText(s) {
 // (window.Babel in-browser, or the vendored babel.min.js required in a Node
 // test) — passed in rather than read off a global so this can be unit-tested
 // outside the browser. Returns the full standalone HTML document string.
+// The Neutralino source (resources/vela.jsx, written by sync-vela.py) already carries
+// a UMD shim that declares the same React hooks and lucide icons. Drop that block
+// from the template before this function prepends its own shim: two top-level
+// `const { useState } = React` declarations in one script is a SyntaxError.
+// Runs on the template only, before spliceStartupPatch injects deck bytes.
+const NEUTRALINO_UMD_SHIM_RE = /^\/\/ --- Neutralino UMD shim[^\n]*\n[\s\S]*?^\/\/ -{3,}[^\n]*\n\n?/m;
+function stripNeutralinoUmdShim(jsx) {
+  return jsx.replace(NEUTRALINO_UMD_SHIM_RE, "");
+}
+
 function buildStandaloneHtml(jsxSource, deckObj, opts = {}) {
   const { footer = false, babel } = opts;
   if (!babel || typeof babel.transform !== "function") throw new Error("buildStandaloneHtml requires a Babel-standalone instance");
-  let jsx = stripEsmImportsForStandalone(jsxSource);
+  let jsx = stripEsmImportsForStandalone(stripNeutralinoUmdShim(jsxSource));
   jsx = spliceStartupPatch(jsx, deckObj);
   jsx = flipPresentationMode(jsx);
   const shim =

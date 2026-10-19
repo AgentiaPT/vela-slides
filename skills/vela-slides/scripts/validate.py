@@ -131,6 +131,10 @@ def validate(path):
                 # Background check
                 if not slide.get("bg") and not slide.get("bgGradient"):
                     errors.append(f"{loc}: Missing 'bg' or 'bgGradient'")
+                # A gradient in 'bg' is not a colour: the renderer drops it and the
+                # slide colours fall back to the default. Gradients belong in bgGradient.
+                if isinstance(slide.get("bg"), str) and "gradient" in slide["bg"].lower():
+                    errors.append(f"{loc}: 'bg' cannot be a gradient (use 'bgGradient'); colours would fall back to default")
 
                 # Color check + contrast auto-fix
                 if not slide.get("color"):
