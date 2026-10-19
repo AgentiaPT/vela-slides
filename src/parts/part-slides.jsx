@@ -718,7 +718,7 @@ function PresenterView({ current, next, index, total, duration, elapsed, brandin
 }
 
 const GALLERY_MODULE_COLORS = ["#60a5fa","#a78bfa","#f472b6","#34d399","#f59e0b","#38bdf8","#fb7185","#818cf8","#2dd4bf","#e879f9","#fbbf24","#67e8f9"];
-function GalleryView({ lanes, currentConceptId, slideIndex, dispatch, onClose, branding }) {
+function GalleryView({ lanes, currentConceptId, slideIndex, dispatch, onClose, branding, top = 0 }) {
   const gridRef = useRef(null);
   const activeRef = useRef(null);
   const ZOOM_SIZES = [140, 180, 224, 300, 400, 560, 800];
@@ -861,7 +861,7 @@ function GalleryView({ lanes, currentConceptId, slideIndex, dispatch, onClose, b
   const realSlideTotal = useMemo(() => allSlides.filter((s) => !s.isTitleCard).length, [allSlides]);
 
   return (
-    <div onClick={onClose} data-teacher-panel style={{ position: "fixed", inset: 0, zIndex: 10000, background: T.isDark ? "rgba(0,0,0,0.92)" : "rgba(241,245,249,0.96)", backdropFilter: "blur(8px)", display: "flex", flexDirection: "column", overflow: "hidden" }}>
+    <div onClick={onClose} data-teacher-panel data-testid="gallery-overlay" style={{ position: "fixed", top, left: 0, right: 0, bottom: 0, zIndex: 10000, background: T.isDark ? "rgba(0,0,0,0.92)" : "rgba(241,245,249,0.96)", backdropFilter: "blur(8px)", display: "flex", flexDirection: "column", overflow: "hidden" }}>
       <div onClick={(e) => e.stopPropagation()} style={{ padding: "16px 24px", display: "flex", alignItems: "center", gap: 12, borderBottom: `1px solid ${T.border}`, flexShrink: 0 }}>
         <span style={{ fontSize: 18 }}>🗂</span>
         <span style={{ fontFamily: FONT.mono, fontSize: 14, fontWeight: 700, color: T.accent, letterSpacing: "0.05em" }}>GALLERY</span>

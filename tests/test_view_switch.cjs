@@ -69,6 +69,23 @@ console.log("CR13 — top-bar view switch");
   check(old && !/Overview<\/span>/.test(old) && !old.includes("🗂"), "old Overview button is demoted to an icon-only, emoji-free shortcut");
 }
 
+console.log("D1/D2/D3 — view switch reachable over the gallery, F path, compact header");
+{
+  const slidesSrc = read("part-slides.jsx");
+  check(/function GalleryView\(\{[^}]*top = 0 \}\)/.test(slidesSrc) && /data-testid="gallery-overlay" style=\{\{ position: "fixed", top, left: 0, right: 0, bottom: 0, zIndex: 10000/.test(slidesSrc), "D1: GalleryView overlay takes a top offset (no inset: 0)");
+  check(/<GalleryView [^\n]*top=\{Math\.max\(0, Math\.round\(containerRef\.current\?\.getBoundingClientRect\(\)\.top/.test(panel), "D1: editor gallery starts below the top bar");
+  check(/e\.key === "f"[^\n]*if \(fullscreen && !showGalleryRef\.current\) \{[^\n]*SET_FULLSCREEN", value: false[^\n]*else actionsRef\?\.current\?\.setView\?\.\("present"\)/.test(panel), "D2: F enters Present through setView (closes the gallery)");
+  check(/e\.key === "F5"[^\n]*if \(!fullscreen \|\| showGalleryRef\.current\) actionsRef\?\.current\?\.setView\?\.\("present"\)/.test(panel), "D2: F5 enters Present through setView");
+  check(!/e\.key === "f"[^\n]*value: !fullscreen/.test(panel), "D2: F no longer toggles fullscreen blind to the gallery");
+  const sw = blockWithTestId(app, "view-switch");
+  check(/HDR_COMPACT_W = 1280/.test(app) && /data-compact=\{hdrCompact/.test(sw), "D3: view switch has a compact tier below 1280");
+  for (const [id, lbl] of [["view-switch-editor", "Editor"], ["view-switch-gallery", "Gallery"], ["view-switch-present", "Present"]]) {
+    const el = elementWithTestId(sw, id);
+    check(el.includes(`{!hdrCompact && " ${lbl}"}`) && /aria-label="/.test(el) && /aria-pressed=/.test(el), `D3: ${id} hides its label when compact, keeps aria-label + aria-pressed`);
+  }
+  check(/view-switch-present[^\n]*background: has \? T\.green/.test(sw), "D3: Present keeps the green emphasis");
+}
+
 console.log("CR10/CR11 — fullscreen top-right controls");
 {
   const strip = blockWithTestId(panel, "present-chrome-strip");
@@ -155,26 +172,88 @@ if (renderDir) {
       }
       await pg.close();
     }
-    // D1: Gallery then Present -> slide shown, gallery closed (also after exit).
+    // D1: all six Editor/Gallery/Present transitions with real mouse clicks.
     {
       const pg = await boot(1280);
-      await pg.click('[data-testid="view-switch-gallery"]');
-      await pg.waitForSelector('[data-testid="gallery-close"]');
-      // The gallery overlay covers the top bar, so click via the DOM (as the validator did).
-      await pg.evaluate(() => document.querySelector('[data-testid="view-switch-present"]').click());
-      await pg.waitForSelector('[data-testid="present-exit"]');
-      await pg.waitForTimeout(300);
-      const inPresent = await pg.evaluate(() => !document.querySelector('[data-testid="gallery-close"]'));
-      check(inPresent, "D1: Present from Gallery closes the gallery overlay");
-      await pg.click('[data-testid="present-exit"]');
-      await pg.waitForTimeout(400);
-      const after = await pg.evaluate(() => ({ g: !!document.querySelector('[data-testid="gallery-close"]'), ed: document.querySelector('[data-testid="view-switch-editor"]')?.getAttribute("aria-pressed") }));
-      check(!after.g && after.ed === "true", "D1: after exit the editor shows, gallery stays closed", JSON.stringify(after));
+      const st = () => pg.evaluate(() => ({ gal: !!document.querySelector('[data-testid="gallery-close"]'), present: !!document.querySelector('[data-testid="present-exit"]') }));
+      const settle = () => pg.waitForTimeout(350);
+      const want = async (exp, name) => { const s = await st(); check(s.gal === exp.gal && s.present === exp.present, name, JSON.stringify(s)); };
+      await pg.click('[data-testid="view-switch-gallery"]'); await settle();
+      await want({ gal: true, present: false }, "D1: Editor -> Gallery (mouse)");
+      const hit = await pg.evaluate(() => { const b = document.querySelector('[data-testid="view-switch-present"]').getBoundingClientRect(); const e = document.elementFromPoint(b.left + b.width / 2, b.top + b.height / 2); return !!e && !!e.closest('[data-testid="view-switch"]'); });
+      check(hit, "D1: with the gallery open, elementFromPoint at the switch hits the switch");
+      await pg.click('[data-testid="view-switch-editor"]'); await settle();
+      await want({ gal: false, present: false }, "D1: Gallery -> Editor (mouse)");
+      await pg.click('[data-testid="view-switch-gallery"]'); await settle();
+      await pg.click('[data-testid="view-switch-present"]'); await settle();
+      await want({ gal: false, present: true }, "D1: Gallery -> Present (mouse)");
+      await pg.click('[data-testid="present-exit"]'); await settle();
+      await want({ gal: false, present: false }, "D1: Present -> Editor (exit)");
+      const ed = await pg.evaluate(() => document.querySelector('[data-testid="view-switch-editor"]')?.getAttribute("aria-pressed"));
+      check(ed === "true", "D1: after exit the Editor segment is active", String(ed));
+      await pg.click('[data-testid="view-switch-present"]'); await settle();
+      await want({ gal: false, present: true }, "D1: Editor -> Present (mouse)");
+      await pg.click('[data-testid="gallery-toggle"]'); await settle();
+      await want({ gal: true, present: true }, "D1: Present -> Gallery (strip toggle)");
+      await pg.click('[data-testid="gallery-close"]'); await settle();
+      await want({ gal: false, present: true }, "D1: gallery close button returns to Present");
+      await pg.click('[data-testid="present-exit"]'); await settle();
+      // Export menu opens above the gallery overlay.
+      await pg.click('[data-testid="view-switch-gallery"]'); await settle();
+      await pg.click('[data-testid="export-menu-toggle"]'); await settle();
+      const menuOk = await pg.evaluate(() => { const b = document.querySelector('[data-testid="export-pdf-menu-item"]'); if (!b) return false; const r = b.getBoundingClientRect(); return document.elementFromPoint(r.left + 10, r.top + r.height / 2)?.closest('[data-testid="export-pdf-menu-item"]') === b; });
+      check(menuOk, "D1: Export menu shows above the gallery overlay");
+      await pg.keyboard.press("Escape"); await settle();
+      await pg.close();
+    }
+    // D2: keys F / F5 / G / Escape go through one view path.
+    {
+      const pg = await boot(1280);
+      const st = () => pg.evaluate(() => ({ gal: !!document.querySelector('[data-testid="gallery-close"]'), present: !!document.querySelector('[data-testid="present-exit"]') }));
+      const settle = () => pg.waitForTimeout(350);
+      const want = async (exp, name) => { const s = await st(); check(s.gal === exp.gal && s.present === exp.present, name, JSON.stringify(s)); };
+      await pg.evaluate(() => document.activeElement?.blur?.());
+      await pg.keyboard.press("g"); await settle();
+      await want({ gal: true, present: false }, "D2: G opens the gallery");
+      await pg.keyboard.press("f"); await settle();
+      await want({ gal: false, present: true }, "D2: F with the gallery open closes it and presents");
+      await pg.keyboard.press("f"); await settle();
+      await want({ gal: false, present: false }, "D2: F in Present returns to the editor");
+      await pg.keyboard.press("g"); await settle();
+      await pg.keyboard.press("g"); await settle();
+      await want({ gal: false, present: false }, "D2: G toggles the gallery closed");
+      await pg.keyboard.press("g"); await settle();
+      await pg.keyboard.press("F5"); await settle();
+      await want({ gal: false, present: true }, "D2: F5 with the gallery open closes it and presents");
+      await pg.keyboard.press("g"); await settle();
+      await want({ gal: true, present: true }, "D2: G in Present opens the gallery");
+      await pg.keyboard.press("Escape"); await settle();
+      await want({ gal: false, present: true }, "D2: Escape closes the gallery, stays in Present");
+      await pg.keyboard.press("g"); await settle();
+      await pg.keyboard.press("f"); await settle();
+      await want({ gal: false, present: true }, "D2: F in Present with the gallery closes it, stays in Present");
+      await pg.close();
+    }
+    // D3: every header button is on screen at 900..1440.
+    for (const w of [900, 1000, 1100, 1180, 1280, 1440]) {
+      const pg = await boot(w);
+      await pg.waitForTimeout(200);
+      const r = await pg.evaluate(() => {
+        const h = document.querySelector("header");
+        const btns = [...h.querySelectorAll("button")].map((b) => b.getBoundingClientRect()).filter((x) => x.width > 0);
+        return { over: h.scrollWidth - h.clientWidth, maxR: Math.max(...btns.map((x) => x.right)), minL: Math.min(...btns.map((x) => x.left)), vw: window.innerWidth, compact: document.querySelector('[data-testid="view-switch"]')?.getAttribute("data-compact"), present: document.querySelector('[data-testid="view-switch-present"]')?.textContent };
+      });
+      check(r.over <= 0 && r.maxR <= r.vw && r.minL >= 0, `D3: ${w}px: header does not overflow, all buttons on screen`, JSON.stringify(r));
+      check((w < 1280) === (r.compact === "true") && (w < 1280 ? !/Present/.test(r.present) : /Present/.test(r.present)), `D3: ${w}px: switch is ${w < 1280 ? "compact" : "labelled"}`, JSON.stringify(r));
+      await pg.close();
+    }
+    {
+      const pg = await boot(1280);
       // D5: hide a slide from the gallery -> card dimmed, hide button full opacity.
       await pg.click('[data-testid="view-switch-gallery"]');
       await pg.waitForSelector('[data-testid="gallery-hide-slide"]');
       await pg.evaluate(() => document.querySelector('[data-testid="gallery-slide"] [data-testid="gallery-hide-slide"]').click());
-      await pg.waitForTimeout(300);
+      await pg.waitForTimeout(700);
       const hc = await pg.evaluate(() => {
         const c = document.querySelector('[data-testid="gallery-slide"][data-hidden="true"]');
         if (!c) return null;
@@ -195,7 +274,7 @@ if (renderDir) {
     await b.close();
     console.log(`\n${pass} passed, ${fail} failed`);
     process.exit(fail ? 1 : 0);
-  })();
+  })().catch((e) => { bad("browser run aborted", String(e.message).split("\n")[0]); console.log(`\n${pass} passed, ${fail} failed`); process.exit(1); });
 } else {
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

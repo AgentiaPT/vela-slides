@@ -961,9 +961,11 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       if (fullscreen && !showGalleryRef.current && (e.key === "+" || e.key === "=")) { e.preventDefault(); { const v = Math.min(fontScale + 0.1, 2.0); dispatch({ type: "SET_FONT_SCALE", value: Math.round(v*10)/10 }); showNavToast("FONT " + Math.round(v * 100) + "%"); }; }
       if (fullscreen && !showGalleryRef.current && e.key === "-") { e.preventDefault(); { const v = Math.max(fontScale - 0.1, 0.5); dispatch({ type: "SET_FONT_SCALE", value: Math.round(v*10)/10 }); showNavToast("FONT " + Math.round(v * 100) + "%"); }; }
       if (fullscreen && !showGalleryRef.current && e.key === "0" && !e.metaKey && !e.ctrlKey) { e.preventDefault(); dispatch({ type: "SET_FONT_SCALE", value: 1 }); showNavToast("FONT 100%"); }
-      if (e.key === "f" && !e.metaKey && !e.ctrlKey && !["INPUT", "TEXTAREA"].includes(document.activeElement?.tagName)) { stopAlternatives(); dispatch({ type: "SET_FULLSCREEN", value: !fullscreen }); }
+      // D2: F / F5 enter Present through the same setView path as the top-bar
+      // switch, so an open gallery closes first. F exits only a plain Present.
+      if (e.key === "f" && !e.metaKey && !e.ctrlKey && !["INPUT", "TEXTAREA"].includes(document.activeElement?.tagName)) { if (fullscreen && !showGalleryRef.current) { stopAlternatives(); dispatch({ type: "SET_FULLSCREEN", value: false }); } else actionsRef?.current?.setView?.("present"); }
       // F5 → fullscreen (prevent page reload)
-      if (e.key === "F5") { e.preventDefault(); e.stopPropagation(); if (!fullscreen) { stopAlternatives(); dispatch({ type: "SET_FULLSCREEN", value: true }); } }
+      if (e.key === "F5") { e.preventDefault(); e.stopPropagation(); if (!fullscreen || showGalleryRef.current) actionsRef?.current?.setView?.("present"); }
       // E → quick edit current slide (not in input/textarea)
       if (e.key === "e" && !e.metaKey && !e.ctrlKey && !e.shiftKey && slides.length > 0 && !["INPUT", "TEXTAREA"].includes(document.activeElement?.tagName)) {
         e.preventDefault(); setShowNewSlide(false); setShowQuickEdit((v) => !v); setQuickEditPrompt(""); setQuickEditImage(null);
@@ -1773,7 +1775,8 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
         {/* Move-to-module popover */}
         {showMoveToModule && (() => { const allMods = []; for (const l of lanes) for (const it of l.items) if (it.id !== concept.id) allMods.push({ id: it.id, title: it.title, lane: l.title }); const rect = moveRef.current?.getBoundingClientRect(); const popH = Math.min(300, allMods.length * 32 + 72); const flipUp = rect && (rect.bottom + popH + 8 > window.innerHeight); const top = rect ? (flipUp ? Math.max(8, rect.top - popH - 4) : rect.bottom + 4) : 40; const left = rect ? Math.max(8, Math.min(rect.left, window.innerWidth - 220)) : 8; return <><div onClick={() => setShowMoveToModule(false)} style={{ position: "fixed", inset: 0, zIndex: 9998 }} /><div data-testid="move-picker" style={{ position: "fixed", top, left, background: T.bgPanel, border: `1px solid ${T.border}`, borderRadius: 8, padding: 4, zIndex: 9999, boxShadow: "0 4px 20px rgba(0,0,0,0.5)" }}><SectionPicker mods={allMods} emptyLabel="No other modules" onPick={(toId, e) => { dispatch({ type: "MOVE_SLIDE_TO_MODULE", fromId: concept.id, toId, index: slideIndex }); if (e && (e.ctrlKey || e.metaKey)) { const remaining = slides.length - 1; if (slideIndex < remaining) { dispatch({ type: "SELECT", id: concept.id, slideIndex }); } else { const flat = []; for (const l of lanes) for (const it of l.items) flat.push(it); const pos = flat.findIndex((it) => it.id === concept.id); const nextMod = pos >= 0 ? flat[pos + 1] : null; if (nextMod) dispatch({ type: "SELECT", id: nextMod.id, slideIndex: 0 }); else if (remaining > 0) dispatch({ type: "SELECT", id: concept.id, slideIndex: remaining - 1 }); } } setShowMoveToModule(false); }} /></div></>; })()}
       </div>
-      {showGallery && <GalleryView lanes={lanes} currentConceptId={concept.id} slideIndex={slideIndex} dispatch={dispatch} onClose={() => setGallery(false)} branding={branding} />}
+      {/* D1: in the editor the gallery starts below the top bar, so the view switch stays clickable. */}
+      {showGallery && <GalleryView lanes={lanes} currentConceptId={concept.id} slideIndex={slideIndex} dispatch={dispatch} onClose={() => setGallery(false)} branding={branding} top={Math.max(0, Math.round(containerRef.current?.getBoundingClientRect().top || 0))} />}
     </div>
   );
 }

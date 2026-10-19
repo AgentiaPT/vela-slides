@@ -505,6 +505,12 @@ export default function App() {
 
   // ━━━ Mobile ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   const isMobile = useIsMobile();
+  // D3: header width tiers. Below HDR_COMPACT_W the view switch is icon-only;
+  // below HDR_TIGHT_W some header labels also drop, so every button stays on screen.
+  const HDR_COMPACT_W = 1280, HDR_TIGHT_W = 1100;
+  const [hdrW, setHdrW] = useState(() => (typeof window !== "undefined" ? window.innerWidth : HDR_COMPACT_W));
+  useEffect(() => { const f = () => setHdrW(window.innerWidth); window.addEventListener("resize", f); return () => window.removeEventListener("resize", f); }, []);
+  const hdrCompact = hdrW < HDR_COMPACT_W, hdrTight = hdrW < HDR_TIGHT_W;
   const [mobileTab, setMobileTab] = useState("list"); // "list" | "slides" | "chat"
   const [mobileMenu, setMobileMenu] = useState(false);
   const [viewMenu, setViewMenu] = useState(false);
@@ -932,7 +938,7 @@ export default function App() {
       </div>}
 
       {/* ── TOP BAR — title left, actions right, dropdown buttons ── */}
-      {!state.fullscreen && <header style={{ padding: isMobile ? "6px 10px" : "0 14px", borderBottom: `1px solid ${T.border}`, display: "flex", alignItems: "center", gap: isMobile ? 8 : 10, background: T.bgPanel, flexShrink: 0, height: isMobile ? 40 : 44 }}>
+      {!state.fullscreen && <header style={{ padding: isMobile ? "6px 10px" : "0 14px", borderBottom: `1px solid ${T.border}`, display: "flex", alignItems: "center", gap: isMobile ? 8 : hdrCompact ? 6 : 10, background: T.bgPanel, flexShrink: 0, height: isMobile ? 40 : 44 }}>
         {/* Left: icon + title + time */}
         {isMobile && mobileTab !== "list" && <button onClick={() => { setMobileTab("list"); if (mobileTab === "slides") dispatch({ type: "DESELECT" }); }} style={S.btn({ padding: "2px 4px", color: T.accent, fontSize: 16 })}>{"←"}</button>}
         <span onClick={() => { if (typeof window !== "undefined" && typeof window.__velaOpenDeckPicker === "function") { window.__velaOpenDeckPicker(); } else { setShowChangelog(true); } }} style={{ cursor: "pointer", display: "flex", alignItems: "center" }} title={typeof window !== "undefined" && typeof window.__velaOpenDeckPicker === "function" ? "Open deck (Ctrl+O)" : "About"}><VelaIcon size={20} /></span>
@@ -977,8 +983,9 @@ export default function App() {
             return <div style={{ position: "relative" }}>
               <button onClick={() => { setViewMenu((v) => !v); setExportMenu(false); }} disabled={!has} style={S.btn({ padding: "4px 10px", fontSize: 14, color: has ? T.text : T.textDim, opacity: has ? 1 : 0.4, display: "flex", alignItems: "center", gap: 4, background: viewMenu ? T.accent + "15" : "transparent", borderRadius: 4 })}>{"👁"} {label} <span style={{ fontSize: 9, opacity: 0.5 }}>▾</span></button>
               {viewMenu && <>
-                <div onClick={() => setViewMenu(false)} style={{ position: "fixed", inset: 0, zIndex: 9998 }} />
-                <div style={{ position: "absolute", top: "100%", right: 0, zIndex: 9999, marginTop: 4, background: T.bgPanel, border: `1px solid ${T.border}`, borderRadius: 8, boxShadow: "0 8px 32px rgba(0,0,0,0.4)", padding: "4px 0", minWidth: 120 }}>
+                {/* D1: above the gallery overlay (zIndex 10000), which leaves the top bar open. */}
+                <div onClick={() => setViewMenu(false)} style={{ position: "fixed", inset: 0, zIndex: 10001 }} />
+                <div style={{ position: "absolute", top: "100%", right: 0, zIndex: 10002, marginTop: 4, background: T.bgPanel, border: `1px solid ${T.border}`, borderRadius: 8, boxShadow: "0 8px 32px rgba(0,0,0,0.4)", padding: "4px 0", minWidth: 120 }}>
                   {PREVIEW_RATIOS.map((r) => <button key={r.id} onClick={() => { sa?.setPreviewRatio?.(r.id); setViewMenu(false); }} style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "8px 14px", background: pr === r.id ? T.accent + "20" : "transparent", border: "none", color: pr === r.id ? T.accent : T.text, fontFamily: FONT.mono, fontSize: 14, fontWeight: pr === r.id ? 700 : 400, cursor: "pointer", textAlign: "left" }}>{pr === r.id && <span style={{ color: T.accent }}>✓</span>}{r.label}</button>)}
                 </div>
               </>}
@@ -996,11 +1003,12 @@ export default function App() {
                   overlay; Present enters fullscreen (keeps the green accent). */}
               {(() => {
                 const galleryOn = !!sa?.showGallery;
-                const seg = (active) => ({ display: "flex", alignItems: "center", gap: 5, padding: "4px 10px", border: "none", borderRadius: 5, background: active ? T.accent + "22" : "transparent", color: !has ? T.textDim : active ? T.accent : T.textMuted, fontFamily: FONT.mono, fontSize: 13, fontWeight: active ? 700 : 500, cursor: has ? "pointer" : "default" });
-                return <div data-testid="view-switch" role="group" aria-label="View" style={{ display: "flex", alignItems: "center", gap: 2, padding: 2, border: `1px solid ${T.border}`, borderRadius: 7, background: T.bgInput || "transparent", opacity: has ? 1 : 0.5 }}>
-                  <button data-testid="view-switch-editor" aria-pressed={has && !galleryOn} onClick={() => sa?.setView?.("editor")} disabled={!has} title="Editor view" style={seg(has && !galleryOn)}>{getIcon("edit", { size: 14, color: "currentColor" })} Editor</button>
-                  <button data-testid="view-switch-gallery" aria-pressed={has && galleryOn} onClick={() => sa?.setView?.("gallery")} disabled={!has} title="Gallery view — all slides (G)" style={seg(has && galleryOn)}>{getIcon("grid", { size: 14, color: "currentColor" })} Gallery</button>
-                  <button data-testid="view-switch-present" aria-pressed={false} onClick={() => sa?.setView?.("present")} disabled={!has} title="Present — fullscreen (F)" style={{ display: "flex", alignItems: "center", gap: 5, padding: "4px 12px", background: has ? T.green : T.border, color: has ? "#fff" : T.textDim, border: "none", borderRadius: 5, cursor: has ? "pointer" : "default", fontFamily: FONT.mono, fontSize: 13, fontWeight: 700 }}>{"▶"} Present</button>
+                // D3: icon-only segments below HDR_COMPACT_W (title + aria-label keep the names).
+                const seg = (active) => ({ display: "flex", alignItems: "center", gap: 5, padding: hdrCompact ? "4px 7px" : "4px 10px", border: "none", borderRadius: 5, background: active ? T.accent + "22" : "transparent", color: !has ? T.textDim : active ? T.accent : T.textMuted, fontFamily: FONT.mono, fontSize: 13, fontWeight: active ? 700 : 500, cursor: has ? "pointer" : "default" });
+                return <div data-testid="view-switch" data-compact={hdrCompact ? "true" : "false"} role="group" aria-label="View" style={{ display: "flex", alignItems: "center", gap: 2, padding: 2, border: `1px solid ${T.border}`, borderRadius: 7, background: T.bgInput || "transparent", opacity: has ? 1 : 0.5, flexShrink: 0 }}>
+                  <button data-testid="view-switch-editor" aria-label="Editor view" aria-pressed={has && !galleryOn} onClick={() => sa?.setView?.("editor")} disabled={!has} title="Editor view" style={seg(has && !galleryOn)}>{getIcon("edit", { size: 14, color: "currentColor" })}{!hdrCompact && " Editor"}</button>
+                  <button data-testid="view-switch-gallery" aria-label="Gallery view" aria-pressed={has && galleryOn} onClick={() => sa?.setView?.("gallery")} disabled={!has} title="Gallery view — all slides (G)" style={seg(has && galleryOn)}>{getIcon("grid", { size: 14, color: "currentColor" })}{!hdrCompact && " Gallery"}</button>
+                  <button data-testid="view-switch-present" aria-label="Present" aria-pressed={false} onClick={() => sa?.setView?.("present")} disabled={!has} title="Present — fullscreen (F)" style={{ display: "flex", alignItems: "center", gap: 5, padding: hdrCompact ? "4px 9px" : "4px 12px", background: has ? T.green : T.border, color: has ? "#fff" : T.textDim, border: "none", borderRadius: 5, cursor: has ? "pointer" : "default", fontFamily: FONT.mono, fontSize: 13, fontWeight: 700 }}>{"▶"}{!hdrCompact && " Present"}</button>
                 </div>;
               })()}
             </>;
@@ -1009,13 +1017,13 @@ export default function App() {
           {/* New Deck */}
           <button onClick={() => setNewDeckDialog(true)} style={S.btn({ padding: "4px 10px", fontSize: 14, color: T.accent, display: "flex", alignItems: "center", gap: 4, borderRadius: 4 })}>{"+"} New</button>
           {/* Import */}
-          <button onClick={() => fileInputRef.current?.click()} style={S.btn({ padding: "4px 10px", fontSize: 14, color: T.textMuted, display: "flex", alignItems: "center", gap: 4, borderRadius: 4 })}>{"📥"} Import</button>
+          <button onClick={() => fileInputRef.current?.click()} title="Import" aria-label="Import" style={S.btn({ padding: "4px 10px", fontSize: 14, color: T.textMuted, display: "flex", alignItems: "center", gap: 4, borderRadius: 4 })}>{"📥"}{!hdrTight && " Import"}</button>
           {/* Export dropdown */}
           <div style={{ position: "relative" }}>
-            <button data-testid="export-menu-toggle" onClick={() => { setExportMenu((v) => !v); setViewMenu(false); }} style={S.btn({ padding: "4px 10px", fontSize: 14, color: exportMenu ? T.accent : T.textMuted, display: "flex", alignItems: "center", gap: 4, background: exportMenu ? T.accent + "15" : "transparent", borderRadius: 4 })}>{"📤"} Export <span style={{ fontSize: 9, opacity: 0.5 }}>▾</span></button>
+            <button data-testid="export-menu-toggle" onClick={() => { setExportMenu((v) => !v); setViewMenu(false); }} style={S.btn({ padding: "4px 10px", fontSize: 14, color: exportMenu ? T.accent : T.textMuted, display: "flex", alignItems: "center", gap: 4, background: exportMenu ? T.accent + "15" : "transparent", borderRadius: 4 })} title="Export" aria-label="Export">{"📤"}{!hdrTight && " Export "}<span style={{ fontSize: 9, opacity: 0.5 }}>▾</span></button>
             {exportMenu && <>
-              <div onClick={() => setExportMenu(false)} style={{ position: "fixed", inset: 0, zIndex: 9998 }} />
-              <div style={{ position: "absolute", top: "100%", right: 0, zIndex: 9999, marginTop: 4, background: T.bgPanel, border: `1px solid ${T.border}`, borderRadius: 8, boxShadow: "0 8px 32px rgba(0,0,0,0.4)", padding: "4px 0", minWidth: 180 }}>
+              <div onClick={() => setExportMenu(false)} style={{ position: "fixed", inset: 0, zIndex: 10001 }} />
+              <div style={{ position: "absolute", top: "100%", right: 0, zIndex: 10002, marginTop: 4, background: T.bgPanel, border: `1px solid ${T.border}`, borderRadius: 8, boxShadow: "0 8px 32px rgba(0,0,0,0.4)", padding: "4px 0", minWidth: 180 }}>
                 {(() => { const ch = getChanges(); return <button onClick={() => { exportDeck(); setExportMenu(false); }} style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "8px 14px", background: "transparent", border: "none", color: ch.dirty ? T.red : T.text, fontFamily: FONT.body, fontSize: 14, cursor: "pointer", textAlign: "left" }}><Download size={14} /> Export Vela {ch.dirty && <span style={{ fontFamily: FONT.mono, fontSize: 9, color: T.red }}>●</span>}</button>; })()}
                 <div style={{ height: 1, background: T.border, margin: "2px 8px" }} />
                 {total > 0 && <button data-testid="export-pdf-menu-item" onClick={() => { setPdfExport(true); setExportMenu(false); }} style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "8px 14px", background: "transparent", border: "none", color: T.text, fontFamily: FONT.body, fontSize: 14, cursor: "pointer", textAlign: "left" }}><FileDown size={14} /> Export PDF</button>}
@@ -1031,7 +1039,7 @@ export default function App() {
           <CostBadge /></>}
           <button data-testid="run-demo" onClick={() => window.dispatchEvent(new CustomEvent("vela-run-demo"))} disabled={!!demoUnavailableReason} style={S.btn({ padding: "4px 10px", fontSize: 14, color: T.textMuted, borderRadius: 4, display: "flex", alignItems: "center", gap: 4, opacity: demoUnavailableReason ? 0.4 : 1, cursor: demoUnavailableReason ? "not-allowed" : "pointer" })} title={demoUnavailableReason || "Run product tour"}>{"🎬"}</button>
           <div style={{ width: 1, height: 22, background: T.border, flexShrink: 0 }} />
-          <button data-testid="comments-toggle" onClick={() => { const entering = !state.reviewMode; dispatch({ type: "SET_REVIEW_MODE", value: entering }); if (entering) { dispatch({ type: "SET_COMMENTS_PANEL", open: true }); dispatch({ type: "SET_CHAT", open: false }); slideActionsRef.current?.closeBranding?.(); } else { dispatch({ type: "SET_COMMENTS_PANEL", open: false }); } }} style={S.btn({ padding: "4px 10px", fontSize: 14, background: state.reviewMode ? T.amber : "transparent", color: state.reviewMode ? "#fff" : T.amber, borderRadius: 4, display: "flex", alignItems: "center", gap: 4 })}>{"💬"} Comments</button>
+          <button data-testid="comments-toggle" onClick={() => { const entering = !state.reviewMode; dispatch({ type: "SET_REVIEW_MODE", value: entering }); if (entering) { dispatch({ type: "SET_COMMENTS_PANEL", open: true }); dispatch({ type: "SET_CHAT", open: false }); slideActionsRef.current?.closeBranding?.(); } else { dispatch({ type: "SET_COMMENTS_PANEL", open: false }); } }} style={S.btn({ padding: "4px 10px", fontSize: 14, background: state.reviewMode ? T.amber : "transparent", color: state.reviewMode ? "#fff" : T.amber, borderRadius: 4, display: "flex", alignItems: "center", gap: 4 })} title="Comments" aria-label="Comments">{"💬"}{!hdrTight && " Comments"}</button>
           <button onClick={() => { dispatch({ type: "SET_CHAT", open: !state.chatOpen }); if (!state.chatOpen) { dispatch({ type: "SET_COMMENTS_PANEL", open: false }); dispatch({ type: "SET_REVIEW_MODE", value: false }); slideActionsRef.current?.closeBranding?.(); } }} style={S.btn({ padding: "4px 10px", fontSize: 14, background: state.chatOpen ? T.accent : "transparent", color: state.chatOpen ? "#fff" : T.accent, borderRadius: 4, display: "flex", alignItems: "center", gap: 4 })}>{"🤖"} Vera</button>
         </>}
         {isMobile && <>
