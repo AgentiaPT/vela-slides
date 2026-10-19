@@ -33,7 +33,7 @@ that symbol in the named part for the line. No line numbers here — they rot.
 ### part-blocks.jsx
 - Error Boundary: SlideErrorBoundary
 - Inline Formatting: **bold**, *italic*, ***both***, ~~strike~~: parseInline
-- X-Ray Glossary Link — inline popover for [term](#key) refs: GlossaryLink EditableText
+- X-Ray Glossary Link — inline popover for [term](#key) refs: GlossaryLink GLUE_CJK glueSuffix EditableText
 - Block Helpers: stg COL_TOOLBAR_PAD patchItemAt removeItemAt setItemLink itemLinkOf addItemAt moveItemAt _noPin reorderCtl itemReorder blankItemFor PLACEHOLDER_FIELDS cloneGridCell clonePoint newItemFor
 - Add-Item Affordance — "+ add" button shown only in edit mode: AddItem ItemText IconBubble
 - Block-level text link badge: TEXT_LINK_BADGE_TYPES TextLinkBadge
@@ -318,10 +318,10 @@ add_lane add_item batch_add_items remove_item remove_lane rename_item rename_lan
 ## Navigability debt (WARN — candidates for banners or splits)
 
 - part-imports.jsx: 860-line unbannered stretch after line 522
-- part-blocks.jsx: 766-line unbannered stretch after line 800
+- part-blocks.jsx: 766-line unbannered stretch after line 835
 - part-canvas.jsx: 415-line unbannered stretch after line 24
-- part-slidepanel.jsx: 452-line unbannered stretch after line 591
-- part-slidepanel.jsx: 425-line unbannered stretch after line 1355
+- part-slidepanel.jsx: 454-line unbannered stretch after line 591
+- part-slidepanel.jsx: 426-line unbannered stretch after line 1357
 - part-uitest.jsx: 616-line unbannered stretch after line 1230
 - part-uitest2.jsx: 448-line unbannered stretch after line 2
 - part-uitest2.jsx: 593-line unbannered stretch after line 1395
@@ -332,3 +332,4 @@ add_lane add_item batch_add_items remove_item remove_lane rename_item rename_lan
 - part-pdf-vector.jsx: 479-line unbannered stretch after line 459
 - part-pdf-vector.jsx: 524-line unbannered stretch after line 1209
 - part-pptx.jsx: no level-1 banners (1188 lines)
+- part-app.jsx: 351-line unbannered stretch after line 887
