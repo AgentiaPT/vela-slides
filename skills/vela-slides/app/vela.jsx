@@ -8302,7 +8302,15 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       showBranding, showTimingScope: !!showTimingScope, estimating: !!estimating,
       showBatchEdit: showImproveInput, improving: !!improving,
       hasBranding: !!(branding?.enabled || guidelines?.trim()),
-      toggleBranding: () => setShowBranding((v) => !v),
+      // CR9: the branding pane docks on the right, where the chat/comments
+      // panes live — opening it closes them so the panes never stack.
+      toggleBranding: () => {
+        if (!showBranding) { dispatch({ type: "SET_CHAT", open: false }); dispatch({ type: "SET_COMMENTS_PANEL", open: false }); dispatch({ type: "SET_REVIEW_MODE", value: false }); }
+        setShowBranding((v) => !v);
+      },
+      closeBranding: () => setShowBranding(false),
+      // CR13: top-bar Editor | Gallery | Present view switch.
+      showGallery, setGallery: (v) => setGallery(!!v),
       toggleBatchEdit: () => improving ? stopAll() : setShowImproveInput((v) => !v),
       toggleTiming: () => estimating ? stopEstimate() : setShowTimingScope((v) => !v),
       setPreviewRatio,
@@ -8310,7 +8318,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       getLayoutStats: () => computeSlideLayoutStats(slideRef.current),
     };
     onRibbonUpdate?.();
-  }, [slides.length, moduleTime, previewRatio, showBranding, showTimingScope, estimating, showImproveInput, improving]);
+  }, [slides.length, moduleTime, previewRatio, showBranding, showTimingScope, estimating, showImproveInput, improving, showGallery]);
 
   // Build flat ordered list of modules across all lanes
   const flatModules = useCallback(() => {
@@ -9020,7 +9028,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
           <FullscreenSlide key={`deck-${state._deckEpoch}`} slide={presSlides[slideIndex]} index={slideIndex} total={presSlides.length} innerRef={slideRef} branding={presSlides[slideIndex]?._virtual ? null : branding} editable={!isStudent && !presSlides[slideIndex]?._virtual} onEdit={isStudent || presSlides[slideIndex]?._virtual ? undefined : handleSlideEdit} onBlockEdit={isStudent || presSlides[slideIndex]?._virtual ? undefined : runBlockEdit} blockEditing={isStudent ? null : blockEditing} fontScale={fontScale} mode="fill" forceEdit={presentEdit && !isStudent} displayIndex={globalSlideIndex - presOffset} displayTotal={globalSlideTotal} />
         </div>
         {!isMobile && <PresenterTOC slides={presSlides} slideIndex={slideIndex} onJump={(i) => dispatch({ type: "SET_SLIDE_INDEX", index: i })} lanes={lanes} currentConceptId={concept.id} dispatch={dispatch} />}
-                {fontScale !== 1 && <div style={{ position: "absolute", top: 12, right: 16, fontFamily: FONT.mono, fontSize: 13, fontWeight: 700, color: T.accent, background: T.bgPanel + "e0", padding: "3px 10px", borderRadius: 4, border: `1px solid ${T.accent}40`, zIndex: 20, letterSpacing: "0.05em", pointerEvents: "none" }}>FONT {Math.round(fontScale * 100)}%</div>}
+                {fontScale !== 1 && <div style={{ position: "absolute", top: 62, right: 16, fontFamily: FONT.mono, fontSize: 13, fontWeight: 700, color: T.accent, background: T.bgPanel + "e0", padding: "3px 10px", borderRadius: 4, border: `1px solid ${T.accent}40`, zIndex: 20, letterSpacing: "0.05em", pointerEvents: "none" }}>FONT {Math.round(fontScale * 100)}%</div>}
         {improving && <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, padding: "10px 20px", background: "rgba(0,0,0,0.82)", backdropFilter: "blur(6px)", display: "flex", alignItems: "center", gap: 12, zIndex: 20 }}>
           <div style={{ fontSize: 18, animation: "spin 1.5s linear infinite", display: "inline-block" }}>✨</div>
           <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 4 }}>
@@ -9031,20 +9039,25 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
           </div>
           <div style={{ fontFamily: FONT.mono, fontSize: 10, color: "rgba(255,255,255,0.5)" }}>{improving.current}/{improving.total}</div>
         </div>}
-        <div className="slide-nav-btn" onClick={() => dispatch({ type: "SET_FULLSCREEN", value: false })} style={{ position: "absolute", top: isMobile ? 8 : 16, right: isMobile ? 8 : 16, padding: isMobile ? 12 : 8 }}><Minimize2 size={isMobile ? 22 : 18} color="#fff" /></div>
-        {!isMobile && <div data-testid="student-toggle" className="slide-nav-btn" onClick={() => dispatch({ type: "SET_VERA_MODE", mode: isStudent ? "editor" : "student" })} title={isStudent ? "Exit student mode" : "Student mode — Vera teaches"} style={{ position: "absolute", top: 16, right: 52, padding: 8, background: isStudent ? T.accent + "30" : "transparent", borderRadius: 6 }}><span style={{ fontSize: 16 }}>🎓</span></div>}
-        {!isMobile && <div data-testid="gallery-toggle" className="slide-nav-btn" onClick={() => setGallery((v) => !v)} title="Gallery view (G)" style={{ position: "absolute", top: 16, right: 88, padding: 8, background: showGallery ? T.accent + "30" : "transparent", borderRadius: 6 }}><span style={{ fontSize: 16 }}>🗂</span></div>}
-        {!isMobile && <div data-testid="presenter-toggle" className="slide-nav-btn" onClick={() => setPresenterView((v) => !v)} title={showPresenterView ? "Exit presenter view (S)" : "Presenter view — notes, next slide, timer (S)"} style={{ position: "absolute", top: 16, right: 124, padding: 8, background: showPresenterView ? T.accent + "30" : "transparent", borderRadius: 6 }}><span style={{ fontSize: 16 }}>🖥️</span></div>}
+        {/* CR10/CR11: the top-right controls sit in ONE flex strip with a dark
+            translucent backing, so the white SVG icons read on light AND dark
+            slides. Each button sets an inline opacity (overrides the dim
+            .slide-nav-btn class). The gallery icon is a Lucide SVG, not an
+            emoji: the desktop webview has no font for the old glyph. */}
+        <div data-testid="present-chrome-strip" style={{ position: "absolute", top: isMobile ? 8 : 12, right: isMobile ? 8 : 12, zIndex: 25, display: "flex", flexDirection: "row-reverse", alignItems: "center", gap: 2, padding: 3, background: "rgba(15,17,23,0.62)", border: "1px solid rgba(255,255,255,0.16)", borderRadius: 10, backdropFilter: "blur(6px)", boxShadow: "0 2px 10px rgba(0,0,0,0.25)" }}>
+        <div data-testid="present-exit" className="slide-nav-btn" onClick={() => dispatch({ type: "SET_FULLSCREEN", value: false })} title="Exit presentation (F)" style={{ padding: isMobile ? 12 : 8, opacity: 0.92, borderRadius: 6, display: "flex" }}><Minimize2 size={isMobile ? 22 : 18} color="#fff" /></div>
+        {!isMobile && <div data-testid="student-toggle" className="slide-nav-btn" onClick={() => dispatch({ type: "SET_VERA_MODE", mode: isStudent ? "editor" : "student" })} title={isStudent ? "Exit student mode" : "Student mode — Vera teaches"} style={{ padding: 8, opacity: 0.92, display: "flex", background: isStudent ? T.accent + "55" : "transparent", borderRadius: 6 }}><span style={{ fontSize: 16, lineHeight: 1 }}>🎓</span></div>}
+        {!isMobile && <div data-testid="gallery-toggle" className="slide-nav-btn" onClick={() => setGallery((v) => !v)} title="Gallery view (G)" style={{ padding: 8, opacity: 0.92, display: "flex", background: showGallery ? T.accent + "55" : "transparent", borderRadius: 6 }}>{getIcon("grid", { size: 18, color: "#fff" })}</div>}
+        {!isMobile && <div data-testid="presenter-toggle" className="slide-nav-btn" onClick={() => setPresenterView((v) => !v)} title={showPresenterView ? "Exit presenter view (S)" : "Presenter view — notes, next slide, timer (S)"} style={{ padding: 8, opacity: 0.92, display: "flex", background: showPresenterView ? T.accent + "55" : "transparent", borderRadius: 6 }}><span style={{ fontSize: 16, lineHeight: 1 }}>🖥️</span></div>}
         {/* Present Edit toggle (Shift+E): restore inline click-to-edit while
             presenting. Uses the Lucide pencil (SVG), NOT the ✏ emoji, so the
             CR-03 "no edit chrome" test still passes when edit mode is off.
             Hidden in student mode, where editing is disabled by design. */}
-        {!isMobile && !isStudent && <div data-testid="present-edit-toggle" className="slide-nav-btn" onClick={() => setPresentEdit((v) => !v)} title={presentEdit ? "Editing on — click text/icons to edit (Shift+E)" : "Edit mode — click text/icons to edit while presenting (Shift+E)"} style={{ position: "absolute", top: 16, right: 160, padding: 8, background: presentEdit ? T.accent + "30" : "transparent", borderRadius: 6 }}>{getIcon("edit", { size: 18, color: "#fff" })}</div>}
+        {!isMobile && !isStudent && <div data-testid="present-edit-toggle" className="slide-nav-btn" onClick={() => setPresentEdit((v) => !v)} title={presentEdit ? "Editing on — click text/icons to edit (Shift+E)" : "Edit mode — click text/icons to edit while presenting (Shift+E)"} style={{ padding: 8, opacity: 0.92, display: "flex", background: presentEdit ? T.accent + "55" : "transparent", borderRadius: 6 }}>{getIcon("edit", { size: 18, color: "#fff" })}</div>}
         {/* Browser fullscreen toggle removed — Vela fullscreen (F key / minimize button) is sufficient */}
-        {!isMobile && !VELA_LOCAL_MODE && <>
-          <div className="slide-nav-btn" onClick={() => setShowCinemaTip((v) => !v)} title="Cinema mode — fullscreen in browser" style={{ position: "absolute", top: 16, right: 196, padding: 8 }}><VelaIcon size={18} /></div>
-          {showCinemaTip && <CinemaTip onClose={() => setShowCinemaTip(false)} />}
-        </>}
+        {!isMobile && !VELA_LOCAL_MODE && <div className="slide-nav-btn" onClick={() => setShowCinemaTip((v) => !v)} title="Cinema mode — fullscreen in browser" style={{ padding: 8, opacity: 0.92, display: "flex", borderRadius: 6 }}><VelaIcon size={18} /></div>}
+        </div>
+        {!isMobile && !VELA_LOCAL_MODE && showCinemaTip && <CinemaTip onClose={() => setShowCinemaTip(false)} />}
         {navToast && <div className={navToast.phase === "in" ? "nav-toast-in" : "nav-toast-out"} style={{ position: "absolute", bottom: 20, left: 0, right: 0, display: "flex", justifyContent: "center", zIndex: 20, pointerEvents: "none" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 20px", borderRadius: 8, background: "rgba(0,0,0,0.78)", backdropFilter: "blur(8px)", border: `1px solid ${T.accent}30` }}>
             {navToast.section && <span style={{ fontFamily: FONT.mono, fontSize: 10, color: T.accent, fontWeight: 600, letterSpacing: "0.05em", textTransform: "uppercase" }}>{navToast.section}</span>}
@@ -9076,7 +9089,16 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
 
 
       {/* ── TOP PANELS — deck-level dialogs from top bar ──── */}
-      {showBranding && <div style={{ flexShrink: 0 }}><BrandingPanel branding={branding} guidelines={guidelines} dispatch={dispatch} isMobile={isMobile} /></div>}
+      {/* CR9: branding docks as a right side pane (same slot as chat/comments),
+          not as a strip above the slide. Top aligns with this panel's top edge,
+          so the app top bar stays visible. */}
+      {showBranding && <div data-testid="branding-side-pane" onWheel={(e) => e.stopPropagation()} style={{ position: "fixed", top: Math.max(0, containerRef.current?.getBoundingClientRect().top || 0), right: 0, bottom: 0, width: isMobile ? "100vw" : 360, maxWidth: "100vw", zIndex: 900, display: "flex", flexDirection: "column", background: T.bgPanel, borderLeft: `1px solid ${T.border}`, boxShadow: "-8px 0 24px rgba(0,0,0,0.25)" }}>
+        <div style={{ flexShrink: 0, display: "flex", alignItems: "center", gap: 8, padding: "10px 12px", borderBottom: `1px solid ${T.border}` }}>
+          <span style={{ fontFamily: FONT.mono, fontSize: 12, fontWeight: 700, color: T.text, letterSpacing: "0.05em" }}>BRAND & GUIDELINES</span>
+          <button data-testid="branding-side-pane-close" onClick={() => setShowBranding(false)} title="Close" aria-label="Close branding pane" style={{ marginLeft: "auto", background: "none", border: "none", color: T.textDim, cursor: "pointer", fontSize: 14, padding: "2px 6px" }}>✕</button>
+        </div>
+        <div style={{ flex: 1, minHeight: 0, overflowY: "auto" }}><BrandingPanel branding={branding} guidelines={guidelines} dispatch={dispatch} isMobile={isMobile} /></div>
+      </div>}
       {showImproveInput && <div data-testid="batch-edit-panel" style={{ flexShrink: 0, borderBottom: `1px solid ${T.border}`, background: T.accent + "08", padding: "8px 12px" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
           <span style={{ fontFamily: FONT.mono, fontSize: 10, fontWeight: 700, color: T.accent, letterSpacing: "0.05em" }}>🔄 BATCH EDIT</span>
@@ -9280,7 +9302,9 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
           <button ref={moveRef} onClick={() => setShowMoveToModule((v) => !v)} title="Move to module" style={S.btn({ padding: "5px 12px", fontSize: 14, color: showMoveToModule ? T.accent : T.textDim, background: showMoveToModule ? T.accent + "20" : "transparent", borderRadius: 4, display: "flex", alignItems: "center", gap: 5 })}>📦{!isMobile && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>Move</span>}</button>
           <button onClick={() => { dispatch({ type: "REMOVE_SLIDE", id: concept.id, index: slideIndex }); dispatch({ type: "SET_SLIDE_INDEX", index: Math.max(0, slideIndex - 1) }); }} title="Delete slide (Del)" style={S.btn({ padding: "5px 12px", fontSize: 14, color: T.red + "90", borderRadius: 4, display: "flex", alignItems: "center", gap: 5 })}>🗑{!isMobile && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>Delete</span>}</button>
           <div style={{ width: 1, height: 22, background: T.border + "60" }} />
-          <button data-testid="editor-gallery-toggle" onClick={() => setGallery((v) => !v)} title="Overview — all slides (G)" style={S.btn({ padding: "5px 12px", fontSize: 14, color: showGallery ? T.accent : T.textDim, background: showGallery ? T.accent + "20" : "transparent", borderRadius: 4, display: "flex", alignItems: "center", gap: 5 })}>🗂{!isMobile && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>Overview</span>}</button>
+          {/* CR13: demoted to an icon-only shortcut; the main entry is the
+              top-bar Editor | Gallery | Present switch. SVG icon, not emoji. */}
+          <button data-testid="editor-gallery-toggle" onClick={() => setGallery((v) => !v)} title="Gallery — all slides (G)" style={S.btn({ padding: "5px 10px", fontSize: 14, color: showGallery ? T.accent : T.textDim, background: showGallery ? T.accent + "20" : "transparent", borderRadius: 4, display: "flex", alignItems: "center", gap: 5 })}>{getIcon("grid", { size: 15, color: "currentColor" })}</button>
         </div>}
 
         {/* ── NOTES BAR ──────────────────────────────────────── */}
@@ -24181,7 +24205,18 @@ export default function App() {
             return <>
               <button data-testid="batch-edit-toggle" onClick={() => sa?.toggleBatchEdit?.()} disabled={!aiOk || !has || !sa?.slidesCount} title={aiOk ? "Batch edit across slides" : VELA_AI_UNAVAILABLE_MSG} style={S.btn({ padding: "4px 10px", fontSize: 14, color: !aiOk ? T.textDim + "60" : sa?.showBatchEdit ? T.accent : (sa?.improving ? T.red : T.textDim), background: sa?.showBatchEdit || sa?.improving ? T.accent + "20" : "transparent", borderRadius: 4, opacity: aiOk && has && sa?.slidesCount ? 1 : 0.4, display: "flex", alignItems: "center", gap: 4, cursor: aiOk ? "pointer" : "not-allowed" })}>{sa?.improving ? "⏹" : "🔄"} Batch</button>
               <button data-testid="brand-toggle" onClick={() => sa?.toggleBranding?.()} disabled={!has} title="Branding & guidelines" style={S.btn({ padding: "4px 10px", fontSize: 14, color: sa?.showBranding ? T.accent : (sa?.hasBranding ? T.accent : T.textDim), background: sa?.showBranding ? T.accent + "20" : "transparent", borderRadius: 4, opacity: has ? 1 : 0.4, display: "flex", alignItems: "center", gap: 4 })}>{"🎨"} Brand</button>
-              <button onClick={() => sa?.present?.()} disabled={!has} style={{ display: "flex", alignItems: "center", gap: 5, padding: "5px 14px", background: has ? T.green : T.border, color: has ? "#fff" : T.textDim, border: "none", borderRadius: 6, cursor: has ? "pointer" : "default", opacity: has ? 1 : 0.5, fontFamily: FONT.mono, fontSize: 14, fontWeight: 700 }}>{"▶"} Present</button>
+              {/* CR13: Editor | Gallery | Present view switch (segmented). The
+                  editor is the current view here; Gallery opens the slide grid
+                  overlay; Present enters fullscreen (keeps the green accent). */}
+              {(() => {
+                const galleryOn = !!sa?.showGallery;
+                const seg = (active) => ({ display: "flex", alignItems: "center", gap: 5, padding: "4px 10px", border: "none", borderRadius: 5, background: active ? T.accent + "22" : "transparent", color: !has ? T.textDim : active ? T.accent : T.textMuted, fontFamily: FONT.mono, fontSize: 13, fontWeight: active ? 700 : 500, cursor: has ? "pointer" : "default" });
+                return <div data-testid="view-switch" role="group" aria-label="View" style={{ display: "flex", alignItems: "center", gap: 2, padding: 2, border: `1px solid ${T.border}`, borderRadius: 7, background: T.bgInput || "transparent", opacity: has ? 1 : 0.5 }}>
+                  <button data-testid="view-switch-editor" aria-pressed={has && !galleryOn} onClick={() => sa?.setGallery?.(false)} disabled={!has} title="Editor view" style={seg(has && !galleryOn)}>{getIcon("edit", { size: 14, color: "currentColor" })} Editor</button>
+                  <button data-testid="view-switch-gallery" aria-pressed={has && galleryOn} onClick={() => sa?.setGallery?.(true)} disabled={!has} title="Gallery view — all slides (G)" style={seg(has && galleryOn)}>{getIcon("grid", { size: 14, color: "currentColor" })} Gallery</button>
+                  <button data-testid="view-switch-present" aria-pressed={false} onClick={() => sa?.present?.()} disabled={!has} title="Present — fullscreen (F)" style={{ display: "flex", alignItems: "center", gap: 5, padding: "4px 12px", background: has ? T.green : T.border, color: has ? "#fff" : T.textDim, border: "none", borderRadius: 5, cursor: has ? "pointer" : "default", fontFamily: FONT.mono, fontSize: 13, fontWeight: 700 }}>{"▶"} Present</button>
+                </div>;
+              })()}
             </>;
           })()}
           <div style={{ width: 1, height: 22, background: T.border, flexShrink: 0 }} />
@@ -24210,8 +24245,8 @@ export default function App() {
           <CostBadge /></>}
           <button data-testid="run-demo" onClick={() => window.dispatchEvent(new CustomEvent("vela-run-demo"))} disabled={!!demoUnavailableReason} style={S.btn({ padding: "4px 10px", fontSize: 14, color: T.textMuted, borderRadius: 4, display: "flex", alignItems: "center", gap: 4, opacity: demoUnavailableReason ? 0.4 : 1, cursor: demoUnavailableReason ? "not-allowed" : "pointer" })} title={demoUnavailableReason || "Run product tour"}>{"🎬"}</button>
           <div style={{ width: 1, height: 22, background: T.border, flexShrink: 0 }} />
-          <button data-testid="comments-toggle" onClick={() => { const entering = !state.reviewMode; dispatch({ type: "SET_REVIEW_MODE", value: entering }); if (entering) { dispatch({ type: "SET_COMMENTS_PANEL", open: true }); dispatch({ type: "SET_CHAT", open: false }); } else { dispatch({ type: "SET_COMMENTS_PANEL", open: false }); } }} style={S.btn({ padding: "4px 10px", fontSize: 14, background: state.reviewMode ? T.amber : "transparent", color: state.reviewMode ? "#fff" : T.amber, borderRadius: 4, display: "flex", alignItems: "center", gap: 4 })}>{"💬"} Comments</button>
-          <button onClick={() => { dispatch({ type: "SET_CHAT", open: !state.chatOpen }); if (!state.chatOpen) { dispatch({ type: "SET_COMMENTS_PANEL", open: false }); dispatch({ type: "SET_REVIEW_MODE", value: false }); } }} style={S.btn({ padding: "4px 10px", fontSize: 14, background: state.chatOpen ? T.accent : "transparent", color: state.chatOpen ? "#fff" : T.accent, borderRadius: 4, display: "flex", alignItems: "center", gap: 4 })}>{"🤖"} Vera</button>
+          <button data-testid="comments-toggle" onClick={() => { const entering = !state.reviewMode; dispatch({ type: "SET_REVIEW_MODE", value: entering }); if (entering) { dispatch({ type: "SET_COMMENTS_PANEL", open: true }); dispatch({ type: "SET_CHAT", open: false }); slideActionsRef.current?.closeBranding?.(); } else { dispatch({ type: "SET_COMMENTS_PANEL", open: false }); } }} style={S.btn({ padding: "4px 10px", fontSize: 14, background: state.reviewMode ? T.amber : "transparent", color: state.reviewMode ? "#fff" : T.amber, borderRadius: 4, display: "flex", alignItems: "center", gap: 4 })}>{"💬"} Comments</button>
+          <button onClick={() => { dispatch({ type: "SET_CHAT", open: !state.chatOpen }); if (!state.chatOpen) { dispatch({ type: "SET_COMMENTS_PANEL", open: false }); dispatch({ type: "SET_REVIEW_MODE", value: false }); slideActionsRef.current?.closeBranding?.(); } }} style={S.btn({ padding: "4px 10px", fontSize: 14, background: state.chatOpen ? T.accent : "transparent", color: state.chatOpen ? "#fff" : T.accent, borderRadius: 4, display: "flex", alignItems: "center", gap: 4 })}>{"🤖"} Vera</button>
         </>}
         {isMobile && <>
           <button onClick={() => setNewDeckDialog(true)} style={{ padding: "4px 10px", fontSize: 14, color: T.accent, background: "transparent", border: `1px solid ${T.accent}40`, borderRadius: 4, cursor: "pointer", flexShrink: 0, fontWeight: 700 }} title="New Deck">{"+"}</button>
