@@ -71,6 +71,27 @@ test("control, bidi and zero-width chars are stripped", () => {
   eq(t, 'Vela Slides - "A B C D E F G H"');
   assert(!/[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2066-\u2069]/.test(t), "control char survived");
 });
+test("title that only begins with the words 'Vela Slides' is kept intact (W4)", () => {
+  eq(windowTitleFor("Vela Slides Roadmap" + D), 'Vela Slides - "Vela Slides Roadmap"');
+  eq(windowTitleFor('Vela Slides - "Vela Slides Roadmap"' + D), 'Vela Slides - "Vela Slides Roadmap"');
+  eq(windowTitleFor("vela slides 2026 plan" + D), 'Vela Slides - "vela slides 2026 plan"');
+});
+test("a real trailing quote (inch mark) is not eaten (W4)", () => {
+  eq(windowTitleFor('Vela Slides: 12"' + D), 'Vela Slides - "12""');
+  eq(windowTitleFor('Screen 27"' + D), 'Vela Slides - "Screen 27""');
+});
+test("exact product name with quotes/dash punctuation -> plain app name (W4)", () => {
+  eq(windowTitleFor('"Vela Slides"' + D), "Vela Slides");
+  eq(windowTitleFor("VELA SLIDES -" + D), "Vela Slides");
+  eq(windowTitleFor("— vela  slides —" + D), "Vela Slides");
+  eq(windowTitleFor('Vela Slides - "Vela Slides"' + D), "Vela Slides");
+  eq(windowTitleFor("Vela Slides - Untitled" + D), "Vela Slides");
+  eq(windowTitleFor("Vela Slides – Intro" + D), 'Vela Slides - "Intro"');
+});
+test("other bidi/format marks are stripped (U+061C, U+180E, U+2064, U+FFF9, tags) (W4)", () => {
+  const t = windowTitleFor("A؜B᠎C⁤D￹E­F\u{E0041}G" + D);
+  eq(t, 'Vela Slides - "A B C D E F G"');
+});
 test("only control chars -> plain app name", () => eq(windowTitleFor("\u0001\u202e\u200b" + D), "Vela Slides"));
 test("long title is capped with an ellipsis", () => {
   const t = windowTitleFor("x".repeat(500) + D);
@@ -206,6 +227,47 @@ test("throwing Neutralino.window.focus does not break DOM restore", () => {
   doc.activeElement = doc.body;
   Neu.handlers.windowFocus();
   eq(doc.activeElement, s);
+});
+
+test("body focused at the last blur -> stale input is NOT refocused (W4 repro)", () => {
+  const Neu = makeNeu();
+  const { installFocusRestore } = load(Neu);
+  const { doc, win, el, listeners } = makeDom();
+  const t = { v: 10000 };
+  installFocusRestore(win, doc, { now: () => t.v });
+  const input = el("input");
+  // 1. focus the input, Alt+Tab out and back: the input gets focus back.
+  doc.activeElement = input;
+  listeners.blur(); Neu.handlers.windowBlur();
+  doc.activeElement = doc.body; doc.focused = false;
+  Neu.handlers.windowFocus(); listeners.focus(); doc.focused = true;
+  eq(doc.activeElement, input, "first cycle restores the input");
+  // 2. click the slide body (input loses focus), Alt+Tab out and back.
+  t.v += 300;
+  doc.activeElement = doc.body;
+  listeners.blur(); Neu.handlers.windowBlur();
+  doc.focused = false;
+  Neu.handlers.windowFocus(); listeners.focus();
+  eq(doc.activeElement, doc.body, "focus must stay on the app root, not the stale input");
+});
+
+test("second real Alt+Tab within the gap -> native focus + DOM restore again (W4)", () => {
+  const Neu = makeNeu();
+  const { installFocusRestore } = load(Neu);
+  const { doc, win, el } = makeDom();
+  const t = { v: 10000 };
+  installFocusRestore(win, doc, { now: () => t.v, minGapMs: 1000 });
+  const stage = el("stage");
+  for (let i = 0; i < 2; i++) {
+    doc.activeElement = stage; Neu.handlers.windowBlur();
+    doc.activeElement = doc.body; doc.focused = false;
+    Neu.handlers.windowFocus();
+    eq(doc.activeElement, stage, `cycle ${i + 1} DOM restore`);
+    t.v += 300;
+  }
+  eq(Neu.calls.focus, 2, "each real activation gets one native focus call");
+  Neu.handlers.windowFocus();          // echo with no blur between
+  eq(Neu.calls.focus, 2, "echo is still rate-limited");
 });
 
 console.log(`\n${pass} passed, ${fail} failed`);
