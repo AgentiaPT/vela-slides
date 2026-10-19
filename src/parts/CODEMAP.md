@@ -248,7 +248,7 @@ keyboard ternaries) or are currently unused — check before assuming a UI exist
 - SELECT: part-app-modals.jsx part-app.jsx part-chat.jsx part-demo.jsx part-list.jsx part-slidepanel.jsx part-slides.jsx
 - SET_AI_WORK: part-app.jsx part-chat.jsx part-slidepanel.jsx
 - SET_BRANDING: part-chat.jsx part-slides.jsx
-- SET_CHAT: part-app.jsx part-chat.jsx part-demo.jsx
+- SET_CHAT: part-app.jsx part-chat.jsx part-demo.jsx part-slidepanel.jsx
 - SET_COMMENTS_PANEL: part-app-modals.jsx part-app.jsx part-demo.jsx part-slidepanel.jsx
 - SET_DEBUG: part-chat.jsx
 - SET_FONT_SCALE: part-demo.jsx part-slidepanel.jsx
@@ -316,8 +316,8 @@ add_lane add_item batch_add_items remove_item remove_lane rename_item rename_lan
 - part-imports.jsx: 860-line unbannered stretch after line 509
 - part-blocks.jsx: 764-line unbannered stretch after line 769
 - part-canvas.jsx: 414-line unbannered stretch after line 24
-- part-slidepanel.jsx: 446-line unbannered stretch after line 206
-- part-slidepanel.jsx: 394-line unbannered stretch after line 964
+- part-slidepanel.jsx: 454-line unbannered stretch after line 206
+- part-slidepanel.jsx: 410-line unbannered stretch after line 972
 - part-uitest.jsx: 616-line unbannered stretch after line 1230
 - part-uitest2.jsx: 448-line unbannered stretch after line 2
 - part-uitest2.jsx: 593-line unbannered stretch after line 1395

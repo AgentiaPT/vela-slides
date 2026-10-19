@@ -559,6 +559,7 @@ def test_security():
         ("tests/test_deck_io_save.cjs",       "Desktop save state machine (CR3 no-swallow/retry/verify/echo-guard)"),
         ("tests/test_ai_cancel_owner.cjs",    "AI-op cancel owner-token aiWork clearing (timing + Alternatives)"),
         ("tests/test_ai_slide_selection.cjs", "AI slide adder selection race (atomic SELECT + stale-deck isolation)"),
+        ("tests/test_view_switch.cjs",        "View switch + presenter chrome + branding pane (CR9-11, CR13)"),
     ]:
         script = os.path.join(REPO_ROOT, fname)
         if os.path.exists(script):
