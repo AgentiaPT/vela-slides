@@ -8,7 +8,7 @@ Complete reference for all Vela v12 slide block types (27 total).
 {
   "blocks": [ ...block objects... ],
   "bg": "#0f172a",                              // solid background color
-  "bgGradient": "linear-gradient(135deg, ...)", // gradient (overrides bg visually)
+  "bgGradient": "linear-gradient(135deg, ...)", // gradient (overrides bg visually). Gradients go ONLY here: a gradient in "bg" is ignored and validate.py reports an error
   "color": "#e2e8f0",                           // default text color
   "accent": "#3b82f6",                          // accent color for dots, icons, highlights
   "align": "left|center|right",                 // horizontal alignment of block stack

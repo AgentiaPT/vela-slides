@@ -8,7 +8,7 @@ Usage:
   python3 validate.py <deck.vela>
 """
 
-import sys, json, os
+import sys, json, os, re
 
 # ── Terminal-output funnel ──────────────────────────────────────────────
 # COMPLETE MEDIATION: every human-readable byte this script writes leaves
@@ -73,6 +73,29 @@ def check_slide_numerics(slide, loc, errors):
             errors.append(f"{loc}: '{key}' out of range — must be {lo}..{hi} (got {v})")
 
 
+_CSS_COLOR_OK = re.compile(r"^#[0-9a-f]{3,8}$|^(?:rgb|rgba|hsl|hsla)\([0-9.,%\s/]+\)$|^[a-z]+$", re.I)
+_CSS_GRADIENT_OK = re.compile(r"^(?:repeating-)?(?:linear|radial|conic)-gradient\([a-zA-Z0-9#.,%\s()-]*\)$")
+
+
+def check_bg_fields(slide, loc, errors, warnings):
+    """A gradient in a color-only field (bg, block bg) is dropped by the app, so
+    the slide falls back to the default color. Gradients belong in bgGradient."""
+    targets = [(loc, slide)]
+    for bi, b in enumerate(slide.get("blocks") or []):
+        if isinstance(b, dict):
+            targets.append((f"{loc}/B{bi+1}", b))
+    for where, obj in targets:
+        bg = obj.get("bg")
+        if isinstance(bg, str) and "gradient(" in bg.lower():
+            hint = "bgGradient" if obj is slide else "a solid color (blocks have no gradient field)"
+            errors.append(f"{where}: 'bg' holds a gradient — the app ignores it and uses the default color. Move it to {hint}")
+        elif isinstance(bg, str) and bg.strip() and not _CSS_COLOR_OK.match(bg.strip()):
+            warnings.append(f"{where}: 'bg' value {bg!r} is not a valid color — the app will ignore it")
+    bgg = slide.get("bgGradient")
+    if isinstance(bgg, str) and bgg.strip() and not _CSS_GRADIENT_OK.match(bgg.strip()):
+        warnings.append(f"{loc}: 'bgGradient' is not a supported gradient — the app will ignore it")
+
+
 def validate(path):
     with open(path, 'r', encoding="utf-8") as f:
         deck = json.load(f)
@@ -131,6 +154,7 @@ def validate(path):
                 # Background check
                 if not slide.get("bg") and not slide.get("bgGradient"):
                     errors.append(f"{loc}: Missing 'bg' or 'bgGradient'")
+                check_bg_fields(slide, loc, errors, warnings)
 
                 # Color check + contrast auto-fix
                 if not slide.get("color"):
