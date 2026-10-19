@@ -75,7 +75,22 @@ function innerReducer(state, a) {
       return loaded;
     }
     case "ADD_LANE": { if (state.lanes.find((l) => l.title.toLowerCase() === a.title.toLowerCase())) return state; return { ...state, lanes: [...state.lanes, { id: uid(), title: a.title, collapsed: false, items: [] }] }; }
-    case "REMOVE_LANE": { const rl = state.lanes.find((l) => l.id === a.id); if (rl) rl.items.forEach((i) => _deletedMods.add(i.id)); return { ...state, lanes: state.lanes.filter((l) => l.id !== a.id), selectedId: null }; }
+    case "REMOVE_LANE": { const rl = state.lanes.find((l) => l.id === a.id); if (rl) rl.items.forEach((i) => _deletedMods.add(i.id)); 
+      let selectedId = null, slideIndex = state.slideIndex;
+      // Pending-review mode (mirrors REMOVE_ITEM): deleting the lane that holds the
+      // selected module selects the nearest module outside it (next, else previous);
+      // deleting another lane keeps the selection. SlidePanel then picks the pending slide.
+      if (state.reviewPending && !state.fullscreen) {
+        const flat = state.lanes.flatMap((l) => (l.items || []).map((i) => ({ i, lane: l.id })));
+        if (!rl || !flat.some((x) => x.lane === a.id && x.i.id === state.selectedId)) selectedId = state.selectedId;
+        else {
+          const at = flat.findIndex((x) => x.lane === a.id);
+          const out = flat.filter((x) => x.lane !== a.id);
+          const nb = flat.slice(at).find((x) => x.lane !== a.id) || out[out.length - 1];
+          if (nb) { selectedId = nb.i.id; slideIndex = 0; }
+        }
+      }
+      return { ...state, lanes: state.lanes.filter((l) => l.id !== a.id), selectedId, slideIndex }; }
     case "RENAME_LANE": return { ...state, lanes: state.lanes.map((l) => l.id === a.id ? { ...l, title: a.title } : l) };
     case "SET_ITEM_NOTES": return mapItems((i) => i.id === a.id ? { ...i, notes: a.notes } : i);
     case "TOGGLE_LANE": return { ...state, lanes: state.lanes.map((l) => l.id === a.id ? { ...l, collapsed: !l.collapsed } : l) };

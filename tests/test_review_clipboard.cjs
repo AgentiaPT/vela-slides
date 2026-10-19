@@ -277,6 +277,26 @@ const deck = (slidesA, slidesB) => [{ id: "L1", title: "Lane", collapsed: false,
     check(n4 && n4.what === "Slide", "single-slide delete is still detected");
     eq("single-slide delete -> next pending slide", n4 && n4.r.target, { id: "C", index: 0 });
 
+    // REMOVE_LANE (same bug class as REMOVE_ITEM)
+    const lanes2 = [{ id: "L0", title: "First", collapsed: false, items: [lanesM[0].items[0]] },
+      { id: "L1", title: "Lane", collapsed: false, items: [lanesM[0].items[1]] },
+      { id: "L2", title: "Last", collapsed: false, items: [lanesM[0].items[2]] }];
+    const lb = { past: [], present: { ...init, lanes: lanes2, selectedId: "B", slideIndex: 1, reviewPending: true }, future: [] };
+    const lh = reducer(lb, { type: "REMOVE_LANE", id: "L1" });
+    check(lh.present.selectedId === "C" && lh.present.slideIndex === 0, "REMOVE_LANE of the current lane in pending mode selects the next lane's module", `${lh.present.selectedId}`);
+    const ln = nav(snap(lb), snap(lh));
+    eq("lane delete -> neighbour lane's first pending slide", ln && ln.r.target, { id: "C", index: 0 });
+    const ll = reducer({ ...lb, present: { ...lb.present, selectedId: "C", slideIndex: 0 } }, { type: "REMOVE_LANE", id: "L2" });
+    check(ll.present.selectedId === "B", "deleting the last lane selects the previous lane's module");
+    const lo = reducer(lb, { type: "REMOVE_LANE", id: "L0" });
+    check(lo.present.selectedId === "B" && lo.present.slideIndex === 1, "deleting another lane keeps the current slide");
+    check(hasNav && nav(snap(lb), snap(lo)) === null, "deleting another lane triggers no navigation");
+    check(reducer({ ...lb, present: { ...lb.present, reviewPending: false } }, { type: "REMOVE_LANE", id: "L1" }).present.selectedId === null, "outside pending mode REMOVE_LANE still clears the selection");
+    const lr = { ...lb, present: { ...lb.present, lanes: lanes2.map((l) => ({ ...l, items: l.items.map((i) => ({ ...i, slides: i.slides.map((x) => ({ ...x, reviewed: true })) })) })) } };
+    const lrh = reducer(lr, { type: "REMOVE_LANE", id: "L1" });
+    const lrn = nav(snap(lr), snap(lrh));
+    check(lrh.present.selectedId === "C" && lrn && lrn.r.target === null, "lane delete, none pending -> stays on neighbour, no target");
+
     console.log("CR7 — undo/redo after a delete in pending mode (W3-2)");
     const u = reducer(s1, { type: "UNDO" });
     check((u.present._histSeq || 0) > (s1.present._histSeq || 0), "UNDO bumps _histSeq");
