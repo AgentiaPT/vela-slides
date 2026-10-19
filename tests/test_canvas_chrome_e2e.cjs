@@ -11,6 +11,9 @@
  *      glyph of its text: no overlap with text, gap <= 8 px, same line.
  *   3. Side image (image-left / image-right): the image is vertically centered
  *      against the content column (no top-aligned, zero-margin image).
+ *   4. Block link badge: a text-like block (text, heading, quote, callout,
+ *      badge, metric) with a block-level link shows its badge inline after the
+ *      last glyph (short, wrapped, centered, right-aligned, narrow columns).
  *
  * Usage: node tests/test_canvas_chrome_e2e.cjs
  * Builds a fresh offline render (.hyper-sprint/render-offline.js) into a temp
@@ -64,6 +67,26 @@ const slides = [
   ] },
   { bg: "#0f172a", layout: "image-right", blocks: [{ type: "heading", text: "Image right" }, { type: "text", text: "Body text." }, { type: "image", src: IMG }] },
   { bg: "#0f172a", layout: "image-left", blocks: [{ type: "heading", text: "Image left tall" }, { type: "text", text: "Body text." }, { type: "image", src: TALL }] },
+  // 4. block-level links on text-like blocks (slides 6-8)
+  { bg: "#0f172a", blocks: [
+    { type: "text", text: "Short linked text", link: L },
+    { type: "text", text: "A long linked paragraph that runs across the full slide width and must wrap onto a second line so the badge follows the very last word", link: L },
+    { type: "text", text: "Centered linked text", align: "center", link: L },
+    { type: "text", text: "Right aligned linked text", align: "right", link: L },
+    { type: "heading", text: "Linked heading", link: L },
+    { type: "heading", text: "Heading with icon", icon: "Star", link: L },
+    { type: "badge", text: "Linked badge", link: L },
+  ] },
+  { bg: "#0f172a", blocks: [
+    { type: "quote", text: "A linked quote without an author", link: L },
+    { type: "quote", text: "A linked quote", author: "Someone", link: L },
+    { type: "callout", title: "Callout title", text: "Linked callout body text.", link: L },
+    { type: "metric", value: "42%", label: "Linked metric", link: L },
+    { type: "heading", text: "Centered heading", align: "center", size: "xl", link: L },
+  ] },
+  { bg: "#0f172a", layout: "cols", blocks: [{ type: "heading", text: "Narrow columns", link: L }],
+    L: [{ type: "text", text: "Left column linked text that wraps inside a narrow column width", link: L }, { type: "text", text: "Right edge", align: "right", link: L }],
+    R: [{ type: "callout", title: "Narrow", text: "Callout in a narrow column that wraps", link: L }, { type: "metric", value: "7", link: L }] },
 ];
 const deck = { deckTitle: "Canvas chrome", branding: { enabled: true, accentBar: true, accentHeight: 6 },
   lanes: [{ id: "l1", title: "L", items: [{ id: "i1", title: "Chrome", status: "todo", slides }] }] };
@@ -76,7 +99,7 @@ const deck = { deckTitle: "Canvas chrome", branding: { enabled: true, accentBar:
   execFileSync("node", [path.join(REPO, ".hyper-sprint", "render-offline.js"), deckPath, outDir, "--repo-root", REPO], { stdio: "pipe" });
   let browser;
   try { browser = await launchChromium(chromium); } catch (e) { console.log("SKIP: chromium not available — " + e.message); process.exit(0); }
-  for (const vw of [1600, 1100]) {
+  for (const vw of [1600, 1440, 1100, 1024]) {
     console.log(`viewport ${vw}px`);
     const page = await browser.newPage({ viewport: { width: vw, height: 1000 } });
     const errors = []; page.on("pageerror", (e) => errors.push(e.message));
@@ -144,6 +167,25 @@ const deck = { deckTitle: "Canvas chrome", branding: { enabled: true, accentBar:
         return { contentMid: (ct + cb) / 2 - col.top, imgMid: (ir.top + ir.bottom) / 2 - col.top, imgTop: ir.top - col.top };
       });
       check(`slide ${n + 1}: side image vertically centered with content (not top-aligned)`, m && Math.abs(m.contentMid - m.imgMid) <= 4 && m.imgTop > 4, m);
+    }
+    // 4. block-level text link badges: inline after the last glyph, never at the box edge
+    for (const [n, want] of [[5, 7], [6, 5], [7, 5]]) {
+      await go(n);
+      const res = await page.evaluate(() => [...document.querySelectorAll("[data-block-index][data-pdf-link]")].map((host) => {
+        const bs = host.querySelectorAll('[data-testid="block-link-badge"]');
+        if (bs.length !== 1) return { type: host.dataset.blockType, count: bs.length };
+        const b = bs[0], br = b.getBoundingClientRect(), hr = host.getBoundingClientRect(), k = br.width / 14;
+        const range = document.createRange(); let overlap = false, last = null;
+        const tw = document.createTreeWalker(host, NodeFilter.SHOW_TEXT);
+        while (tw.nextNode()) { const tn = tw.currentNode; if (b.contains(tn)) continue; range.selectNodeContents(tn);
+          for (const r of range.getClientRects()) { if (!r.width) continue; if (!(r.right <= br.left || r.left >= br.right || r.bottom <= br.top || r.top >= br.bottom)) overlap = true; last = r; } }
+        return { type: host.dataset.blockType, text: host.textContent.slice(0, 24), count: 1, overlap,
+          gap: last ? (br.left - last.right) / k : null,
+          sameLine: last ? Math.abs((last.top + last.bottom) / 2 - (br.top + br.bottom) / 2) < 14 * k : false,
+          inside: br.right <= hr.right + 2 * k };
+      }));
+      check(`slide ${n + 1}: every linked text block has one inline badge`, res.length === want && res.every((r) => r.count === 1), res);
+      for (const r of res) check(`slide ${n + 1}: ${r.type} "${r.text}" — badge after last glyph, no overlap, gap 0..8px, same line`, r.count === 1 && !r.overlap && r.gap != null && r.gap >= 0 && r.gap <= 8 && r.sameLine && r.inside, r);
     }
     check("no page errors", errors.length === 0, errors);
     await page.close();

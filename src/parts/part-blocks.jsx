@@ -505,6 +505,22 @@ function IconBubble({ icon, size = 20, color, bg, shape, strokeWidth = 1.5 }) {
   return <div style={{ width: d, height: d, borderRadius: shape === "square" ? 8 : "50%", background: cssColor(bg), display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>{el}</div>;
 }
 
+// ━━━ Block-level text link badge ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// A text-like block with a block-level `link` renders its link badge INLINE as the
+// suffix of its last text run (RenderBlock `linkBadge` prop). It then sits right
+// after the last glyph, also when the text wraps or is centered / right-aligned.
+// An absolute badge on the block box lands far right of short text (the box is
+// full width) or over the last word. Other block types keep the corner badge
+// in part-canvas.jsx. The word joiner keeps the badge on the line of the last word.
+const TEXT_LINK_BADGE_TYPES = new Set(["heading", "text", "quote", "callout", "badge", "metric"]);
+function TextLinkBadge({ link, presenting, active }) {
+  const base = { display: "inline-flex", alignItems: "center", justifyContent: "center", verticalAlign: "middle", marginLeft: 6, lineHeight: 1, cursor: "pointer", fontStyle: "normal", fontWeight: 400, letterSpacing: 0, textTransform: "none", whiteSpace: "nowrap" };
+  const look = presenting
+    ? { height: 16, padding: "0 5px", borderRadius: 4, background: T.accent, fontSize: 9, color: "#fff", opacity: active ? 1 : 0.3, transition: "opacity 0.2s", boxShadow: "0 2px 6px rgba(0,0,0,0.4)" }
+    : { width: 14, height: 14, borderRadius: "50%", background: T.accent + "80", fontSize: 7 };
+  return <span data-no-pdf="">{"⁠"}<span data-testid="block-link-badge" onClick={(e) => { e.stopPropagation(); openExternalLink(link); }} title={link} style={{ ...base, ...look }}>🔗</span></span>;
+}
+
 // ━━━ Per-Item Chrome — hover toolbar (🔗 link + ✕ delete) for one item of a multi-item block ━━
 // In edit mode, hovering an item shows a small cluster to attach/edit a link or delete the item.
 // Out of edit mode, a linked item becomes clickable (and feeds PDF export via data-pdf-link).
@@ -759,10 +775,12 @@ function CodeBlock({ block, cls, st, editable, onChange, SIZES }) {
 }
 
 // ━━━ Callout Block (sub-component for useState reveal toggle) ━━━━
-function CalloutBlock({ block, cls, st, editable, onChange, SIZES }) {
+function CalloutBlock({ block, cls, st, editable, onChange, SIZES, linkBadge }) {
   // reveal: true → starts collapsed (open=false); reveal: false/omitted → always open
   const [open, setOpen] = useState(!block.reveal);
   const isReveal = !!block.reveal;
+  // Inline link badge goes after the last visible text run.
+  const badgeAt = open && block.text ? "text" : block.title ? "title" : "reveal";
   const chevron = isReveal ? (open ? "▾" : "▸") : null;
   return <div className={cls} style={{ display: "flex", gap: 10, padding: "14px 18px", borderRadius: 8, background: cssColor(block.bg) || `${st.accent}12`, borderLeft: `3px solid ${block.border || st.accent}`, alignItems: "flex-start", ...block.style }}>
     <EditableIcon editable={editable} value={block.icon} size={18} onPick={(name) => onChange?.({ icon: name })}>
@@ -771,16 +789,18 @@ function CalloutBlock({ block, cls, st, editable, onChange, SIZES }) {
     <div style={{ flex: 1 }}>
       {block.title && <div style={{ display: "flex", alignItems: "center", gap: 6, ...(isReveal ? { cursor: "pointer", userSelect: "none" } : {}) }} onClick={isReveal ? () => setOpen(!open) : undefined}>
         {chevron && <span style={{ fontSize: 14, color: block.border || st.accent, lineHeight: 1 }}>{chevron}</span>}
-        <EditableText text={block.title} editable={editable} onSave={(v) => onChange?.({ title: v })} style={{ fontFamily: FONT.display, fontSize: SIZES.sm, fontWeight: 700, color: block.border || st.accent, marginBottom: open ? 4 : 0 }} />
+        <EditableText text={block.title} editable={editable} onSave={(v) => onChange?.({ title: v })} style={{ fontFamily: FONT.display, fontSize: SIZES.sm, fontWeight: 700, color: block.border || st.accent, marginBottom: open ? 4 : 0 }} suffix={badgeAt === "title" ? linkBadge : undefined} />
       </div>}
-      {!block.title && isReveal && <div style={{ cursor: "pointer", userSelect: "none", fontSize: 14, color: block.border || st.accent, marginBottom: open ? 4 : 0 }} onClick={() => setOpen(!open)}>{chevron} {open ? "Ocultar" : "Revelar"}</div>}
-      {open && <EditableText text={block.text} editable={editable} onSave={(v) => onChange?.({ text: v })} multiline style={{ fontFamily: FONT.body, fontSize: SIZES[block.size || "md"], color: block.color || st.text, lineHeight: 1.5 }} />}
+      {!block.title && isReveal && <div style={{ cursor: "pointer", userSelect: "none", fontSize: 14, color: block.border || st.accent, marginBottom: open ? 4 : 0 }} onClick={() => setOpen(!open)}>{chevron} {open ? "Ocultar" : "Revelar"}{badgeAt === "reveal" ? linkBadge : null}</div>}
+      {open && <EditableText text={block.text} editable={editable} onSave={(v) => onChange?.({ text: v })} multiline style={{ fontFamily: FONT.body, fontSize: SIZES[block.size || "md"], color: block.color || st.text, lineHeight: 1.5 }} suffix={badgeAt === "text" ? linkBadge : undefined} />}
     </div>
   </div>;
 }
 
 // ━━━ Block Renderer ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChange, slideAlign, fontScale = 1, presenting = false }) {
+// linkBadge: optional inline link badge node (TextLinkBadge) that text-like blocks
+// (TEXT_LINK_BADGE_TYPES) render right after their last text run.
+function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChange, slideAlign, fontScale = 1, presenting = false, linkBadge }) {
   // Runtime guard: ensure .style is always a plain object
   const block = useMemo(() => {
     if (rawBlock.style && (typeof rawBlock.style !== "object" || Array.isArray(rawBlock.style))) {
@@ -818,12 +838,12 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
         <EditableIcon editable={textEditable} value={block.icon} size={24} onPick={(name) => onChange?.({ icon: name })}>
           {block.icon ? <span style={{ flexShrink: 0, display: "flex" }}>{getIcon(block.icon, { size: Math.round(parseFloat(SIZES[block.size || "2xl"]) * 16) || 24, color: block.iconColor || block.color || st.accent, strokeWidth: 2 })}</span> : null}
         </EditableIcon>
-        <EditableText text={headingText} editable={textEditable} onSave={(v) => onChange?.({ text: v })} style={headingIconSlot ? { flex: 1, textAlign: block.align } : undefined} />
+        <EditableText text={headingText} editable={textEditable} onSave={(v) => onChange?.({ text: v })} style={headingIconSlot ? { flex: 1, textAlign: block.align } : undefined} suffix={linkBadge} />
       </div>;
     }
 
     case "text":
-      return <EditableText className={cls} text={block.text} editable={textEditable} onSave={(v) => onChange?.({ text: v })} multiline
+      return <EditableText className={cls} text={block.text} editable={textEditable} onSave={(v) => onChange?.({ text: v })} multiline suffix={linkBadge}
         style={{ fontFamily: FONT.body, fontSize: SIZES[block.size || "md"], color: block.color || st.muted, lineHeight: 1.6, textAlign: block.align, maxWidth: block.maxWidth, margin: block.maxWidth && slideAlign === "center" ? "0 auto" : undefined, fontStyle: block.italic ? "italic" : "normal", fontWeight: block.bold ? 600 : 400, ...block.style }} />;
 
     case "bullets":
@@ -895,22 +915,22 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
       </div>;
 
     case "callout":
-      return <CalloutBlock block={block} cls={cls} st={st} editable={textEditable} onChange={onChange} SIZES={SIZES} />;
+      return <CalloutBlock block={block} cls={cls} st={st} editable={textEditable} onChange={onChange} SIZES={SIZES} linkBadge={linkBadge} />;
 
     case "metric":
       return <div className={cls} style={{ display: "flex", flexDirection: "column", alignItems: block.align === "left" ? "flex-start" : block.align === "right" ? "flex-end" : "center", ...block.style }}>
         <EditableIcon editable={textEditable} value={block.icon} size={28} onPick={(name) => onChange?.({ icon: name })}>
           {block.icon ? <div style={{ marginBottom: 8, display: "flex" }}>{getIcon(block.icon, { size: 28, color: block.iconColor || st.accent, strokeWidth: 1.5 })}</div> : null}
         </EditableIcon>
-        <EditableText text={block.value} editable={textEditable} onSave={(v) => onChange?.({ value: v })} style={{ fontFamily: FONT.display, fontSize: SIZES[block.size || "4xl"], fontWeight: 800, color: block.color || st.accent, lineHeight: 1, letterSpacing: "-0.03em" }} />
-        {block.label && <EditableText text={block.label} editable={textEditable} onSave={(v) => onChange?.({ label: v })} style={{ fontFamily: FONT.mono, fontSize: SIZES.xs, color: block.labelColor || st.textDim, marginTop: 6, letterSpacing: "0.05em", textTransform: "uppercase" }} />}
+        <EditableText text={block.value} editable={textEditable} onSave={(v) => onChange?.({ value: v })} style={{ fontFamily: FONT.display, fontSize: SIZES[block.size || "4xl"], fontWeight: 800, color: block.color || st.accent, lineHeight: 1, letterSpacing: "-0.03em" }} suffix={block.label ? undefined : linkBadge} />
+        {block.label && <EditableText text={block.label} editable={textEditable} onSave={(v) => onChange?.({ label: v })} suffix={linkBadge} style={{ fontFamily: FONT.mono, fontSize: SIZES.xs, color: block.labelColor || st.textDim, marginTop: 6, letterSpacing: "0.05em", textTransform: "uppercase" }} />}
       </div>;
 
     case "quote":
       return <div className={cls} style={{ display: "flex", flexDirection: "column", alignItems: "center", textAlign: "center", ...block.style }}>
-        <EditableText text={block.text} editable={textEditable} onSave={(v) => onChange?.({ text: v })} multiline prefix={"\u201C"} suffix={"\u201D"}
+        <EditableText text={block.text} editable={textEditable} onSave={(v) => onChange?.({ text: v })} multiline prefix={"\u201C"} suffix={<>{"\u201D"}{block.author ? null : linkBadge}</>}
           style={{ fontFamily: FONT.display, fontSize: SIZES[block.size || "xl"], fontWeight: 600, color: block.color || st.text, lineHeight: 1.4, fontStyle: "italic", maxWidth: "85%" }} />
-        {block.author && <EditableText text={block.author} editable={textEditable} onSave={(v) => onChange?.({ author: v })} prefix={"\u2014 "}
+        {block.author && <EditableText text={block.author} editable={textEditable} onSave={(v) => onChange?.({ author: v })} prefix={"\u2014 "} suffix={linkBadge}
           style={{ fontFamily: FONT.mono, fontSize: SIZES.xs, color: st.accent, marginTop: 14, letterSpacing: "0.05em" }} />}
       </div>;
 
@@ -945,7 +965,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
         <EditableIcon editable={textEditable} value={block.icon} size={14} onPick={(name) => onChange?.({ icon: name })}>
           {block.icon ? <span style={{ display: "flex" }}>{getIcon(block.icon, { size: badgeIconSize, color: block.color || st.accent, strokeWidth: 2 })}</span> : null}
         </EditableIcon>
-        <EditableText text={block.text} editable={textEditable} onSave={(v) => onChange?.({ text: v })} />
+        <EditableText text={block.text} editable={textEditable} onSave={(v) => onChange?.({ text: v })} suffix={linkBadge} />
       </div>;
     }
 

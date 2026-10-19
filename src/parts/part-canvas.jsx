@@ -461,7 +461,9 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
 
   // Render a single block with all editable chrome (hover, edit popup, link, etc.)
   // ── Per-block editor chrome: hover toolbar, AI/link/comment popups, badges ──
-  const renderBlockItem = (b, i) => { const fl = flushOf(b, i); const popTop = fl.top ? 30 : null; return editable && onEdit ? (
+  const renderBlockItem = (b, i) => { const fl = flushOf(b, i); const popTop = fl.top ? 30 : null;
+    // Text-like blocks show the block link badge inline after their last word (TextLinkBadge).
+    const inlineLink = !!b.link && TEXT_LINK_BADGE_TYPES.has(b.type); return editable && onEdit ? (
     <div key={i} data-block-type={b.type} data-block-index={i} data-block-flush={fl.top || fl.right ? `${fl.top ? "top" : ""}${fl.top && fl.right ? " " : ""}${fl.right ? "right" : ""}` : undefined} style={{ position: "relative", ...(b.link ? { cursor: "pointer" } : {}), ...(b.hidden && !presenting ? { opacity: 0.4 } : {}) }}
       title={b.link ? linkPreview(b.link, b.text || b.value || b.title) : undefined}
       data-pdf-link={b.link || undefined}
@@ -507,9 +509,10 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
       </div>}
       {/* Comment count badge (edit mode, not review) */}
       {!reviewMode && !presenting && hoveredBlock !== i && externalDispatch && (() => { const cc = slideComments.filter((c) => c.blockIndex === i && c.status === "open"); return cc.length > 0 ? <div style={{ position: "absolute", top: -2, left: -2, minWidth: 14, height: 14, borderRadius: 7, background: T.amber, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 7, fontFamily: FONT.mono, fontWeight: 700, color: "#fff", padding: "0 3px", zIndex: 5, boxShadow: "0 2px 4px rgba(0,0,0,0.3)" }} title={`${cc.length} comment${cc.length > 1 ? "s" : ""}`}>💬{cc.length > 1 ? cc.length : ""}</div> : null; })()}
-      {b.link && hoveredBlock !== i && !presenting && <div onClick={(e) => { e.stopPropagation(); openExternalLink(b.link); }} style={{ position: "absolute", top: fl.top ? 6 : -2, right: fl.right ? 6 : -2, width: 14, height: 14, borderRadius: "50%", background: T.accent + "80", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 7, zIndex: 5, cursor: "pointer" }} title={b.link}>🔗</div>}
-      {b.link && presenting && <div style={{ position: "absolute", top: fl.top ? 6 : -2, right: fl.right ? 6 : -2, padding: "2px 5px", borderRadius: 4, background: T.accent, fontSize: 9, color: "#fff", zIndex: 12, pointerEvents: "none", opacity: hoveredBlock === i ? 1 : 0.3, transition: "opacity 0.2s", boxShadow: "0 2px 6px rgba(0,0,0,0.4)" }}>🔗</div>}
+      {b.link && !inlineLink && hoveredBlock !== i && !presenting && <div onClick={(e) => { e.stopPropagation(); openExternalLink(b.link); }} style={{ position: "absolute", top: fl.top ? 6 : -2, right: fl.right ? 6 : -2, width: 14, height: 14, borderRadius: "50%", background: T.accent + "80", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 7, zIndex: 5, cursor: "pointer" }} title={b.link}>🔗</div>}
+      {b.link && !inlineLink && presenting && <div style={{ position: "absolute", top: fl.top ? 6 : -2, right: fl.right ? 6 : -2, padding: "2px 5px", borderRadius: 4, background: T.accent, fontSize: 9, color: "#fff", zIndex: 12, pointerEvents: "none", opacity: hoveredBlock === i ? 1 : 0.3, transition: "opacity 0.2s", boxShadow: "0 2px 6px rgba(0,0,0,0.4)" }}>🔗</div>}
       <RenderBlock block={b} staggerIdx={i + 1} slideTheme={st} editable={b.link ? false : editable} slideAlign={align} fontScale={fontScale} presenting={presenting}
+        linkBadge={inlineLink ? <TextLinkBadge link={b.link} presenting={presenting} active={hoveredBlock === i} /> : undefined}
         onChange={onEdit ? (patch) => handleBlockChange(i, patch) : undefined} />
     </div>
   ) : (
