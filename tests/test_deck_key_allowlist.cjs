@@ -459,5 +459,30 @@ const baseSlide = (extra) => ({ duration: 60, blocks: [{ type: "heading", text: 
     s.bgImage === dataUri);
 }
 
+// ── Ingress id stability: a deck-supplied lane/module id survives validateAndSanitizeDeck ──
+// Re-opening the same file must yield the same ids (the write-back to the source
+// file and the per-module storage keys depend on it). Unsafe or duplicate ids are
+// replaced with generated ones instead of being trusted.
+{
+  const deckIn = { deckTitle: "x", lanes: [{ id: "lane-A1", items: [{ id: "mod_1", title: "M", slides: [baseSlide()] }] }] };
+  const first = validateAndSanitizeDeck(deckIn);
+  const second = validateAndSanitizeDeck(JSON.parse(JSON.stringify(deckIn)));
+  assert("ingress keeps a valid lane id", first.lanes[0].id === "lane-A1");
+  assert("ingress keeps a valid module id", first.lanes[0].items[0].id === "mod_1");
+  assert("ids are stable across two opens of the same deck",
+    first.lanes[0].id === second.lanes[0].id && first.lanes[0].items[0].id === second.lanes[0].items[0].id);
+
+  const bad = validateAndSanitizeDeck({ lanes: [{ id: "<x>\"y", items: [
+    { id: "dup", slides: [baseSlide()] }, { id: "dup", slides: [baseSlide()] }, { id: { toString: () => "obj" }, slides: [baseSlide()] },
+  ] }] });
+  const tokenOk = (v) => typeof v === "string" && /^[A-Za-z0-9_-]{1,40}$/.test(v);
+  assert("unsafe lane id is replaced by a generated token", tokenOk(bad.lanes[0].id) && bad.lanes[0].id !== "<x>\"y");
+  assert("duplicate module id: first keeps it, the repeat gets a fresh id",
+    bad.lanes[0].items[0].id === "dup" && tokenOk(bad.lanes[0].items[1].id) && bad.lanes[0].items[1].id !== "dup");
+  assert("non-string module id is replaced by a generated token", tokenOk(bad.lanes[0].items[2].id));
+  const allIds = [bad.lanes[0].id, ...bad.lanes[0].items.map((i) => i.id)];
+  assert("all ids in one deck are distinct", new Set(allIds).size === allIds.length);
+}
+
 console.log(`\n  ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

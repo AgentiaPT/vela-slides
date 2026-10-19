@@ -1821,6 +1821,23 @@ def test_integration():
         else:
             fail("validate.py on vela-demo.vela", result.stdout + result.stderr)
 
+        # 3b. A gradient in slide 'bg' must fail validation (it is not a colour and
+        #     would silently fall back to the default colour set). Same deck, one edit.
+        with open(starter, encoding="utf-8") as fh:
+            grad_deck = json.load(fh)
+        grad_deck["lanes"][0]["items"][0]["slides"][0]["bg"] = "linear-gradient(#0A0F1C, #1E293B)"
+        grad_path = os.path.join(tmpdir, "gradient-bg.vela")
+        with open(grad_path, "w", encoding="utf-8") as fh:
+            json.dump(grad_deck, fh)
+        result = subprocess.run(
+            [sys.executable, os.path.join(SCRIPTS, "validate.py"), grad_path],
+            capture_output=True, text=True
+        )
+        if result.returncode != 0 and "cannot be a gradient" in result.stdout + result.stderr:
+            ok("validate.py rejects a gradient used as slide 'bg'")
+        else:
+            fail("validate.py gradient slide bg", result.stdout + result.stderr)
+
         # 4. Assemble produces a valid artifact
         out_artifact = os.path.join(tmpdir, "assembled.jsx")
         result = subprocess.run(
