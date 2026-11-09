@@ -20,7 +20,7 @@ const body = `
   var crypto = (typeof globalThis !== "undefined" && globalThis.crypto) ? globalThis.crypto : {};
 
 ` + importsSrc.slice(sliceStart, sliceEnd).replace(/^(?:const|let) STARTUP_PATCH = null;$/m, "var STARTUP_PATCH = null;") + `
-; return { validateAndSanitizeDeck, adoptPriorDeckIds, localDeckPayload, open: function (deck) {
+; return { validateAndSanitizeDeck, adoptPriorDeckIds, localDeckPayload, sanitizeDeckTitle, defaultBranding, open: function (deck) {
     STARTUP_PATCH = deck; var out = null;
     applyStartupPatch({ lanes: [] }, function (a) { if (a.type === "LOAD") out = a.payload; });
     return out; } };`;
@@ -175,6 +175,43 @@ check("meridian-F6 a real edit changes the signature (edits still save)", (() =>
   check("meridian-F6 flush skips an unchanged payload before __velaSendDeckUpdate", g > 0 && w > g);
   check("meridian-F6 boot startup patch + incoming update record the on-disk baseline",
     (app.match(/_localBaselineLanes\.current = /g) || []).length >= 3 && /_localDiskSig\.current = JSON\.stringify\(localDeckPayload\(/.test(app));
+}
+
+// ── hunt1 HS2: the live-update path must load SANITIZED guidelines ──
+// Runs the REAL window.__velaReceiveDeckUpdate body from part-app.jsx (sliced,
+// with the React refs/dispatch stubbed) and checks that the LOAD payload holds
+// the same guidelines value the import path produces: string-typed, control/
+// bidi-stripped, capped at 2000. A raw non-string here makes every AI call throw.
+{
+  const app = fs.readFileSync(P("src/parts/part-app.jsx"), "utf8");
+  const head = "window.__velaReceiveDeckUpdate = (deck) => {";
+  const tail = "\n    };\n    return () => { window.__velaReceiveDeckUpdate = null; };";
+  const a = app.indexOf(head), b = app.indexOf(tail, a);
+  check("hunt1-HS2 receive-path body located in part-app.jsx", a > 0 && b > a && app.indexOf(head, a + 1) < 0);
+  const fnSrc = "(deck) => {" + app.slice(a + head.length, b) + "\n}";
+  const makeReceive = Function("validateAndSanitizeDeck", "adoptPriorDeckIds", "sanitizeDeckTitle", "defaultBranding",
+    "_localSyncIncoming", "_localSyncState", "_localBaselineLanes", "dispatch", "dbg", "setTimeout",
+    "return (" + fnSrc + ");");
+  const live = (deck, cur) => {
+    let out = null;
+    const fn = makeReceive(API.validateAndSanitizeDeck, API.adoptPriorDeckIds, API.sanitizeDeckTitle, API.defaultBranding,
+      { current: false }, { current: cur }, { current: null }, (act) => { if (act.type === "LOAD") out = act.payload; }, () => {}, () => {});
+    fn(deck);
+    return out;
+  };
+  const cur = { lanes: [], guidelines: "old" };
+  const lanes = [{ title: "L", items: [{ title: "M", slides: [] }] }];
+  const hostile = "a‮​b\u0007" + "x".repeat(5000);
+  const want = API.validateAndSanitizeDeck({ lanes, guidelines: hostile }).guidelines;
+  const p1 = live({ lanes, guidelines: hostile }, cur);
+  check("hunt1-HS2 live update loads guidelines sanitized like import (bidi/control stripped, capped)",
+    !!p1 && p1.guidelines === want && want.length === 2000 && !/[‮​\u0007]/.test(p1.guidelines),
+    p1 && JSON.stringify(String(p1.guidelines).slice(0, 12)) + " len " + String(p1.guidelines).length);
+  const p2 = live({ lanes, guidelines: { trim: 1 } }, cur);
+  check("hunt1-HS2 live update turns a non-string guidelines value into a string",
+    !!p2 && typeof p2.guidelines === "string" && p2.guidelines === "", p2 && typeof p2.guidelines);
+  const p3 = live({ lanes }, cur);
+  check("hunt1-HS2 live update without guidelines keeps the current value", !!p3 && p3.guidelines === "old", p3 && p3.guidelines);
 }
 
 console.log(`\n  ${pass} passed, ${fail} failed`);

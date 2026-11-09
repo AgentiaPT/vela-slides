@@ -577,14 +577,24 @@ function sanitizeUrl(url, allowedProtocols = ["http:", "https:", "mailto:"]) {
 // "www.example.com"; sanitizeUrl needs an explicit scheme, so a bare domain was
 // saved as empty with no feedback. Add https:// (or mailto: for a plain email
 // address) when no scheme is given, then gate through sanitizeUrl as before.
+// Schemeless input gets a scheme ONLY when it is a plain email address or looks
+// like a real host (dotted labels, optional port, then a path/query/fragment
+// with no whitespace). Anything else — free text, "a@b", "user@host/x" (would
+// become https userinfo), "sms:123" (would parse as host:port), ".." — returns
+// undefined, which the link box treats as "no link" (an empty box does the same).
+const LINK_HOST_LABEL = "[\\p{L}\\p{N}](?:[\\p{L}\\p{N}-]{0,61}[\\p{L}\\p{N}])?";
+const LINK_HOST = `(?:${LINK_HOST_LABEL}\\.)+${LINK_HOST_LABEL}`;
+const LINK_BARE_EMAIL = new RegExp(`^[A-Za-z0-9.!#$%&'*+=?^_\`{|}~-]+@${LINK_HOST}$`, "u");
+const LINK_BARE_HOST = new RegExp(`^${LINK_HOST}(?::\\d{1,5})?(?:[/?#]\\S*)?$`, "u");
 function linkFromInput(value) {
   const t = String(value == null ? "" : value).trim();
   if (!t) return undefined;
   // "host:8080" is a host and port, not a scheme.
-  const withScheme = /^[a-z][a-z0-9+.\-]*:(?!\d)/i.test(t) ? t
-    : /^[^\s@/]+@[^\s@/]+\.[^\s@/]+$/.test(t) ? "mailto:" + t
-    : "https://" + t.replace(/^\/+/, "");
-  return sanitizeUrl(withScheme) || undefined;
+  if (/^[a-z][a-z0-9+.\-]*:(?!\d)/i.test(t)) return sanitizeUrl(t) || undefined;
+  if (LINK_BARE_EMAIL.test(t)) return sanitizeUrl("mailto:" + t) || undefined;
+  const bare = t.replace(/^\/+/, "");
+  if (!LINK_BARE_HOST.test(bare)) return undefined;
+  return sanitizeUrl("https://" + bare) || undefined;
 }
 
 // Open a deck-supplied URL safely — re-sanitize at the sink so a javascript:/data:/
@@ -986,6 +996,15 @@ function sanitizeSvgMarkup(raw) {
             // feature needs data-* in SVG, so drop every one (both spellings: a
             // prefixed name keeps "data-…" as its localName).
             if (name.startsWith("data-") || (a.localName || "").toLowerCase().startsWith("data-")) { child.removeAttribute(a.name); continue; }
+            // UI-integrity (§3.15): class lets deck SVG opt into the app's global
+            // stylesheet rules (hover transforms etc. on the root <svg>, which
+            // SVG_ROOT_BLOCKED forbids as attributes). role / aria-* / tabindex /
+            // autofocus let deck SVG take focus and pose as app widgets that the
+            // keyboard handlers treat specially. No deck diagram needs them; paint
+            // uses presentation attributes and refs use id, which stays.
+            // Both spellings, as for data-* above.
+            const chromeAttr = /^(?:class|role|tabindex|autofocus|aria-.*)$/;
+            if (chromeAttr.test(name) || chromeAttr.test((a.localName || "").toLowerCase())) { child.removeAttribute(a.name); continue; }
             // src/srcset never appear on legitimate SVG elements (SVG uses href/
             // xlink:href), so they survive the SVG parse inert — but the sanitized
             // string is later parsed in an HTML context (dangerouslySetInnerHTML into a
@@ -14538,7 +14557,7 @@ uiSuite("SVG Sanitizer (XSS)", [
     // A <style> is document-global (not SVG-scoped) — dropped outright, not filtered.
     // The shape element survives so geometry still renders; only the class CSS is gone.
     const out = sanitizeSvgMarkup('<style>.node{fill:#3b82f6;stroke:#888}.edge{stroke-width:2}</style><rect class="node"/>');
-    return !/<style[\s>]/i.test(out) && !/#3b82f6/.test(out) && /<rect[^>]*class="node"/i.test(out);
+    return !/<style[\s>]/i.test(out) && !/#3b82f6/.test(out) && /<rect/i.test(out);
   }},
   { name: "SVG url(#fragment) paint refs preserved via presentation attrs (<style> dropped)", fn: async () => {
     // Paint-server refs belong on presentation attributes, which remain allowed+validated.
@@ -18180,6 +18199,43 @@ uiSuite("review-fix-image", [
       const hidden = Array.from(vp.querySelectorAll("img")).filter((im) => getComputedStyle(im).visibility === "hidden").length;
       if (hidden) throw new Error(`${hidden} on-screen image(s) hidden after a cache eviction`);
       if (!blocks.every((b) => IMAGE_NATURAL_SIZE.has(b.src))) throw new Error("the evicted natural sizes were not measured again");
+    } finally { await _mrdUndoTo(past); }
+  }},
+], { setup: _selectFirstModule });
+
+uiSuite("hunt1-fix-sanitize", [
+  { name: "HE4: the link box saves no link for free text, no-dot hosts, userinfo and other schemes", fn: async () => {
+    // Runs in the real browser URL parser (Chromium percent-encodes a space in a
+    // host where Node throws, so "garbage text" is only provable here).
+    const cases = [
+      ["garbage text", undefined], ["example", undefined], ["a@b", undefined], ["x@y.z/path", undefined],
+      ["sms:123", undefined], ["tel:5551234", undefined], ["..", undefined], ["user:pw@example.com", undefined],
+      ["example.com", "https://example.com/"], ["example.com:8080/x", "https://example.com:8080/x"],
+      ["me@example.com", "mailto:me@example.com"], ["https://example.org/p", "https://example.org/p"],
+    ];
+    for (const [input, want] of cases) {
+      const got = linkFromInput(input);
+      if (got !== want) throw new Error(`linkFromInput(${JSON.stringify(input)}) = ${JSON.stringify(got)}, want ${JSON.stringify(want)}`);
+    }
+  }},
+  { name: "HS3: a rendered deck SVG carries no class/role/aria-*/tabindex/autofocus; id refs stay", fn: async () => {
+    const past = _hooks().getHistoryCounts().past;
+    try {
+      const markup = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10" class="status-btn" role="tree" tabindex="0" autofocus="" aria-modal="true">'
+        + '<defs><linearGradient id="h1g"><stop offset="0" stop-color="#f00"/></linearGradient></defs>'
+        + '<rect class="slide-nav-btn" role="button" aria-label="x" tabindex="-1" fill="url(#h1g)" width="5" height="5"/></svg>';
+      const vp = await _mrdInject([{ type: "svg", markup }], null, (v) => (v && v.querySelector("linearGradient#h1g")) ? v : null);
+      // The deck's own <svg> (app chrome such as lucide icons carries its own class).
+      const root = vp.querySelector("linearGradient#h1g").closest("svg");
+      const els = [root, ...root.querySelectorAll("*")];
+      const leaked = [];
+      for (const el of els) {
+        for (const a of el.attributes) if (/^(class|role|tabindex|autofocus|aria-.*)$/i.test(a.name)) leaked.push(`${el.localName}@${a.name}=${a.value}`);
+      }
+      if (!els.some((el) => el.localName === "rect")) throw new Error("the deck SVG did not render in an svg block");
+      if (leaked.length) throw new Error("attributes kept on deck SVG: " + leaked.join(", "));
+      const rect = vp.querySelector("rect[fill='url(#h1g)']");
+      if (!rect) throw new Error("the url(#id) gradient ref was lost");
     } finally { await _mrdUndoTo(past); }
   }},
 ], { setup: _selectFirstModule });
@@ -26547,7 +26603,10 @@ export default function App() {
           lanes: sanitized.lanes,                                    // update content
           deckTitle: deck.deckTitle ? sanitizeDeckTitle(deck.deckTitle) : cur.deckTitle,                 // update title
           branding: deck.branding ? { ...defaultBranding, ...sanitized.branding } : cur.branding, // sanitized (scrubbed) branding, not raw deck.branding (v12.67)
-          guidelines: deck.guidelines !== undefined ? deck.guidelines : cur.guidelines,
+          // Sanitized (string-typed, control/bidi-stripped, capped) as on import, not
+          // raw deck.guidelines: it goes into the Vera system prompt, and a
+          // non-string would make every AI call throw.
+          guidelines: deck.guidelines !== undefined ? sanitized.guidelines : cur.guidelines,
           // Reset selection when switching to a different deck so auto-select picks the first module
           ...(isDifferentDeck ? { selectedId: null, slideIndex: 0 } : {}),
         };

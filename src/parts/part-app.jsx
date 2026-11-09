@@ -464,7 +464,10 @@ export default function App() {
           lanes: sanitized.lanes,                                    // update content
           deckTitle: deck.deckTitle ? sanitizeDeckTitle(deck.deckTitle) : cur.deckTitle,                 // update title
           branding: deck.branding ? { ...defaultBranding, ...sanitized.branding } : cur.branding, // sanitized (scrubbed) branding, not raw deck.branding (v12.67)
-          guidelines: deck.guidelines !== undefined ? deck.guidelines : cur.guidelines,
+          // Sanitized (string-typed, control/bidi-stripped, capped) as on import, not
+          // raw deck.guidelines: it goes into the Vera system prompt, and a
+          // non-string would make every AI call throw.
+          guidelines: deck.guidelines !== undefined ? sanitized.guidelines : cur.guidelines,
           // Reset selection when switching to a different deck so auto-select picks the first module
           ...(isDifferentDeck ? { selectedId: null, slideIndex: 0 } : {}),
         };

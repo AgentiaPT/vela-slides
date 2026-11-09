@@ -577,14 +577,24 @@ function sanitizeUrl(url, allowedProtocols = ["http:", "https:", "mailto:"]) {
 // "www.example.com"; sanitizeUrl needs an explicit scheme, so a bare domain was
 // saved as empty with no feedback. Add https:// (or mailto: for a plain email
 // address) when no scheme is given, then gate through sanitizeUrl as before.
+// Schemeless input gets a scheme ONLY when it is a plain email address or looks
+// like a real host (dotted labels, optional port, then a path/query/fragment
+// with no whitespace). Anything else — free text, "a@b", "user@host/x" (would
+// become https userinfo), "sms:123" (would parse as host:port), ".." — returns
+// undefined, which the link box treats as "no link" (an empty box does the same).
+const LINK_HOST_LABEL = "[\\p{L}\\p{N}](?:[\\p{L}\\p{N}-]{0,61}[\\p{L}\\p{N}])?";
+const LINK_HOST = `(?:${LINK_HOST_LABEL}\\.)+${LINK_HOST_LABEL}`;
+const LINK_BARE_EMAIL = new RegExp(`^[A-Za-z0-9.!#$%&'*+=?^_\`{|}~-]+@${LINK_HOST}$`, "u");
+const LINK_BARE_HOST = new RegExp(`^${LINK_HOST}(?::\\d{1,5})?(?:[/?#]\\S*)?$`, "u");
 function linkFromInput(value) {
   const t = String(value == null ? "" : value).trim();
   if (!t) return undefined;
   // "host:8080" is a host and port, not a scheme.
-  const withScheme = /^[a-z][a-z0-9+.\-]*:(?!\d)/i.test(t) ? t
-    : /^[^\s@/]+@[^\s@/]+\.[^\s@/]+$/.test(t) ? "mailto:" + t
-    : "https://" + t.replace(/^\/+/, "");
-  return sanitizeUrl(withScheme) || undefined;
+  if (/^[a-z][a-z0-9+.\-]*:(?!\d)/i.test(t)) return sanitizeUrl(t) || undefined;
+  if (LINK_BARE_EMAIL.test(t)) return sanitizeUrl("mailto:" + t) || undefined;
+  const bare = t.replace(/^\/+/, "");
+  if (!LINK_BARE_HOST.test(bare)) return undefined;
+  return sanitizeUrl("https://" + bare) || undefined;
 }
 
 // Open a deck-supplied URL safely — re-sanitize at the sink so a javascript:/data:/
@@ -986,6 +996,15 @@ function sanitizeSvgMarkup(raw) {
             // feature needs data-* in SVG, so drop every one (both spellings: a
             // prefixed name keeps "data-…" as its localName).
             if (name.startsWith("data-") || (a.localName || "").toLowerCase().startsWith("data-")) { child.removeAttribute(a.name); continue; }
+            // UI-integrity (§3.15): class lets deck SVG opt into the app's global
+            // stylesheet rules (hover transforms etc. on the root <svg>, which
+            // SVG_ROOT_BLOCKED forbids as attributes). role / aria-* / tabindex /
+            // autofocus let deck SVG take focus and pose as app widgets that the
+            // keyboard handlers treat specially. No deck diagram needs them; paint
+            // uses presentation attributes and refs use id, which stays.
+            // Both spellings, as for data-* above.
+            const chromeAttr = /^(?:class|role|tabindex|autofocus|aria-.*)$/;
+            if (chromeAttr.test(name) || chromeAttr.test((a.localName || "").toLowerCase())) { child.removeAttribute(a.name); continue; }
             // src/srcset never appear on legitimate SVG elements (SVG uses href/
             // xlink:href), so they survive the SVG parse inert — but the sanitized
             // string is later parsed in an HTML context (dangerouslySetInnerHTML into a

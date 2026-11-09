@@ -82,7 +82,7 @@ uiSuite("SVG Sanitizer (XSS)", [
     // A <style> is document-global (not SVG-scoped) — dropped outright, not filtered.
     // The shape element survives so geometry still renders; only the class CSS is gone.
     const out = sanitizeSvgMarkup('<style>.node{fill:#3b82f6;stroke:#888}.edge{stroke-width:2}</style><rect class="node"/>');
-    return !/<style[\s>]/i.test(out) && !/#3b82f6/.test(out) && /<rect[^>]*class="node"/i.test(out);
+    return !/<style[\s>]/i.test(out) && !/#3b82f6/.test(out) && /<rect/i.test(out);
   }},
   { name: "SVG url(#fragment) paint refs preserved via presentation attrs (<style> dropped)", fn: async () => {
     // Paint-server refs belong on presentation attributes, which remain allowed+validated.
@@ -3724,6 +3724,43 @@ uiSuite("review-fix-image", [
       const hidden = Array.from(vp.querySelectorAll("img")).filter((im) => getComputedStyle(im).visibility === "hidden").length;
       if (hidden) throw new Error(`${hidden} on-screen image(s) hidden after a cache eviction`);
       if (!blocks.every((b) => IMAGE_NATURAL_SIZE.has(b.src))) throw new Error("the evicted natural sizes were not measured again");
+    } finally { await _mrdUndoTo(past); }
+  }},
+], { setup: _selectFirstModule });
+
+uiSuite("hunt1-fix-sanitize", [
+  { name: "HE4: the link box saves no link for free text, no-dot hosts, userinfo and other schemes", fn: async () => {
+    // Runs in the real browser URL parser (Chromium percent-encodes a space in a
+    // host where Node throws, so "garbage text" is only provable here).
+    const cases = [
+      ["garbage text", undefined], ["example", undefined], ["a@b", undefined], ["x@y.z/path", undefined],
+      ["sms:123", undefined], ["tel:5551234", undefined], ["..", undefined], ["user:pw@example.com", undefined],
+      ["example.com", "https://example.com/"], ["example.com:8080/x", "https://example.com:8080/x"],
+      ["me@example.com", "mailto:me@example.com"], ["https://example.org/p", "https://example.org/p"],
+    ];
+    for (const [input, want] of cases) {
+      const got = linkFromInput(input);
+      if (got !== want) throw new Error(`linkFromInput(${JSON.stringify(input)}) = ${JSON.stringify(got)}, want ${JSON.stringify(want)}`);
+    }
+  }},
+  { name: "HS3: a rendered deck SVG carries no class/role/aria-*/tabindex/autofocus; id refs stay", fn: async () => {
+    const past = _hooks().getHistoryCounts().past;
+    try {
+      const markup = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10" class="status-btn" role="tree" tabindex="0" autofocus="" aria-modal="true">'
+        + '<defs><linearGradient id="h1g"><stop offset="0" stop-color="#f00"/></linearGradient></defs>'
+        + '<rect class="slide-nav-btn" role="button" aria-label="x" tabindex="-1" fill="url(#h1g)" width="5" height="5"/></svg>';
+      const vp = await _mrdInject([{ type: "svg", markup }], null, (v) => (v && v.querySelector("linearGradient#h1g")) ? v : null);
+      // The deck's own <svg> (app chrome such as lucide icons carries its own class).
+      const root = vp.querySelector("linearGradient#h1g").closest("svg");
+      const els = [root, ...root.querySelectorAll("*")];
+      const leaked = [];
+      for (const el of els) {
+        for (const a of el.attributes) if (/^(class|role|tabindex|autofocus|aria-.*)$/i.test(a.name)) leaked.push(`${el.localName}@${a.name}=${a.value}`);
+      }
+      if (!els.some((el) => el.localName === "rect")) throw new Error("the deck SVG did not render in an svg block");
+      if (leaked.length) throw new Error("attributes kept on deck SVG: " + leaked.join(", "));
+      const rect = vp.querySelector("rect[fill='url(#h1g)']");
+      if (!rect) throw new Error("the url(#id) gradient ref was lost");
     } finally { await _mrdUndoTo(past); }
   }},
 ], { setup: _selectFirstModule });

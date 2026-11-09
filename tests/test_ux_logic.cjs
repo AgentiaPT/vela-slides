@@ -63,6 +63,51 @@ const blankSlideFrom = eval("(function(){ " + styleKeysLine + " return (" + fn(l
   else bad("blankSlideFrom", JSON.stringify(b));
 }
 
+// linkFromInput — the editor link box (hunt1 HE4). Loads the REAL function and
+// its regex constants + sanitizeUrl. Accepts explicit http(s)/mailto, a plain
+// email and a real-looking host; everything else is "no link" (undefined).
+{
+  const constLine = (name) => {
+    const m = imports.match(new RegExp("^const " + name + " = .+;$", "m"));
+    if (!m) throw new Error("not found: " + name);
+    return m[0];
+  };
+  // eslint-disable-next-line no-eval
+  const linkFromInput = eval("(function(){ " +
+    ["LINK_HOST_LABEL", "LINK_HOST", "LINK_BARE_EMAIL", "LINK_BARE_HOST"].map(constLine).join("\n") + "\n" +
+    fn(imports, "sanitizeUrl") + "\n" + fn(imports, "linkFromInput") + "\n return linkFromInput; })()");
+  const cases = [
+    // accepted
+    ["example.com", "https://example.com/"],
+    ["  www.example.com/a ", "https://www.example.com/a"],
+    ["//example.com/p?q=1#f", "https://example.com/p?q=1#f"],
+    ["example.com:8080/x", "https://example.com:8080/x"],
+    ["sub.example.co.uk", "https://sub.example.co.uk/"],
+    ["example.com/@user", "https://example.com/@user"],
+    ["10.0.0.1:3000", "https://10.0.0.1:3000/"],
+    ["bücher.de", "https://xn--bcher-kva.de/"],
+    ["https://example.org/p", "https://example.org/p"],
+    ["HTTP://Example.org", "http://example.org/"],
+    ["me@example.com", "mailto:me@example.com"],
+    ["first.last+tag@mail.example.org", "mailto:first.last+tag@mail.example.org"],
+    ["mailto:me@example.com", "mailto:me@example.com"],
+    // rejected: empty, free text, no-dot hosts, userinfo forms, other schemes, garbage
+    ["", undefined], ["   ", undefined], [null, undefined],
+    ["garbage text", undefined], ["example", undefined], ["localhost", undefined],
+    ["a@b", undefined], ["x@y.z/path", undefined], ["user@host", undefined],
+    ["user:pw@example.com", undefined], ["example.com x", undefined],
+    ["sms:123", undefined], ["tel:5551234", undefined], ["sms:+351", undefined],
+    ["ftp://example.com/", undefined], ["javascript:alert(1)", undefined],
+    ["data:text/html,x", undefined], ["\\\\host\\share", undefined],
+    ["..", undefined], [".example.com", undefined], ["example..com", undefined],
+    ["-bad.com", undefined], ["example.com:123456", undefined], ["#frag", undefined],
+  ];
+  const wrong = cases.filter(([input, want]) => linkFromInput(input) !== want)
+    .map(([input, want]) => `${JSON.stringify(input)} -> ${JSON.stringify(linkFromInput(input))} (want ${JSON.stringify(want)})`);
+  if (!wrong.length) ok(`linkFromInput: ${cases.length} accept/reject cases`);
+  else bad("linkFromInput accept/reject table", wrong.join("; "));
+}
+
 // reducer source assertions (the reducer isn't safely extractable in isolation)
 if (/case "TOGGLE_SLIDE_HIDDEN":/.test(reducer)) ok("reducer has TOGGLE_SLIDE_HIDDEN"); else bad("reducer TOGGLE_SLIDE_HIDDEN missing");
 if (/case "INSERT_ITEM":/.test(reducer) && /afterId/.test(reducer)) ok("reducer has INSERT_ITEM with afterId"); else bad("reducer INSERT_ITEM missing");

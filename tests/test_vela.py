@@ -4273,6 +4273,20 @@ def test_checklist_label_roundtrip():
     old_txt = txt.replace(', "Shipped"]', ']')
     got = cl(unturbo_deck(json.loads(old_txt)))
     chk(got[0] == {"text": "A", "status": "done"}, "C2: old turbo checklist items load", str(got))
+    # Plain-string items (valid in the app and validate.py) round-trip in every
+    # path, alone and mixed with dict items (hunt1 HC3: turbo crashed on them).
+    s_items = ["just text", {"text": "B", "status": "blocked", "label": "Waiting"}, "tail"]
+    s_deck = copy.deepcopy(deck)
+    cl(s_deck)[:] = copy.deepcopy(s_items)
+    for label, fn in (
+            ("compact", lambda d: expand_deck(compact_deck(d))),
+            ("turbo", lambda d: unturbo_deck(json.loads(json.dumps(turbo_deck(d))))),
+            ("compact->turbo", lambda d: unturbo_deck(json.loads(json.dumps(turbo_deck(compact_deck(d))))))):
+        try:
+            got = cl(fn(copy.deepcopy(s_deck)))
+        except Exception as e:
+            got = f"{type(e).__name__}: {e}"
+        chk(got == s_items, f"HC3: {label} round-trip keeps plain-string checklist items", str(got))
     # validate.py
     with tempfile.TemporaryDirectory() as td:
         def run(label):
