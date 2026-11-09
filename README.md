@@ -19,7 +19,7 @@ Create, edit, and present beautiful slide decks — entirely through conversatio
 
 > **No human has reviewed the source code.**
 >
-> Every line of Vela — 14,000+ lines of JSX, Python CLI tools, and build scripts — was generated entirely by AI (Claude). The codebase is validated by extensive AI code reviews, 270+ automated tests, and static analysis, but no human has ever read or audited the code.
+> Every line of Vela — 29,000+ lines of JSX, Python CLI tools, and build scripts — was generated entirely by AI (Claude). The codebase is validated by extensive AI code reviews, 270+ automated tests, and static analysis, but no human has ever read or audited the code.
 >
 > **You are responsible for your own review before using this in any production or sensitive context.**
 >
