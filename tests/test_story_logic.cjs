@@ -35,7 +35,8 @@ function makeEnv(imgBehaviour) {
         }, 0); },
       });
     },
-    document: { createElement: () => ({ getContext: () => ({ drawImage() {} }), toDataURL: () => "data:image/jpeg;base64,RE9ORQ==" }) },
+    // 2D context stub: an opaque image (no alpha), so compressImage takes its JPEG path.
+    document: { createElement: () => ({ getContext: () => ({ drawImage() {}, fillRect() {}, getImageData: (x, y, w, h) => ({ data: new Uint8ClampedArray(w * h * 4).fill(255) }) }), toDataURL: () => "data:image/jpeg;base64,RE9ORQ==" }) },
   };
 }
 function load(env) {
