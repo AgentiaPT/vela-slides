@@ -510,13 +510,23 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
   }, [layoutGeneration, requestedJustify]);
 
   // CR23: learn the aspect ratio of each image once (cached by src), so a run of
-  // images can pick the column count that shows them largest.
+  // images can pick the column count that shows them largest. The cache is
+  // bounded, so it can evict the aspect of an image that is still on screen.
+  // Check on every render (no deps) and measure a missing src again, so an
+  // eviction never silently changes the grid of a slide on screen (HI3, the
+  // same class as GridCellImage's natural-size re-measure). aspectLoadsRef
+  // keeps one decode per src in flight.
+  const aspectLoadsRef = useRef(new Set());
+  const aspectLiveRef = useRef(true);
+  useEffect(() => { aspectLiveRef.current = true; return () => { aspectLiveRef.current = false; }; }, []);
   useEffect(() => {
-    let live = true;
-    const pending = new Set(blocks.filter((b) => b && b.type === "image" && typeof b.src === "string" && b.src && !IMAGE_ASPECT_CACHE.has(b.src)).map((b) => b.src));
-    pending.forEach((src) => imageAspect(src).then((a) => { rememberImageAspect(src, a); if (live) setAspectTick((t) => t + 1); }));
-    return () => { live = false; };
-  }, [layoutGeneration]);
+    const loads = aspectLoadsRef.current;
+    const pending = new Set(blocks.filter((b) => b && b.type === "image" && typeof b.src === "string" && b.src && !IMAGE_ASPECT_CACHE.has(b.src) && !loads.has(b.src)).map((b) => b.src));
+    pending.forEach((src) => {
+      loads.add(src);
+      imageAspect(src).then((a) => { loads.delete(src); rememberImageAspect(src, a); if (aspectLiveRef.current) setAspectTick((t) => t + 1); });
+    });
+  });
 
   if (!blocks.length && !(slide.layout === "cols" && (Array.isArray(slide.L) || Array.isArray(slide.R)))) return null;
 
@@ -654,8 +664,11 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
     });
     // CR25: a full-width run yields height to the other blocks (flex basis 0), but
     // it keeps a small floor so the fit measurement still reserves room for it
-    // and it never collapses to nothing.
-    const minGridH = region === "full" ? rows * 72 : 0;
+    // and it never collapses to nothing. The floor is one row, not one per plan
+    // row: the plan is made for the box it gets, so a per-row floor fed back into
+    // the box and made the text scale down instead of the images (HI2).
+    // pasteLayoutArea uses the same floor.
+    const minGridH = region === "full" ? 72 : 0;
     // Grid images are absolute-fill cells, so they have no intrinsic grid
     // height. Use one balanced 140px row per grid row only when the author
     // requests alignment. The default path still fills all available height.

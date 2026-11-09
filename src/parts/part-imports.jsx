@@ -1994,6 +1994,7 @@ function validateAndSanitizeDeck(raw, opts) {
 }
 
 // ━━━ Image Compression ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+const PNG_KEEP_MAX = 400000; // max data-URL length of a kept (transparent) PNG
 // `opts.strict` (drop + paste): resolve null — never the original — when the
 // image cannot be decoded or exceeds IMAGE_MAX_PIXELS, so an undecodable or
 // decompression-bomb file is rejected instead of stored raw. Without it the
@@ -2008,7 +2009,24 @@ function compressImage(dataUrl, maxWidth = 800, quality = 0.7, opts) {
       if (w > maxWidth) { h = Math.round(h * maxWidth / w); w = maxWidth; }
       const c = document.createElement("canvas");
       c.width = w; c.height = h;
-      c.getContext("2d").drawImage(img, 0, 0, w, h);
+      const ctx = c.getContext("2d");
+      ctx.drawImage(img, 0, 0, w, h);
+      // HI7: JPEG has no alpha. An image with transparent pixels (PNG, GIF,
+      // WebP, SVG...) keeps them as PNG, but only while the PNG stays small
+      // (PNG_KEEP_MAX chars), so a paste cannot grow the deck without bound.
+      // Otherwise (or for an image too large to scan) it is JPEG on white, not on
+      // the canvas's transparent black.
+      let alpha = false;
+      if (!/^data:image\/jpe?g[;,]/i.test(dataUrl) && w * h <= 4e6) {
+        try { const px = ctx.getImageData(0, 0, w, h).data; for (let k = 3; k < px.length; k += 4) if (px[k] < 255) { alpha = true; break; } } catch (_) { alpha = false; }
+      }
+      if (alpha) {
+        const png = c.toDataURL("image/png");
+        if (png.length <= PNG_KEEP_MAX) { resolve(png); return; }
+      }
+      ctx.globalCompositeOperation = "destination-over";
+      ctx.fillStyle = "#ffffff";
+      ctx.fillRect(0, 0, w, h);
       resolve(c.toDataURL("image/jpeg", quality));
     };
     img.onerror = () => resolve(strict ? null : dataUrl);
@@ -2121,8 +2139,8 @@ function pasteLayoutArea(slide, aspects, layout, measure, naturalW) {
   const pinned = slide.imageCols ? Math.min(6, Math.max(1, slide.imageCols | 0)) : 0;
   if (layout === "stack") {
     const head = body.length ? textH(W) + gap : 0;
-    const floorRows = imageGridPlan(aspects, 0, 0, gap, gridColsFor(n, "full"), pinned).rows.length;
-    const gridH = Math.max(H - head, floorRows * 72);
+    // The renderer's one-row floor (renderImageGrid minGridH).
+    const gridH = Math.max(H - head, 72);
     const s = Math.min(1, H / (head + gridH));
     return imageGridPlan(aspects, W, gridH, gap, gridColsFor(n, "full"), pinned, capGrid).area * s * s;
   }
@@ -2217,8 +2235,30 @@ function imageGridPlan(aspects, boxW, boxH, gap, fallback, pinned, maxW) {
   if (n <= 1) return pack(uniform(1));
   const base = pack(uniform(Math.min(n, Math.max(1, fallback | 0))));
   if (!valid) return base;
+  // Drawn width of each image in its cell (objectFit:contain, no upscale cap).
+  const fitW = (rows) => {
+    const avail = boxH - g * (rows.length - 1), sumHw = rows.reduce((t, r) => t + r.hw, 0), out = [];
+    for (const r of rows) for (const c of r.cells) out[c.i] = Math.max(0, Math.min((boxW - g * r.gc) * c.f, avail * r.hw / sumHw * aspects[c.i]));
+    return out;
+  };
+  const baseW = fitW(base.rows);
+  // Fairness for justified rows (a higher total area alone is not enough):
+  // images of the same aspect are drawn at the same size, and no image is drawn
+  // at less than half the area the count-driven uniform grid gives it. Without
+  // this, a wide banner shares a row with a photo and shrinks that photo to a
+  // sliver while an identical photo in the next row is drawn large.
+  const fair = (rows) => {
+    const w = fitW(rows);
+    for (let i = 0; i < n; i++) {
+      if (w[i] * w[i] < 0.5 * baseW[i] * baseW[i]) return false;
+      for (let j = i + 1; j < n; j++) {
+        if (Math.abs(aspects[i] - aspects[j]) <= 0.02 * Math.min(aspects[i], aspects[j]) && Math.abs(w[i] - w[j]) > 0.02 * Math.max(w[i], w[j])) return false;
+      }
+    }
+    return true;
+  };
   let best = base;
-  const consider = (p) => { const q = pack(p); if (q.area > base.area * 1.05 && q.area > best.area) best = q; };
+  const consider = (p, justified) => { const q = pack(p); if (q.area > base.area * 1.05 && q.area > best.area && (!justified || fair(p.rows))) best = q; };
   for (let c = 1; c <= Math.min(n, 6); c++) consider(uniform(c));
   // Justified rows only help a mixed set; equal aspects keep uniform cells.
   if (n <= 8 && Math.max(...aspects) > Math.min(...aspects) * 1.15) {
@@ -2232,7 +2272,7 @@ function imageGridPlan(aspects, boxW, boxH, gap, fallback, pinned, maxW) {
           run = [i];
         } else run.push(i);
       }
-      consider({ rows, cols: Math.max(...rows.map((r) => r.cells.length)) });
+      consider({ rows, cols: Math.max(...rows.map((r) => r.cells.length)) }, true);
     }
   }
   return best;

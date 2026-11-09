@@ -1994,6 +1994,7 @@ function validateAndSanitizeDeck(raw, opts) {
 }
 
 // ━━━ Image Compression ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+const PNG_KEEP_MAX = 400000; // max data-URL length of a kept (transparent) PNG
 // `opts.strict` (drop + paste): resolve null — never the original — when the
 // image cannot be decoded or exceeds IMAGE_MAX_PIXELS, so an undecodable or
 // decompression-bomb file is rejected instead of stored raw. Without it the
@@ -2008,7 +2009,24 @@ function compressImage(dataUrl, maxWidth = 800, quality = 0.7, opts) {
       if (w > maxWidth) { h = Math.round(h * maxWidth / w); w = maxWidth; }
       const c = document.createElement("canvas");
       c.width = w; c.height = h;
-      c.getContext("2d").drawImage(img, 0, 0, w, h);
+      const ctx = c.getContext("2d");
+      ctx.drawImage(img, 0, 0, w, h);
+      // HI7: JPEG has no alpha. An image with transparent pixels (PNG, GIF,
+      // WebP, SVG...) keeps them as PNG, but only while the PNG stays small
+      // (PNG_KEEP_MAX chars), so a paste cannot grow the deck without bound.
+      // Otherwise (or for an image too large to scan) it is JPEG on white, not on
+      // the canvas's transparent black.
+      let alpha = false;
+      if (!/^data:image\/jpe?g[;,]/i.test(dataUrl) && w * h <= 4e6) {
+        try { const px = ctx.getImageData(0, 0, w, h).data; for (let k = 3; k < px.length; k += 4) if (px[k] < 255) { alpha = true; break; } } catch (_) { alpha = false; }
+      }
+      if (alpha) {
+        const png = c.toDataURL("image/png");
+        if (png.length <= PNG_KEEP_MAX) { resolve(png); return; }
+      }
+      ctx.globalCompositeOperation = "destination-over";
+      ctx.fillStyle = "#ffffff";
+      ctx.fillRect(0, 0, w, h);
       resolve(c.toDataURL("image/jpeg", quality));
     };
     img.onerror = () => resolve(strict ? null : dataUrl);
@@ -2121,8 +2139,8 @@ function pasteLayoutArea(slide, aspects, layout, measure, naturalW) {
   const pinned = slide.imageCols ? Math.min(6, Math.max(1, slide.imageCols | 0)) : 0;
   if (layout === "stack") {
     const head = body.length ? textH(W) + gap : 0;
-    const floorRows = imageGridPlan(aspects, 0, 0, gap, gridColsFor(n, "full"), pinned).rows.length;
-    const gridH = Math.max(H - head, floorRows * 72);
+    // The renderer's one-row floor (renderImageGrid minGridH).
+    const gridH = Math.max(H - head, 72);
     const s = Math.min(1, H / (head + gridH));
     return imageGridPlan(aspects, W, gridH, gap, gridColsFor(n, "full"), pinned, capGrid).area * s * s;
   }
@@ -2217,8 +2235,30 @@ function imageGridPlan(aspects, boxW, boxH, gap, fallback, pinned, maxW) {
   if (n <= 1) return pack(uniform(1));
   const base = pack(uniform(Math.min(n, Math.max(1, fallback | 0))));
   if (!valid) return base;
+  // Drawn width of each image in its cell (objectFit:contain, no upscale cap).
+  const fitW = (rows) => {
+    const avail = boxH - g * (rows.length - 1), sumHw = rows.reduce((t, r) => t + r.hw, 0), out = [];
+    for (const r of rows) for (const c of r.cells) out[c.i] = Math.max(0, Math.min((boxW - g * r.gc) * c.f, avail * r.hw / sumHw * aspects[c.i]));
+    return out;
+  };
+  const baseW = fitW(base.rows);
+  // Fairness for justified rows (a higher total area alone is not enough):
+  // images of the same aspect are drawn at the same size, and no image is drawn
+  // at less than half the area the count-driven uniform grid gives it. Without
+  // this, a wide banner shares a row with a photo and shrinks that photo to a
+  // sliver while an identical photo in the next row is drawn large.
+  const fair = (rows) => {
+    const w = fitW(rows);
+    for (let i = 0; i < n; i++) {
+      if (w[i] * w[i] < 0.5 * baseW[i] * baseW[i]) return false;
+      for (let j = i + 1; j < n; j++) {
+        if (Math.abs(aspects[i] - aspects[j]) <= 0.02 * Math.min(aspects[i], aspects[j]) && Math.abs(w[i] - w[j]) > 0.02 * Math.max(w[i], w[j])) return false;
+      }
+    }
+    return true;
+  };
   let best = base;
-  const consider = (p) => { const q = pack(p); if (q.area > base.area * 1.05 && q.area > best.area) best = q; };
+  const consider = (p, justified) => { const q = pack(p); if (q.area > base.area * 1.05 && q.area > best.area && (!justified || fair(p.rows))) best = q; };
   for (let c = 1; c <= Math.min(n, 6); c++) consider(uniform(c));
   // Justified rows only help a mixed set; equal aspects keep uniform cells.
   if (n <= 8 && Math.max(...aspects) > Math.min(...aspects) * 1.15) {
@@ -2232,7 +2272,7 @@ function imageGridPlan(aspects, boxW, boxH, gap, fallback, pinned, maxW) {
           run = [i];
         } else run.push(i);
       }
-      consider({ rows, cols: Math.max(...rows.map((r) => r.cells.length)) });
+      consider({ rows, cols: Math.max(...rows.map((r) => r.cells.length)) }, true);
     }
   }
   return best;
@@ -5398,13 +5438,23 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
   }, [layoutGeneration, requestedJustify]);
 
   // CR23: learn the aspect ratio of each image once (cached by src), so a run of
-  // images can pick the column count that shows them largest.
+  // images can pick the column count that shows them largest. The cache is
+  // bounded, so it can evict the aspect of an image that is still on screen.
+  // Check on every render (no deps) and measure a missing src again, so an
+  // eviction never silently changes the grid of a slide on screen (HI3, the
+  // same class as GridCellImage's natural-size re-measure). aspectLoadsRef
+  // keeps one decode per src in flight.
+  const aspectLoadsRef = useRef(new Set());
+  const aspectLiveRef = useRef(true);
+  useEffect(() => { aspectLiveRef.current = true; return () => { aspectLiveRef.current = false; }; }, []);
   useEffect(() => {
-    let live = true;
-    const pending = new Set(blocks.filter((b) => b && b.type === "image" && typeof b.src === "string" && b.src && !IMAGE_ASPECT_CACHE.has(b.src)).map((b) => b.src));
-    pending.forEach((src) => imageAspect(src).then((a) => { rememberImageAspect(src, a); if (live) setAspectTick((t) => t + 1); }));
-    return () => { live = false; };
-  }, [layoutGeneration]);
+    const loads = aspectLoadsRef.current;
+    const pending = new Set(blocks.filter((b) => b && b.type === "image" && typeof b.src === "string" && b.src && !IMAGE_ASPECT_CACHE.has(b.src) && !loads.has(b.src)).map((b) => b.src));
+    pending.forEach((src) => {
+      loads.add(src);
+      imageAspect(src).then((a) => { loads.delete(src); rememberImageAspect(src, a); if (aspectLiveRef.current) setAspectTick((t) => t + 1); });
+    });
+  });
 
   if (!blocks.length && !(slide.layout === "cols" && (Array.isArray(slide.L) || Array.isArray(slide.R)))) return null;
 
@@ -5542,8 +5592,11 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
     });
     // CR25: a full-width run yields height to the other blocks (flex basis 0), but
     // it keeps a small floor so the fit measurement still reserves room for it
-    // and it never collapses to nothing.
-    const minGridH = region === "full" ? rows * 72 : 0;
+    // and it never collapses to nothing. The floor is one row, not one per plan
+    // row: the plan is made for the box it gets, so a per-row floor fed back into
+    // the box and made the text scale down instead of the images (HI2).
+    // pasteLayoutArea uses the same floor.
+    const minGridH = region === "full" ? 72 : 0;
     // Grid images are absolute-fill cells, so they have no intrinsic grid
     // height. Use one balanced 140px row per grid row only when the author
     // requests alignment. The default path still fills all available height.
@@ -8913,6 +8966,10 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
   pasteLiveRef.current = { moduleId: concept.id, index: slideIndex };
   const pasteQueueRef = useRef(Promise.resolve());
   const emptyPasteKeyRef = useRef(new Map());
+  // A queued paste reads the live lanes through lanesRef, which stops updating
+  // when this panel unmounts: drop the paste then, never write from a stale list.
+  const pasteMountedRef = useRef(true);
+  useEffect(() => { pasteMountedRef.current = true; return () => { pasteMountedRef.current = false; }; }, []);
   const aiOk = useAIAvailable();
 
   // Virtual title card for presentation mode
@@ -9372,6 +9429,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       });
       // Don't return here — if it's not JSON, let image paste proceed
     }
+    // HI6: one paste event can carry several images. Queue every one, in order.
     for (const item of items) {
       if (item.type.startsWith("image/")) {
         e.preventDefault(); const blob = item.getAsFile(); const reader = new FileReader();
@@ -9382,6 +9440,9 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
         // slide an earlier queued paste made from it (pasteResolveTarget). It then
         // builds the change from that CURRENT slide. If the target is gone, or the
         // user changed it, the paste is dropped. Never write back a stale copy.
+        // HI8: the target is found in its own module's live slide list (lanesRef),
+        // so a paste still lands on its target when the user switches to another
+        // module before it applies, as it does for a slide switch.
         const moduleId = concept.id, epoch = deckEpochRef.current, empty = !slides.length;
         let target = empty ? null : slides[slideIndex];
         if (empty) { const keys = emptyPasteKeyRef.current; target = keys.get(moduleId) || {}; keys.set(moduleId, target); }
@@ -9389,11 +9450,13 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
         const bodyProbe = empty ? null : pasteBodyProbe(containerRef.current, target);
         const data = new Promise((res) => { reader.onload = () => res(compressSlideImage(reader.result)); reader.onerror = () => res(null); });
         reader.readAsDataURL(blob);
-        const live = () => deckEpochRef.current === epoch && pasteLiveRef.current.moduleId === moduleId;
+        const modSlides = () => { const it = findItem(lanesRef.current || [], moduleId); return it && Array.isArray(it.slides) ? it.slides : null; };
+        const live = () => deckEpochRef.current === epoch && pasteMountedRef.current && !!modSlides();
+        const onScreen = () => pasteLiveRef.current.moduleId === moduleId;
         // Wait until a dispatch below has rendered, then link the new slide object.
         const settle = async (from, before, src) => {
-          for (let k = 0; k < 60 && slidesRef.current === before; k++) await new Promise((r) => setTimeout(r, 16));
-          if (live()) pasteRecordSuccessor(from, before, slidesRef.current, src);
+          for (let k = 0; k < 60 && modSlides() === before; k++) await new Promise((r) => setTimeout(r, 16));
+          if (live()) pasteRecordSuccessor(from, before, modSlides(), src);
         };
         const apply = async () => {
           const raw = await data;
@@ -9403,42 +9466,47 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
           // (undecodable type, canvas too large, read error) must not add an empty
           // image block, and a src the reducer changes would break the successor
           // link for the rest of the burst.
-          const compressed = raw ? sanitizeImageDataUri(sanitizeUrl(raw, ["data:"])) : "";
+          let compressed = raw ? sanitizeImageDataUri(sanitizeUrl(raw, ["data:"])) : "";
+          // HI4: an allowed MIME type with bytes that do not decode passes the
+          // data-URI check (compressImage returns its input on a decode error).
+          // Decode the result here: an image with no size is not added.
+          if (compressed) { const z = await imageNaturalSize(compressed); if (!(z.w > 0 && z.h > 0)) compressed = ""; }
           if (!compressed) { showNavToast("This image could not be pasted", null, true); return; }
+          if (!live()) return;
           // Empty module → brand-new full-bleed solo-image slide (additive). Later
           // pastes of the same burst go onto that slide.
-          if (empty && !pasteResolveTarget(target, slidesRef.current)) {
-            const before = slidesRef.current;
+          if (empty && !pasteResolveTarget(target, modSlides())) {
+            const before = modSlides();
             dispatch({ type: "ADD_SLIDE", id: moduleId, slide: { blocks: [{ type: "image", src: compressed }] } });
             await settle(target, before, compressed); return;
           }
           let cur = null, sizes = null;
           for (let tries = 0; tries < 4 && !cur; tries++) {
-            const c = live() ? pasteResolveTarget(target, slidesRef.current) : null;
+            const c = live() ? pasteResolveTarget(target, modSlides()) : null;
             if (!c) return;
             // Natural sizes give the aspects and the upscale caps for the layout choice.
             sizes = await Promise.all([...(c.blocks || []).filter((b) => b.type === "image").map((b) => b.src), compressed].map((src) => imageNaturalSize(src)));
             // Resolve again, in the same task as the dispatch below; start over if it moved on.
-            if (live() && pasteResolveTarget(target, slidesRef.current) === c) cur = c;
+            if (live() && pasteResolveTarget(target, modSlides()) === c) cur = c;
           }
           if (!cur) return;
           const aspects = sizes.map((z) => (z.w > 0 && z.h > 0 ? z.w / z.h : 1)), aspect = aspects[aspects.length - 1];
           rememberImageAspect(compressed, aspect);
-          const before = slidesRef.current, at = before.indexOf(cur);
+          const before = modSlides(), at = before.indexOf(cur);
           const curImgBlocks = (cur.blocks || []).filter((b) => b.type === "image");
           const curImgs = curImgBlocks.length;
           // Overflow cap: at most 5 images per slide. A 6th image spills onto a new
           // image-only slide inserted after this one rather than over-packing the grid.
           if (curImgs >= 5) {
             dispatch({ type: "INSERT_SLIDES", id: moduleId, index: at + 1, slides: [{ blocks: [{ type: "image", src: compressed }] }] });
-            dispatch({ type: "SET_SLIDE_INDEX", index: at + 1 });
+            if (onScreen()) dispatch({ type: "SET_SLIDE_INDEX", index: at + 1 });
             await settle(cur, before, compressed); return;
           }
           const patch = { blocks: [...(cur.blocks || []), { type: "image", src: compressed }] };
           const n = curImgs + 1; // image count after this paste
           // The body height is measured on screen. Measure again while the slide is
           // on screen (an earlier paste of the burst can have changed its layout).
-          const probe = (pasteLiveRef.current.index === at && pasteBodyProbe(containerRef.current, cur)) || bodyProbe;
+          const probe = (onScreen() && pasteLiveRef.current.index === at && pasteBodyProbe(containerRef.current, cur)) || bodyProbe;
           // Layout-aware paste: place the image beside existing body content rather
           // than always stacking it below. pasteImageLayout() respects an explicit
           // author layout and otherwise keeps the layout (stack or image-right) that
@@ -9468,7 +9536,6 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
         };
         // Log a fault (never swallow it silently); the catch keeps the queue alive.
         pasteQueueRef.current = pasteQueueRef.current.then(apply).catch((err) => { console.warn("Vela: image paste failed", err); });
-        break;
       }
     }
   }, [concept.id, slideIndex, slides, dispatch, showNavToast]);
@@ -11847,6 +11914,17 @@ const VELA_TESTS = [
     return p.rows.length === 1 && p.rows[0].cells[1].f > 0.7 && p.area > eq.area * 1.6;
   } },
   { name: "imageGridPlan CR23: equal aspects keep uniform cells", fn: () => imageGridPlan([1.78, 1.78, 1.78, 1.78, 1.78], 864, 400, 12, 3).rows.every((r) => r.cells.every((c) => Math.abs(c.f - 1 / 3) < 1e-9 || Math.abs(c.f - 1 / 2) < 1e-9 || c.f === 1)) },
+  { name: "imageGridPlan HI1: same-aspect images get the same size; none below half its uniform-grid area", fn: () => {
+    const drawn = (a, W, H, fb) => {
+      const p = imageGridPlan(a, W, H, 12, fb), out = [], avail = H - 12 * (p.rows.length - 1), sum = p.rows.reduce((t, r) => t + r.hw, 0);
+      for (const r of p.rows) for (const c of r.cells) out[c.i] = Math.min((W - 12 * r.gc) * c.f, avail * r.hw / sum * a[c.i]);
+      return out;
+    };
+    const same = (w) => Math.min(...w) >= 0.98 * Math.max(...w);
+    const f = drawn([6, 4 / 3, 4 / 3, 4 / 3, 4 / 3], 864, 468, 3), c = drawn([8, 4 / 3, 4 / 3], 416, 468, 2), x = drawn([20, 4 / 3, 0.75], 416, 468, 2);
+    const xBase = imageGridPlan([20, 4 / 3, 0.75], 416, 468, 12, 2, 2);
+    return same(f.slice(1)) && same(c.slice(1)) && x[1] >= 202 * Math.SQRT1_2 && x[2] >= 171 * Math.SQRT1_2 && xBase.cols === 2;
+  }},
   { name: "imageGridPlan CR23: pinned imageCols forces a uniform grid", fn: () => { const p = imageGridPlan([4, 0.5], 864, 468, 12, 2, 3); return p.cols === 3 && p.rows[0].cells.every((c) => c.f === 1 / 3); } },
   { name: "imageGridPlan CR23: no box → count default, area 0", fn: () => { const p = imageGridPlan([1, 2, 3], 0, 0, 12, 3); return p.cols === 3 && p.area === 0; } },
   { name: "pasteLayoutArea: honors the author's imageCols like the renderer", fn: () => {
@@ -18524,6 +18602,119 @@ uiSuite("hunt1-fix-editor", [
       document.activeElement?.blur?.();
       await _mrdUndoTo(past);
     }
+  }},
+], { setup: _selectFirstModule });
+
+// ── Bug-hunt round 1 fixes: image paste and placement ───────────────────
+const _h1Heavy = [{ type: "heading", text: "H1 heavy" }, { type: "bullets", items: ["one long bullet point with lots of words in it to wrap", "two long bullet point with lots of words in it to wrap", "three long bullet point with lots of words in it", "four long bullet point with lots of words in it", "five long bullet point with lots of words", "six long bullet point with lots of words", "seven long bullet point"] }, { type: "text", text: "Footer text that must stay on the slide." }];
+const _h1CellWidths = (vp) => Array.from(vp.querySelectorAll("[data-testid='image-grid-cell']")).map((c) => c.getBoundingClientRect().width);
+const _h1Imgs = (vp) => Array.from(vp.querySelectorAll("img")).filter((im) => im.complete && im.naturalWidth > 0);
+const _h1Paste = (files) => {
+  const dt = new DataTransfer(); files.forEach((f) => dt.items.add(f));
+  _mrdViewport().dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true }));
+};
+const _h1Heading = async (mark) => _mrdInject([{ type: "heading", text: mark }], { imageCols: undefined }, (vp) => vp?.textContent.includes(mark) && !vp.querySelector("img") ? vp : null);
+uiSuite("hunt1-fix-image", [
+  { name: "HI1: same-aspect photos next to a wide banner are drawn at the same size", fn: async () => {
+    const past = _hooks().getHistoryCounts().past;
+    try {
+      const blocks = [{ type: "image", src: _rfiSrc(1200, 200, 0) }, ...[1, 2, 3, 4].map((k) => ({ type: "image", src: _rfiSrc(400, 300, k) }))];
+      await _mrdInject(blocks, { imageCols: undefined }, (v) => _tlLoaded(v) === 5 ? v : null);
+      await _wait(500); await _mrdFrame();
+      const photos = _tlMeasure().imgs.slice(1).map((i) => i.w);
+      if (photos.length !== 4) throw new Error(`${photos.length} photos rendered`);
+      if (Math.min(...photos) < 0.98 * Math.max(...photos)) throw new Error(`photo widths differ: ${photos.map((w) => w.toFixed(0)).join(", ")}`);
+    } finally { await _mrdUndoTo(past); }
+  }},
+  { name: "HI2: wide banners under heavy text shrink; the text keeps its size", fn: async () => {
+    const past = _hooks().getHistoryCounts().past;
+    try {
+      let vp = await _mrdInject(_h1Heavy, { imageCols: undefined }, (v) => v?.textContent.includes("H1 heavy") && !v.querySelector("img") ? v : null);
+      await _wait(300); await _mrdFrame();
+      const h0 = vp.querySelector("[data-block-type='heading']").getBoundingClientRect().height;
+      const banners = [0, 1, 2, 3].map((k) => ({ type: "image", src: _rfiSrc(2000, 100, k) }));
+      vp = await _mrdInject([..._h1Heavy, ...banners], { imageCols: undefined }, (v) => _tlLoaded(v) === 4 ? v : null);
+      await _wait(600); await _mrdFrame();
+      const h1 = vp.querySelector("[data-block-type='heading']").getBoundingClientRect().height, m = _tlMeasure();
+      if (m.outside) throw new Error(`${m.outside} text block(s) off the slide`);
+      if (h1 < 0.97 * h0) throw new Error(`the text was scaled down: heading ${h0.toFixed(1)} -> ${h1.toFixed(1)} px`);
+    } finally { await _mrdUndoTo(past); }
+  }},
+  { name: "HI3: an evicted image aspect is measured again; the on-screen grid does not change", fn: async () => {
+    const past = _hooks().getHistoryCounts().past;
+    try {
+      const blocks = [{ type: "image", src: _rfiSrc(150, 450, 0) }, { type: "image", src: _rfiSrc(640, 360, 1) }];
+      let vp = await _mrdInject(blocks, { imageCols: undefined }, (v) => _tlLoaded(v) === 2 ? v : null);
+      await _wait(500); await _mrdFrame();
+      const before = _h1CellWidths(vp);
+      if (!(before.length === 2 && before[1] > 2 * before[0])) throw new Error(`precondition: expected aspect-sized cells, got ${before.map((w) => w.toFixed(0)).join(", ")}`);
+      blocks.forEach((b) => IMAGE_ASPECT_CACHE.delete(b.src));
+      // Re-render without a layout change (speakerNotes is not a layout input).
+      vp = await _mrdInject(blocks, { imageCols: undefined, speakerNotes: "h1-hi3" }, (v) => v);
+      await _wait(500); await _mrdFrame();
+      const after = _h1CellWidths(vp);
+      if (!blocks.every((b) => IMAGE_ASPECT_CACHE.has(b.src))) throw new Error("the evicted aspects were not measured again");
+      if (after.some((w, k) => Math.abs(w - before[k]) > 1)) throw new Error(`grid changed after eviction: ${before.map((w) => w.toFixed(0))} -> ${after.map((w) => w.toFixed(0))}`);
+    } finally { await _mrdUndoTo(past); }
+  }},
+  { name: "HI4: a corrupt image with an allowed type shows a notice and adds no block", fn: async () => {
+    const past = _hooks().getHistoryCounts().past;
+    try {
+      await _h1Heading("H1-HI4");
+      _h1Paste([new File(["this is not a png at all, garbage bytes"], "bad.png", { type: "image/png" })]);
+      _h1Paste([await _rfiPng(140, 90, 1)]);
+      const notice = await _waitFor(() => document.querySelector("[data-testid='paste-notice']"), 4000).catch(() => null);
+      await _waitFor(() => _h1Imgs(_mrdViewport()).length >= 1, 5000).catch(() => {});
+      await _wait(400);
+      const n = _mrdViewport().querySelectorAll("[data-block-type='image']").length;
+      if (n !== 1) throw new Error(`${n} image block(s) on the slide (expected 1)`);
+      if (!notice) throw new Error("no notice for the image that could not be pasted");
+    } finally { await _mrdUndoTo(past); }
+  }},
+  { name: "HI6: one paste event with two images pastes both, in order", fn: async () => {
+    const past = _hooks().getHistoryCounts().past;
+    try {
+      await _h1Heading("H1-HI6");
+      _h1Paste([await _rfiPng(140, 90, 0), await _rfiPng(220, 90, 1)]);
+      let got = [];
+      await _waitFor(() => { got = _h1Imgs(_mrdViewport()).map((im) => im.naturalWidth); return got.length >= 2; }, 5000).catch(() => {});
+      if (got.join(",") !== "140,220") throw new Error(`images on the slide: ${got.join(",") || "none"} (expected 140,220)`);
+    } finally { await _mrdUndoTo(past); }
+  }},
+  { name: "HI7: a transparent PNG keeps its transparency", fn: async () => {
+    const past = _hooks().getHistoryCounts().past;
+    try {
+      await _h1Heading("H1-HI7");
+      const cv = document.createElement("canvas"); cv.width = 200; cv.height = 100;
+      const g = cv.getContext("2d"); g.fillStyle = "#3b82f6"; g.fillRect(40, 20, 120, 60);
+      const blob = await new Promise((r) => cv.toBlob(r, "image/png"));
+      _h1Paste([new File([blob], "alpha.png", { type: "image/png" })]);
+      const img = await _waitFor(() => _h1Imgs(_mrdViewport())[0], 5000);
+      if (!/^data:image\/png;base64,/.test(img.getAttribute("src"))) throw new Error(`stored as ${img.getAttribute("src").slice(0, 22)}`);
+      const t = document.createElement("canvas"); t.width = img.naturalWidth; t.height = img.naturalHeight;
+      const tg = t.getContext("2d"); tg.drawImage(img, 0, 0);
+      const corner = tg.getImageData(0, 0, 1, 1).data[3], mid = tg.getImageData(100, 50, 1, 1).data[3];
+      if (corner !== 0 || mid !== 255) throw new Error(`alpha corner ${corner} / center ${mid} (expected 0 / 255)`);
+    } finally { await _mrdUndoTo(past); }
+  }},
+  { name: "HI8: pastes queued before a module switch land on their original slide, in order", fn: async () => {
+    const past = _hooks().getHistoryCounts().past;
+    try {
+      await _h1Heading("H1-HI8");
+      const rows = _$$(".concept-row");
+      if (rows.length < 2) throw new Error("the test deck needs two modules");
+      const from = _hooks().getSelection();
+      const files = [await _rfiPng(120, 90, 0), await _rfiPng(160, 90, 1), await _rfiPng(200, 90, 2)];
+      files.forEach((f) => _h1Paste([f]));
+      _click(rows[1]);
+      await _waitFor(() => { const s = _hooks().getSelection(); return s && s.itemId !== from.itemId; }, 2000);
+      await _wait(2500);
+      _click(rows[0]);
+      await _waitFor(() => { const s = _hooks().getSelection(); return s && s.itemId === from.itemId; }, 2000);
+      const vp = await _waitFor(() => { const v = _mrdViewport(); return v?.textContent.includes("H1-HI8") && _h1Imgs(v).length >= 3 ? v : null; }, 4000).catch(() => null);
+      const got = vp ? _h1Imgs(vp).map((im) => im.naturalWidth).join(",") : "none";
+      if (got !== "120,160,200") throw new Error(`images on the original slide: ${got} (expected 120,160,200)`);
+    } finally { await _mrdUndoTo(past); }
   }},
 ], { setup: _selectFirstModule });
 
