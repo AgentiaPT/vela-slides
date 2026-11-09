@@ -172,6 +172,8 @@ for (const n of [2, 10]) {
     assert("deck number: later module counts earlier visible slides", deckSlideNumber(lanes, "m2", lanes[0].items[1].slides, 3) === 6);
     assert("deck number: other lane, spill index past the list end", deckSlideNumber(lanes, "m3", lanes[1].items[0].slides, 2) === 9);
     assert("deck number: unknown module falls back to index+1", deckSlideNumber(lanes, "zz", [], 4) === 5);
+    const holes = [null, { items: [null, { id: "m1", slides: [null, {}, { hidden: true }, {}] }, { id: "m2", slides: [{}] }] }];
+    assert("deck number: null lanes, modules and slides are skipped", deckSlideNumber(holes, "m2", holes[1].items[2].slides, 0) === 3);
   }
   console.log(`\n  ${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);

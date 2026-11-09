@@ -2364,11 +2364,12 @@ function imageDropFiles(fileList) {
 function deckSlideNumber(lanes, moduleId, slides, index) {
   let n = 0;
   for (const l of (lanes || [])) {
-    for (const item of (l.items || [])) {
+    for (const item of (l?.items || [])) {
+      if (!item) continue;
       if (item.id === moduleId) {
-        return n + (slides || []).slice(0, Math.max(0, index)).filter((s) => !s.hidden).length + 1;
+        return n + (slides || []).slice(0, Math.max(0, index)).filter((s) => s && !s.hidden).length + 1;
       }
-      n += (item.slides || []).filter((s) => !s.hidden).length;
+      n += (item.slides || []).filter((s) => s && !s.hidden).length;
     }
   }
   return index + 1;

@@ -77,9 +77,11 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
   // for the same slide: a new object takes the id of the object it replaced at
   // that index (that object left the list). Undo/redo bring back an object that
   // already has the id. Objects that only moved keep their own id.
-  const storyIdsRef = useRef({ ids: new WeakMap(), next: 1, prev: [] });
+  const storyIdsRef = useRef({ ids: new WeakMap(), next: 1, prev: [], concept: null });
   const storySlideId = useMemo(() => {
     const r = storyIdsRef.current, cur = presSlides || [];
+    // Inherit ids only within one module: a module switch is not an edit.
+    if (r.concept !== concept.id) { r.prev = []; r.concept = concept.id; }
     const inList = new Set(cur);
     cur.forEach((s, i) => {
       if (!s || typeof s !== "object" || r.ids.has(s)) return;
@@ -88,7 +90,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
     });
     r.prev = cur;
     return (storySlide && typeof storySlide === "object" && r.ids.get(storySlide)) || 0;
-  }, [presSlides, storySlide]);
+  }, [presSlides, storySlide, concept.id]);
   const storyKey = `${state._deckEpoch}|${concept.id}|${slideIndex}|${storySlideId}|${fullscreen ? 1 : 0}`;
   // -1 only while a back step (arrow, wheel, swipe) is about to land: a story
   // slide reached that way opens on its last image. Every other entry is forward.
