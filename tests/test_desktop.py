@@ -374,7 +374,13 @@ class FullscreenBridgeEscapeInvariants(unittest.TestCase):
 
     def test_vela_exits_present_on_escape(self):
         panel = read("src", "parts", "part-slidepanel.jsx")
-        self.assertRegex(panel, r'e\.key === "Escape" && fullscreen && !document\.querySelector\("\[data-vela-modal\]"\)')
+        # Open modals are tracked in an app-owned registry (not a page-wide
+        # attribute query that deck-supplied markup could satisfy).
+        self.assertRegex(panel, r'e\.key === "Escape" && fullscreen && VELA_OPEN_CHROME\.modals\.size === 0')
+        self.assertNotIn('querySelector("[data-vela-modal]")', panel)
+        modals = read("src", "parts", "part-app-modals.jsx")
+        self.assertIn("VELA_OPEN_CHROME.modals.add(", modals)
+        self.assertIn("VELA_OPEN_CHROME.modals.delete(", modals)
 
 
 class FsGuardHardeningInvariants(unittest.TestCase):
