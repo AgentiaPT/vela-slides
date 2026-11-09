@@ -2,7 +2,7 @@
 
 ## Overview
 
-Vela Slides is a **single-file React application** (18,421 lines, ~1.3 MB) designed to run inside Claude.ai's artifact sandbox. The sandbox requires all code to be in one `.jsx` file with no external module imports between files — so Vela uses a **modular source / concatenated output** architecture.
+Vela Slides is a **single-file React application** (29,685 lines, ~2.1 MB) designed to run inside Claude.ai's artifact sandbox. The sandbox requires all code to be in one `.jsx` file with no external module imports between files — so Vela uses a **modular source / concatenated output** architecture.
 
 ```
 Source (16 part-files)  →  concat.py  →  vela.jsx  →  assemble.py  →  final.jsx
@@ -39,7 +39,7 @@ part-slides     → Slide panel, fullscreen, branding overlay
 part-list       → Lane/module list, drag & drop
 part-chat       → Chat panel, tool trace cards
 part-test       → Battery tests
-part-uitest     → UI integration tests (185 tests in 33 suites)
+part-uitest     → UI integration tests (84 suites)
 part-demo       → Cinematic demo mode (18 scenes)
 part-pdf-fonts  → Offline font fallback data (compressed TTF blobs)
 part-pdf        → PDF export (raster + vector), markdown export
@@ -74,7 +74,7 @@ imports → icons → blocks → canvas → reducer → engine → slides → li
 | `part-list.jsx` | ~780 | `ModuleList`, `LaneSection`, `ConceptRow`, drag-and-drop reordering, AI slide adder |
 | `part-chat.jsx` | ~450 | `ChatPanel`, message rendering, tool trace cards, image paste/drop, starter prompts |
 | `part-test.jsx` | ~410 | `VelaBatteryTest` — automated render tests for block types |
-| `part-uitest.jsx` | ~2,800 | 185 UI integration tests in 33 suites — comprehensive coverage of block rendering, themes, edge cases |
+| `part-uitest.jsx` | ~2,800 | UI integration tests in 84 suites — comprehensive coverage of block rendering, themes, edge cases |
 | `part-demo.jsx` | ~860 | Cinematic demo mode with 18 scenes showcasing all Vela features |
 | `part-pdf-fonts.jsx` | ~15 | `COMPRESSED_FONTS` — offline font fallback data (compressed TTF blobs), rarely changes; split out of part-pdf.jsx so its ~242KB of base64 doesn't sit inside the frequently-edited export logic |
 | `part-pdf.jsx` | ~4,040 | Canvas-based PDF renderer (raster + vector export path), watermark system, link annotations, markdown export |
