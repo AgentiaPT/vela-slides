@@ -397,6 +397,16 @@ function PresenterTOC({ slides, slideIndex, onJump, lanes, currentConceptId, dis
   const scheduleClose = () => { clearClose(); if (!pinned) closeTimer.current = setTimeout(() => setOpen(false), 400); };
 
   useEffect(() => { if (open && searchRef.current) setTimeout(() => searchRef.current?.focus(), 100); }, [open]);
+  // While open, register for SlidePanel's Esc order (VELA_OPEN_CHROME in
+  // part-blocks.jsx): Esc closes this panel first and Present stays.
+  useEffect(() => {
+    if (!open) return;
+    const t = {};
+    const close = () => { setOpen(false); setPinned(false); };
+    VELA_OPEN_CHROME.panels.add(t);
+    window.addEventListener("vela-close-panel", close);
+    return () => { VELA_OPEN_CHROME.panels.delete(t); window.removeEventListener("vela-close-panel", close); };
+  }, [open]);
   useEffect(() => {
     if (!open) {
       setSearch("");

@@ -3728,6 +3728,138 @@ uiSuite("review-fix-image", [
   }},
 ], { setup: _selectFirstModule });
 
+// hunt1-fix-editor: Esc/arrow order with an open zoom or Present TOC, hover
+// cluster that covers no item text, IME Enter in the inline editors.
+const _hfeZoomed = () => !!document.querySelector("[data-vela-zoom]");
+const _hfeZoomables = () => Array.from(document.querySelectorAll("[data-vela-zoomable]")).filter((z) => z.getBoundingClientRect().width > 0 && !z.closest("[data-vela-zoom]"));
+const _hfeTocPanel = () => { let p = _$("input[placeholder^='Search slides']"); while (p && !(p.style && /^translateX/.test(p.style.transform || ""))) p = p.parentElement; return p; };
+const _hfeTocOpen = () => /^translateX\(0(px)?\)$/.test(_hfeTocPanel()?.style.transform || "");
+const _hfeHits = (a, b) => a.left < b.right - 0.5 && a.right > b.left + 0.5 && a.top < b.bottom - 0.5 && a.bottom > b.top + 0.5;
+const _hfeTextNode = (root, t) => { const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT); for (let n = w.nextNode(); n; n = w.nextNode()) if (n.nodeValue.trim() === t) return n; return null; };
+uiSuite("hunt1-fix-editor", [
+  { name: "HE1: with focus off the zoom overlay, Esc closes only the zoom and arrows step the zoom, not the slide", fn: async () => {
+    const past = _hooks().getHistoryCounts().past;
+    try {
+      await _mrdInject([{ type: "image", src: _rfiSrc(320, 200, 0) }, { type: "image", src: _rfiSrc(200, 320, 1) }], { imageCols: undefined }, (v) => _tlLoaded(v) === 2 ? v : null);
+      await _mrdFrame();
+      for (const mode of ["editor", "present"]) {
+        if (mode === "present") { document.activeElement?.blur?.(); _key("f"); await _waitFor(() => !_$("header"), 2000); }
+        const open = async () => { _click(await _waitFor(() => _hfeZoomables()[0], 2000)); await _waitFor(_hfeZoomed, 2000); document.activeElement?.blur?.(); await _mrdFrame(); };
+        await open();
+        const pos = _slidePos();
+        _key("ArrowRight"); await _wait(250);
+        if (_slidePos() !== pos) throw new Error(`${mode}: ArrowRight moved the slide behind the zoom`);
+        if (!_hfeZoomed()) throw new Error(`${mode}: ArrowRight did not step to the next zoomable image`);
+        document.activeElement?.blur?.();
+        _key("Escape");
+        await _waitFor(() => !_hfeZoomed(), 1500).catch(() => { throw new Error(`${mode}: Esc did not close the zoom`); });
+        await _wait(200);
+        if (mode === "present" && _$("header")) throw new Error("present: Esc with a zoom open also left Present");
+        if (mode === "editor" && !_$("header")) throw new Error("editor: Esc changed the view");
+      }
+    } finally {
+      if (_hfeZoomed()) window.dispatchEvent(new Event("vela-close-zoom"));
+      await _exitFullscreen();
+      await _mrdUndoTo(past);
+    }
+  }},
+  { name: "HE6: Esc with the Present TOC open closes the TOC first and keeps Present", fn: async () => {
+    try {
+      document.activeElement?.blur?.(); _key("f");
+      await _waitFor(() => !_$("header"), 2000);
+      _key("e", { ctrlKey: true });
+      await _waitFor(_hfeTocOpen, 2000);
+      await _wait(150);
+      document.activeElement?.blur?.();
+      _key("Escape");
+      await _waitFor(() => !_hfeTocOpen(), 1500).catch(() => { throw new Error("Esc did not close the Present TOC"); });
+      await _wait(200);
+      if (_$("header")) throw new Error("Esc with the Present TOC open left Present");
+      // Browser-fullscreen path: the browser eats Esc and only fires fullscreenchange.
+      _key("e", { ctrlKey: true });
+      await _waitFor(_hfeTocOpen, 2000);
+      document.dispatchEvent(new Event("fullscreenchange"));
+      await _waitFor(() => !_hfeTocOpen(), 1500).catch(() => { throw new Error("browser fullscreen exit did not close the Present TOC"); });
+      await _wait(200);
+      if (_$("header")) throw new Error("browser fullscreen exit with the Present TOC open left Present");
+      document.activeElement?.blur?.();
+      _key("Escape");
+      await _waitFor(() => _$("header"), 2000).catch(() => { throw new Error("the next Esc did not leave Present"); });
+    } finally { await _exitFullscreen(); }
+  }},
+  { name: "HE2/HE3: the item hover cluster covers no item text; a click on short text edits it", fn: async () => {
+    const past = _hooks().getHistoryCounts().past;
+    try {
+      const sets = [
+        [[{ type: "tag-group", items: [{ text: "ht1" }, { text: "ht2" }, { text: "ht3" }] }, { type: "comparison", items: [{ title: "Before", items: ["ha1", "ha2"] }, { title: "After", items: ["hb1"] }] }], ["ht1", "ht2", "ht3", "ha1", "ha2", "hb1"]],
+        [[{ type: "steps", items: [{ title: "hs1" }, { title: "hs2" }] }, { type: "progress", items: [{ label: "hg1", value: 5 }, { label: "hg2", value: 9 }] }], ["hs1", "hs2", "hg1", "hg2"]],
+      ];
+      let seen = 0;
+      for (const [blocks, labels] of sets) {
+        const vp = await _mrdInject(blocks, { align: "center" }, (v) => labels.every((t) => _hfeTextNode(v, t)) ? v : null);
+        await _wait(400); // entrance animation
+        for (const t of labels) {
+          const n = _hfeTextNode(vp, t);
+          const host = n.parentElement;
+          await _mrdHover(host); await _mrdFrame();
+          const cl = _$("[data-item-cluster]", vp);
+          if (cl) {
+            seen++;
+            const rg = document.createRange(); rg.selectNodeContents(n);
+            const tr = rg.getBoundingClientRect();
+            const over = Array.from(cl.querySelectorAll("button")).find((b) => _hfeHits(b.getBoundingClientRect(), tr));
+            if (over) throw new Error(`"${over.title}" covers the text "${t}"`);
+            const hit = document.elementFromPoint(tr.left + tr.width / 2, tr.top + tr.height / 2);
+            if (hit?.closest("button")) throw new Error(`a click on "${t}" lands on "${hit.closest("button").title}"`);
+          }
+          await _mrdUnhover(host);
+        }
+      }
+      if (seen < 8) throw new Error(`only ${seen} item hover clusters were shown`);
+      // Click the middle tag: it edits, it is not deleted.
+      const vp = await _mrdInject(sets[0][0], { align: "center" }, (v) => _hfeTextNode(v, "ht2") ? v : null);
+      await _wait(400);
+      const host = _hfeTextNode(vp, "ht2").parentElement;
+      await _mrdHover(host); await _mrdFrame();
+      const rg = document.createRange(); rg.selectNodeContents(_hfeTextNode(vp, "ht2"));
+      const tr = rg.getBoundingClientRect();
+      _click(document.elementFromPoint(tr.left + tr.width / 2, tr.top + tr.height / 2));
+      await _waitFor(() => _$("[contenteditable='true']", _mrdViewport()), 1500).catch(() => { throw new Error("a click on a short tag did not start the inline edit"); });
+      _key("Escape"); await _mrdFrame();
+      const tags = (_hooks().getCurrentSlideForTest()?.blocks?.[0]?.items || []).map((i) => i.text).join();
+      if (tags !== "ht1,ht2,ht3") throw new Error(`the click changed the tags: ${tags}`);
+    } finally {
+      document.activeElement?.blur?.();
+      await _mrdUndoTo(past);
+    }
+  }},
+  { name: "HE5: Enter during IME composition does not commit the inline text or SVG label editor", fn: async () => {
+    const past = _hooks().getHistoryCounts().past;
+    const ime = (el) => el.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", keyCode: 229, isComposing: true, bubbles: true, cancelable: true }));
+    const enter = (el) => el.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", keyCode: 13, bubbles: true, cancelable: true }));
+    try {
+      await _mrdInject([{ type: "heading", text: "HFE ime" }, { type: "cycle", items: [{ label: "HFEa" }, { label: "HFEb" }, { label: "HFEc" }] }], null, (vp) => vp?.textContent.includes("HFEc") ? vp : null);
+      await _wait(400);
+      _click(await _waitFor(() => _tlEditNode("HFE ime"), 2000));
+      const ed = await _waitFor(() => _$("[contenteditable='true']", _mrdViewport()), 1500);
+      ime(ed); await _mrdFrame();
+      if (!ed.isConnected || !ed.isContentEditable) throw new Error("a composing Enter closed the inline text editor");
+      enter(ed);
+      await _waitFor(() => !_$("[contenteditable='true']", _mrdViewport()), 1500).catch(() => { throw new Error("a plain Enter did not commit the inline text editor"); });
+      const lbl = await _waitFor(() => Array.from(_mrdViewport().querySelectorAll("text[data-svg-edit]")).find((t) => t.textContent.trim() === "HFEa"), 2000);
+      lbl.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+      const inp = await _waitFor(() => _$("[data-testid='svg-text-edit']", _mrdViewport()), 1500);
+      ime(inp); await _mrdFrame();
+      if (!_$("[data-testid='svg-text-edit']", _mrdViewport())) throw new Error("a composing Enter closed the SVG label editor");
+      enter(_$("[data-testid='svg-text-edit']", _mrdViewport()));
+      await _waitFor(() => !_$("[data-testid='svg-text-edit']", _mrdViewport()), 1500).catch(() => { throw new Error("a plain Enter did not commit the SVG label editor"); });
+    } finally {
+      document.activeElement?.blur?.();
+      await _mrdUndoTo(past);
+    }
+  }},
+], { setup: _selectFirstModule });
+
 // ━━━ UI TEST RUNNER COMPONENT ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 // Demo deck guard — UI tests only run against the original demo deck

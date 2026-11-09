@@ -602,6 +602,18 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
   useEffect(() => {
     const handler = (e) => {
       if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA" || e.target.isContentEditable) return;
+      // An open zoom owns Esc and the step keys, also when focus is not on its
+      // overlay (for example after Tab). Esc closes only the zoom. A step key goes
+      // to the overlay's own handler, so the slide behind the zoom never moves.
+      if (VELA_OPEN_CHROME.zooms.size > 0) {
+        if (e.key === "Escape") { e.preventDefault(); window.dispatchEvent(new Event("vela-close-zoom")); return; }
+        if (["ArrowRight", "ArrowDown", "ArrowLeft", "ArrowUp", "PageDown", "PageUp", " "].includes(e.key)) {
+          e.preventDefault();
+          const overlay = [...VELA_OPEN_CHROME.zooms].pop();
+          if (e.key !== " " && overlay && e.target !== overlay) { overlay.focus(); overlay.dispatchEvent(new KeyboardEvent("keydown", { key: e.key, bubbles: true, cancelable: true })); }
+          return;
+        }
+      }
       // CR2: the TOC left rail is a roving-tabindex ARIA tree. While one of its
       // treeitems holds DOM focus, arrow/space keys are its own disclosure/navigation
       // keys (expand/collapse/move-focus/select) — never global slide-advance. The
@@ -727,6 +739,8 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       if (fullscreen && e.key === "E" && e.shiftKey && !e.metaKey && !e.ctrlKey && !["INPUT", "TEXTAREA"].includes(document.activeElement?.tagName)) {
         e.preventDefault(); setPresentEdit((v) => { showNavToast(v ? "Edit mode OFF" : "Edit mode ON"); return !v; });
       }
+      // An open Present TOC panel closes first; Present stays.
+      if (e.key === "Escape" && fullscreen && VELA_OPEN_CHROME.panels.size > 0) { e.preventDefault(); window.dispatchEvent(new Event("vela-close-panel")); return; }
       if (e.key === "Escape" && showGalleryRef.current) { e.preventDefault(); setGallery(false); return; }
       if (e.key === "Escape" && showPresenterViewRef.current) { e.preventDefault(); setPresenterView(false); return; }
       // Esc leaves Present mode. Browser fullscreen normally does this itself, but in a
@@ -801,6 +815,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
     const onFsChange = () => {
       if (document.fullscreenElement || !fullscreen) return;
       if (VELA_OPEN_CHROME.zooms.size > 0) { window.dispatchEvent(new Event("vela-close-zoom")); return; }
+      if (VELA_OPEN_CHROME.panels.size > 0) { window.dispatchEvent(new Event("vela-close-panel")); return; }
       if (showGalleryRef.current) { setGallery(false); return; }
       if (showPresenterViewRef.current) { setPresenterView(false); return; }
       dispatch({ type: "SET_FULLSCREEN", value: false });

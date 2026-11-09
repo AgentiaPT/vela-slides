@@ -270,6 +270,8 @@ function EditableText({ text, onSave, editable, style, multiline, className, pre
 
   const onKey = (e) => {
     e.stopPropagation();
+    // An IME composition owns Enter and Esc (confirm or drop a candidate).
+    if (e.nativeEvent?.isComposing || e.keyCode === 229) return;
     if (e.key === "Escape") cancel();
     if (e.key === "Enter" && !multiline && !e.shiftKey) { e.preventDefault(); commit(); }
     if ((e.ctrlKey || e.metaKey) && e.key === "b") { e.preventDefault(); document.execCommand("bold"); }
@@ -396,6 +398,7 @@ function SvgEditText({ text, editable, onSave, suffix, ...textProps }) {
         onClick={stop} onMouseDown={stop} onBlur={() => finish(true)}
         onKeyDown={(e) => {
           e.stopPropagation();
+          if (e.nativeEvent?.isComposing || e.keyCode === 229) return; // IME composition owns Enter/Esc
           if (e.key === "Enter") { e.preventDefault(); finish(true); }
           else if (e.key === "Escape") { e.preventDefault(); finish(false); }
         }}
@@ -699,7 +702,8 @@ function LinkBadge({ fallback, style, label, gap = 4, children, ...rest }) {
 // Pass onDelete/onSetLink to enable each action; omit one to hide that button.
 //
 // Overlap handling: the toolbar anchors INSIDE the item's top-right corner so it never
-// pokes into a neighbouring item or past the slide edge. Hovering an item also notifies
+// pokes into a neighbouring item or past the slide edge. If that corner covers text,
+// placeItemCluster moves it to a free spot just outside the item. Hovering an item also notifies
 // ItemHoverContext, which the block lets read to hide its own (block-level) toolbar — so
 // the item toolbar and the block toolbar are never shown stacked on the same corner.
 const ItemHoverContext = React.createContext(null);
@@ -707,6 +711,39 @@ const itemChromeBtn = (bg, border, color) => ({ width: 18, height: 18, borderRad
 // Reorder arrow — a full-size round button (same footprint as the link/delete
 // chrome) so it's an easy click target. Dimmed + non-interactive at a boundary.
 const reorderArrowBtn = (enabled) => ({ ...itemChromeBtn(T.bgPanel, T.border, enabled ? T.text : T.border), fontSize: 10, fontWeight: 700, cursor: enabled ? "pointer" : "default", opacity: enabled ? 1 : 0.4 });
+
+// The hover cluster must never cover text: a click on short text must start the
+// inline edit, not Move/Delete/Link. Try the anchor corner first, then spots
+// just outside the item (right, top, left, bottom; touching it, so the hover
+// stays on). Take the first spot that is inside the slide and covers no text of
+// the slide; else the first that covers none of this item's own text. Returns a
+// local {left, top} or null (keep the anchor).
+function placeItemCluster(wrap, cluster, a) {
+  const W = wrap.offsetWidth, H = wrap.offsetHeight, cw = cluster.offsetWidth, ch = cluster.offsetHeight;
+  if (!W || !cw) return null;
+  const wr = wrap.getBoundingClientRect();
+  const k = wr.width / W || 1;
+  const num = (v) => typeof v === "number" ? v : null;
+  const al = num(a.left), ar = num(a.right), at = num(a.top);
+  const spots = [
+    { left: al != null ? al : W - cw - (ar || 0), top: at != null ? at : 2 },
+    { left: W, top: 0 }, { left: W - cw, top: -ch }, { left: -cw, top: 0 }, { left: W - cw, top: H },
+  ];
+  const root = wrap.closest("[data-vela-slide-content]") || wrap.closest("[data-block-type]") || wrap.parentElement;
+  const rr = root.getBoundingClientRect();
+  const own = [], all = [];
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, { acceptNode: (n) => (n.nodeValue.trim() && !cluster.contains(n)) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT });
+  for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+    const range = document.createRange(); range.selectNodeContents(n);
+    for (const r of range.getClientRects()) if (r.width > 0.5 && r.height > 0.5) { all.push(r); if (wrap.contains(n)) own.push(r); }
+  }
+  const box = (s) => ({ l: wr.left + s.left * k, t: wr.top + s.top * k, r: wr.left + (s.left + cw) * k, b: wr.top + (s.top + ch) * k });
+  const hits = (b, rects) => rects.some((r) => b.l < r.right - 0.5 && b.r > r.left + 0.5 && b.t < r.bottom - 0.5 && b.b > r.top + 0.5);
+  const inside = (b) => b.l >= rr.left - 0.5 && b.r <= rr.right + 0.5 && b.t >= rr.top - 0.5 && b.b <= rr.bottom + 0.5;
+  const pick = spots.find((s) => { const b = box(s); return inside(b) && !hits(b, all); })
+    || spots.find((s) => { const b = box(s); return inside(b) && !hits(b, own); });
+  return !pick || pick === spots[0] ? null : pick;
+}
 
 // noLinkBadge: keep link click-through + PDF export but render no link UI (badge/popup/button)
 // — used by grid, where the inner block already owns the link-editing chrome.
@@ -728,8 +765,17 @@ function ItemChrome({ editable, presenting, onDelete, link, onSetLink, children,
   // stays focused instead of the neighbour now under the cursor. The pin clears on
   // the next mouse move, handing control back to plain hover.
   const clusterVisible = reorder && reorder.anyPinned ? reorder.pinned : hovered;
+  const wrapRef = useRef(null);
+  const clusterRef = useRef(null);
+  const [clusterAt, setClusterAt] = useState(null);
+  const clusterShown = clusterVisible && editMode && (showLinkUI || deletable || reorder);
+  React.useLayoutEffect(() => {
+    let next = null;
+    if (clusterShown && wrapRef.current && clusterRef.current) { try { next = placeItemCluster(wrapRef.current, clusterRef.current, a); } catch (_) {} }
+    setClusterAt((prev) => (prev?.left === next?.left && prev?.top === next?.top) ? prev : next);
+  });
   return (
-    <div className={className} style={{ position: "relative", ...(clickable ? { cursor: "pointer" } : {}), ...wrapStyle }}
+    <div ref={wrapRef} className={className} style={{ position: "relative", ...(clickable ? { cursor: "pointer" } : {}), ...wrapStyle }}
       title={link ? linkPreview(link, linkLabel) : undefined}
       onMouseMove={reorder && reorder.anyPinned ? () => reorder.clearPin?.() : undefined}
       data-pdf-link={link || undefined}
@@ -741,7 +787,7 @@ function ItemChrome({ editable, presenting, onDelete, link, onSetLink, children,
       {/* Idle link badge — presenter */}
       {link && presenting && !noLinkBadge && <LinkBadge fallback={ba} label={linkLabel} onClick={(e) => { e.stopPropagation(); openExternalLink(link); }} style={{ padding: "2px 5px", borderRadius: 4, background: T.accent, fontSize: 9, color: "#fff", zIndex: 12, cursor: "pointer", opacity: hovered ? 1 : 0.3, transition: "opacity 0.2s", boxShadow: "0 2px 6px rgba(0,0,0,0.4)" }}>🔗</LinkBadge>}
       {/* Hover cluster — edit mode (or pinned after a reorder move) */}
-      {clusterVisible && editMode && (showLinkUI || deletable || reorder) && <div style={{ position: "absolute", ...a, display: "flex", alignItems: "center", gap: 3, zIndex: 11 }}>
+      {clusterShown && <div ref={clusterRef} data-item-cluster="" style={{ position: "absolute", ...(clusterAt || a), display: "flex", alignItems: "center", gap: 3, zIndex: 11 }}>
         {reorder && <button onClick={(e) => { e.stopPropagation(); reorder.onUp?.(); }} disabled={!reorder.onUp} style={reorderArrowBtn(!!reorder.onUp)} title="Move up">▲</button>}
         {reorder && <button onClick={(e) => { e.stopPropagation(); reorder.onDown?.(); }} disabled={!reorder.onDown} style={reorderArrowBtn(!!reorder.onDown)} title="Move down">▼</button>}
         {showLinkUI && <button onClick={(e) => { e.stopPropagation(); setEditingLink(!editingLink); }} style={itemChromeBtn(link ? T.accent : T.bgPanel, link ? T.accent : T.border, link ? "#fff" : T.textDim)} title={link ? `Link: ${link}` : "Add link"}>🔗</button>}
@@ -888,7 +934,7 @@ function GridCellImage({ src, alt, style }) {
 // query: deck SVG markup is in the same document (and a zoom clones it onto
 // <body>), so a marker attribute is not proof that app chrome is open (UI
 // integrity — a deck must not change what Esc does).
-const VELA_OPEN_CHROME = { modals: new Set(), zooms: new Set() };
+const VELA_OPEN_CHROME = { modals: new Set(), zooms: new Set(), panels: new Set() };
 
 function ZoomWrap({ children, enabled, link, fill }) {
   const [zoomed, setZoomed] = useState(false);
