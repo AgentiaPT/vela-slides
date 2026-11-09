@@ -29,9 +29,9 @@ const SAVE_DEBOUNCE_MS = 200;
 const WATCHER_IGNORE_MS = 400;
 // Upper bound on a deck file we are willing to read into memory and JSON.parse
 // in response to a watcher event. The watcher fires for whatever lands in the
-// folder, so the read must be bounded BEFORE it happens. Same 5 MB order as the
-// deck-save payload cap in the dev preview server (serve.py).
-const MAX_DECK_BYTES = 5 * 1024 * 1024;
+// folder, so the read must be bounded BEFORE it happens. 50 MB: decks with
+// embedded images pass 5 MB, and a larger deck must still reload live.
+const MAX_DECK_BYTES = 50 * 1024 * 1024;
 // Backoff between write attempts. A Windows write can transiently reject under
 // AV real-time scanning, a synced folder (OneDrive/Dropbox), or a briefly-held
 // file handle. 3 attempts total: the initial write + these two delays.

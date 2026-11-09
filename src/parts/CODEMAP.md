@@ -14,7 +14,7 @@ that symbol in the named part for the line. No line numbers here — they rot.
 - Startup Patch System: STARTUP_PATCH VELA_TEST_STARTUP_PATCH levenshtein extractSlideText applyStartupPatch
 - Distributed Storage: dirty tracking: _dirtyMods _deletedMods _loadedMods _autoEditItemId _fullRewrite now
 - Validation Constants: MAX_IMPORT_SIZE VALID_STATUSES VALID_IMPORTANCES SAFE_BLOCK_TYPES defaultBranding linkPreview
-- Sanitizers: sanitizeString sanitizeDeckTitle sanitizeUrl openExternalLink SVG_ALLOWED_TAGS SVG_URL_REF_ATTRS CSS_FETCH_SCHEME SVG_VALUE_FNS SVG_STYLE_PROPS SVG_ROOT_BLOCKED isSvgStyleSafe isSvgInlineStyleSafe sanitizeSvgMarkup SAFE_RASTER_DATA_IMAGE sanitizeImageDataUri SAFE_STYLE_KEYS STYLE_VALUE_REJECT sanitizeStyle CSS_COLOR_KEY scrubCssFields scrubColorFields CSS_LAYOUT_KEY scrubLayoutFields CSS_PAINT_KEY cssKeyStem scrubPaintFields velaTestSurfaceEnabled MAX_SUBOBJECT_DEPTH scrubSubObject cssUrl CSS_COLOR_OK cssColor CSS_GRADIENT_OK cssGradient
+- Sanitizers: sanitizeString sanitizeDeckTitle sanitizeUrl linkFromInput openExternalLink SVG_ALLOWED_TAGS SVG_URL_REF_ATTRS CSS_FETCH_SCHEME SVG_VALUE_FNS SVG_STYLE_PROPS SVG_ROOT_BLOCKED isSvgStyleSafe isSvgInlineStyleSafe sanitizeSvgMarkup SAFE_RASTER_DATA_IMAGE sanitizeImageDataUri SAFE_STYLE_KEYS STYLE_VALUE_REJECT sanitizeStyle CSS_COLOR_KEY scrubCssFields scrubColorFields CSS_LAYOUT_KEY scrubLayoutFields CSS_PAINT_KEY cssKeyStem scrubPaintFields velaTestSurfaceEnabled MAX_SUBOBJECT_DEPTH scrubSubObject cssUrl CSS_COLOR_OK cssColor CSS_GRADIENT_OK cssGradient
 - Deck-ingress key allowlists: SAFE_SLIDE_KEYS SAFE_BLOCK_KEYS SLIDE_NUMERIC_BOUNDS clampDeckNumber MAX_BLOCK_DEPTH sanitizeBlock VALID_COMMENT_STATUSES MAX_COMMENTS sanitizeComment
 - Offline Study Notes sanitizer: sanitizeStudyNotes sanitizeSlide stableIdFrom sanitizeItem resanitizeLoadedLanes resanitizeLoadedBranding KEEPABLE_DECK_ID isKeepableDeckId adoptPriorDeckIds localDeckPayload validateAndSanitizeDeck
 - Image Compression: compressImage IMG_SETTINGS compressSlideImage imageAspect imageNaturalSize PASTE_TITLE_BLOCKS pasteImageLayout pasteSplitFlex PASTE_TEXT_METRICS pasteBodyEstimate pasteLayoutArea pasteBodyProbe gridColsFor imageGridPlan bestImageGridCols IMAGE_ASPECT_CACHE rememberImageAspect PASTE_LAYOUT_OWNED pasteLayoutSig rememberPasteLayout PASTE_SLIDE_SUCC pasteResolveTarget pasteRecordSuccessor
@@ -322,15 +322,15 @@ add_lane add_item batch_add_items remove_item remove_lane rename_item rename_lan
 
 ## Navigability debt (WARN — candidates for banners or splits)
 
-- part-imports.jsx: 860-line unbannered stretch after line 514
-- part-blocks.jsx: 779-line unbannered stretch after line 966
-- part-canvas.jsx: 489-line unbannered stretch after line 24
-- part-slidepanel.jsx: 518-line unbannered stretch after line 241
-- part-slidepanel.jsx: 406-line unbannered stretch after line 1071
+- part-imports.jsx: 874-line unbannered stretch after line 515
+- part-blocks.jsx: 779-line unbannered stretch after line 1007
+- part-canvas.jsx: 497-line unbannered stretch after line 24
+- part-slidepanel.jsx: 521-line unbannered stretch after line 241
+- part-slidepanel.jsx: 411-line unbannered stretch after line 1078
 - part-uitest.jsx: 616-line unbannered stretch after line 1230
 - part-uitest2.jsx: 448-line unbannered stretch after line 2
-- part-uitest2.jsx: 593-line unbannered stretch after line 1395
-- part-uitest2.jsx: 793-line unbannered stretch after line 2261
+- part-uitest2.jsx: 593-line unbannered stretch after line 1457
+- part-uitest2.jsx: 823-line unbannered stretch after line 2323
 - part-demo.jsx: 407-line unbannered stretch after line 510
 - part-demo.jsx: 373-line unbannered stretch after line 917
 - part-pdf.jsx: 389-line unbannered stretch after line 582

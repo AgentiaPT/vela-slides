@@ -487,8 +487,11 @@ function installAgentsBridge() {
 //   2. Override document.exitFullscreen likewise.
 //   3. Expose a read-only document.fullscreenElement getter so code that
 //      checks "am I in fullscreen?" still works.
-//   4. Listen for Escape and the F11 shortcut so users have an out even
-//      when Vela's handlers don't fire.
+//   4. Listen for the F11 shortcut so users have an out even when Vela's
+//      handlers don't fire. Escape is NOT handled here: Vela owns it, so Esc
+//      first closes a zoom / gallery / presenter view / dialog, and only then
+//      leaves Present (which calls document.exitFullscreen → exit() below).
+//      A capture-phase Escape here ran before Vela and always left fullscreen.
 
 function installFullscreenBridge() {
   let fsElement = null;
@@ -561,7 +564,6 @@ function installFullscreenBridge() {
 
   document.addEventListener("keydown", (e) => {
     if (e.key === "F11") { e.preventDefault(); fsElement ? exit() : enter(document.documentElement); }
-    else if (e.key === "Escape" && fsElement) { exit(); }
   }, true);
 }
 

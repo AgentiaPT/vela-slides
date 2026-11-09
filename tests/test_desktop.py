@@ -361,6 +361,22 @@ class AIAvailabilityEventContractInvariants(unittest.TestCase):
         self.assertIn("useAIAvailable", imports_jsx)
 
 
+class FullscreenBridgeEscapeInvariants(unittest.TestCase):
+    """Vela owns Escape in Present mode (zoom / gallery / presenter view /
+    dialog close first). A bridge-level Escape listener runs before Vela and
+    always leaves OS fullscreen, so Present exits on every Esc."""
+
+    def test_bridge_does_not_handle_escape(self):
+        boot_js = read("vela-neutralino", "resources", "js", "nl-boot.js")
+        start = boot_js.index("function installFullscreenBridge")
+        end = boot_js.index("\n}\n", start)
+        self.assertNotRegex(boot_js[start:end], r'e\.key\s*===\s*["\']Escape["\']')
+
+    def test_vela_exits_present_on_escape(self):
+        panel = read("src", "parts", "part-slidepanel.jsx")
+        self.assertRegex(panel, r'e\.key === "Escape" && fullscreen && !document\.querySelector\("\[data-vela-modal\]"\)')
+
+
 class FsGuardHardeningInvariants(unittest.TestCase):
     """Source locks for the filesystem-guard hardening. The behavioral suite
     (tests/test_fs_guard.cjs) executes the real module; these assert the guard

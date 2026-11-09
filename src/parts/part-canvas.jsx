@@ -171,16 +171,24 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
     prevEditing.current = blockEditing;
   }, [blockEditing]);
 
+  // Block indices run through blocks, then the cols L column, then R (see
+  // renderColumnBlocks offsets). Map an index to the array that holds it, so an
+  // edit to a column block (text, link, hide, delete) changes L/R, not nothing.
+  const blockSlot = (idx) => idx < blocks.length ? ["blocks", blocks, idx]
+    : idx < blocks.length + colsL.length ? ["L", colsL, idx - blocks.length]
+    : ["R", colsR, idx - blocks.length - colsL.length];
+
   const handleBlockChange = useCallback((blockIdx, blockPatch) => {
     if (!onEdit) return;
-    const newBlocks = blocks.map((b, i) => i === blockIdx ? { ...b, ...blockPatch } : b);
-    onEdit({ blocks: newBlocks });
-  }, [onEdit, blocks]);
+    const [key, arr, j] = blockSlot(blockIdx);
+    onEdit({ [key]: arr.map((b, i) => i === j ? { ...b, ...blockPatch } : b) });
+  }, [onEdit, blocks, colsL, colsR]);
 
   const handleBlockRemove = useCallback((blockIdx) => {
     if (!onEdit) return;
-    onEdit({ blocks: blocks.filter((_, i) => i !== blockIdx) });
-  }, [onEdit, blocks]);
+    const [key, arr, j] = blockSlot(blockIdx);
+    onEdit({ [key]: arr.filter((_, i) => i !== j) });
+  }, [onEdit, blocks, colsL, colsR]);
 
   useLayoutEffect(() => {
     const SCALE_FLOOR = 0.35;
@@ -550,7 +558,7 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
       </div>}
       {editingLink === i && !presenting && <div data-testid="block-link-popup" onClick={(e) => e.stopPropagation()} style={{ position: "absolute", top: (chromeFlip[i]?.pop ? (chromeFlip[i]?.bar ? 30 : 14) : -32), right: chromeFlip[i]?.shift || 0, zIndex: 12, display: "flex", gap: 4, alignItems: "center", background: T.bgPanel, border: `1px solid ${T.border}`, borderRadius: 6, padding: "3px 6px", boxShadow: "0 4px 12px rgba(0,0,0,0.5)" }}>
         <span style={{ fontSize: 9, color: T.textDim }}>🔗</span>
-        <input autoFocus defaultValue={b.link || ""} placeholder="https://..." onKeyDown={(e) => { e.stopPropagation(); if (e.key === "Enter") { const url = e.target.value.trim(); handleBlockChange(i, { link: url || undefined }); setEditingLink(null); } if (e.key === "Escape") setEditingLink(null); }} onBlur={(e) => { const url = e.target.value.trim(); handleBlockChange(i, { link: url || undefined }); setEditingLink(null); }} style={{ width: 200, padding: "2px 6px", fontSize: 10, fontFamily: FONT.mono, background: T.bg, color: T.text, border: `1px solid ${T.border}`, borderRadius: 4, outline: "none" }} />
+        <input autoFocus defaultValue={b.link || ""} placeholder="https://..." onKeyDown={(e) => { e.stopPropagation(); if (e.key === "Enter") { handleBlockChange(i, { link: linkFromInput(e.target.value) }); setEditingLink(null); } if (e.key === "Escape") setEditingLink(null); }} onBlur={(e) => { handleBlockChange(i, { link: linkFromInput(e.target.value) }); setEditingLink(null); }} style={{ width: 200, padding: "2px 6px", fontSize: 10, fontFamily: FONT.mono, background: T.bg, color: T.text, border: `1px solid ${T.border}`, borderRadius: 4, outline: "none" }} />
         {b.link && <button onClick={() => { handleBlockChange(i, { link: undefined }); setEditingLink(null); }} style={{ background: "none", border: "none", color: T.red, fontSize: 10, cursor: "pointer", padding: 0 }}>✕</button>}
       </div>}
       {/* Block comment popup */}
@@ -760,7 +768,7 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
 
   return (
     <SlideErrorBoundary>
-      <div ref={outerRef} style={{ height: "100%", padding: pad, position: "relative", overflow: "visible", boxSizing: "border-box", display: "flex", flexDirection: "column", ...bgStyle }}>
+      <div ref={outerRef} data-vela-slide-content="" style={{ height: "100%", padding: pad, position: "relative", overflow: "visible", boxSizing: "border-box", display: "flex", flexDirection: "column", ...bgStyle }}>
         <div ref={innerRef} style={{ position: "relative", zIndex: 2, display: "flex", flexDirection: isSplit ? "row" : "column", justifyContent: isSplit ? "stretch" : fitJustify, alignItems: isSplit ? "stretch" : (align === "center" ? "center" : "stretch"), textAlign: align, gap: isSplit ? (slide.splitGap || 32) : (slide.gap || 12), transform: fitScale < 1 ? `scale(${fitScale})` : "none", transformOrigin: "top left", width: fitScale < 1 ? `${100 / fitScale}%` : "100%", height: fitScale < 1 ? `${100 / fitScale}%` : "100%", maxWidth: fitScale < 1 ? `${100 / fitScale}%` : "100%", flex: fitScale < 1 ? undefined : 1, flexShrink: fitScale < 1 && (isSplit || isCols) ? 0 : undefined, boxSizing: "border-box" }}>
           <ItemHoverContext.Provider value={setItemHovered}>
             {renderBlocks()}

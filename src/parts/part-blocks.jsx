@@ -735,7 +735,7 @@ function ItemChrome({ editable, presenting, onDelete, link, onSetLink, children,
       {/* Link editor popup */}
       {editingLink && editMode && showLinkUI && <div onClick={(e) => e.stopPropagation()} style={{ position: "absolute", top: -30, right: 0, zIndex: 12, display: "flex", gap: 4, alignItems: "center", background: T.bgPanel, border: `1px solid ${T.border}`, borderRadius: 6, padding: "3px 6px", boxShadow: "0 4px 12px rgba(0,0,0,0.5)" }}>
         <span style={{ fontSize: 9, color: T.textDim }}>🔗</span>
-        <input autoFocus defaultValue={link || ""} placeholder="https://..." onKeyDown={(e) => { e.stopPropagation(); if (e.key === "Enter") { onSetLink(e.target.value.trim() || undefined); setEditingLink(false); } if (e.key === "Escape") setEditingLink(false); }} onBlur={(e) => { onSetLink(e.target.value.trim() || undefined); setEditingLink(false); }} style={{ width: 200, padding: "2px 6px", fontSize: 10, fontFamily: FONT.mono, background: T.bg, color: T.text, border: `1px solid ${T.border}`, borderRadius: 4, outline: "none" }} />
+        <input autoFocus defaultValue={link || ""} placeholder="https://..." onKeyDown={(e) => { e.stopPropagation(); if (e.key === "Enter") { onSetLink(linkFromInput(e.target.value)); setEditingLink(false); } if (e.key === "Escape") setEditingLink(false); }} onBlur={(e) => { onSetLink(linkFromInput(e.target.value)); setEditingLink(false); }} style={{ width: 200, padding: "2px 6px", fontSize: 10, fontFamily: FONT.mono, background: T.bg, color: T.text, border: `1px solid ${T.border}`, borderRadius: 4, outline: "none" }} />
         {link && <button onClick={() => { onSetLink(undefined); setEditingLink(false); }} style={{ background: "none", border: "none", color: T.red, fontSize: 10, cursor: "pointer", padding: 0 }}>✕</button>}
       </div>}
     </div>
@@ -828,7 +828,7 @@ function GridCellBlock({ block, staggerIdx, slideTheme, editable, onChange, slid
       {/* Link editor popup */}
       {editingLink && editMode && <div onClick={(e) => e.stopPropagation()} style={{ position: "absolute", top: -30, left: 0, zIndex: 12, display: "flex", gap: 4, alignItems: "center", background: T.bgPanel, border: `1px solid ${T.border}`, borderRadius: 6, padding: "3px 6px", boxShadow: "0 4px 12px rgba(0,0,0,0.5)" }}>
         <span style={{ fontSize: 9, color: T.textDim }}>🔗</span>
-        <input autoFocus defaultValue={link || ""} placeholder="https://..." onKeyDown={(e) => { e.stopPropagation(); if (e.key === "Enter") { setLink(e.target.value.trim()); setEditingLink(false); } if (e.key === "Escape") setEditingLink(false); }} onBlur={(e) => { setLink(e.target.value.trim()); setEditingLink(false); }} style={{ width: 200, padding: "2px 6px", fontSize: 10, fontFamily: FONT.mono, background: T.bg, color: T.text, border: `1px solid ${T.border}`, borderRadius: 4, outline: "none" }} />
+        <input autoFocus defaultValue={link || ""} placeholder="https://..." onKeyDown={(e) => { e.stopPropagation(); if (e.key === "Enter") { setLink(linkFromInput(e.target.value)); setEditingLink(false); } if (e.key === "Escape") setEditingLink(false); }} onBlur={(e) => { setLink(linkFromInput(e.target.value)); setEditingLink(false); }} style={{ width: 200, padding: "2px 6px", fontSize: 10, fontFamily: FONT.mono, background: T.bg, color: T.text, border: `1px solid ${T.border}`, borderRadius: 4, outline: "none" }} />
         {link && <button onClick={() => { setLink(undefined); setEditingLink(false); }} style={{ background: "none", border: "none", color: T.red, fontSize: 10, cursor: "pointer", padding: 0 }}>✕</button>}
       </div>}
     </div>
@@ -864,13 +864,29 @@ function ZoomWrap({ children, enabled, link, fill }) {
   const [zoomed, setZoomed] = useState(false);
   const [hovered, setHovered] = useState(false);
   const sourceRef = useRef(null);
-  const cloneRef = useRef(null);
 
+  // The overlay is plain DOM on <body> (or on the fullscreen element, the only
+  // subtree the browser shows in fullscreen). Rendered inside the slide, it was
+  // trapped by the canvas transform: position:fixed then fills the scaled slide,
+  // not the window, so a large image zoomed to the same size or smaller.
   useEffect(() => {
-    if (!zoomed || !sourceRef.current || !cloneRef.current) return;
+    if (!zoomed || !sourceRef.current) return;
     const el = sourceRef.current;
-    const container = cloneRef.current;
-    container.innerHTML = "";
+    const host = document.fullscreenElement || document.body;
+    const overlay = document.createElement("div");
+    overlay.setAttribute("data-vela-zoom", "");
+    overlay.tabIndex = 0;
+    overlay.style.cssText = "position:fixed;inset:0;z-index:999999;background:#060a14;cursor:zoom-out;outline:none";
+    const hint = document.createElement("div");
+    hint.textContent = "ESC or click to close";
+    hint.style.cssText = "position:absolute;top:12px;right:16px;color:#64748b;font-size:11px;font-family:monospace;z-index:10";
+    const container = document.createElement("div");
+    // Keep the inherited text color and font, which the clone loses outside the slide.
+    const cs = getComputedStyle(el);
+    container.style.cssText = "position:absolute;top:40px;left:40px;right:40px;bottom:40px;cursor:default";
+    container.style.color = cs.color;
+    container.style.fontFamily = cs.fontFamily;
+    overlay.append(hint, container);
     // Find the SVG or IMG and render it full-viewport (skip the zoom badge icon)
     const svg = Array.from(el.querySelectorAll("svg[viewBox]")).find(s => !s.closest("[data-zoom-badge]"));
     const img = el.querySelector("img[src]");
@@ -890,7 +906,40 @@ function ZoomWrap({ children, enabled, link, fill }) {
       clone.style.cssText = "transform:scale(2);transform-origin:center center;position:absolute;top:50%;left:50%;translate:-50% -50%";
       container.appendChild(clone);
     }
+    const close = () => setZoomed(false);
+    overlay.addEventListener("click", close);
+    container.addEventListener("click", (e) => e.stopPropagation());
+    // Esc closes only the zoom: stop it here so the window-level slide handler
+    // does not also leave Present mode. Arrow and page keys step to the previous
+    // or next zoomable block on the same slide, never to another slide. Past the
+    // first or last zoomable block on the slide, they close the zoom.
+    const step = { ArrowRight: 1, ArrowDown: 1, PageDown: 1, ArrowLeft: -1, ArrowUp: -1, PageUp: -1 };
+    overlay.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); close(); return; }
+      const dir = step[e.key];
+      if (!dir) return;
+      e.preventDefault(); e.stopPropagation();
+      const slide = el.closest("[data-vela-slide-content]");
+      const list = slide ? Array.from(slide.querySelectorAll("[data-vela-zoomable]")).filter((z) => z.getBoundingClientRect().width > 0) : [];
+      const next = list[list.indexOf(el) + dir];
+      close();
+      if (next && list.includes(el)) next.dispatchEvent(new Event("vela-zoom-open"));
+    });
+    // SlidePanel asks an open zoom to close when the browser leaves fullscreen on Esc.
+    window.addEventListener("vela-close-zoom", close);
+    host.appendChild(overlay);
+    overlay.focus();
+    return () => { window.removeEventListener("vela-close-zoom", close); overlay.remove(); };
   }, [zoomed]);
+
+  // Arrow keys in another block's zoom open this block's zoom.
+  useEffect(() => {
+    const el = sourceRef.current;
+    if (!enabled || !el) return;
+    const open = () => setZoomed(true);
+    el.addEventListener("vela-zoom-open", open);
+    return () => el.removeEventListener("vela-zoom-open", open);
+  }, [enabled]);
 
   if (!enabled) return children;
 
@@ -902,7 +951,7 @@ function ZoomWrap({ children, enabled, link, fill }) {
   const triggerZoom = (e) => { e.stopPropagation(); setZoomed(true); };
 
   return <>
-    <div ref={sourceRef} style={{ position: "relative", cursor: hasLink ? "pointer" : "zoom-in", ...(fill ? { display: "flex", flexDirection: "column", flex: 1, minHeight: 0, minWidth: 0, width: "100%" } : {}) }}
+    <div ref={sourceRef} data-vela-zoomable="" style={{ position: "relative", cursor: hasLink ? "pointer" : "zoom-in", ...(fill ? { display: "flex", flexDirection: "column", flex: 1, minHeight: 0, minWidth: 0, width: "100%" } : {}) }}
       onClick={hasLink ? undefined : triggerZoom}
       onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}>
       {children}
@@ -910,14 +959,6 @@ function ZoomWrap({ children, enabled, link, fill }) {
         {getIcon("Maximize2", { size: 10, color: "#e2e8f0" })} zoom
       </div>
     </div>
-    {zoomed && <div
-      onClick={() => setZoomed(false)}
-      onKeyDown={(e) => { if (e.key === "Escape") setZoomed(false); }}
-      tabIndex={0} ref={(el) => el?.focus()}
-      style={{ position: "fixed", inset: 0, zIndex: 999999, background: "#060a14", cursor: "zoom-out" }}>
-      <div style={{ position: "absolute", top: 12, right: 16, color: "#64748b", fontSize: 11, fontFamily: "monospace", zIndex: 10 }}>ESC or click to close</div>
-      <div ref={cloneRef} onClick={(e) => e.stopPropagation()} style={{ position: "absolute", top: 40, left: 40, right: 40, bottom: 40, cursor: "default" }} />
-    </div>}
   </>;
 }
 

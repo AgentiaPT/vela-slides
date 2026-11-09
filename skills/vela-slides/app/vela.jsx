@@ -138,8 +138,9 @@ const velaClipboardReadSlides = async () => {
   return [];
 };
 
-const VELA_VERSION = "13.76";
+const VELA_VERSION = "13.77";
 const VELA_CHANGELOG = [
+  { v: "13.77", d: ["Two-column slides: edits to a column block (link, text, hide, delete) are saved; before, they were lost.", "Link boxes accept a bare domain (example.com) or an email address; before, these were saved as an empty link.", "Desktop: outside edits to decks up to 50 MB now reload live (was 5 MB).", "Present: Esc exits fullscreen, also inside Claude.ai artifacts.", "Esc closes the gallery, presenter view, image zoom or an open dialog first.", "Present toolbar: removed the duplicate gallery icon; presenter view uses a notes icon.", "Image zoom fills the window again (it was limited to the scaled slide).", "Zoom: arrow keys step through the images on the slide; past the first or last image they close the zoom.", "Present toolbar stays faint until you point at it."] },
   { v: "13.76", d: ["TOC: dragging a slide or section near the list edge auto-scrolls the list.", "TOC: moving a slide to a section in an earlier lane no longer loses the slide.", "Images: a pasted image on an empty slide fills the slide, not one half.", "Images: grids pick rows and columns by image aspect ratio.", "Images: solo and wide images fill the free slide area.", "Images: images shrink to fit, so text below an image stays on the slide.", "Editing: all text in checklist, comparison, matrix, number-row, progress and flow blocks is editable inline.", "Checklist: type a status name to change the status; custom status labels survive compact/turbo formats."] },
   { v: "13.75", d: ["Editor: mark slides reviewed (✓); Review cycle makes arrow keys skip reviewed slides.", "View switch (editor | presenter | gallery) next to Present.", "Gallery: hide/unhide a slide beside delete; TOC: delete icon on slide rows (undoable).", "Fullscreen nav icons stay visible on any slide background.", "Branding: right-side settings pane; accent line removable at 0px.", "Block toolbar stays visible on full-bleed images; link badges sit right after the text.", "Vector PDF: € and other WinAnsi symbols render as text at correct size.", "validate: reports a gradient in solid-color bg fields (use bgGradient).", "Opening or switching a deck keeps lane/module ids.", "Desktop: window title shows the deck title; keyboard works after alt-tab; AI agents detected on first start; HTML export fixed."] },
   { v: "13.74", d: ["Security: CLI output now neutralizes terminal control sequences in deck text (CWE-150 class), closing a display-spoofing channel.", "Security: the machine-readable --json output is fully escaped for the same class.", "Added one canonical output encoder, a CI gate keeping every CLI output path routed through it, and regression tests."] },
@@ -570,6 +571,20 @@ function sanitizeUrl(url, allowedProtocols = ["http:", "https:", "mailto:"]) {
     // data: image path is validated raw downstream). Backslashes already rejected.
     return trimmed;
   } catch (_) { return ""; }
+}
+
+// A link typed into an editor link box. People type "example.com" or
+// "www.example.com"; sanitizeUrl needs an explicit scheme, so a bare domain was
+// saved as empty with no feedback. Add https:// (or mailto: for a plain email
+// address) when no scheme is given, then gate through sanitizeUrl as before.
+function linkFromInput(value) {
+  const t = String(value == null ? "" : value).trim();
+  if (!t) return undefined;
+  // "host:8080" is a host and port, not a scheme.
+  const withScheme = /^[a-z][a-z0-9+.\-]*:(?!\d)/i.test(t) ? t
+    : /^[^\s@/]+@[^\s@/]+\.[^\s@/]+$/.test(t) ? "mailto:" + t
+    : "https://" + t.replace(/^\/+/, "");
+  return sanitizeUrl(withScheme) || undefined;
 }
 
 // Open a deck-supplied URL safely — re-sanitize at the sink so a javascript:/data:/
@@ -2389,7 +2404,7 @@ const getCss = () => `
 .vela-wide-scroll::-webkit-scrollbar{width:10px} .vela-wide-scroll::-webkit-scrollbar-thumb{background:${T.textDim};border-radius:5px}
 .concept-row{transition:all .15s;cursor:pointer} .concept-row:hover{background:${T.accentGlow}!important} .concept-row.selected{background:${T.accent}18!important;border-left-color:${T.accent}!important}
 .status-btn{cursor:pointer;transition:transform .15s} .status-btn:hover{transform:scale(1.3)}
-.slide-nav-btn{opacity:.85;transition:opacity .2s,background .2s;cursor:pointer;background:rgba(0,0,0,0.38);backdrop-filter:blur(2px);-webkit-backdrop-filter:blur(2px)} .slide-nav-btn:hover{opacity:1;background:rgba(0,0,0,0.55)}
+.slide-nav-btn{opacity:.85;transition:opacity .2s,background .2s;cursor:pointer;background:rgba(0,0,0,0.38);backdrop-filter:blur(2px);-webkit-backdrop-filter:blur(2px)} .slide-nav-btn:hover{opacity:1;background:rgba(0,0,0,0.55)} .vela-fs-toolbar{opacity:.15;transition:opacity .3s;pointer-events:none} .vela-fs-toolbar>*{pointer-events:auto} .vela-fs-toolbar:hover,.vela-fs-toolbar:focus-within{opacity:1}
 .imp-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0}
 .add-btn{transition:all .15s} .add-btn:hover{background:${T.accent}!important;color:#fff!important}
 .lane-header{transition:background .15s} .lane-header:hover{background:${T.bgCard}!important}
@@ -3578,7 +3593,7 @@ function ItemChrome({ editable, presenting, onDelete, link, onSetLink, children,
       {/* Link editor popup */}
       {editingLink && editMode && showLinkUI && <div onClick={(e) => e.stopPropagation()} style={{ position: "absolute", top: -30, right: 0, zIndex: 12, display: "flex", gap: 4, alignItems: "center", background: T.bgPanel, border: `1px solid ${T.border}`, borderRadius: 6, padding: "3px 6px", boxShadow: "0 4px 12px rgba(0,0,0,0.5)" }}>
         <span style={{ fontSize: 9, color: T.textDim }}>🔗</span>
-        <input autoFocus defaultValue={link || ""} placeholder="https://..." onKeyDown={(e) => { e.stopPropagation(); if (e.key === "Enter") { onSetLink(e.target.value.trim() || undefined); setEditingLink(false); } if (e.key === "Escape") setEditingLink(false); }} onBlur={(e) => { onSetLink(e.target.value.trim() || undefined); setEditingLink(false); }} style={{ width: 200, padding: "2px 6px", fontSize: 10, fontFamily: FONT.mono, background: T.bg, color: T.text, border: `1px solid ${T.border}`, borderRadius: 4, outline: "none" }} />
+        <input autoFocus defaultValue={link || ""} placeholder="https://..." onKeyDown={(e) => { e.stopPropagation(); if (e.key === "Enter") { onSetLink(linkFromInput(e.target.value)); setEditingLink(false); } if (e.key === "Escape") setEditingLink(false); }} onBlur={(e) => { onSetLink(linkFromInput(e.target.value)); setEditingLink(false); }} style={{ width: 200, padding: "2px 6px", fontSize: 10, fontFamily: FONT.mono, background: T.bg, color: T.text, border: `1px solid ${T.border}`, borderRadius: 4, outline: "none" }} />
         {link && <button onClick={() => { onSetLink(undefined); setEditingLink(false); }} style={{ background: "none", border: "none", color: T.red, fontSize: 10, cursor: "pointer", padding: 0 }}>✕</button>}
       </div>}
     </div>
@@ -3671,7 +3686,7 @@ function GridCellBlock({ block, staggerIdx, slideTheme, editable, onChange, slid
       {/* Link editor popup */}
       {editingLink && editMode && <div onClick={(e) => e.stopPropagation()} style={{ position: "absolute", top: -30, left: 0, zIndex: 12, display: "flex", gap: 4, alignItems: "center", background: T.bgPanel, border: `1px solid ${T.border}`, borderRadius: 6, padding: "3px 6px", boxShadow: "0 4px 12px rgba(0,0,0,0.5)" }}>
         <span style={{ fontSize: 9, color: T.textDim }}>🔗</span>
-        <input autoFocus defaultValue={link || ""} placeholder="https://..." onKeyDown={(e) => { e.stopPropagation(); if (e.key === "Enter") { setLink(e.target.value.trim()); setEditingLink(false); } if (e.key === "Escape") setEditingLink(false); }} onBlur={(e) => { setLink(e.target.value.trim()); setEditingLink(false); }} style={{ width: 200, padding: "2px 6px", fontSize: 10, fontFamily: FONT.mono, background: T.bg, color: T.text, border: `1px solid ${T.border}`, borderRadius: 4, outline: "none" }} />
+        <input autoFocus defaultValue={link || ""} placeholder="https://..." onKeyDown={(e) => { e.stopPropagation(); if (e.key === "Enter") { setLink(linkFromInput(e.target.value)); setEditingLink(false); } if (e.key === "Escape") setEditingLink(false); }} onBlur={(e) => { setLink(linkFromInput(e.target.value)); setEditingLink(false); }} style={{ width: 200, padding: "2px 6px", fontSize: 10, fontFamily: FONT.mono, background: T.bg, color: T.text, border: `1px solid ${T.border}`, borderRadius: 4, outline: "none" }} />
         {link && <button onClick={() => { setLink(undefined); setEditingLink(false); }} style={{ background: "none", border: "none", color: T.red, fontSize: 10, cursor: "pointer", padding: 0 }}>✕</button>}
       </div>}
     </div>
@@ -3707,13 +3722,29 @@ function ZoomWrap({ children, enabled, link, fill }) {
   const [zoomed, setZoomed] = useState(false);
   const [hovered, setHovered] = useState(false);
   const sourceRef = useRef(null);
-  const cloneRef = useRef(null);
 
+  // The overlay is plain DOM on <body> (or on the fullscreen element, the only
+  // subtree the browser shows in fullscreen). Rendered inside the slide, it was
+  // trapped by the canvas transform: position:fixed then fills the scaled slide,
+  // not the window, so a large image zoomed to the same size or smaller.
   useEffect(() => {
-    if (!zoomed || !sourceRef.current || !cloneRef.current) return;
+    if (!zoomed || !sourceRef.current) return;
     const el = sourceRef.current;
-    const container = cloneRef.current;
-    container.innerHTML = "";
+    const host = document.fullscreenElement || document.body;
+    const overlay = document.createElement("div");
+    overlay.setAttribute("data-vela-zoom", "");
+    overlay.tabIndex = 0;
+    overlay.style.cssText = "position:fixed;inset:0;z-index:999999;background:#060a14;cursor:zoom-out;outline:none";
+    const hint = document.createElement("div");
+    hint.textContent = "ESC or click to close";
+    hint.style.cssText = "position:absolute;top:12px;right:16px;color:#64748b;font-size:11px;font-family:monospace;z-index:10";
+    const container = document.createElement("div");
+    // Keep the inherited text color and font, which the clone loses outside the slide.
+    const cs = getComputedStyle(el);
+    container.style.cssText = "position:absolute;top:40px;left:40px;right:40px;bottom:40px;cursor:default";
+    container.style.color = cs.color;
+    container.style.fontFamily = cs.fontFamily;
+    overlay.append(hint, container);
     // Find the SVG or IMG and render it full-viewport (skip the zoom badge icon)
     const svg = Array.from(el.querySelectorAll("svg[viewBox]")).find(s => !s.closest("[data-zoom-badge]"));
     const img = el.querySelector("img[src]");
@@ -3733,7 +3764,40 @@ function ZoomWrap({ children, enabled, link, fill }) {
       clone.style.cssText = "transform:scale(2);transform-origin:center center;position:absolute;top:50%;left:50%;translate:-50% -50%";
       container.appendChild(clone);
     }
+    const close = () => setZoomed(false);
+    overlay.addEventListener("click", close);
+    container.addEventListener("click", (e) => e.stopPropagation());
+    // Esc closes only the zoom: stop it here so the window-level slide handler
+    // does not also leave Present mode. Arrow and page keys step to the previous
+    // or next zoomable block on the same slide, never to another slide. Past the
+    // first or last zoomable block on the slide, they close the zoom.
+    const step = { ArrowRight: 1, ArrowDown: 1, PageDown: 1, ArrowLeft: -1, ArrowUp: -1, PageUp: -1 };
+    overlay.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); close(); return; }
+      const dir = step[e.key];
+      if (!dir) return;
+      e.preventDefault(); e.stopPropagation();
+      const slide = el.closest("[data-vela-slide-content]");
+      const list = slide ? Array.from(slide.querySelectorAll("[data-vela-zoomable]")).filter((z) => z.getBoundingClientRect().width > 0) : [];
+      const next = list[list.indexOf(el) + dir];
+      close();
+      if (next && list.includes(el)) next.dispatchEvent(new Event("vela-zoom-open"));
+    });
+    // SlidePanel asks an open zoom to close when the browser leaves fullscreen on Esc.
+    window.addEventListener("vela-close-zoom", close);
+    host.appendChild(overlay);
+    overlay.focus();
+    return () => { window.removeEventListener("vela-close-zoom", close); overlay.remove(); };
   }, [zoomed]);
+
+  // Arrow keys in another block's zoom open this block's zoom.
+  useEffect(() => {
+    const el = sourceRef.current;
+    if (!enabled || !el) return;
+    const open = () => setZoomed(true);
+    el.addEventListener("vela-zoom-open", open);
+    return () => el.removeEventListener("vela-zoom-open", open);
+  }, [enabled]);
 
   if (!enabled) return children;
 
@@ -3745,7 +3809,7 @@ function ZoomWrap({ children, enabled, link, fill }) {
   const triggerZoom = (e) => { e.stopPropagation(); setZoomed(true); };
 
   return <>
-    <div ref={sourceRef} style={{ position: "relative", cursor: hasLink ? "pointer" : "zoom-in", ...(fill ? { display: "flex", flexDirection: "column", flex: 1, minHeight: 0, minWidth: 0, width: "100%" } : {}) }}
+    <div ref={sourceRef} data-vela-zoomable="" style={{ position: "relative", cursor: hasLink ? "pointer" : "zoom-in", ...(fill ? { display: "flex", flexDirection: "column", flex: 1, minHeight: 0, minWidth: 0, width: "100%" } : {}) }}
       onClick={hasLink ? undefined : triggerZoom}
       onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}>
       {children}
@@ -3753,14 +3817,6 @@ function ZoomWrap({ children, enabled, link, fill }) {
         {getIcon("Maximize2", { size: 10, color: "#e2e8f0" })} zoom
       </div>
     </div>
-    {zoomed && <div
-      onClick={() => setZoomed(false)}
-      onKeyDown={(e) => { if (e.key === "Escape") setZoomed(false); }}
-      tabIndex={0} ref={(el) => el?.focus()}
-      style={{ position: "fixed", inset: 0, zIndex: 999999, background: "#060a14", cursor: "zoom-out" }}>
-      <div style={{ position: "absolute", top: 12, right: 16, color: "#64748b", fontSize: 11, fontFamily: "monospace", zIndex: 10 }}>ESC or click to close</div>
-      <div ref={cloneRef} onClick={(e) => e.stopPropagation()} style={{ position: "absolute", top: 40, left: 40, right: 40, bottom: 40, cursor: "default" }} />
-    </div>}
   </>;
 }
 
@@ -4812,16 +4868,24 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
     prevEditing.current = blockEditing;
   }, [blockEditing]);
 
+  // Block indices run through blocks, then the cols L column, then R (see
+  // renderColumnBlocks offsets). Map an index to the array that holds it, so an
+  // edit to a column block (text, link, hide, delete) changes L/R, not nothing.
+  const blockSlot = (idx) => idx < blocks.length ? ["blocks", blocks, idx]
+    : idx < blocks.length + colsL.length ? ["L", colsL, idx - blocks.length]
+    : ["R", colsR, idx - blocks.length - colsL.length];
+
   const handleBlockChange = useCallback((blockIdx, blockPatch) => {
     if (!onEdit) return;
-    const newBlocks = blocks.map((b, i) => i === blockIdx ? { ...b, ...blockPatch } : b);
-    onEdit({ blocks: newBlocks });
-  }, [onEdit, blocks]);
+    const [key, arr, j] = blockSlot(blockIdx);
+    onEdit({ [key]: arr.map((b, i) => i === j ? { ...b, ...blockPatch } : b) });
+  }, [onEdit, blocks, colsL, colsR]);
 
   const handleBlockRemove = useCallback((blockIdx) => {
     if (!onEdit) return;
-    onEdit({ blocks: blocks.filter((_, i) => i !== blockIdx) });
-  }, [onEdit, blocks]);
+    const [key, arr, j] = blockSlot(blockIdx);
+    onEdit({ [key]: arr.filter((_, i) => i !== j) });
+  }, [onEdit, blocks, colsL, colsR]);
 
   useLayoutEffect(() => {
     const SCALE_FLOOR = 0.35;
@@ -5191,7 +5255,7 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
       </div>}
       {editingLink === i && !presenting && <div data-testid="block-link-popup" onClick={(e) => e.stopPropagation()} style={{ position: "absolute", top: (chromeFlip[i]?.pop ? (chromeFlip[i]?.bar ? 30 : 14) : -32), right: chromeFlip[i]?.shift || 0, zIndex: 12, display: "flex", gap: 4, alignItems: "center", background: T.bgPanel, border: `1px solid ${T.border}`, borderRadius: 6, padding: "3px 6px", boxShadow: "0 4px 12px rgba(0,0,0,0.5)" }}>
         <span style={{ fontSize: 9, color: T.textDim }}>🔗</span>
-        <input autoFocus defaultValue={b.link || ""} placeholder="https://..." onKeyDown={(e) => { e.stopPropagation(); if (e.key === "Enter") { const url = e.target.value.trim(); handleBlockChange(i, { link: url || undefined }); setEditingLink(null); } if (e.key === "Escape") setEditingLink(null); }} onBlur={(e) => { const url = e.target.value.trim(); handleBlockChange(i, { link: url || undefined }); setEditingLink(null); }} style={{ width: 200, padding: "2px 6px", fontSize: 10, fontFamily: FONT.mono, background: T.bg, color: T.text, border: `1px solid ${T.border}`, borderRadius: 4, outline: "none" }} />
+        <input autoFocus defaultValue={b.link || ""} placeholder="https://..." onKeyDown={(e) => { e.stopPropagation(); if (e.key === "Enter") { handleBlockChange(i, { link: linkFromInput(e.target.value) }); setEditingLink(null); } if (e.key === "Escape") setEditingLink(null); }} onBlur={(e) => { handleBlockChange(i, { link: linkFromInput(e.target.value) }); setEditingLink(null); }} style={{ width: 200, padding: "2px 6px", fontSize: 10, fontFamily: FONT.mono, background: T.bg, color: T.text, border: `1px solid ${T.border}`, borderRadius: 4, outline: "none" }} />
         {b.link && <button onClick={() => { handleBlockChange(i, { link: undefined }); setEditingLink(null); }} style={{ background: "none", border: "none", color: T.red, fontSize: 10, cursor: "pointer", padding: 0 }}>✕</button>}
       </div>}
       {/* Block comment popup */}
@@ -5401,7 +5465,7 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
 
   return (
     <SlideErrorBoundary>
-      <div ref={outerRef} style={{ height: "100%", padding: pad, position: "relative", overflow: "visible", boxSizing: "border-box", display: "flex", flexDirection: "column", ...bgStyle }}>
+      <div ref={outerRef} data-vela-slide-content="" style={{ height: "100%", padding: pad, position: "relative", overflow: "visible", boxSizing: "border-box", display: "flex", flexDirection: "column", ...bgStyle }}>
         <div ref={innerRef} style={{ position: "relative", zIndex: 2, display: "flex", flexDirection: isSplit ? "row" : "column", justifyContent: isSplit ? "stretch" : fitJustify, alignItems: isSplit ? "stretch" : (align === "center" ? "center" : "stretch"), textAlign: align, gap: isSplit ? (slide.splitGap || 32) : (slide.gap || 12), transform: fitScale < 1 ? `scale(${fitScale})` : "none", transformOrigin: "top left", width: fitScale < 1 ? `${100 / fitScale}%` : "100%", height: fitScale < 1 ? `${100 / fitScale}%` : "100%", maxWidth: fitScale < 1 ? `${100 / fitScale}%` : "100%", flex: fitScale < 1 ? undefined : 1, flexShrink: fitScale < 1 && (isSplit || isCols) ? 0 : undefined, boxSizing: "border-box" }}>
           <ItemHoverContext.Provider value={setItemHovered}>
             {renderBlocks()}
@@ -7910,7 +7974,7 @@ function PresenterView({ current, next, index, total, duration, elapsed, brandin
   return (
     <div data-testid="presenter-view" onClick={(e) => e.stopPropagation()} style={{ position: "fixed", inset: 0, zIndex: 10000, background: "#0a0d14", color: "#e2e8f0", display: "flex", flexDirection: "column", overflow: "hidden" }}>
       <div style={{ padding: "10px 20px", display: "flex", alignItems: "center", gap: 14, borderBottom: "1px solid rgba(255,255,255,0.1)", flexShrink: 0 }}>
-        <span style={{ fontSize: 16 }}>🖥️</span>
+        <span style={{ fontSize: 16 }}>🗒️</span>
         <span style={{ fontFamily: FONT.mono, fontSize: 13, fontWeight: 700, color: "#60a5fa", letterSpacing: "0.05em" }}>PRESENTER VIEW</span>
         <span data-testid="presenter-timer" style={{ fontFamily: FONT.mono, fontSize: 15, fontWeight: 700, color: "#fff", background: "rgba(255,255,255,0.08)", padding: "3px 12px", borderRadius: 6 }}>⏱ {fmtElapsed(elapsed)}</span>
         <span style={{ fontFamily: FONT.mono, fontSize: 12, color: "#94a3b8" }}>Slide {index + 1} / {total}</span>
@@ -9290,7 +9354,6 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
         }
       }
 
-      // Esc closes popovers in fullscreen, but doesn't exit fullscreen (use F)
       // Font scale: +/- in fullscreen (0 resets)
       if (fullscreen && !showGalleryRef.current && (e.key === "+" || e.key === "=")) { e.preventDefault(); { const v = Math.min(fontScale + 0.1, 2.0); dispatch({ type: "SET_FONT_SCALE", value: Math.round(v*10)/10 }); showNavToast("FONT " + Math.round(v * 100) + "%"); }; }
       if (fullscreen && !showGalleryRef.current && e.key === "-") { e.preventDefault(); { const v = Math.max(fontScale - 0.1, 0.5); dispatch({ type: "SET_FONT_SCALE", value: Math.round(v*10)/10 }); showNavToast("FONT " + Math.round(v * 100) + "%"); }; }
@@ -9322,6 +9385,10 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       }
       if (e.key === "Escape" && showGalleryRef.current) { e.preventDefault(); setGallery(false); return; }
       if (e.key === "Escape" && showPresenterViewRef.current) { e.preventDefault(); setPresenterView(false); return; }
+      // Esc leaves Present mode. Browser fullscreen normally does this itself, but in a
+      // sandboxed iframe (Claude.ai artifact) requestFullscreen fails, so the key lands here.
+      // An open modal takes Esc first (it closes on the same keydown).
+      if (e.key === "Escape" && fullscreen && !document.querySelector("[data-vela-modal]")) { e.preventDefault(); stopAlternatives(); dispatch({ type: "SET_FULLSCREEN", value: false }); return; }
       // Ctrl+C → copy ALL selected slides (multi-select) to system clipboard,
       // in slide order. Falls back to the active slide when nothing is multi-selected.
       if ((e.ctrlKey || e.metaKey) && e.key === "c" && slidesRef.current.length > 0 && !["INPUT", "TEXTAREA"].includes(document.activeElement?.tagName) && !window.getSelection()?.toString()) {
@@ -9385,10 +9452,14 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       el.requestFullscreen?.().catch(() => {});
     }
     // Listen for browser-level fullscreen exit (e.g. user presses Esc at browser level)
+    // The browser eats that Esc, so the keydown handler never sees it. Apply the same
+    // layering here: a zoom, gallery or presenter view closes first and Present stays.
     const onFsChange = () => {
-      if (!document.fullscreenElement && fullscreen) {
-        dispatch({ type: "SET_FULLSCREEN", value: false });
-      }
+      if (document.fullscreenElement || !fullscreen) return;
+      if (document.querySelector("[data-vela-zoom]")) { window.dispatchEvent(new Event("vela-close-zoom")); return; }
+      if (showGalleryRef.current) { setGallery(false); return; }
+      if (showPresenterViewRef.current) { setPresenterView(false); return; }
+      dispatch({ type: "SET_FULLSCREEN", value: false });
     };
     document.addEventListener("fullscreenchange", onFsChange);
     return () => document.removeEventListener("fullscreenchange", onFsChange);
@@ -9783,22 +9854,27 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
           </div>
           <div style={{ fontFamily: FONT.mono, fontSize: 10, color: "rgba(255,255,255,0.5)" }}>{improving.current}/{improving.total}</div>
         </div>}
+        {/* Present toolbar: one group, kept faint so it does not distract the
+            audience. Pointing at any button shows the whole group. The group
+            itself takes no clicks, so the slide under it stays clickable. */}
+        <div className={isMobile ? undefined : "vela-fs-toolbar"} style={{ position: "absolute", top: 0, right: 0, width: "100%", height: 0 }}>
         <div className="slide-nav-btn" onClick={() => dispatch({ type: "SET_FULLSCREEN", value: false })} style={{ position: "absolute", top: isMobile ? 8 : 16, right: isMobile ? 8 : 16, padding: isMobile ? 12 : 8 }}><Minimize2 size={isMobile ? 22 : 18} color="#fff" /></div>
         {!isMobile && <div data-testid="student-toggle" className="slide-nav-btn" onClick={() => dispatch({ type: "SET_VERA_MODE", mode: isStudent ? "editor" : "student" })} title={isStudent ? "Exit student mode" : "Student mode — Vera teaches"} style={{ position: "absolute", top: 16, right: 52, padding: 8, background: isStudent ? T.accent + "30" : undefined, borderRadius: 6 }}><span style={{ fontSize: 16, color: "#fff" }}>🎓</span></div>}
-        {!isMobile && <div data-testid="gallery-toggle" className="slide-nav-btn" onClick={() => setGallery((v) => !v)} title="Gallery view (G)" style={{ position: "absolute", top: 16, right: 88, padding: 8, background: showGallery ? T.accent + "30" : undefined, borderRadius: 6 }}><span style={{ fontSize: 16, color: "#fff" }}>{"\u{1F5C2}\uFE0F"}</span></div>}
-        {!isMobile && <div data-testid="presenter-toggle" className="slide-nav-btn" onClick={() => setPresenterView((v) => !v)} title={showPresenterView ? "Exit presenter view (S)" : "Presenter view — notes, next slide, timer (S)"} style={{ position: "absolute", top: 16, right: 124, padding: 8, background: showPresenterView ? T.accent + "30" : undefined, borderRadius: 6 }}><span style={{ fontSize: 16, color: "#fff" }}>🖥️</span></div>}
+        {/* Gallery is reached through the view switch (fs-view-switch), so it has no separate icon here. */}
+        {!isMobile && <div data-testid="presenter-toggle" className="slide-nav-btn" onClick={() => setPresenterView((v) => !v)} title={showPresenterView ? "Exit presenter view (S)" : "Presenter view — notes, next slide, timer (S)"} style={{ position: "absolute", top: 16, right: 88, padding: 8, background: showPresenterView ? T.accent + "30" : undefined, borderRadius: 6 }}><span style={{ fontSize: 16, color: "#fff" }}>{"\u{1F5D2}\uFE0F"}</span></div>}
         {/* Present Edit toggle (Shift+E): restore inline click-to-edit while
             presenting. Uses the Lucide pencil (SVG), NOT the ✏ emoji, so the
             CR-03 "no edit chrome" test still passes when edit mode is off.
             Hidden in student mode, where editing is disabled by design. */}
-        {!isMobile && !isStudent && <div data-testid="present-edit-toggle" className="slide-nav-btn" onClick={() => setPresentEdit((v) => !v)} title={presentEdit ? "Editing on — click text/icons to edit (Shift+E)" : "Edit mode — click text/icons to edit while presenting (Shift+E)"} style={{ position: "absolute", top: 16, right: 160, padding: 8, background: presentEdit ? T.accent + "30" : undefined, borderRadius: 6 }}>{getIcon("edit", { size: 18, color: "#fff" })}</div>}
+        {!isMobile && !isStudent && <div data-testid="present-edit-toggle" className="slide-nav-btn" onClick={() => setPresentEdit((v) => !v)} title={presentEdit ? "Editing on — click text/icons to edit (Shift+E)" : "Edit mode — click text/icons to edit while presenting (Shift+E)"} style={{ position: "absolute", top: 16, right: 124, padding: 8, background: presentEdit ? T.accent + "30" : undefined, borderRadius: 6 }}>{getIcon("edit", { size: 18, color: "#fff" })}</div>}
         {/* CR13: the same view switch as the top bar, left of the icon row. */}
-        {!isMobile && <ViewSwitch testid="fs-view-switch" mode={viewMode} onSet={setView} compact onDark style={{ position: "absolute", top: 16, right: VELA_LOCAL_MODE ? 200 : 236 }} />}
+        {!isMobile && <ViewSwitch testid="fs-view-switch" mode={viewMode} onSet={setView} compact onDark style={{ position: "absolute", top: 16, right: VELA_LOCAL_MODE ? 164 : 200 }} />}
         {/* Browser fullscreen toggle removed — Vela fullscreen (F key / minimize button) is sufficient */}
         {!isMobile && !VELA_LOCAL_MODE && <>
-          <div className="slide-nav-btn" onClick={() => setShowCinemaTip((v) => !v)} title="Cinema mode — fullscreen in browser" style={{ position: "absolute", top: 16, right: 196, padding: 8 }}><VelaIcon size={18} /></div>
-          {showCinemaTip && <CinemaTip onClose={() => setShowCinemaTip(false)} />}
+          <div className="slide-nav-btn" onClick={() => setShowCinemaTip((v) => !v)} title="Cinema mode — fullscreen in browser" style={{ position: "absolute", top: 16, right: 160, padding: 8 }}><VelaIcon size={18} /></div>
         </>}
+        </div>
+        {!isMobile && !VELA_LOCAL_MODE && showCinemaTip && <CinemaTip onClose={() => setShowCinemaTip(false)} />}
         {navToast && <div className={navToast.phase === "in" ? "nav-toast-in" : "nav-toast-out"} style={{ position: "absolute", bottom: 20, left: 0, right: 0, display: "flex", justifyContent: "center", zIndex: 20, pointerEvents: "none" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 20px", borderRadius: 8, background: "rgba(0,0,0,0.78)", backdropFilter: "blur(8px)", border: `1px solid ${T.accent}30` }}>
             {navToast.section && <span style={{ fontFamily: FONT.mono, fontSize: 10, color: T.accent, fontWeight: 600, letterSpacing: "0.05em", textTransform: "uppercase" }}>{navToast.section}</span>}
@@ -14773,8 +14849,8 @@ uiSuite("Gallery View", [
     _key("f");
     await _waitFor(() => !_$("header"));
   }},
-  { name: "🗂 gallery button visible", fn: async () => {
-    await _waitFor(() => _$("[data-testid='gallery-toggle']"), 2000);
+  { name: "Gallery reachable from the fullscreen view switch", fn: async () => {
+    await _waitFor(() => _$("[data-testid='fs-view-switch-gallery']"), 2000);
   }},
   { name: "G key opens gallery", fn: async () => {
     document.activeElement?.blur(); await _wait(100);
@@ -14920,8 +14996,13 @@ uiSuite("Presenter View", [
     _key("f");
     await _waitFor(() => !_$("header"), 2000);
   }},
-  { name: "🖥️ presenter-view button visible in Present mode", fn: async () => {
+  { name: "🗒️ presenter-view button visible in Present mode", fn: async () => {
     await _waitFor(() => _$("[data-testid='presenter-toggle']"), 2000);
+  }},
+  { name: "Present toolbar has no duplicate gallery icon or 🖥️ glyph", fn: async () => {
+    if (_$("[data-testid='gallery-toggle']")) throw new Error("separate gallery icon still shown next to the view switch");
+    const pt = _$("[data-testid='presenter-toggle']");
+    if (/🖥/.test(pt.textContent || "")) throw new Error("presenter-view toggle reuses the 🖥️ Present glyph");
   }},
   { name: "S key opens presenter view: current + Next + notes + timer", fn: async () => {
     document.activeElement?.blur(); await _wait(100);
@@ -14953,9 +15034,66 @@ uiSuite("Presenter View", [
     _click(btn);
     await _waitFor(() => !_$("[data-testid='presenter-view']"), 2000);
   }},
-  { name: "Exit fullscreen after presenter-view tests", fn: async () => {
+  { name: "Esc closes presenter view first, then exits Present mode", fn: async () => {
+    document.activeElement?.blur(); await _wait(100);
+    _key("s");
+    await _waitFor(() => _$("[data-testid='presenter-view']"), 2000);
+    _key("Escape");
+    await _waitFor(() => !_$("[data-testid='presenter-view']"), 2000);
+    await _wait(150);
+    if (_$("header")) throw new Error("first Esc exited Present mode; it must only close presenter view");
+    _key("Escape");
+    await _waitFor(() => _$("header"), 2000);
+  }},
+]);
+
+uiSuite("Present Esc closes image zoom only", [
+  { name: "Esc on a zoomed block closes the zoom and stays in Present mode", fn: async () => {
+    document.activeElement?.blur(); await _wait(100);
     _key("f");
-    await _waitFor(() => _$("header"));
+    await _waitFor(() => !_$("header"), 2000);
+    const zoomable = () => _$$("div").find((d) => d.style.cursor === "zoom-in" && d.getBoundingClientRect().width > 0);
+    for (let i = 0; i < 30 && !zoomable(); i++) { _key("ArrowRight"); await _wait(250); }
+    const src = zoomable();
+    if (!src) throw new Error("no zoomable block found in the demo deck");
+    _click(src);
+    const zoomed = () => document.body.textContent.includes("ESC or click to close");
+    await _waitFor(zoomed, 2000);
+    // The overlay must fill the window, not the scaled slide canvas.
+    const r = _$("[data-vela-zoom]").getBoundingClientRect();
+    if (Math.abs(r.width - window.innerWidth) > 2 || Math.abs(r.height - window.innerHeight) > 2)
+      throw new Error(`zoom overlay is ${Math.round(r.width)}x${Math.round(r.height)}, window is ${window.innerWidth}x${window.innerHeight}`);
+    // Arrow keys stay on this slide: they step to another zoomable block, or
+    // close the zoom past the last one (no wrap to the first).
+    const before = _slidePos();
+    const list = Array.from(src.closest("[data-vela-slide-content]").querySelectorAll("[data-vela-zoomable]"));
+    const isLast = list.indexOf(src) === list.length - 1;
+    _key("ArrowRight");
+    await _wait(300);
+    if (_slidePos() !== before) throw new Error("ArrowRight in zoom changed the slide");
+    if (isLast && zoomed()) throw new Error("ArrowRight in zoom on the last zoomable block did not close the zoom");
+    if (!isLast && !zoomed()) throw new Error("ArrowRight in zoom did not step to the next zoomable block");
+    if (!zoomed()) { _click(src); await _waitFor(zoomed, 2000); }
+    _key("Escape");
+    await _waitFor(() => !zoomed(), 2000);
+    await _wait(200);
+    if (_$("header")) throw new Error("Esc on the zoom overlay also exited Present mode");
+    // Browser-fullscreen path: the browser eats Esc and only fires fullscreenchange.
+    const fsExit = () => document.dispatchEvent(new Event("fullscreenchange"));
+    _click(zoomable());
+    await _waitFor(zoomed, 2000);
+    fsExit();
+    await _waitFor(() => !zoomed(), 2000).catch(() => { throw new Error("browser fullscreen exit did not close the zoom"); });
+    await _wait(200);
+    if (_$("header")) throw new Error("browser fullscreen exit with a zoom open also exited Present mode");
+    document.activeElement?.blur(); _key("s");
+    await _waitFor(() => _$("[data-testid='presenter-view']"), 2000);
+    fsExit();
+    await _waitFor(() => !_$("[data-testid='presenter-view']"), 2000);
+    await _wait(200);
+    if (_$("header")) throw new Error("browser fullscreen exit with presenter view open also exited Present mode");
+    fsExit();
+    await _waitFor(() => _$("header"), 2000);
   }},
 ]);
 
@@ -16372,7 +16510,7 @@ uiSuite("meridian-CR07 Review cycle", [
 // glyph draws in the inherited (dark, light-theme) text colour on the dark chip.
 const _mrdIsLightTheme = () => { const h = _$("header"); const m = (h ? getComputedStyle(h).backgroundColor : "").match(/\d+/g); return !!m && (+m[0] + +m[1] + +m[2]) / 3 >= 128; };
 const _mrdCheckNavGlyphs = async () => {
-  for (const id of ["gallery-toggle", "presenter-toggle", "student-toggle"]) {
+  for (const id of ["presenter-toggle", "student-toggle"]) {
     const el = await _waitFor(() => _$(`[data-testid='${id}']`), 2000);
     const sp = el.querySelector("span");
     if (!sp) throw new Error(`${id}: no glyph`);
@@ -16391,7 +16529,7 @@ uiSuite("meridian-CR10-CR11 Nav Icon Contrast", [
     await _waitFor(() => !_$("header"));
   }},
   { name: "gallery/presenter/edit nav buttons render with a non-transparent chip", fn: async () => {
-    const ids = ["gallery-toggle", "presenter-toggle", "present-edit-toggle"];
+    const ids = ["presenter-toggle", "present-edit-toggle"];
     for (const id of ids) {
       const el = await _waitFor(() => _$(`[data-testid='${id}']`), 2000);
       const bg = getComputedStyle(el).backgroundColor;
@@ -16744,6 +16882,36 @@ uiSuite("meridian-CR15 toolbar room above", [
       }
     }
     _hooks().injectBlocks([{ type: "text", text: "F3 done" }], { comments: [] });
+  }},
+], { setup: _selectFirstModule });
+
+uiSuite("Link box input normalization", [
+  { name: "bare domain, email and host:port get a scheme; unsafe schemes stay rejected", fn: async () => {
+    const cases = [
+      ["example.com", "https://example.com/"], ["  www.example.com/a ", "https://www.example.com/a"],
+      ["me@example.com", "mailto:me@example.com"], ["localhost:3000/x", "https://localhost:3000/x"],
+      ["https://example.org/p", "https://example.org/p"], ["", undefined], ["   ", undefined],
+      ["javascript:alert(1)", undefined], ["data:text/html,x", undefined], ["\\\\host\\share", undefined],
+    ];
+    for (const [input, want] of cases) {
+      const got = linkFromInput(input);
+      if (got !== want) throw new Error(`linkFromInput(${JSON.stringify(input)}) = ${JSON.stringify(got)}, want ${JSON.stringify(want)}`);
+    }
+  }},
+]);
+
+uiSuite("Cols layout block edits", [
+  { name: "a link added to a right-column block is saved on that block", fn: async () => {
+    const sel = "[data-cols-side='right'] [data-block-type='text']";
+    const el = await _mrdInject([], { layout: "cols", L: [{ type: "heading", text: "Left col" }], R: [{ type: "text", text: "Right col text" }] }, (vp) => vp && vp.querySelector(sel));
+    el.dispatchEvent(new MouseEvent("mouseover", { bubbles: true, relatedTarget: document.body }));
+    const btn = await _waitFor(() => el.querySelector("[data-testid='block-hover-toolbar'] button[title='Add link']"), 2000);
+    btn.click();
+    const inp = await _waitFor(() => el.querySelector("[data-testid='block-link-popup'] input"), 2000);
+    inp.value = "example.com/col";
+    inp.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    await _waitFor(() => { const n = _mrdViewport()?.querySelector(sel); return n && n.getAttribute("data-pdf-link") === "https://example.com/col"; }, 2000)
+      .catch(() => { throw new Error("right-column block did not keep its link"); });
   }},
 ], { setup: _selectFirstModule });
 
@@ -24471,7 +24639,7 @@ function ModalBackdrop({ onClose, onEnter, extraKeys, children }) {
     return () => window.removeEventListener("keydown", h);
   }, [onClose, onEnter, extraKeys]);
   return (
-    <div onClick={onClose} style={{ position: "fixed", inset: 0, zIndex: 10001, background: "rgba(0,0,0,0.75)", backdropFilter: "blur(8px)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+    <div data-vela-modal="" onClick={onClose} style={{ position: "fixed", inset: 0, zIndex: 10001, background: "rgba(0,0,0,0.75)", backdropFilter: "blur(8px)", display: "flex", alignItems: "center", justifyContent: "center" }}>
       <div onClick={(e) => e.stopPropagation()} style={{ background: T.bgPanel, border: `1px solid ${T.border}`, borderRadius: 12, padding: "24px 28px", maxWidth: 520, width: "90vw", maxHeight: "85vh", overflowY: "auto", boxSizing: "border-box", boxShadow: "0 24px 64px rgba(0,0,0,0.5)" }}>
         {children}
       </div>
@@ -25028,6 +25196,7 @@ function ShortcutHelp({ onClose }) {
     { title: "Presentation", items: [
       ["F", "Toggle fullscreen"],
       ["F5", "Enter fullscreen (blocks reload)"],
+      ["Esc", "Exit fullscreen"],
       ["Ctrl+E", "Toggle slides TOC / search (fullscreen)"],
       ["D", "Toggle dark / light theme"],
       ["+ / −", "Scale font up / down"],

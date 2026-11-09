@@ -348,7 +348,7 @@ const PATH = "/decks/a.vela";
     m.saveCurrent(DECK());
     await m.flushNow();
     // The file is now reported as far larger than the deck cap.
-    cfg.getStats = () => ({ size: 6 * 1024 * 1024 });
+    cfg.getStats = () => ({ size: m.MAX_DECK_BYTES + 1 });
     N.resetCounts();
     m.state.lastWriteAt = 0; // window lapsed: the size cap is the only thing left
     m.onWatchEvent({ detail: { dir: "/decks", filename: "a.vela", action: "modified" } });
@@ -373,7 +373,7 @@ const PATH = "/decks/a.vela";
     await m.flushNow(); // real save + verify (default mock) must succeed first
     // Simulate the race: stat reports a small file (passes the pre-read cap), but
     // the read returns an oversized document grown inside the window.
-    const big = "x".repeat(6 * 1024 * 1024);
+    const big = "x".repeat(m.MAX_DECK_BYTES + 1);
     cfg.getStats = () => ({ size: 100 });
     cfg.readFile = () => big;
     N.resetCounts();
@@ -472,7 +472,7 @@ const PATH = "/decks/a.vela";
     assert(SRC.includes('lastWrittenSig'), "echo-guard signature missing");
     assert(SRC.includes('verifyWrite'), "verify-after-write missing");
     assert(SRC.includes('lastWrittenText'), "exact-bytes echo baseline missing");
-    assert(/const MAX_DECK_BYTES = 5 \* 1024 \* 1024;/.test(SRC), "deck read size cap missing");
+    assert(/const MAX_DECK_BYTES = 50 \* 1024 \* 1024;/.test(SRC), "deck read size cap missing");
     // Post-read TOCTOU re-check: the watcher must re-validate the bytes it read
     // against the cap, not trust the prior stat (which a writer can outrace).
     assert(/const readBytes = byteLen\(text\);/.test(SRC) && /readBytes > MAX_DECK_BYTES/.test(SRC),

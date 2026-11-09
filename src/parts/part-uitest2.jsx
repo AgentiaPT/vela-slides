@@ -475,8 +475,8 @@ uiSuite("Gallery View", [
     _key("f");
     await _waitFor(() => !_$("header"));
   }},
-  { name: "🗂 gallery button visible", fn: async () => {
-    await _waitFor(() => _$("[data-testid='gallery-toggle']"), 2000);
+  { name: "Gallery reachable from the fullscreen view switch", fn: async () => {
+    await _waitFor(() => _$("[data-testid='fs-view-switch-gallery']"), 2000);
   }},
   { name: "G key opens gallery", fn: async () => {
     document.activeElement?.blur(); await _wait(100);
@@ -622,8 +622,13 @@ uiSuite("Presenter View", [
     _key("f");
     await _waitFor(() => !_$("header"), 2000);
   }},
-  { name: "🖥️ presenter-view button visible in Present mode", fn: async () => {
+  { name: "🗒️ presenter-view button visible in Present mode", fn: async () => {
     await _waitFor(() => _$("[data-testid='presenter-toggle']"), 2000);
+  }},
+  { name: "Present toolbar has no duplicate gallery icon or 🖥️ glyph", fn: async () => {
+    if (_$("[data-testid='gallery-toggle']")) throw new Error("separate gallery icon still shown next to the view switch");
+    const pt = _$("[data-testid='presenter-toggle']");
+    if (/🖥/.test(pt.textContent || "")) throw new Error("presenter-view toggle reuses the 🖥️ Present glyph");
   }},
   { name: "S key opens presenter view: current + Next + notes + timer", fn: async () => {
     document.activeElement?.blur(); await _wait(100);
@@ -655,9 +660,66 @@ uiSuite("Presenter View", [
     _click(btn);
     await _waitFor(() => !_$("[data-testid='presenter-view']"), 2000);
   }},
-  { name: "Exit fullscreen after presenter-view tests", fn: async () => {
+  { name: "Esc closes presenter view first, then exits Present mode", fn: async () => {
+    document.activeElement?.blur(); await _wait(100);
+    _key("s");
+    await _waitFor(() => _$("[data-testid='presenter-view']"), 2000);
+    _key("Escape");
+    await _waitFor(() => !_$("[data-testid='presenter-view']"), 2000);
+    await _wait(150);
+    if (_$("header")) throw new Error("first Esc exited Present mode; it must only close presenter view");
+    _key("Escape");
+    await _waitFor(() => _$("header"), 2000);
+  }},
+]);
+
+uiSuite("Present Esc closes image zoom only", [
+  { name: "Esc on a zoomed block closes the zoom and stays in Present mode", fn: async () => {
+    document.activeElement?.blur(); await _wait(100);
     _key("f");
-    await _waitFor(() => _$("header"));
+    await _waitFor(() => !_$("header"), 2000);
+    const zoomable = () => _$$("div").find((d) => d.style.cursor === "zoom-in" && d.getBoundingClientRect().width > 0);
+    for (let i = 0; i < 30 && !zoomable(); i++) { _key("ArrowRight"); await _wait(250); }
+    const src = zoomable();
+    if (!src) throw new Error("no zoomable block found in the demo deck");
+    _click(src);
+    const zoomed = () => document.body.textContent.includes("ESC or click to close");
+    await _waitFor(zoomed, 2000);
+    // The overlay must fill the window, not the scaled slide canvas.
+    const r = _$("[data-vela-zoom]").getBoundingClientRect();
+    if (Math.abs(r.width - window.innerWidth) > 2 || Math.abs(r.height - window.innerHeight) > 2)
+      throw new Error(`zoom overlay is ${Math.round(r.width)}x${Math.round(r.height)}, window is ${window.innerWidth}x${window.innerHeight}`);
+    // Arrow keys stay on this slide: they step to another zoomable block, or
+    // close the zoom past the last one (no wrap to the first).
+    const before = _slidePos();
+    const list = Array.from(src.closest("[data-vela-slide-content]").querySelectorAll("[data-vela-zoomable]"));
+    const isLast = list.indexOf(src) === list.length - 1;
+    _key("ArrowRight");
+    await _wait(300);
+    if (_slidePos() !== before) throw new Error("ArrowRight in zoom changed the slide");
+    if (isLast && zoomed()) throw new Error("ArrowRight in zoom on the last zoomable block did not close the zoom");
+    if (!isLast && !zoomed()) throw new Error("ArrowRight in zoom did not step to the next zoomable block");
+    if (!zoomed()) { _click(src); await _waitFor(zoomed, 2000); }
+    _key("Escape");
+    await _waitFor(() => !zoomed(), 2000);
+    await _wait(200);
+    if (_$("header")) throw new Error("Esc on the zoom overlay also exited Present mode");
+    // Browser-fullscreen path: the browser eats Esc and only fires fullscreenchange.
+    const fsExit = () => document.dispatchEvent(new Event("fullscreenchange"));
+    _click(zoomable());
+    await _waitFor(zoomed, 2000);
+    fsExit();
+    await _waitFor(() => !zoomed(), 2000).catch(() => { throw new Error("browser fullscreen exit did not close the zoom"); });
+    await _wait(200);
+    if (_$("header")) throw new Error("browser fullscreen exit with a zoom open also exited Present mode");
+    document.activeElement?.blur(); _key("s");
+    await _waitFor(() => _$("[data-testid='presenter-view']"), 2000);
+    fsExit();
+    await _waitFor(() => !_$("[data-testid='presenter-view']"), 2000);
+    await _wait(200);
+    if (_$("header")) throw new Error("browser fullscreen exit with presenter view open also exited Present mode");
+    fsExit();
+    await _waitFor(() => _$("header"), 2000);
   }},
 ]);
 
@@ -2074,7 +2136,7 @@ uiSuite("meridian-CR07 Review cycle", [
 // glyph draws in the inherited (dark, light-theme) text colour on the dark chip.
 const _mrdIsLightTheme = () => { const h = _$("header"); const m = (h ? getComputedStyle(h).backgroundColor : "").match(/\d+/g); return !!m && (+m[0] + +m[1] + +m[2]) / 3 >= 128; };
 const _mrdCheckNavGlyphs = async () => {
-  for (const id of ["gallery-toggle", "presenter-toggle", "student-toggle"]) {
+  for (const id of ["presenter-toggle", "student-toggle"]) {
     const el = await _waitFor(() => _$(`[data-testid='${id}']`), 2000);
     const sp = el.querySelector("span");
     if (!sp) throw new Error(`${id}: no glyph`);
@@ -2093,7 +2155,7 @@ uiSuite("meridian-CR10-CR11 Nav Icon Contrast", [
     await _waitFor(() => !_$("header"));
   }},
   { name: "gallery/presenter/edit nav buttons render with a non-transparent chip", fn: async () => {
-    const ids = ["gallery-toggle", "presenter-toggle", "present-edit-toggle"];
+    const ids = ["presenter-toggle", "present-edit-toggle"];
     for (const id of ids) {
       const el = await _waitFor(() => _$(`[data-testid='${id}']`), 2000);
       const bg = getComputedStyle(el).backgroundColor;
@@ -2446,6 +2508,36 @@ uiSuite("meridian-CR15 toolbar room above", [
       }
     }
     _hooks().injectBlocks([{ type: "text", text: "F3 done" }], { comments: [] });
+  }},
+], { setup: _selectFirstModule });
+
+uiSuite("Link box input normalization", [
+  { name: "bare domain, email and host:port get a scheme; unsafe schemes stay rejected", fn: async () => {
+    const cases = [
+      ["example.com", "https://example.com/"], ["  www.example.com/a ", "https://www.example.com/a"],
+      ["me@example.com", "mailto:me@example.com"], ["localhost:3000/x", "https://localhost:3000/x"],
+      ["https://example.org/p", "https://example.org/p"], ["", undefined], ["   ", undefined],
+      ["javascript:alert(1)", undefined], ["data:text/html,x", undefined], ["\\\\host\\share", undefined],
+    ];
+    for (const [input, want] of cases) {
+      const got = linkFromInput(input);
+      if (got !== want) throw new Error(`linkFromInput(${JSON.stringify(input)}) = ${JSON.stringify(got)}, want ${JSON.stringify(want)}`);
+    }
+  }},
+]);
+
+uiSuite("Cols layout block edits", [
+  { name: "a link added to a right-column block is saved on that block", fn: async () => {
+    const sel = "[data-cols-side='right'] [data-block-type='text']";
+    const el = await _mrdInject([], { layout: "cols", L: [{ type: "heading", text: "Left col" }], R: [{ type: "text", text: "Right col text" }] }, (vp) => vp && vp.querySelector(sel));
+    el.dispatchEvent(new MouseEvent("mouseover", { bubbles: true, relatedTarget: document.body }));
+    const btn = await _waitFor(() => el.querySelector("[data-testid='block-hover-toolbar'] button[title='Add link']"), 2000);
+    btn.click();
+    const inp = await _waitFor(() => el.querySelector("[data-testid='block-link-popup'] input"), 2000);
+    inp.value = "example.com/col";
+    inp.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    await _waitFor(() => { const n = _mrdViewport()?.querySelector(sel); return n && n.getAttribute("data-pdf-link") === "https://example.com/col"; }, 2000)
+      .catch(() => { throw new Error("right-column block did not keep its link"); });
   }},
 ], { setup: _selectFirstModule });
 
