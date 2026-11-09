@@ -127,6 +127,7 @@ that symbol in the named part for the line. No line numbers here — they rot.
 - meridian-CR13: editor|presenter|gallery view switcher next to Present: _mrdSeg _mrdActive _mrdOnTop _mrdSwitchTo _mrdGalleryOpen
 - Sprint meridian (C3): split image alignment, accent 0, docked branding: _mrdSvg _mrdViewport _mrdFrame _mrdInject _mrdSetRange _mrdOpenBranding _mrdCloseBranding _mrdUndoTo _mrdHover _mrdUnhover _mrdCr15Clear _meridianF8SlowSave _tlEditNode _tlEdit _tidelineTocDrag _tidelineFire _tidelineHold _tidelineRows _tidelineTitle
 - Sprint tideline (CR22-CR25): image paste placement stress test: _tlAspects _tlBases _tlPaste _tlMeasure _tlCase _tlColors _tlCanvas _tlPasteCanvas _tlPasteBig _tlLoaded _tlStressMeasure _tlStressCase
+- Review fixes: image grid and image paste: _rfiCanvas _rfiSrc _rfiPasteFile _rfiPng
 - UI TEST RUNNER COMPONENT: computeDeckFingerprint DEMO_DECK_FP_TITLE VelaUITestRunner
 
 ### part-demo.jsx
@@ -323,10 +324,10 @@ add_lane add_item batch_add_items remove_item remove_lane rename_item rename_lan
 ## Navigability debt (WARN — candidates for banners or splits)
 
 - part-imports.jsx: 874-line unbannered stretch after line 515
-- part-blocks.jsx: 779-line unbannered stretch after line 1007
+- part-blocks.jsx: 779-line unbannered stretch after line 1015
 - part-canvas.jsx: 497-line unbannered stretch after line 24
-- part-slidepanel.jsx: 521-line unbannered stretch after line 241
-- part-slidepanel.jsx: 411-line unbannered stretch after line 1078
+- part-slidepanel.jsx: 530-line unbannered stretch after line 241
+- part-slidepanel.jsx: 415-line unbannered stretch after line 1087
 - part-uitest.jsx: 616-line unbannered stretch after line 1230
 - part-uitest2.jsx: 448-line unbannered stretch after line 2
 - part-uitest2.jsx: 593-line unbannered stretch after line 1457

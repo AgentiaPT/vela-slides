@@ -638,10 +638,13 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
     plan.rows.forEach((row, r) => {
       const h = row.hw / hwSum, sumF = row.cells.reduce((t, c) => t + c.f, 0), rowGaps = gap * row.gc;
       let cumF = 0;
+      // A short row also has fewer gaps than rowGaps reserves: split the unused
+      // gaps (gc - (cells - 1)) evenly on both sides, so the row centers exactly.
+      const spare = gap * (row.gc - (row.cells.length - 1)) / 2;
       row.cells.forEach((c, k) => {
         cellPos[c.i] = {
           top: len(cumH, gap * r - cumH * gapsH), height: len(h, -h * gapsH),
-          left: len((1 - sumF) / 2 + cumF, gap * k - rowGaps * ((1 - sumF) / 2 + cumF)), width: len(c.f, -c.f * rowGaps),
+          left: len((1 - sumF) / 2 + cumF, gap * k + spare - rowGaps * ((1 - sumF) / 2 + cumF)), width: len(c.f, -c.f * rowGaps),
         };
         cumF += c.f;
       });
@@ -659,7 +662,8 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
       <div key={`__imgrid-${idxs[0]}`} data-testid="image-grid" data-image-grid={region} data-image-count={runLen} data-image-grid-key={gridKey} data-image-cols={plan.cols} data-image-rows={rows}
         style={{ position: "relative", flex: gridHeight == null ? "1 1 0" : "0 0 auto", height: gridHeight == null ? undefined : gridHeight, maxHeight: "100%", minHeight: minGridH, minWidth: 0, width: "100%" }}>
         {idxs.map((bi, k) => {
-          const rendered = renderBlockWithComments({ ...blocks[bi], _gridCell: true, ...(isSoloImage && blocks[bi].rounded == null ? { rounded: 0 } : {}) }, bi);
+          // A solo image fills the slide: keep its _solo flag, so it is not click-to-zoom.
+          const rendered = renderBlockWithComments({ ...blocks[bi], _gridCell: true, ...(isSoloImage ? { _solo: true } : {}), ...(isSoloImage && blocks[bi].rounded == null ? { rounded: 0 } : {}) }, bi);
           const [blockEl, ...rest] = rendered;
           // Make the block wrapper fill its cell height so the image (height:100%)
           // and objectFit:contain letterbox uniformly across mixed aspect ratios.
