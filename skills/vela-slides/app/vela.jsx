@@ -3394,7 +3394,7 @@ const EDIT_PLACEHOLDER = "Text";
 // copy), for callers whose onSave normalizes the value (checklist status label).
 // autoEdit: start in edit mode on mount (the image "+ Add title" chip); default off.
 // onEditEnd: called after an edit ends (commit or cancel), whatever the value.
-function EditableText({ text, onSave, editable, style, multiline, className, prefix, suffix, controlled, autoEdit, onEditEnd }) {
+function EditableText({ text, onSave, editable, style, multiline, className, prefix, suffix, controlled, autoEdit, onEditEnd, oneLine }) {
   const [editing, setEditing] = useState(() => !!autoEdit && !!editable && !!onSave);
   const [hovered, setHovered] = useState(false);
   const [localText, setLocalText] = useState(text);
@@ -3414,7 +3414,9 @@ function EditableText({ text, onSave, editable, style, multiline, className, pre
     try { const s = window.getSelection(); s.selectAllChildren(el); s.collapseToEnd(); } catch (_) {}
   }, [editing]);
 
-  const baseStyle = { ...style, whiteSpace: "pre-line" };
+  // oneLine (story grid caption row): the static text stays on one line with an
+  // ellipsis; the edit field below may wrap and grow.
+  const baseStyle = oneLine ? { ...style, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } : { ...style, whiteSpace: "pre-line" };
 
   if (!editable || !onSave) return <div className={className} style={baseStyle}>{prefix}{parseInline(text)}{suffix}</div>;
 
@@ -3463,7 +3465,7 @@ function EditableText({ text, onSave, editable, style, multiline, className, pre
       onClick={(e) => e.stopPropagation()}
       onMouseDown={(e) => e.stopPropagation()}
       className={className}
-      style={{ ...baseStyle, outline: `2px solid ${T.accent}`, outlineOffset: 2, borderRadius: 2, cursor: "text", minHeight: "1em", minWidth: "2em", whiteSpace: "pre-wrap" }}
+      style={{ ...baseStyle, outline: `2px solid ${T.accent}`, outlineOffset: 2, borderRadius: 2, cursor: "text", minHeight: "1em", minWidth: "2em", whiteSpace: "pre-wrap", ...(oneLine ? { overflow: "visible", textOverflow: "clip", height: "auto" } : {}) }}
     />
   );
 
@@ -4322,7 +4324,12 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
       // _captionChip = this surface may offer the editor "+ Add title" chip.
       const storyN = Number.isInteger(block._storyN) && block._storyN > 0 ? block._storyN : undefined;
       const showChip = !!block._captionChip && canEdit && !!block.src && !block.caption && !block._storyNav;
-      const captionStyle = { fontFamily: FONT.body, fontSize: SIZES.sm, color: st.textDim, marginTop: 8, flexShrink: 0 };
+      // _storyRow = this cell is in a story-active grid: every cell reserves one
+      // uniform caption row (one line, ellipsis), also without a caption, so the
+      // tiles of a row keep equal image sizes. Without the flag: unchanged.
+      const storyRow = !!block._gridCell && !!block._storyRow;
+      const captionStyle = { fontFamily: FONT.body, fontSize: SIZES.sm, color: st.textDim, marginTop: 8, flexShrink: 0, ...(storyRow ? { lineHeight: 1.4, height: "1.4em", maxWidth: "100%" } : {}) };
+      const captionAdding = !block.caption && chipAdding && canEdit;
       return <ZoomWrap enabled={!!block.src && !block._solo && !block._storyNav} link={block.link} fill={!!block._gridCell}><div className={cls} data-story-idx={storyN}
         onMouseEnter={block._captionChip ? () => setChipHover(true) : undefined} onMouseLeave={block._captionChip ? () => setChipHover(false) : undefined}
         style={{ display: "flex", flexDirection: "column", alignItems: block.align === "left" ? "flex-start" : block.align === "right" ? "flex-end" : "center", ...(block._solo ? { flex: 1, width: "100%", justifyContent: "center" } : {}), ...(block._gridCell ? { flex: 1, minHeight: 0, minWidth: 0, width: "100%", justifyContent: "center", position: "relative" } : {}), ...(block._storyNav && block.src ? { cursor: "zoom-in" } : {}), ...block.style }}>
@@ -4340,8 +4347,9 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
           ? { width: "100%", height: "100%", objectFit: block.fit || "contain", borderRadius: 0 }
           : { maxWidth: block.maxWidth || "100%", maxHeight: block.maxHeight ?? "100%", borderRadius: block.rounded ?? 8, objectFit: block.fit || "contain", boxShadow: block.shadow ? "0 8px 32px rgba(0,0,0,0.3)" : "none" }
         } /> : <div style={{ padding: 32, color: st.textDim, fontFamily: FONT.mono, fontSize: 11 }}>Paste image (Ctrl+V)</div>}
-        {block.caption && <EditableText text={block.caption} editable={textEditable} onSave={(v) => onChange?.({ caption: v })} prefix={storyN ? `${storyN} · ` : undefined} style={captionStyle} />}
-        {!block.caption && chipAdding && canEdit && <EditableText text="" autoEdit editable={textEditable} onSave={(v) => { if (v) onChange?.({ caption: v }); }} onEditEnd={() => { setChipAdding(false); setChipHover(false); }} style={captionStyle} />}
+        {block.caption && <EditableText text={block.caption} editable={textEditable} onSave={(v) => onChange?.({ caption: v })} prefix={storyN ? `${storyN} · ` : undefined} style={captionStyle} oneLine={storyRow} />}
+        {captionAdding && <EditableText text="" autoEdit editable={textEditable} onSave={(v) => { if (v) onChange?.({ caption: v }); }} onEditEnd={() => { setChipAdding(false); setChipHover(false); }} style={captionStyle} oneLine={storyRow} />}
+        {storyRow && !block.caption && !captionAdding && <div aria-hidden="true" data-story-caption-row="" style={captionStyle} />}
         {showChip && chipHover && !chipAdding && <div data-no-pdf="" data-testid="caption-chip" role="button" tabIndex={0}
           onClick={(e) => { e.stopPropagation(); e.preventDefault(); setChipAdding(true); }}
           onMouseDown={(e) => e.stopPropagation()}
@@ -5966,6 +5974,9 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
     const drag = tileDrag && tileDrag.key === gridKey && tileDrag.idxs.length === runLen && tileDrag.idxs.every((v, q) => v === idxs[q]) ? tileDrag : null;
     const seq = drag ? drag.order.map((p) => idxs[p]) : idxs;
     const canReorder = !!(editable && onEdit && !presenting && !presentSurface && runLen >= 2 && !isSoloImage);
+    // A story-active grid gives every cell one uniform caption row (_storyRow),
+    // so tiles with and without a caption align. Other grids: no flag, unchanged.
+    const storyRow = storyActive && runLen >= 2 && idxs.some((bi) => storyNumOf.has(bi));
     const maxW = seq.map((bi) => { const z = IMAGE_NATURAL_SIZE.get(blocks[bi].src); return z && z.w > 0 ? z.w * GRID_IMG_MAX_UPSCALE : 0; });
     const plan = imageGridPlan(seq.map((bi) => IMAGE_ASPECT_CACHE.get(blocks[bi].src)), box?.[0], box?.[1], gap, gridColsFor(runLen, region), slide.imageCols ? Math.min(6, Math.max(1, slide.imageCols | 0)) : 0, maxW);
     const rows = plan.rows.length;
@@ -6005,7 +6016,7 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
         {idxs.map((bi, p) => {
           const k = drag ? drag.order.indexOf(p) : p;
           // A solo image fills the slide: keep its _solo flag, so it is not click-to-zoom.
-          const rendered = renderBlockWithComments({ ...blocks[bi], _gridCell: true, ...(isSoloImage ? { _solo: true } : {}), ...(isSoloImage && blocks[bi].rounded == null ? { rounded: 0 } : {}) }, bi);
+          const rendered = renderBlockWithComments({ ...blocks[bi], _gridCell: true, ...(storyRow ? { _storyRow: true } : {}), ...(isSoloImage ? { _solo: true } : {}), ...(isSoloImage && blocks[bi].rounded == null ? { rounded: 0 } : {}) }, bi);
           const [blockEl, ...rest] = rendered;
           // Make the block wrapper fill its cell height so the image (height:100%)
           // and objectFit:contain letterbox uniformly across mixed aspect ratios.

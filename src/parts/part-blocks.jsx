@@ -380,7 +380,7 @@ const EDIT_PLACEHOLDER = "Text";
 // copy), for callers whose onSave normalizes the value (checklist status label).
 // autoEdit: start in edit mode on mount (the image "+ Add title" chip); default off.
 // onEditEnd: called after an edit ends (commit or cancel), whatever the value.
-function EditableText({ text, onSave, editable, style, multiline, className, prefix, suffix, controlled, autoEdit, onEditEnd }) {
+function EditableText({ text, onSave, editable, style, multiline, className, prefix, suffix, controlled, autoEdit, onEditEnd, oneLine }) {
   const [editing, setEditing] = useState(() => !!autoEdit && !!editable && !!onSave);
   const [hovered, setHovered] = useState(false);
   const [localText, setLocalText] = useState(text);
@@ -400,7 +400,9 @@ function EditableText({ text, onSave, editable, style, multiline, className, pre
     try { const s = window.getSelection(); s.selectAllChildren(el); s.collapseToEnd(); } catch (_) {}
   }, [editing]);
 
-  const baseStyle = { ...style, whiteSpace: "pre-line" };
+  // oneLine (story grid caption row): the static text stays on one line with an
+  // ellipsis; the edit field below may wrap and grow.
+  const baseStyle = oneLine ? { ...style, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } : { ...style, whiteSpace: "pre-line" };
 
   if (!editable || !onSave) return <div className={className} style={baseStyle}>{prefix}{parseInline(text)}{suffix}</div>;
 
@@ -449,7 +451,7 @@ function EditableText({ text, onSave, editable, style, multiline, className, pre
       onClick={(e) => e.stopPropagation()}
       onMouseDown={(e) => e.stopPropagation()}
       className={className}
-      style={{ ...baseStyle, outline: `2px solid ${T.accent}`, outlineOffset: 2, borderRadius: 2, cursor: "text", minHeight: "1em", minWidth: "2em", whiteSpace: "pre-wrap" }}
+      style={{ ...baseStyle, outline: `2px solid ${T.accent}`, outlineOffset: 2, borderRadius: 2, cursor: "text", minHeight: "1em", minWidth: "2em", whiteSpace: "pre-wrap", ...(oneLine ? { overflow: "visible", textOverflow: "clip", height: "auto" } : {}) }}
     />
   );
 
@@ -1308,7 +1310,12 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
       // _captionChip = this surface may offer the editor "+ Add title" chip.
       const storyN = Number.isInteger(block._storyN) && block._storyN > 0 ? block._storyN : undefined;
       const showChip = !!block._captionChip && canEdit && !!block.src && !block.caption && !block._storyNav;
-      const captionStyle = { fontFamily: FONT.body, fontSize: SIZES.sm, color: st.textDim, marginTop: 8, flexShrink: 0 };
+      // _storyRow = this cell is in a story-active grid: every cell reserves one
+      // uniform caption row (one line, ellipsis), also without a caption, so the
+      // tiles of a row keep equal image sizes. Without the flag: unchanged.
+      const storyRow = !!block._gridCell && !!block._storyRow;
+      const captionStyle = { fontFamily: FONT.body, fontSize: SIZES.sm, color: st.textDim, marginTop: 8, flexShrink: 0, ...(storyRow ? { lineHeight: 1.4, height: "1.4em", maxWidth: "100%" } : {}) };
+      const captionAdding = !block.caption && chipAdding && canEdit;
       return <ZoomWrap enabled={!!block.src && !block._solo && !block._storyNav} link={block.link} fill={!!block._gridCell}><div className={cls} data-story-idx={storyN}
         onMouseEnter={block._captionChip ? () => setChipHover(true) : undefined} onMouseLeave={block._captionChip ? () => setChipHover(false) : undefined}
         style={{ display: "flex", flexDirection: "column", alignItems: block.align === "left" ? "flex-start" : block.align === "right" ? "flex-end" : "center", ...(block._solo ? { flex: 1, width: "100%", justifyContent: "center" } : {}), ...(block._gridCell ? { flex: 1, minHeight: 0, minWidth: 0, width: "100%", justifyContent: "center", position: "relative" } : {}), ...(block._storyNav && block.src ? { cursor: "zoom-in" } : {}), ...block.style }}>
@@ -1326,8 +1333,9 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
           ? { width: "100%", height: "100%", objectFit: block.fit || "contain", borderRadius: 0 }
           : { maxWidth: block.maxWidth || "100%", maxHeight: block.maxHeight ?? "100%", borderRadius: block.rounded ?? 8, objectFit: block.fit || "contain", boxShadow: block.shadow ? "0 8px 32px rgba(0,0,0,0.3)" : "none" }
         } /> : <div style={{ padding: 32, color: st.textDim, fontFamily: FONT.mono, fontSize: 11 }}>Paste image (Ctrl+V)</div>}
-        {block.caption && <EditableText text={block.caption} editable={textEditable} onSave={(v) => onChange?.({ caption: v })} prefix={storyN ? `${storyN} · ` : undefined} style={captionStyle} />}
-        {!block.caption && chipAdding && canEdit && <EditableText text="" autoEdit editable={textEditable} onSave={(v) => { if (v) onChange?.({ caption: v }); }} onEditEnd={() => { setChipAdding(false); setChipHover(false); }} style={captionStyle} />}
+        {block.caption && <EditableText text={block.caption} editable={textEditable} onSave={(v) => onChange?.({ caption: v })} prefix={storyN ? `${storyN} · ` : undefined} style={captionStyle} oneLine={storyRow} />}
+        {captionAdding && <EditableText text="" autoEdit editable={textEditable} onSave={(v) => { if (v) onChange?.({ caption: v }); }} onEditEnd={() => { setChipAdding(false); setChipHover(false); }} style={captionStyle} oneLine={storyRow} />}
+        {storyRow && !block.caption && !captionAdding && <div aria-hidden="true" data-story-caption-row="" style={captionStyle} />}
         {showChip && chipHover && !chipAdding && <div data-no-pdf="" data-testid="caption-chip" role="button" tabIndex={0}
           onClick={(e) => { e.stopPropagation(); e.preventDefault(); setChipAdding(true); }}
           onMouseDown={(e) => e.stopPropagation()}

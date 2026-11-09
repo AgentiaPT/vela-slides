@@ -865,6 +865,9 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
     const drag = tileDrag && tileDrag.key === gridKey && tileDrag.idxs.length === runLen && tileDrag.idxs.every((v, q) => v === idxs[q]) ? tileDrag : null;
     const seq = drag ? drag.order.map((p) => idxs[p]) : idxs;
     const canReorder = !!(editable && onEdit && !presenting && !presentSurface && runLen >= 2 && !isSoloImage);
+    // A story-active grid gives every cell one uniform caption row (_storyRow),
+    // so tiles with and without a caption align. Other grids: no flag, unchanged.
+    const storyRow = storyActive && runLen >= 2 && idxs.some((bi) => storyNumOf.has(bi));
     const maxW = seq.map((bi) => { const z = IMAGE_NATURAL_SIZE.get(blocks[bi].src); return z && z.w > 0 ? z.w * GRID_IMG_MAX_UPSCALE : 0; });
     const plan = imageGridPlan(seq.map((bi) => IMAGE_ASPECT_CACHE.get(blocks[bi].src)), box?.[0], box?.[1], gap, gridColsFor(runLen, region), slide.imageCols ? Math.min(6, Math.max(1, slide.imageCols | 0)) : 0, maxW);
     const rows = plan.rows.length;
@@ -904,7 +907,7 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
         {idxs.map((bi, p) => {
           const k = drag ? drag.order.indexOf(p) : p;
           // A solo image fills the slide: keep its _solo flag, so it is not click-to-zoom.
-          const rendered = renderBlockWithComments({ ...blocks[bi], _gridCell: true, ...(isSoloImage ? { _solo: true } : {}), ...(isSoloImage && blocks[bi].rounded == null ? { rounded: 0 } : {}) }, bi);
+          const rendered = renderBlockWithComments({ ...blocks[bi], _gridCell: true, ...(storyRow ? { _storyRow: true } : {}), ...(isSoloImage ? { _solo: true } : {}), ...(isSoloImage && blocks[bi].rounded == null ? { rounded: 0 } : {}) }, bi);
           const [blockEl, ...rest] = rendered;
           // Make the block wrapper fill its cell height so the image (height:100%)
           // and objectFit:contain letterbox uniformly across mixed aspect ratios.
