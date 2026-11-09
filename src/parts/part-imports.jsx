@@ -138,8 +138,9 @@ const velaClipboardReadSlides = async () => {
   return [];
 };
 
-const VELA_VERSION = "13.77";
+const VELA_VERSION = "13.78";
 const VELA_CHANGELOG = [
+  { v: "13.78", d: ["Images: up to 10 per slide; overflow goes to a new slide.", "Images: drag image files from your computer onto a slide.", "Images: drag tiles to reorder.", "Story mode: present a slide's images one by one.", "Export: expand story slides to one page per image (PDF/PPTX)."] },
   { v: "13.77", d: ["Two-column slides: edits to a column block (link, text, hide, delete) are saved; before, they were lost.", "Link boxes accept a bare domain (example.com) or an email address; before, these were saved as an empty link.", "Desktop: outside edits to decks up to 50 MB now reload live (was 5 MB).", "Present: Esc exits fullscreen, also inside Claude.ai artifacts.", "Esc closes the gallery, presenter view, image zoom or an open dialog first.", "Present toolbar: removed the duplicate gallery icon; presenter view uses a notes icon.", "Image zoom fills the window again (it was limited to the scaled slide).", "Zoom: arrow keys step through the images on the slide; past the first or last image they close the zoom.", "Present toolbar stays faint until you point at it.", "Editor: Ctrl+E toggles the TOC (as in present mode); [ also works with AltGr keyboards."] },
   { v: "13.76", d: ["TOC: dragging a slide or section near the list edge auto-scrolls the list.", "TOC: moving a slide to a section in an earlier lane no longer loses the slide.", "Images: a pasted image on an empty slide fills the slide, not one half.", "Images: grids pick rows and columns by image aspect ratio.", "Images: solo and wide images fill the free slide area.", "Images: images shrink to fit, so text below an image stays on the slide.", "Editing: all text in checklist, comparison, matrix, number-row, progress and flow blocks is editable inline.", "Checklist: type a status name to change the status; custom status labels survive compact/turbo formats."] },
   { v: "13.75", d: ["Editor: mark slides reviewed (✓); Review cycle makes arrow keys skip reviewed slides.", "View switch (editor | presenter | gallery) next to Present.", "Gallery: hide/unhide a slide beside delete; TOC: delete icon on slide rows (undoable).", "Fullscreen nav icons stay visible on any slide background.", "Branding: right-side settings pane; accent line removable at 0px.", "Block toolbar stays visible on full-bleed images; link badges sit right after the text.", "Vector PDF: € and other WinAnsi symbols render as text at correct size.", "validate: reports a gradient in solid-color bg fields (use bgGradient).", "Opening or switching a deck keeps lane/module ids.", "Desktop: window title shows the deck title; keyboard works after alt-tab; AI agents detected on first start; HTML export fixed."] },
@@ -1441,7 +1442,7 @@ const SAFE_SLIDE_KEYS = new Set([
   "align", "verticalAlign", "padding", "gap",
   "splitGap", "contentFlex", "imageFlex", "imageCols",
   // presentation metadata
-  "duration", "timeLock", "hidden", "reviewed", "notes", "speakerNotes", "studyNotes",
+  "duration", "timeLock", "hidden", "reviewed", "story", "notes", "speakerNotes", "studyNotes",
   "comments", "image",
 ]);
 const SAFE_BLOCK_KEYS = new Set([
@@ -1742,6 +1743,10 @@ function sanitizeSlide(slide) {
   if ("hidden" in clean) { if (clean.hidden === true) clean.hidden = true; else delete clean.hidden; }
   // `reviewed` (editor review-cycle mark; never rendered or exported) — strict boolean only.
   if ("reviewed" in clean) { if (clean.reviewed === true) clean.reviewed = true; else delete clean.reviewed; }
+  // `story` (Present shows the slide's images one by one) — strict boolean only.
+  // Any other shape is deleted, never coerced: it gates a presentation mode, so
+  // a truthy string/number from a deck must not switch it on.
+  if ("story" in clean) { if (clean.story === true) clean.story = true; else delete clean.story; }
   // NOTE: wrap the sanitizeBlock calls — a bare `.map(sanitizeBlock)` would pass
   // the array INDEX into the recursion-depth parameter.
   if (Array.isArray(clean.blocks)) clean.blocks = clean.blocks.slice(0, 30).map((b) => sanitizeBlock(b)).filter(Boolean);
@@ -1989,10 +1994,16 @@ function validateAndSanitizeDeck(raw, opts) {
 }
 
 // ━━━ Image Compression ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-function compressImage(dataUrl, maxWidth = 800, quality = 0.7) {
+// `opts.strict` (drop + paste): resolve null — never the original — when the
+// image cannot be decoded or exceeds IMAGE_MAX_PIXELS, so an undecodable or
+// decompression-bomb file is rejected instead of stored raw. Without it the
+// behaviour is unchanged (chat keeps the fail-open default).
+function compressImage(dataUrl, maxWidth = 800, quality = 0.7, opts) {
+  const strict = !!(opts && opts.strict);
   return new Promise((resolve) => {
     const img = new Image();
     img.onload = () => {
+      if (strict && !((img.naturalWidth || 0) * (img.naturalHeight || 0) <= IMAGE_MAX_PIXELS)) { resolve(null); return; }
       let w = img.width, h = img.height;
       if (w > maxWidth) { h = Math.round(h * maxWidth / w); w = maxWidth; }
       const c = document.createElement("canvas");
@@ -2000,7 +2011,7 @@ function compressImage(dataUrl, maxWidth = 800, quality = 0.7) {
       c.getContext("2d").drawImage(img, 0, 0, w, h);
       resolve(c.toDataURL("image/jpeg", quality));
     };
-    img.onerror = () => resolve(dataUrl);
+    img.onerror = () => resolve(strict ? null : dataUrl);
     img.src = dataUrl;
   });
 }
@@ -2229,6 +2240,76 @@ function imageGridPlan(aspects, boxW, boxH, gap, fallback, pinned, maxW) {
 // Column count of the chosen plan (the longest row).
 function bestImageGridCols(aspects, boxW, boxH, gap, fallback) {
   return imageGridPlan(aspects, boxW, boxH, gap, fallback).cols;
+}
+
+// ━━━ Story images (present a slide's images one by one) ━━━━━━━━━━━━━━
+// Pure helpers; no DOM. Story state is { k, zoomed }: k = 0..N is the last image
+// visited (0 = overview grid), zoomed = that image is shown full size.
+const PASTE_MAX_IMAGES = 10;
+// Raster types accepted from an OS file drop. SVG is deliberately absent: an
+// SVG file is active markup, and the drop path only ever stores re-encoded JPEG.
+const IMAGE_DROP_MIME = new Set(["image/png", "image/jpeg", "image/gif", "image/webp", "image/avif", "image/bmp"]);
+const IMAGE_DROP_MAX_BYTES = 25 * 1024 * 1024;
+const IMAGE_DROP_MAX_FILES = 20;
+const IMAGE_MAX_PIXELS = 40e6;
+
+// Top-level image blocks that take part in story mode, in presentation order.
+// idx is in the SlideContent index space: blocks[i] -> i, L[i] -> blocks.length+i,
+// R[i] -> blocks.length+L.length+i. Grid-nested images are excluded. When
+// `presenting`, hidden blocks are excluded (they are not drawn in Present).
+function storyImageList(slide, presenting) {
+  const out = [];
+  if (!slide || typeof slide !== "object") return out;
+  const blocks = Array.isArray(slide.blocks) ? slide.blocks : [];
+  const L = Array.isArray(slide.L) ? slide.L : [];
+  const R = Array.isArray(slide.R) ? slide.R : [];
+  const add = (b, idx) => {
+    if (!b || typeof b !== "object" || b.type !== "image") return;
+    if (typeof b.src !== "string" || !b.src) return;
+    if (presenting && b.hidden) return;
+    out.push({ idx, src: b.src, alt: typeof b.alt === "string" ? b.alt : "" });
+  };
+  blocks.forEach((b, i) => add(b, i));
+  L.forEach((b, i) => add(b, blocks.length + i));
+  R.forEach((b, i) => add(b, blocks.length + L.length + i));
+  return out;
+}
+// Story is on only for an explicit `true` and at least two images.
+function storyIsActive(slide, list) {
+  return !!slide && slide.story === true && Array.isArray(list) && list.length >= 2;
+}
+// Entry state when Present lands on a story slide: forward -> overview grid,
+// backward -> the last image visited with the grid showing (n = image count).
+function storyEntry(dir, n) {
+  return dir < 0 ? { k: n, zoomed: false } : { k: 0, zoomed: false };
+}
+// Next step. Returns the new state, or null to leave the slide.
+function storyNext(s, n) {
+  if (s.zoomed) return s.k < n ? { k: s.k + 1, zoomed: true } : { k: n, zoomed: false };
+  return s.k < n ? { k: s.k + 1, zoomed: true } : null;
+}
+// Previous step. Returns the new state, or null to leave the slide.
+function storyPrev(s, n) {
+  if (s.zoomed) return s.k > 1 ? { k: s.k - 1, zoomed: true } : { k: 0, zoomed: false };
+  return s.k >= 1 ? { k: s.k, zoomed: true } : null;
+}
+// Escape: zoom out when zoomed; otherwise null (not consumed).
+function storyEsc(s) {
+  return s.zoomed ? { k: s.k, zoomed: false } : null;
+}
+// Filter an OS file list to droppable raster images. Reads only f.type and
+// f.size (never f.name). Order is kept; the count cap applies after the
+// type/size filter. Returns { files, rejected } (rejected = count).
+function imageDropFiles(fileList) {
+  const all = fileList ? Array.prototype.slice.call(fileList) : [];
+  const files = [];
+  let rejected = 0;
+  for (const f of all) {
+    const okType = !!f && typeof f.type === "string" && IMAGE_DROP_MIME.has(f.type);
+    const okSize = okType && typeof f.size === "number" && f.size >= 0 && f.size <= IMAGE_DROP_MAX_BYTES;
+    if (okSize && files.length < IMAGE_DROP_MAX_FILES) files.push(f); else rejected++;
+  }
+  return { files, rejected };
 }
 
 // Bounded cache of image aspect ratios keyed by the (data:) src, filled by the
@@ -2537,8 +2618,8 @@ function useSwipe(ref, { onLeft, onRight, threshold = 50 } = {}) {
 }
 
 // ━━━ Shared Prompt Constants (deduped from 3 system prompts) ━━━━━━━
-const BLOCK_REFERENCE = `Slide: { blocks: [...], bg?, bgGradient?: "linear-gradient(...)", color?, accent?, align?, verticalAlign?, padding?, gap?, duration?: seconds_integer, layout?: "stack"|"image-right"|"image-left"|"cols", contentFlex?, imageFlex?, splitGap?, imageCols?: 1-6, L?: [...], R?: [...] }
-Numeric slide fields are range-checked on load: imageCols is an integer 1-6, gap/splitGap 0-200, contentFlex/imageFlex 0.1-20. imageCols pins the column count for a run of adjacent image blocks (omit for automatic).
+const BLOCK_REFERENCE = `Slide: { blocks: [...], bg?, bgGradient?: "linear-gradient(...)", color?, accent?, align?, verticalAlign?, padding?, gap?, duration?: seconds_integer, layout?: "stack"|"image-right"|"image-left"|"cols", contentFlex?, imageFlex?, splitGap?, imageCols?: 1-6, story?: true, L?: [...], R?: [...] }
+Numeric slide fields are range-checked on load: imageCols is an integer 1-6, gap/splitGap 0-200, contentFlex/imageFlex 0.1-20. imageCols pins the column count for a run of adjacent image blocks (omit for automatic). story:true = Present shows the slide's images one by one (needs 2+ images); an image caption is its tile title.
 Layout: "stack" (default) = vertical column. "image-right"/"image-left" = splits content blocks and image blocks side-by-side. "cols" = explicit two-column layout using L (left blocks) and R (right blocks) arrays. blocks renders full-width above columns (optional header). contentFlex/imageFlex control column ratio (default 1:1). splitGap controls gap between columns (default 32).
 Inline formatting: All text supports **bold**, *italic*, ***bold+italic*** using markdown syntax (also __bold__ and _italic_). Use in headings, text, bullets, callouts, etc.
 Links: ANY block can have an optional "link" property: {type:"text", text:"Read the paper", link:"https://..."} — renders clickable. For sources/citations, ALWAYS use a descriptive text block or badge with link property instead of putting raw URLs in text. E.g. {type:"badge", text:"📎 Yao et al., ReAct (2022)", icon:"ExternalLink", link:"https://arxiv.org/abs/2210.03629"} or {type:"text", text:"Source: Snorkel AI Blog", size:"sm", link:"https://snorkel.ai/blog/..."}
@@ -2546,7 +2627,7 @@ Block types:
 - heading: {type:"heading", text, size:"xs|sm|md|lg|xl|2xl|3xl|4xl", color?, weight?, align?, icon?:"Zap", iconColor?}
 - text: {type:"text", text, size?, color?, bold?, italic?, align?, maxWidth?}
 - bullets: {type:"bullets", items:["string" or {text, icon?:"CheckCircle", link?:"https://..."},...], size?, dotColor?, gap?, color?}
-- image: {type:"image", src, caption?, maxWidth?, shadow?, rounded?}
+- image: {type:"image", src, caption?, alt?, maxWidth?, shadow?, rounded?}
 - code: {type:"code", text:"code here", label?"JAVASCRIPT", size?, bg?, color?}
 - grid: {type:"grid", cols:1|2|3, gap?, items:[{blocks:[...], bg?, padding?, borderRadius?, border?, style?, align?, direction?:"row"|"column"}]}
 - callout: {type:"callout", text, title?, bg?, border?, color?, icon?:"AlertTriangle"}

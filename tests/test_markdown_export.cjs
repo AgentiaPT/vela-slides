@@ -439,5 +439,24 @@ noThrow("missing lane/module/deck titles use defaults", () => {
   noSub(cellbs, "a\\\\\\\\b", "table cell: backslash NOT double-escaped");
 }
 
+// ── story slides (regression guard): markdown is unchanged by story mode ─────
+// A story slide still exports its image captions exactly like a gallery slide:
+// no extra pages/lines, and caption metacharacters stay escaped (`[`, `<`, `*`).
+{
+  const imgs = [
+    { type: "image", src: "data:image/png;base64,AAAA", caption: "A <img src=https://attacker.example/b.png> *x* [r]" },
+    { type: "image", src: "data:image/png;base64,AAAA", caption: "Plain" },
+    { type: "image", src: "data:image/png;base64,AAAA" },
+  ];
+  const on = md1(imgs, { story: true });
+  const off = md1(imgs, {});
+  if (on === off) ok("story slide: markdown output identical to the same slide without story");
+  else bad("story slide: markdown output identical to the same slide without story");
+  noRawTag(on, "story slide: caption with HTML tag stays escaped");
+  hasSub(on, "\\[r\\]", "story slide: caption square brackets escaped");
+  hasLine(on, "*Plain*", "story slide: plain caption emitted as before");
+  noSub(on, "data:image", "story slide: no image bytes inlined");
+}
+
 console.log(`\n  ${pass} passed, ${fail} failed`);
 process.exit(fail ? 2 : 0);

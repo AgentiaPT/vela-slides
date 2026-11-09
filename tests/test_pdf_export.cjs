@@ -71,6 +71,52 @@ const DECK = (() => {
 })();
 const RENDER_OFFLINE = path.join(ROOT, 'tools', 'vela-dev', 'scripts', 'render-offline.js');
 
+// ── Story-slide fixtures ("Expand story slides" option) ──────────────────────
+// Solid-colour PNG data URIs built with node:zlib only (no deps), so the images
+// pass the real data-image ingress allowlist and are visibly distinct per page.
+function crc32(buf) {
+  let c, crc = 0xffffffff;
+  for (let n = 0; n < buf.length; n++) {
+    c = (crc ^ buf[n]) & 0xff;
+    for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    crc = (crc >>> 8) ^ c;
+  }
+  return (crc ^ 0xffffffff) >>> 0;
+}
+function pngChunk(type, data) {
+  const len = Buffer.alloc(4); len.writeUInt32BE(data.length);
+  const body = Buffer.concat([Buffer.from(type, 'latin1'), data]);
+  const crc = Buffer.alloc(4); crc.writeUInt32BE(crc32(body));
+  return Buffer.concat([len, body, crc]);
+}
+function solidPng(r, g, b, w = 800, h = 450) {
+  const zlib = require('zlib');
+  const row = Buffer.alloc(1 + w * 3);
+  for (let x = 0; x < w; x++) { row[1 + x * 3] = r; row[2 + x * 3] = g; row[3 + x * 3] = b; }
+  const raw = Buffer.concat(Array.from({ length: h }, () => row));
+  const ihdr = Buffer.alloc(13); ihdr.writeUInt32BE(w, 0); ihdr.writeUInt32BE(h, 4); ihdr[8] = 8; ihdr[9] = 2;
+  const png = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    pngChunk('IHDR', ihdr), pngChunk('IDAT', zlib.deflateSync(raw)), pngChunk('IEND', Buffer.alloc(0))]);
+  return 'data:image/png;base64,' + png.toString('base64');
+}
+// PDF literal-string metacharacters in alt text: must never reach the PDF raw.
+const STORY_ALT = 'alt ) /S /JavaScript ( \\ <b>&"';
+// Slide 1 = story slide (3 visible images + 1 hidden image, which must NOT get a page);
+// slide 2 = plain. ON => 1 + 3 + 1 = 5 pages; expand OFF => 2; story absent => 2.
+function storyDeckFile(story) {
+  const img = (r, g, b, extra) => ({ type: 'image', src: solidPng(r, g, b), alt: STORY_ALT, ...extra });
+  const s1 = { bg: '#0f172a', color: '#e2e8f0', accent: '#3b82f6',
+    blocks: [{ type: 'heading', text: 'Story slide' }, img(200, 40, 40, { caption: 'One' }), img(40, 200, 40, { caption: 'Two' }),
+      img(40, 40, 200, { caption: 'Three' }), img(250, 250, 0, { hidden: true })] };
+  if (story) s1.story = true;
+  const deck = { deckTitle: 'PDF Story', lanes: [{ title: 'Deck', items: [{ title: 'Module', slides: [
+    s1, { bg: '#0f172a', color: '#e2e8f0', accent: '#10b981', blocks: [{ type: 'text', text: 'A plain slide.' }] } ] }] }] };
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'vela-pdf-story-'));
+  const p = path.join(dir, 'story.vela');
+  fs.writeFileSync(p, JSON.stringify(deck));
+  return p;
+}
+
 // ── Expected page count — replicate collectAllSlides() counting from the deck ──
 // A module with presentCard shows an auto title slide before its content; hidden
 // slides are excluded from the presentation (and therefore exports). This mirrors
@@ -169,7 +215,7 @@ async function bootPage(browser, renderHtml) {
 // quality tile. The finished modal exposes an <a download="*.pdf"> anchor whose
 // href is a data:application/pdf;base64 URI (blob: URLs are blocked in the
 // artifact sandbox), which is exactly what a click would download.
-async function drivePdfExport(page, { vector }) {
+async function drivePdfExport(page, { vector, toggle, startLabel }) {
   // Open the Export dropdown, then the "Export PDF" item.
   const openedMenu = await page.evaluate(() => {
     const b = document.querySelector('[data-testid=export-menu-toggle]');
@@ -189,6 +235,26 @@ async function drivePdfExport(page, { vector }) {
   await page.waitForFunction(() =>
     !![...document.querySelectorAll('button')].find(b => /^EXPORT\s+\d+\s+SLIDES$/.test(b.textContent.trim())),
     { timeout: 5000 });
+
+  // Story option (only for story fixtures): 'off' flips the toggle, 'absent' asserts it
+  // is not offered (no story slide in the deck). startLabel pins the page count the
+  // modal announces before the export starts.
+  if (toggle) {
+    const state = await page.evaluate((mode) => {
+      const t = document.querySelector('[data-testid=pdf-expand-story]');
+      if (mode === 'off' && t) t.click();
+      return { present: !!t, pressed: t ? t.getAttribute('aria-pressed') : null };
+    }, toggle);
+    if (toggle === 'absent' && state.present) throw new Error('expand-story toggle shown without a story slide');
+    if (toggle !== 'absent' && !state.present) throw new Error('expand-story toggle missing for a story slide');
+  }
+  if (startLabel) {
+    const label = await page.evaluate(() => {
+      const b = [...document.querySelectorAll('button')].find(x => /^EXPORT\s+\d+\s+SLIDES$/.test(x.textContent.trim()));
+      return b ? b.textContent.trim() : null;
+    });
+    if (label !== startLabel) throw new Error(`start button reads ${JSON.stringify(label)}, expected ${JSON.stringify(startLabel)}`);
+  }
 
   if (vector) {
     // Select the "Vector" quality tile before starting.
@@ -310,6 +376,20 @@ function assertPdf(label, buf, expectedPages, { vector }) {
   }
 }
 
+
+// ── Story PDF assertions: page count + alt text never reaches the PDF raw ────
+function assertStoryPdf(label, buf, expectedPages) {
+  const text = buf.toString('latin1');
+  check(`[${label}] starts with %PDF- and has %%EOF`, text.startsWith('%PDF-') && text.includes('%%EOF'));
+  const m = text.match(/\/Type\s*\/Pages\s*\/Kids\s*\[[^\]]*\]\s*\/Count\s+(\d+)/);
+  const treeCount = m ? parseInt(m[1], 10) : -1;
+  const pageObjs = (text.match(/\/Type \/Page \/Parent/g) || []).length;
+  check(`[${label}] /Count == ${expectedPages}`, treeCount === expectedPages, `treeCount=${treeCount}`);
+  check(`[${label}] page-object count == ${expectedPages}`, pageObjs === expectedPages, `pageObjs=${pageObjs}`);
+  check(`[${label}] alt text with PDF metacharacters never appears raw in the PDF`,
+    !text.includes('alt ) /S /JavaScript'), 'raw alt text found');
+}
+
 // ── Main ─────────────────────────────────────────────────────────────────────
 (async () => {
   const t0 = Date.now();
@@ -365,6 +445,36 @@ function assertPdf(label, buf, expectedPages, { vector }) {
       console.log(`\n── ${variant.label.toUpperCase()} PDF export ──`);
       console.log(`Exported ${variant.label} PDF: ${buf.length} bytes, download="${download}"`);
       assertPdf(variant.label, buf, expectedPages, variant);
+    }
+
+    // ── Story slides: "Expand story slides" ──
+    const storyOn = storyDeckFile(true), storyNone = storyDeckFile(false);
+    const storyRender = (f) => require(RENDER_OFFLINE).build(f, fs.mkdtempSync(path.join(os.tmpdir(), 'vela-pdf-story-render-')), { repoRoot: ROOT }).html;
+    const htmlOn = storyRender(storyOn), htmlNone = storyRender(storyNone);
+    const storyVariants = [
+      { label: 'story raster ON (3 images -> 1+3+1 pages)', html: htmlOn, opts: { vector: false, toggle: 'on', startLabel: 'EXPORT 5 SLIDES' }, pages: 5 },
+      { label: 'story vector ON (3 images -> 1+3+1 pages)', html: htmlOn, opts: { vector: true, toggle: 'on', startLabel: 'EXPORT 5 SLIDES' }, pages: 5 },
+      { label: 'story raster expand OFF (1+1 pages)', html: htmlOn, opts: { vector: false, toggle: 'off' }, pages: 2 },
+      { label: 'story vector expand OFF (1+1 pages)', html: htmlOn, opts: { vector: true, toggle: 'off' }, pages: 2 },
+      { label: 'story OFF deck raster (unchanged, no toggle)', html: htmlNone, opts: { vector: false, toggle: 'absent', startLabel: 'EXPORT 2 SLIDES' }, pages: 2 },
+      { label: 'story OFF deck vector (unchanged, no toggle)', html: htmlNone, opts: { vector: true, toggle: 'absent' }, pages: 2 },
+    ];
+    const storyResults = await Promise.all(storyVariants.map(async (v) => {
+      const page = await bootPage(browser, v.html);
+      try {
+        const info = await drivePdfExport(page, v.opts);
+        return { v, buf: Buffer.from(info.b64, 'base64') };
+      } finally {
+        await page.close().catch(() => {});
+      }
+    }));
+    for (const { v, buf } of storyResults) {
+      console.log(`\n── ${v.label} ──`);
+      if (process.env.VELA_PDF_KEEP_DIR && v.pages === 5 && !v.opts.vector) {
+        fs.mkdirSync(process.env.VELA_PDF_KEEP_DIR, { recursive: true });
+        fs.writeFileSync(path.join(process.env.VELA_PDF_KEEP_DIR, 'story-raster.pdf'), buf);
+      }
+      assertStoryPdf(v.label, buf, v.pages);
     }
   } catch (e) {
     fatal = e;

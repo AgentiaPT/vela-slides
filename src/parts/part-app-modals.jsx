@@ -37,7 +37,7 @@ function ModalBackdrop({ onClose, onEnter, extraKeys, children }) {
 // then buildPptx() emits the OOXML+ZIP Blob. The artifact sandbox blocks blob:
 // URLs, so the bytes are base64-encoded into a data: URI for the <a download>
 // (same pattern the PDF modal uses for its own bytes).
-function PptxExportModal({ slides, branding, deckTitle, onClose }) {
+function PptxExportModal({ slides: allSlides, branding, deckTitle, onClose }) {
   const [phase, setPhase] = useState("choose"); // choose | exporting | done | error
   const [progress, setProgress] = useState(0);
   const [errorMsg, setErrorMsg] = useState("");
@@ -50,6 +50,11 @@ function PptxExportModal({ slides, branding, deckTitle, onClose }) {
   const [showBranding, setShowBranding] = useState(false);
   const showBrandingRef = useRef(showBranding);
   showBrandingRef.current = showBranding;
+  // Story slides (slide.story with 2+ images) optionally expand to one page per image.
+  const [expandStory, setExpandStory] = useState(true);
+  const storyExpanded = useMemo(() => expandStorySlides(allSlides), [allSlides]);
+  const storyPageCount = useMemo(() => storyExpanded.filter((s) => s._storyPage).length, [storyExpanded]);
+  const slides = expandStory ? storyExpanded : allSlides;
 
   const startExport = useCallback(() => {
     setPhase("exporting");
@@ -183,6 +188,23 @@ function PptxExportModal({ slides, branding, deckTitle, onClose }) {
                 }} />
               </button>
             </div>
+            {storyPageCount > 0 && <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20, padding: "10px 12px", background: "rgba(255,255,255,0.03)", border: `1px solid ${T.border}`, borderRadius: 8 }}>
+              <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                <span style={{ fontFamily: FONT.body, fontSize: 13, color: T.text }}>Expand story slides</span>
+                <span style={{ fontFamily: FONT.mono, fontSize: 9, color: T.textDim }}>{"🖼"} {storyPageCount} extra image page{storyPageCount !== 1 ? "s" : ""} (one per story image)</span>
+              </div>
+              <button data-testid="pptx-export-expand-story" aria-pressed={expandStory} onClick={() => setExpandStory(b => !b)} style={{
+                width: 40, height: 22, borderRadius: 11, border: "none", cursor: "pointer",
+                background: expandStory ? T.accent : "rgba(255,255,255,0.12)",
+                position: "relative", transition: "background .2s", flexShrink: 0,
+              }}>
+                <div style={{
+                  width: 16, height: 16, borderRadius: 8, background: "#fff",
+                  position: "absolute", top: 3, left: expandStory ? 21 : 3,
+                  transition: "left .2s", boxShadow: "0 1px 3px rgba(0,0,0,0.3)",
+                }} />
+              </button>
+            </div>}
             <button data-testid="pptx-export-start" onClick={startExport} style={{
               width: "100%", padding: "10px", fontFamily: FONT.mono, fontSize: 12, fontWeight: 700,
               background: T.accent, color: "#fff", border: "none", borderRadius: 6, cursor: "pointer",
@@ -299,10 +321,11 @@ function PptxExportModal({ slides, branding, deckTitle, onClose }) {
 
       {/* Off-screen slide renderer — one slide at a time, fixed 960×540 (16:9). */}
       {phase === "exporting" && currentSlide && (() => {
-        const displayTotal = slides.reduce((n, s) => n + (s._virtual ? 0 : 1), 0);
+        const displayTotal = slides.reduce((n, s) => n + (s._storyPage ? 0 : s._virtual ? 0 : 1), 0);
         let nonVirtualBefore = 0;
-        for (let i = 0; i < renderIdx; i++) if (!slides[i]._virtual) nonVirtualBefore++;
-        const displayIndex = currentSlide._virtual ? nonVirtualBefore - 1 : nonVirtualBefore;
+        for (let i = 0; i < renderIdx; i++) if (!(slides[i]._virtual || slides[i]._storyPage)) nonVirtualBefore++;
+        // A story page shares the number of its grid slide (the one just before it).
+        const displayIndex = (currentSlide._virtual || currentSlide._storyPage) ? nonVirtualBefore - 1 : nonVirtualBefore;
         return (
           <div style={{ position: "fixed", left: -9999, top: -9999, width: VIRTUAL_W, height: VIRTUAL_H, overflow: "hidden", zIndex: -1 }}>
             <style>{`.no-anim, .no-anim * { animation: none !important; transition: none !important; }`}</style>

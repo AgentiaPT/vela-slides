@@ -17,7 +17,8 @@ that symbol in the named part for the line. No line numbers here — they rot.
 - Sanitizers: sanitizeString sanitizeDeckTitle sanitizeUrl LINK_HOST_LABEL LINK_HOST LINK_BARE_EMAIL LINK_BARE_HOST linkFromInput openExternalLink SVG_ALLOWED_TAGS SVG_URL_REF_ATTRS CSS_FETCH_SCHEME SVG_VALUE_FNS SVG_STYLE_PROPS SVG_ROOT_BLOCKED isSvgStyleSafe isSvgInlineStyleSafe sanitizeSvgMarkup SAFE_RASTER_DATA_IMAGE sanitizeImageDataUri SAFE_STYLE_KEYS STYLE_VALUE_REJECT sanitizeStyle CSS_COLOR_KEY scrubCssFields scrubColorFields CSS_LAYOUT_KEY scrubLayoutFields CSS_PAINT_KEY cssKeyStem scrubPaintFields velaTestSurfaceEnabled MAX_SUBOBJECT_DEPTH scrubSubObject cssUrl CSS_COLOR_OK cssColor CSS_GRADIENT_OK cssGradient
 - Deck-ingress key allowlists: SAFE_SLIDE_KEYS SAFE_BLOCK_KEYS SLIDE_NUMERIC_BOUNDS clampDeckNumber MAX_BLOCK_DEPTH sanitizeBlock VALID_COMMENT_STATUSES MAX_COMMENTS sanitizeComment
 - Offline Study Notes sanitizer: sanitizeStudyNotes sanitizeSlide stableIdFrom sanitizeItem resanitizeLoadedLanes resanitizeLoadedBranding KEEPABLE_DECK_ID isKeepableDeckId adoptPriorDeckIds localDeckPayload validateAndSanitizeDeck
-- Image Compression: compressImage IMG_SETTINGS compressSlideImage imageAspect imageNaturalSize PASTE_TITLE_BLOCKS pasteImageLayout pasteSplitFlex PASTE_TEXT_METRICS pasteBodyEstimate pasteLayoutArea pasteBodyProbe gridColsFor imageGridPlan bestImageGridCols IMAGE_ASPECT_CACHE rememberImageAspect PASTE_LAYOUT_OWNED pasteLayoutSig rememberPasteLayout PASTE_SLIDE_SUCC pasteResolveTarget pasteRecordSuccessor
+- Image Compression: compressImage IMG_SETTINGS compressSlideImage imageAspect imageNaturalSize PASTE_TITLE_BLOCKS pasteImageLayout pasteSplitFlex PASTE_TEXT_METRICS pasteBodyEstimate pasteLayoutArea pasteBodyProbe gridColsFor imageGridPlan bestImageGridCols
+- Story images (present a slide's images one by one): PASTE_MAX_IMAGES IMAGE_DROP_MIME IMAGE_DROP_MAX_BYTES IMAGE_DROP_MAX_FILES IMAGE_MAX_PIXELS storyImageList storyIsActive storyEntry storyNext storyPrev storyEsc imageDropFiles IMAGE_ASPECT_CACHE rememberImageAspect PASTE_LAYOUT_OWNED pasteLayoutSig rememberPasteLayout PASTE_SLIDE_SUCC pasteResolveTarget pasteRecordSuccessor
 - Status & Importance Meta: STATUSES STATUS_META IMP
 - Themes: themes T statusColor FONT buildTitleCardSlide
 - Vela Logo Icon: VelaIcon BASE_SIZES
@@ -171,7 +172,7 @@ that symbol in the named part for the line. No line numbers here — they rot.
 - Font loading: _fontCache loadFonts
 - Font selection: pickFont
 - Image capture fallback (from existing pdf-export): vectorDomToCanvas
-- Vector PDF Export Modal: VectorPdfExportModal stripHiddenBlocks collectAllSlides
+- Vector PDF Export Modal: VectorPdfExportModal stripHiddenBlocks collectAllSlides STORY_PAGE_KEYS expandStorySlides
 
 ### part-export-md.jsx
 - Markdown Export: deckToMarkdown exportMarkdown
@@ -324,7 +325,7 @@ add_lane add_item batch_add_items remove_item remove_lane rename_item rename_lan
 
 ## Navigability debt (WARN — candidates for banners or splits)
 
-- part-imports.jsx: 898-line unbannered stretch after line 515
+- part-imports.jsx: 898-line unbannered stretch after line 516
 - part-blocks.jsx: 781-line unbannered stretch after line 1038
 - part-canvas.jsx: 499-line unbannered stretch after line 24
 - part-slidepanel.jsx: 531-line unbannered stretch after line 241
@@ -335,8 +336,8 @@ add_lane add_item batch_add_items remove_item remove_lane rename_item rename_lan
 - part-uitest2.jsx: 837-line unbannered stretch after line 2323
 - part-demo.jsx: 407-line unbannered stretch after line 510
 - part-demo.jsx: 373-line unbannered stretch after line 917
-- part-pdf.jsx: 389-line unbannered stretch after line 582
+- part-pdf.jsx: 414-line unbannered stretch after line 582
 - part-pdf-vector.jsx: 441-line unbannered stretch after line 2
 - part-pdf-vector.jsx: 480-line unbannered stretch after line 459
-- part-pdf-vector.jsx: 524-line unbannered stretch after line 1204
+- part-pdf-vector.jsx: 551-line unbannered stretch after line 1204
 - part-pptx.jsx: no level-1 banners (1188 lines)

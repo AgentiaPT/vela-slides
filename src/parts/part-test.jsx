@@ -257,6 +257,9 @@ const VELA_TESTS = [
   { name: "imageCols: huge value clamps to 6", fn: () => sanitizeSlide({ duration: 10, blocks: [], imageCols: 2147483647 }).imageCols === 6 },
   { name: "imageCols: '3; x' dropped", fn: () => sanitizeSlide({ duration: 10, blocks: [], imageCols: "3; x" }).imageCols === undefined },
   { name: "imageCols: 0 clamps to 1", fn: () => sanitizeSlide({ duration: 10, blocks: [], imageCols: 0 }).imageCols === 1 },
+  { name: "story: true survives sanitizeSlide", fn: () => sanitizeSlide({ duration: 10, blocks: [], story: true }).story === true },
+  { name: "story: non-boolean values dropped", fn: () => ["true", 1, {}, [], null].every((v) => sanitizeSlide({ duration: 10, blocks: [], story: v }).story === undefined) },
+  { name: "story: renderer-private _story* keys dropped", fn: () => { const s = sanitizeSlide({ duration: 10, blocks: [], _storyIdx: 1, _storyNav: true, _storyPage: true }); return s._storyIdx === undefined && s._storyNav === undefined && s._storyPage === undefined; } },
   { name: "gap clamps to the 0..200 range", fn: () => sanitizeSlide({ duration: 10, blocks: [], gap: 1e9 }).gap === 200 },
   { name: "contentFlex garbage dropped", fn: () => sanitizeSlide({ duration: 10, blocks: [], contentFlex: "wide" }).contentFlex === undefined },
   { name: "grid nesting is depth-capped", fn: () => {

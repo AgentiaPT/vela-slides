@@ -1677,10 +1677,11 @@ function VectorPdfExportModal({ slides, branding, deckTitle, onClose, initialRat
         const rw = Math.round(VIRTUAL_W / zoom);
         const rh = Math.round(rh0 / zoom);
         // Match presentation numbering: title cards aren't counted toward slide numbers.
-        const displayTotal = slides.reduce((n, s) => n + (s._virtual ? 0 : 1), 0);
+        const displayTotal = slides.reduce((n, s) => n + (s._storyPage ? 0 : s._virtual ? 0 : 1), 0);
         let nonVirtualBefore = 0;
-        for (let i = 0; i < renderIdx; i++) if (!slides[i]._virtual) nonVirtualBefore++;
-        const displayIndex = currentSlide._virtual ? nonVirtualBefore - 1 : nonVirtualBefore;
+        for (let i = 0; i < renderIdx; i++) if (!(slides[i]._virtual || slides[i]._storyPage)) nonVirtualBefore++;
+        // A story page shares the number of its grid slide (the one just before it).
+        const displayIndex = (currentSlide._virtual || currentSlide._storyPage) ? nonVirtualBefore - 1 : nonVirtualBefore;
         return (
           <div style={{ position: "fixed", left: -9999, top: -9999, width: rw, height: rh, overflow: "hidden", zIndex: -1 }}>
             <style>{`.no-anim, .no-anim * { animation: none !important; transition: none !important; }`}</style>
@@ -1723,5 +1724,31 @@ function collectAllSlides(lanes, branding) {
     }
   }
   return all;
+}
+
+// Story slides ("Expand story slides" export option): after a story-active slide,
+// emit one virtual full-slide page per story image. A page is built ONLY from
+// already-sanitized slide state and copies a fixed key list, so no deck key can
+// ride along; "_storyPage" is a renderer-private flag set here, after sanitization
+// (deck input can never carry a "_" key). A one-image page renders through the
+// solo-image path (full slide, contain). Hidden images are excluded because
+// storyImageList runs in presenting mode. Title cards (_virtual) are never story.
+const STORY_PAGE_KEYS = ["bg", "bgGradient", "bgImage", "color", "accent", "mutedColor", "duration"];
+function expandStorySlides(slides) {
+  const out = [];
+  for (const slide of (slides || [])) {
+    out.push(slide);
+    if (!slide || typeof slide !== "object" || slide._virtual) continue;
+    const list = storyImageList(slide, true);
+    if (!storyIsActive(slide, list)) continue;
+    for (const it of list) {
+      const page = {};
+      for (const k of STORY_PAGE_KEYS) if (slide[k] !== undefined) page[k] = slide[k];
+      page.blocks = [{ type: "image", src: it.src, alt: it.alt }];
+      page._storyPage = true;
+      out.push(page);
+    }
+  }
+  return out;
 }
 
