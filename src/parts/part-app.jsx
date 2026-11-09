@@ -962,7 +962,9 @@ export default function App() {
     // An images-only drop that no slide took (Present, or the editor outside the
     // slide panel) is told so, never loaded as a deck.
     if (dragHasOnlyImageFiles(e.dataTransfer)) { slideActionsRef.current?.showToast?.(fullscreenRef.current ? "Exit Present to add images" : "Drop images on the slide to add them", !fullscreenRef.current); return; }
-    const file = e.dataTransfer?.files?.[0]; if (file) loadDeckFile(file); }, [loadDeckFile]);
+    // A mixed drop loads its deck file, not whichever file happens to be first.
+    const files = Array.from(e.dataTransfer?.files || []);
+    const file = files.find((f) => !(typeof f.type === "string" && f.type.startsWith("image/"))) || files[0]; if (file) loadDeckFile(file); }, [loadDeckFile]);
 
   // Title editing
   const startEditTitle = () => { setTitleDraft(state.deckTitle || "Untitled"); setEditingTitle(true); };

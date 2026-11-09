@@ -4728,17 +4728,16 @@ uiSuite("wp5-image-drop", [
       if (_wp5Deck().deckTitle !== title) throw new Error("image drop changed the deck");
     });
   }},
-  { name: "mixed drop: SVG, oversize and .vela files are rejected, images kept, deck kept", fn: async () => {
+  { name: "mixed image drop: SVG and oversize files are rejected, images kept, deck kept", fn: async () => {
     await _wp5OnSlide("WP5 drop mixed", 0, {}, async (vp) => {
       const title = _wp5Deck().deckTitle;
       const svg = new File(['<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><rect width="10" height="10"/></svg>'], "a.svg", { type: "image/svg+xml" });
       const big = new File([new Uint8Array(26 * 1024 * 1024)], "big.png", { type: "image/png" });
-      const vela = new File([JSON.stringify({ deckTitle: "WP5 must not load", lanes: [] })], "deck.vela", { type: "" });
-      const files = [await _rfiPng(200, 100, 0), svg, big, vela, await _rfiPng(300, 100, 1)];
+      const files = [await _rfiPng(200, 100, 0), svg, big, await _rfiPng(300, 100, 1)];
       const ev = _wp5Drop(vp, files);
       if (!ev.defaultPrevented) throw new Error("mixed drop was not taken by the slide panel");
       const msg = await _waitFor(() => _wp5Toast(/not added/), 10000).catch(() => { throw new Error("no reject notice"); });
-      if (msg !== "Added 2 · 3 not added") throw new Error(`notice is ${JSON.stringify(msg)}`);
+      if (msg !== "Added 2 · 2 not added") throw new Error(`notice is ${JSON.stringify(msg)}`);
       const src = _wp5ImgSrcs();
       if (src.length !== 2) throw new Error(`slide has ${src.length} images, expected 2`);
       if (!src.every((s) => /^data:image\/jpeg;base64,/i.test(s) && SAFE_RASTER_DATA_IMAGE.test(s))) throw new Error("a kept src is not a safe JPEG data URI");
@@ -4746,8 +4745,27 @@ uiSuite("wp5-image-drop", [
       if (Math.abs(asp[0] - 2) > 0.1 || Math.abs(asp[1] - 3) > 0.1) throw new Error("mixed drop lost the image order");
       _wp5NoBlob();
       await _wait(300);
-      if (_wp5Deck().deckTitle !== title) throw new Error("the .vela file in a mixed drop loaded as a deck");
+      if (_wp5Deck().deckTitle !== title) throw new Error("a mixed image drop changed the deck");
     });
+  }},
+  { name: "a drop of a .vela file plus an image loads the deck and adds no image", fn: async () => {
+    await _wp5Exit(); await _selectFirstModule();
+    const title = _wp5Deck().deckTitle;
+    const deck = { deckTitle: "WP5 mixed deck", lanes: [{ id: "wp5x", title: "WP5 lane", items: [{ id: "wp5xm", title: "WP5 mixed module", slides: [{ blocks: [{ type: "heading", text: "WP5 MIXED DECK" }] }] }] }] };
+    const vela = new File([JSON.stringify(deck)], "mixed.vela", { type: "" });
+    try {
+      _wp5Drop(_mrdViewport(), [await _rfiPng(200, 100, 0), vela]);
+      await _waitFor(() => _wp5Deck().deckTitle === "WP5 mixed deck", 5000).catch(() => { throw new Error(`deck not loaded, title is ${JSON.stringify(_wp5Deck().deckTitle)}`); });
+      await _wait(300);
+      if (_wp5Deck().firstBlockText !== "WP5 MIXED DECK") throw new Error("loaded deck content is wrong");
+      const n = _wp5ImgSrcs().length;
+      if (n !== 0) throw new Error(`mixed drop added ${n} image(s) to the loaded deck`);
+      _wp5NoBlob();
+    } finally {
+      if (!_hooks().restoreStartupDeck?.()) throw new Error("could not restore the demo deck");
+      await _waitFor(() => _wp5Deck().deckTitle === title, 3000).catch(() => { throw new Error("demo deck not restored"); });
+      await _selectFirstModule();
+    }
   }},
   { name: "FX2a: images-only drop in Present shows a toast; deck unchanged", fn: async () => {
     await _wp5OnSlide("WP5 drop present", 2, {}, async () => {

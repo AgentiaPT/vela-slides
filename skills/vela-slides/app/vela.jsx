@@ -140,7 +140,7 @@ const velaClipboardReadSlides = async () => {
 
 const VELA_VERSION = "13.78";
 const VELA_CHANGELOG = [
-  { v: "13.78", d: ["Images: up to 10 per slide; overflow goes to a new slide.", "Images: drag image files from your computer onto a slide.", "Images: drag tiles to reorder.", "Story mode: present a slide's images one by one.", "Export: expand story slides to one page per image (PDF/PPTX).", "Text: Ctrl+U underline is saved and shows everywhere (++text++).", "Images: dropped files use the same ordered, safe queue as pasted images.", "Story mode: grid tiles keep a one-line title row, so tiles align.", "Vector PDF: text after bold/italic/underline/link keeps its space and letter spacing."] },
+  { v: "13.78", d: ["Images: up to 10 per slide; overflow goes to a new slide.", "Images: drag image files from your computer onto a slide.", "Images: drag tiles to reorder.", "Story mode: present a slide's images one by one.", "Export: expand story slides to one page per image (PDF/PPTX).", "Text: Ctrl+U underline is saved and shows everywhere (++text++).", "Images: dropped files use the same ordered, safe queue as pasted images.", "Story mode: grid tiles keep a one-line title row, so tiles align.", "Vector PDF: text after bold/italic/underline/link keeps its space and letter spacing.", "Drop: images dropped outside a slide show a hint; a deck file dropped with images still loads."] },
   { v: "13.77", d: ["Two-column slides: edits to a column block (link, text, hide, delete) are saved; before, they were lost.", "Link boxes accept a bare domain (example.com) or an email address; before, these were saved as an empty link.", "Desktop: outside edits to decks up to 50 MB now reload live (was 5 MB).", "Present: Esc exits fullscreen, also inside Claude.ai artifacts.", "Esc closes the gallery, presenter view, image zoom or an open dialog first.", "Present toolbar: removed the duplicate gallery icon; presenter view uses a notes icon.", "Image zoom fills the window again (it was limited to the scaled slide).", "Zoom: arrow keys step through the images on the slide; past the first or last image they close the zoom.", "Present toolbar stays faint until you point at it.", "Editor: Ctrl+E toggles the TOC (as in present mode); [ also works with AltGr keyboards."] },
   { v: "13.76", d: ["TOC: dragging a slide or section near the list edge auto-scrolls the list.", "TOC: moving a slide to a section in an earlier lane no longer loses the slide.", "Images: a pasted image on an empty slide fills the slide, not one half.", "Images: grids pick rows and columns by image aspect ratio.", "Images: solo and wide images fill the free slide area.", "Images: images shrink to fit, so text below an image stays on the slide.", "Editing: all text in checklist, comparison, matrix, number-row, progress and flow blocks is editable inline.", "Checklist: type a status name to change the status; custom status labels survive compact/turbo formats."] },
   { v: "13.75", d: ["Editor: mark slides reviewed (✓); Review cycle makes arrow keys skip reviewed slides.", "View switch (editor | presenter | gallery) next to Present.", "Gallery: hide/unhide a slide beside delete; TOC: delete icon on slide rows (undoable).", "Fullscreen nav icons stay visible on any slide background.", "Branding: right-side settings pane; accent line removable at 0px.", "Block toolbar stays visible on full-bleed images; link badges sit right after the text.", "Vector PDF: € and other WinAnsi symbols render as text at correct size.", "validate: reports a gradient in solid-color bg fields (use bgGradient).", "Opening or switching a deck keeps lane/module ids.", "Desktop: window title shows the deck title; keyboard works after alt-tab; AI agents detected on first start; HTML export fixed."] },
@@ -20129,17 +20129,16 @@ uiSuite("wp5-image-drop", [
       if (_wp5Deck().deckTitle !== title) throw new Error("image drop changed the deck");
     });
   }},
-  { name: "mixed drop: SVG, oversize and .vela files are rejected, images kept, deck kept", fn: async () => {
+  { name: "mixed image drop: SVG and oversize files are rejected, images kept, deck kept", fn: async () => {
     await _wp5OnSlide("WP5 drop mixed", 0, {}, async (vp) => {
       const title = _wp5Deck().deckTitle;
       const svg = new File(['<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><rect width="10" height="10"/></svg>'], "a.svg", { type: "image/svg+xml" });
       const big = new File([new Uint8Array(26 * 1024 * 1024)], "big.png", { type: "image/png" });
-      const vela = new File([JSON.stringify({ deckTitle: "WP5 must not load", lanes: [] })], "deck.vela", { type: "" });
-      const files = [await _rfiPng(200, 100, 0), svg, big, vela, await _rfiPng(300, 100, 1)];
+      const files = [await _rfiPng(200, 100, 0), svg, big, await _rfiPng(300, 100, 1)];
       const ev = _wp5Drop(vp, files);
       if (!ev.defaultPrevented) throw new Error("mixed drop was not taken by the slide panel");
       const msg = await _waitFor(() => _wp5Toast(/not added/), 10000).catch(() => { throw new Error("no reject notice"); });
-      if (msg !== "Added 2 · 3 not added") throw new Error(`notice is ${JSON.stringify(msg)}`);
+      if (msg !== "Added 2 · 2 not added") throw new Error(`notice is ${JSON.stringify(msg)}`);
       const src = _wp5ImgSrcs();
       if (src.length !== 2) throw new Error(`slide has ${src.length} images, expected 2`);
       if (!src.every((s) => /^data:image\/jpeg;base64,/i.test(s) && SAFE_RASTER_DATA_IMAGE.test(s))) throw new Error("a kept src is not a safe JPEG data URI");
@@ -20147,8 +20146,27 @@ uiSuite("wp5-image-drop", [
       if (Math.abs(asp[0] - 2) > 0.1 || Math.abs(asp[1] - 3) > 0.1) throw new Error("mixed drop lost the image order");
       _wp5NoBlob();
       await _wait(300);
-      if (_wp5Deck().deckTitle !== title) throw new Error("the .vela file in a mixed drop loaded as a deck");
+      if (_wp5Deck().deckTitle !== title) throw new Error("a mixed image drop changed the deck");
     });
+  }},
+  { name: "a drop of a .vela file plus an image loads the deck and adds no image", fn: async () => {
+    await _wp5Exit(); await _selectFirstModule();
+    const title = _wp5Deck().deckTitle;
+    const deck = { deckTitle: "WP5 mixed deck", lanes: [{ id: "wp5x", title: "WP5 lane", items: [{ id: "wp5xm", title: "WP5 mixed module", slides: [{ blocks: [{ type: "heading", text: "WP5 MIXED DECK" }] }] }] }] };
+    const vela = new File([JSON.stringify(deck)], "mixed.vela", { type: "" });
+    try {
+      _wp5Drop(_mrdViewport(), [await _rfiPng(200, 100, 0), vela]);
+      await _waitFor(() => _wp5Deck().deckTitle === "WP5 mixed deck", 5000).catch(() => { throw new Error(`deck not loaded, title is ${JSON.stringify(_wp5Deck().deckTitle)}`); });
+      await _wait(300);
+      if (_wp5Deck().firstBlockText !== "WP5 MIXED DECK") throw new Error("loaded deck content is wrong");
+      const n = _wp5ImgSrcs().length;
+      if (n !== 0) throw new Error(`mixed drop added ${n} image(s) to the loaded deck`);
+      _wp5NoBlob();
+    } finally {
+      if (!_hooks().restoreStartupDeck?.()) throw new Error("could not restore the demo deck");
+      await _waitFor(() => _wp5Deck().deckTitle === title, 3000).catch(() => { throw new Error("demo deck not restored"); });
+      await _selectFirstModule();
+    }
   }},
   { name: "FX2a: images-only drop in Present shows a toast; deck unchanged", fn: async () => {
     await _wp5OnSlide("WP5 drop present", 2, {}, async () => {
@@ -29168,7 +29186,9 @@ export default function App() {
     // An images-only drop that no slide took (Present, or the editor outside the
     // slide panel) is told so, never loaded as a deck.
     if (dragHasOnlyImageFiles(e.dataTransfer)) { slideActionsRef.current?.showToast?.(fullscreenRef.current ? "Exit Present to add images" : "Drop images on the slide to add them", !fullscreenRef.current); return; }
-    const file = e.dataTransfer?.files?.[0]; if (file) loadDeckFile(file); }, [loadDeckFile]);
+    // A mixed drop loads its deck file, not whichever file happens to be first.
+    const files = Array.from(e.dataTransfer?.files || []);
+    const file = files.find((f) => !(typeof f.type === "string" && f.type.startsWith("image/"))) || files[0]; if (file) loadDeckFile(file); }, [loadDeckFile]);
 
   // Title editing
   const startEditTitle = () => { setTitleDraft(state.deckTitle || "Untitled"); setEditingTitle(true); };
