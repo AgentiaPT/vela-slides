@@ -4804,7 +4804,7 @@ uiSuite("wp5-image-drop", [
 // Slide toolbar auto-compact: one row at any width; labels hide from the right.
 const _tbEl = () => _$("[data-testid='slide-toolbar']");
 const _tbButtons = () => Array.from(_tbEl()?.querySelectorAll("button") || []);
-const _tbOneRow = () => { const c = _tbButtons().map((b) => { const r = b.getBoundingClientRect(); return r.top + r.height / 2; }); return c.length > 0 && c.every((y) => Math.abs(y - c[0]) < 2); };
+const _tbOneRow = () => { const el = _tbEl(), c = _tbButtons().map((b) => { const r = b.getBoundingClientRect(); return r.top + r.height / 2; }); return c.length > 0 && c.every((y) => Math.abs(y - c[0]) < 2) && el.scrollWidth <= el.clientWidth + 1; }; // one row, and the row fits
 const _tbAtWidth = async (w, body) => {
   await _selectFirstModule();
   const el = await _waitFor(_tbEl, 3000).catch(() => { throw new Error("no slide toolbar"); });
@@ -4836,6 +4836,14 @@ uiSuite("toolbar-auto-compact", [
       const extra = _tbButtons().filter((b) => b.getAttribute("aria-label") && b.dataset.testid !== "story-preview");
       if (extra.length) throw new Error(`aria-label set on a labelled button: ${extra.map((b) => b.getAttribute("aria-label")).join(",")}`);
       if (!_tbOneRow()) throw new Error("toolbar is not one row at 2400 px");
+    });
+  }},
+  { name: "narrower toolbar: icons use compact padding, still one row that fits", fn: async () => {
+    await _tbAtWidth(360, async (el) => {
+      if (!_tbOneRow()) throw new Error(`toolbar wraps or overflows at 360 px (scrollWidth ${el.scrollWidth}, clientWidth ${el.clientWidth})`);
+      if (_tbButtons().some((b) => b.querySelector("span"))) throw new Error("a label is still shown at 360 px");
+      const pad = getComputedStyle(_tbButtons()[0]).paddingLeft;
+      if (pad !== "6px") throw new Error(`icon buttons do not use compact padding at 360 px (padding-left ${pad})`);
     });
   }},
 ]);
