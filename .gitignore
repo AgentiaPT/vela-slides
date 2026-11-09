@@ -73,6 +73,7 @@ tests/screenshots/
 !.claude/hooks/
 .claude/hooks/*
 !.claude/hooks/post-edit-lint.py
+!.claude/hooks/block-session-url.py
 
 # Working decks (user-created, not shipped)
 decks/
