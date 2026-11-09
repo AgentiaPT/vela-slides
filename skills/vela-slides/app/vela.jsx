@@ -3240,6 +3240,8 @@ function EditableText({ text, onSave, editable, style, multiline, className, pre
 
   const onKey = (e) => {
     e.stopPropagation();
+    // An IME composition owns Enter and Esc (confirm or drop a candidate).
+    if (e.nativeEvent?.isComposing || e.keyCode === 229) return;
     if (e.key === "Escape") cancel();
     if (e.key === "Enter" && !multiline && !e.shiftKey) { e.preventDefault(); commit(); }
     if ((e.ctrlKey || e.metaKey) && e.key === "b") { e.preventDefault(); document.execCommand("bold"); }
@@ -3366,6 +3368,7 @@ function SvgEditText({ text, editable, onSave, suffix, ...textProps }) {
         onClick={stop} onMouseDown={stop} onBlur={() => finish(true)}
         onKeyDown={(e) => {
           e.stopPropagation();
+          if (e.nativeEvent?.isComposing || e.keyCode === 229) return; // IME composition owns Enter/Esc
           if (e.key === "Enter") { e.preventDefault(); finish(true); }
           else if (e.key === "Escape") { e.preventDefault(); finish(false); }
         }}
@@ -3669,7 +3672,8 @@ function LinkBadge({ fallback, style, label, gap = 4, children, ...rest }) {
 // Pass onDelete/onSetLink to enable each action; omit one to hide that button.
 //
 // Overlap handling: the toolbar anchors INSIDE the item's top-right corner so it never
-// pokes into a neighbouring item or past the slide edge. Hovering an item also notifies
+// pokes into a neighbouring item or past the slide edge. If that corner covers text,
+// placeItemCluster moves it to a free spot just outside the item. Hovering an item also notifies
 // ItemHoverContext, which the block lets read to hide its own (block-level) toolbar — so
 // the item toolbar and the block toolbar are never shown stacked on the same corner.
 const ItemHoverContext = React.createContext(null);
@@ -3677,6 +3681,39 @@ const itemChromeBtn = (bg, border, color) => ({ width: 18, height: 18, borderRad
 // Reorder arrow — a full-size round button (same footprint as the link/delete
 // chrome) so it's an easy click target. Dimmed + non-interactive at a boundary.
 const reorderArrowBtn = (enabled) => ({ ...itemChromeBtn(T.bgPanel, T.border, enabled ? T.text : T.border), fontSize: 10, fontWeight: 700, cursor: enabled ? "pointer" : "default", opacity: enabled ? 1 : 0.4 });
+
+// The hover cluster must never cover text: a click on short text must start the
+// inline edit, not Move/Delete/Link. Try the anchor corner first, then spots
+// just outside the item (right, top, left, bottom; touching it, so the hover
+// stays on). Take the first spot that is inside the slide and covers no text of
+// the slide; else the first that covers none of this item's own text. Returns a
+// local {left, top} or null (keep the anchor).
+function placeItemCluster(wrap, cluster, a) {
+  const W = wrap.offsetWidth, H = wrap.offsetHeight, cw = cluster.offsetWidth, ch = cluster.offsetHeight;
+  if (!W || !cw) return null;
+  const wr = wrap.getBoundingClientRect();
+  const k = wr.width / W || 1;
+  const num = (v) => typeof v === "number" ? v : null;
+  const al = num(a.left), ar = num(a.right), at = num(a.top);
+  const spots = [
+    { left: al != null ? al : W - cw - (ar || 0), top: at != null ? at : 2 },
+    { left: W, top: 0 }, { left: W - cw, top: -ch }, { left: -cw, top: 0 }, { left: W - cw, top: H },
+  ];
+  const root = wrap.closest("[data-vela-slide-content]") || wrap.closest("[data-block-type]") || wrap.parentElement;
+  const rr = root.getBoundingClientRect();
+  const own = [], all = [];
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, { acceptNode: (n) => (n.nodeValue.trim() && !cluster.contains(n)) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT });
+  for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+    const range = document.createRange(); range.selectNodeContents(n);
+    for (const r of range.getClientRects()) if (r.width > 0.5 && r.height > 0.5) { all.push(r); if (wrap.contains(n)) own.push(r); }
+  }
+  const box = (s) => ({ l: wr.left + s.left * k, t: wr.top + s.top * k, r: wr.left + (s.left + cw) * k, b: wr.top + (s.top + ch) * k });
+  const hits = (b, rects) => rects.some((r) => b.l < r.right - 0.5 && b.r > r.left + 0.5 && b.t < r.bottom - 0.5 && b.b > r.top + 0.5);
+  const inside = (b) => b.l >= rr.left - 0.5 && b.r <= rr.right + 0.5 && b.t >= rr.top - 0.5 && b.b <= rr.bottom + 0.5;
+  const pick = spots.find((s) => { const b = box(s); return inside(b) && !hits(b, all); })
+    || spots.find((s) => { const b = box(s); return inside(b) && !hits(b, own); });
+  return !pick || pick === spots[0] ? null : pick;
+}
 
 // noLinkBadge: keep link click-through + PDF export but render no link UI (badge/popup/button)
 // — used by grid, where the inner block already owns the link-editing chrome.
@@ -3698,8 +3735,17 @@ function ItemChrome({ editable, presenting, onDelete, link, onSetLink, children,
   // stays focused instead of the neighbour now under the cursor. The pin clears on
   // the next mouse move, handing control back to plain hover.
   const clusterVisible = reorder && reorder.anyPinned ? reorder.pinned : hovered;
+  const wrapRef = useRef(null);
+  const clusterRef = useRef(null);
+  const [clusterAt, setClusterAt] = useState(null);
+  const clusterShown = clusterVisible && editMode && (showLinkUI || deletable || reorder);
+  React.useLayoutEffect(() => {
+    let next = null;
+    if (clusterShown && wrapRef.current && clusterRef.current) { try { next = placeItemCluster(wrapRef.current, clusterRef.current, a); } catch (_) {} }
+    setClusterAt((prev) => (prev?.left === next?.left && prev?.top === next?.top) ? prev : next);
+  });
   return (
-    <div className={className} style={{ position: "relative", ...(clickable ? { cursor: "pointer" } : {}), ...wrapStyle }}
+    <div ref={wrapRef} className={className} style={{ position: "relative", ...(clickable ? { cursor: "pointer" } : {}), ...wrapStyle }}
       title={link ? linkPreview(link, linkLabel) : undefined}
       onMouseMove={reorder && reorder.anyPinned ? () => reorder.clearPin?.() : undefined}
       data-pdf-link={link || undefined}
@@ -3711,7 +3757,7 @@ function ItemChrome({ editable, presenting, onDelete, link, onSetLink, children,
       {/* Idle link badge — presenter */}
       {link && presenting && !noLinkBadge && <LinkBadge fallback={ba} label={linkLabel} onClick={(e) => { e.stopPropagation(); openExternalLink(link); }} style={{ padding: "2px 5px", borderRadius: 4, background: T.accent, fontSize: 9, color: "#fff", zIndex: 12, cursor: "pointer", opacity: hovered ? 1 : 0.3, transition: "opacity 0.2s", boxShadow: "0 2px 6px rgba(0,0,0,0.4)" }}>🔗</LinkBadge>}
       {/* Hover cluster — edit mode (or pinned after a reorder move) */}
-      {clusterVisible && editMode && (showLinkUI || deletable || reorder) && <div style={{ position: "absolute", ...a, display: "flex", alignItems: "center", gap: 3, zIndex: 11 }}>
+      {clusterShown && <div ref={clusterRef} data-item-cluster="" style={{ position: "absolute", ...(clusterAt || a), display: "flex", alignItems: "center", gap: 3, zIndex: 11 }}>
         {reorder && <button onClick={(e) => { e.stopPropagation(); reorder.onUp?.(); }} disabled={!reorder.onUp} style={reorderArrowBtn(!!reorder.onUp)} title="Move up">▲</button>}
         {reorder && <button onClick={(e) => { e.stopPropagation(); reorder.onDown?.(); }} disabled={!reorder.onDown} style={reorderArrowBtn(!!reorder.onDown)} title="Move down">▼</button>}
         {showLinkUI && <button onClick={(e) => { e.stopPropagation(); setEditingLink(!editingLink); }} style={itemChromeBtn(link ? T.accent : T.bgPanel, link ? T.accent : T.border, link ? "#fff" : T.textDim)} title={link ? `Link: ${link}` : "Add link"}>🔗</button>}
@@ -3858,7 +3904,7 @@ function GridCellImage({ src, alt, style }) {
 // query: deck SVG markup is in the same document (and a zoom clones it onto
 // <body>), so a marker attribute is not proof that app chrome is open (UI
 // integrity — a deck must not change what Esc does).
-const VELA_OPEN_CHROME = { modals: new Set(), zooms: new Set() };
+const VELA_OPEN_CHROME = { modals: new Set(), zooms: new Set(), panels: new Set() };
 
 function ZoomWrap({ children, enabled, link, fill }) {
   const [zoomed, setZoomed] = useState(false);
@@ -7835,6 +7881,16 @@ function PresenterTOC({ slides, slideIndex, onJump, lanes, currentConceptId, dis
   const scheduleClose = () => { clearClose(); if (!pinned) closeTimer.current = setTimeout(() => setOpen(false), 400); };
 
   useEffect(() => { if (open && searchRef.current) setTimeout(() => searchRef.current?.focus(), 100); }, [open]);
+  // While open, register for SlidePanel's Esc order (VELA_OPEN_CHROME in
+  // part-blocks.jsx): Esc closes this panel first and Present stays.
+  useEffect(() => {
+    if (!open) return;
+    const t = {};
+    const close = () => { setOpen(false); setPinned(false); };
+    VELA_OPEN_CHROME.panels.add(t);
+    window.addEventListener("vela-close-panel", close);
+    return () => { VELA_OPEN_CHROME.panels.delete(t); window.removeEventListener("vela-close-panel", close); };
+  }, [open]);
   useEffect(() => {
     if (!open) {
       setSearch("");
@@ -9421,6 +9477,18 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
   useEffect(() => {
     const handler = (e) => {
       if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA" || e.target.isContentEditable) return;
+      // An open zoom owns Esc and the step keys, also when focus is not on its
+      // overlay (for example after Tab). Esc closes only the zoom. A step key goes
+      // to the overlay's own handler, so the slide behind the zoom never moves.
+      if (VELA_OPEN_CHROME.zooms.size > 0) {
+        if (e.key === "Escape") { e.preventDefault(); window.dispatchEvent(new Event("vela-close-zoom")); return; }
+        if (["ArrowRight", "ArrowDown", "ArrowLeft", "ArrowUp", "PageDown", "PageUp", " "].includes(e.key)) {
+          e.preventDefault();
+          const overlay = [...VELA_OPEN_CHROME.zooms].pop();
+          if (e.key !== " " && overlay && e.target !== overlay) { overlay.focus(); overlay.dispatchEvent(new KeyboardEvent("keydown", { key: e.key, bubbles: true, cancelable: true })); }
+          return;
+        }
+      }
       // CR2: the TOC left rail is a roving-tabindex ARIA tree. While one of its
       // treeitems holds DOM focus, arrow/space keys are its own disclosure/navigation
       // keys (expand/collapse/move-focus/select) — never global slide-advance. The
@@ -9546,6 +9614,8 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       if (fullscreen && e.key === "E" && e.shiftKey && !e.metaKey && !e.ctrlKey && !["INPUT", "TEXTAREA"].includes(document.activeElement?.tagName)) {
         e.preventDefault(); setPresentEdit((v) => { showNavToast(v ? "Edit mode OFF" : "Edit mode ON"); return !v; });
       }
+      // An open Present TOC panel closes first; Present stays.
+      if (e.key === "Escape" && fullscreen && VELA_OPEN_CHROME.panels.size > 0) { e.preventDefault(); window.dispatchEvent(new Event("vela-close-panel")); return; }
       if (e.key === "Escape" && showGalleryRef.current) { e.preventDefault(); setGallery(false); return; }
       if (e.key === "Escape" && showPresenterViewRef.current) { e.preventDefault(); setPresenterView(false); return; }
       // Esc leaves Present mode. Browser fullscreen normally does this itself, but in a
@@ -9620,6 +9690,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
     const onFsChange = () => {
       if (document.fullscreenElement || !fullscreen) return;
       if (VELA_OPEN_CHROME.zooms.size > 0) { window.dispatchEvent(new Event("vela-close-zoom")); return; }
+      if (VELA_OPEN_CHROME.panels.size > 0) { window.dispatchEvent(new Event("vela-close-panel")); return; }
       if (showGalleryRef.current) { setGallery(false); return; }
       if (showPresenterViewRef.current) { setPresenterView(false); return; }
       dispatch({ type: "SET_FULLSCREEN", value: false });
@@ -18321,6 +18392,138 @@ uiSuite("hunt1-fix-sanitize", [
       const rect = vp.querySelector("rect[fill='url(#h1g)']");
       if (!rect) throw new Error("the url(#id) gradient ref was lost");
     } finally { await _mrdUndoTo(past); }
+  }},
+], { setup: _selectFirstModule });
+
+// hunt1-fix-editor: Esc/arrow order with an open zoom or Present TOC, hover
+// cluster that covers no item text, IME Enter in the inline editors.
+const _hfeZoomed = () => !!document.querySelector("[data-vela-zoom]");
+const _hfeZoomables = () => Array.from(document.querySelectorAll("[data-vela-zoomable]")).filter((z) => z.getBoundingClientRect().width > 0 && !z.closest("[data-vela-zoom]"));
+const _hfeTocPanel = () => { let p = _$("input[placeholder^='Search slides']"); while (p && !(p.style && /^translateX/.test(p.style.transform || ""))) p = p.parentElement; return p; };
+const _hfeTocOpen = () => /^translateX\(0(px)?\)$/.test(_hfeTocPanel()?.style.transform || "");
+const _hfeHits = (a, b) => a.left < b.right - 0.5 && a.right > b.left + 0.5 && a.top < b.bottom - 0.5 && a.bottom > b.top + 0.5;
+const _hfeTextNode = (root, t) => { const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT); for (let n = w.nextNode(); n; n = w.nextNode()) if (n.nodeValue.trim() === t) return n; return null; };
+uiSuite("hunt1-fix-editor", [
+  { name: "HE1: with focus off the zoom overlay, Esc closes only the zoom and arrows step the zoom, not the slide", fn: async () => {
+    const past = _hooks().getHistoryCounts().past;
+    try {
+      await _mrdInject([{ type: "image", src: _rfiSrc(320, 200, 0) }, { type: "image", src: _rfiSrc(200, 320, 1) }], { imageCols: undefined }, (v) => _tlLoaded(v) === 2 ? v : null);
+      await _mrdFrame();
+      for (const mode of ["editor", "present"]) {
+        if (mode === "present") { document.activeElement?.blur?.(); _key("f"); await _waitFor(() => !_$("header"), 2000); }
+        const open = async () => { _click(await _waitFor(() => _hfeZoomables()[0], 2000)); await _waitFor(_hfeZoomed, 2000); document.activeElement?.blur?.(); await _mrdFrame(); };
+        await open();
+        const pos = _slidePos();
+        _key("ArrowRight"); await _wait(250);
+        if (_slidePos() !== pos) throw new Error(`${mode}: ArrowRight moved the slide behind the zoom`);
+        if (!_hfeZoomed()) throw new Error(`${mode}: ArrowRight did not step to the next zoomable image`);
+        document.activeElement?.blur?.();
+        _key("Escape");
+        await _waitFor(() => !_hfeZoomed(), 1500).catch(() => { throw new Error(`${mode}: Esc did not close the zoom`); });
+        await _wait(200);
+        if (mode === "present" && _$("header")) throw new Error("present: Esc with a zoom open also left Present");
+        if (mode === "editor" && !_$("header")) throw new Error("editor: Esc changed the view");
+      }
+    } finally {
+      if (_hfeZoomed()) window.dispatchEvent(new Event("vela-close-zoom"));
+      await _exitFullscreen();
+      await _mrdUndoTo(past);
+    }
+  }},
+  { name: "HE6: Esc with the Present TOC open closes the TOC first and keeps Present", fn: async () => {
+    try {
+      document.activeElement?.blur?.(); _key("f");
+      await _waitFor(() => !_$("header"), 2000);
+      _key("e", { ctrlKey: true });
+      await _waitFor(_hfeTocOpen, 2000);
+      await _wait(150);
+      document.activeElement?.blur?.();
+      _key("Escape");
+      await _waitFor(() => !_hfeTocOpen(), 1500).catch(() => { throw new Error("Esc did not close the Present TOC"); });
+      await _wait(200);
+      if (_$("header")) throw new Error("Esc with the Present TOC open left Present");
+      // Browser-fullscreen path: the browser eats Esc and only fires fullscreenchange.
+      _key("e", { ctrlKey: true });
+      await _waitFor(_hfeTocOpen, 2000);
+      document.dispatchEvent(new Event("fullscreenchange"));
+      await _waitFor(() => !_hfeTocOpen(), 1500).catch(() => { throw new Error("browser fullscreen exit did not close the Present TOC"); });
+      await _wait(200);
+      if (_$("header")) throw new Error("browser fullscreen exit with the Present TOC open left Present");
+      document.activeElement?.blur?.();
+      _key("Escape");
+      await _waitFor(() => _$("header"), 2000).catch(() => { throw new Error("the next Esc did not leave Present"); });
+    } finally { await _exitFullscreen(); }
+  }},
+  { name: "HE2/HE3: the item hover cluster covers no item text; a click on short text edits it", fn: async () => {
+    const past = _hooks().getHistoryCounts().past;
+    try {
+      const sets = [
+        [[{ type: "tag-group", items: [{ text: "ht1" }, { text: "ht2" }, { text: "ht3" }] }, { type: "comparison", items: [{ title: "Before", items: ["ha1", "ha2"] }, { title: "After", items: ["hb1"] }] }], ["ht1", "ht2", "ht3", "ha1", "ha2", "hb1"]],
+        [[{ type: "steps", items: [{ title: "hs1" }, { title: "hs2" }] }, { type: "progress", items: [{ label: "hg1", value: 5 }, { label: "hg2", value: 9 }] }], ["hs1", "hs2", "hg1", "hg2"]],
+      ];
+      let seen = 0;
+      for (const [blocks, labels] of sets) {
+        const vp = await _mrdInject(blocks, { align: "center" }, (v) => labels.every((t) => _hfeTextNode(v, t)) ? v : null);
+        await _wait(400); // entrance animation
+        for (const t of labels) {
+          const n = _hfeTextNode(vp, t);
+          const host = n.parentElement;
+          await _mrdHover(host); await _mrdFrame();
+          const cl = _$("[data-item-cluster]", vp);
+          if (cl) {
+            seen++;
+            const rg = document.createRange(); rg.selectNodeContents(n);
+            const tr = rg.getBoundingClientRect();
+            const over = Array.from(cl.querySelectorAll("button")).find((b) => _hfeHits(b.getBoundingClientRect(), tr));
+            if (over) throw new Error(`"${over.title}" covers the text "${t}"`);
+            const hit = document.elementFromPoint(tr.left + tr.width / 2, tr.top + tr.height / 2);
+            if (hit?.closest("button")) throw new Error(`a click on "${t}" lands on "${hit.closest("button").title}"`);
+          }
+          await _mrdUnhover(host);
+        }
+      }
+      if (seen < 8) throw new Error(`only ${seen} item hover clusters were shown`);
+      // Click the middle tag: it edits, it is not deleted.
+      const vp = await _mrdInject(sets[0][0], { align: "center" }, (v) => _hfeTextNode(v, "ht2") ? v : null);
+      await _wait(400);
+      const host = _hfeTextNode(vp, "ht2").parentElement;
+      await _mrdHover(host); await _mrdFrame();
+      const rg = document.createRange(); rg.selectNodeContents(_hfeTextNode(vp, "ht2"));
+      const tr = rg.getBoundingClientRect();
+      _click(document.elementFromPoint(tr.left + tr.width / 2, tr.top + tr.height / 2));
+      await _waitFor(() => _$("[contenteditable='true']", _mrdViewport()), 1500).catch(() => { throw new Error("a click on a short tag did not start the inline edit"); });
+      _key("Escape"); await _mrdFrame();
+      const tags = (_hooks().getCurrentSlideForTest()?.blocks?.[0]?.items || []).map((i) => i.text).join();
+      if (tags !== "ht1,ht2,ht3") throw new Error(`the click changed the tags: ${tags}`);
+    } finally {
+      document.activeElement?.blur?.();
+      await _mrdUndoTo(past);
+    }
+  }},
+  { name: "HE5: Enter during IME composition does not commit the inline text or SVG label editor", fn: async () => {
+    const past = _hooks().getHistoryCounts().past;
+    const ime = (el) => el.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", keyCode: 229, isComposing: true, bubbles: true, cancelable: true }));
+    const enter = (el) => el.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", keyCode: 13, bubbles: true, cancelable: true }));
+    try {
+      await _mrdInject([{ type: "heading", text: "HFE ime" }, { type: "cycle", items: [{ label: "HFEa" }, { label: "HFEb" }, { label: "HFEc" }] }], null, (vp) => vp?.textContent.includes("HFEc") ? vp : null);
+      await _wait(400);
+      _click(await _waitFor(() => _tlEditNode("HFE ime"), 2000));
+      const ed = await _waitFor(() => _$("[contenteditable='true']", _mrdViewport()), 1500);
+      ime(ed); await _mrdFrame();
+      if (!ed.isConnected || !ed.isContentEditable) throw new Error("a composing Enter closed the inline text editor");
+      enter(ed);
+      await _waitFor(() => !_$("[contenteditable='true']", _mrdViewport()), 1500).catch(() => { throw new Error("a plain Enter did not commit the inline text editor"); });
+      const lbl = await _waitFor(() => Array.from(_mrdViewport().querySelectorAll("text[data-svg-edit]")).find((t) => t.textContent.trim() === "HFEa"), 2000);
+      lbl.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+      const inp = await _waitFor(() => _$("[data-testid='svg-text-edit']", _mrdViewport()), 1500);
+      ime(inp); await _mrdFrame();
+      if (!_$("[data-testid='svg-text-edit']", _mrdViewport())) throw new Error("a composing Enter closed the SVG label editor");
+      enter(_$("[data-testid='svg-text-edit']", _mrdViewport()));
+      await _waitFor(() => !_$("[data-testid='svg-text-edit']", _mrdViewport()), 1500).catch(() => { throw new Error("a plain Enter did not commit the SVG label editor"); });
+    } finally {
+      document.activeElement?.blur?.();
+      await _mrdUndoTo(past);
+    }
   }},
 ], { setup: _selectFirstModule });
 

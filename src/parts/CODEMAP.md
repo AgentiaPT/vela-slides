@@ -38,7 +38,7 @@ that symbol in the named part for the line. No line numbers here — they rot.
 - Block Helpers: stg COL_TOOLBAR_PAD patchItemAt removeItemAt setItemLink itemLinkOf addItemAt moveItemAt _noPin reorderCtl itemReorder blankItemFor PLACEHOLDER_FIELDS cloneGridCell clonePoint newItemFor
 - Add-Item Affordance — "+ add" button shown only in edit mode: AddItem ItemText IconBubble
 - Link Badge — one placement rule for every link badge (CR17): linkBadgeTextEnd LinkBadge
-- Per-Item Chrome — hover toolbar (🔗 link + ✕ delete) for one item of a multi-item block: ItemHoverContext itemChromeBtn reorderArrowBtn ItemChrome
+- Per-Item Chrome — hover toolbar (🔗 link + ✕ delete) for one item of a multi-item block: ItemHoverContext itemChromeBtn reorderArrowBtn placeItemCluster ItemChrome
 - Icon Row Item (per-item link + delete): IconRowItem
 - Bullet Item (per-item link + delete): BulletItem
 - Grid Cell Block (with per-block link editing): GridCellBlock
@@ -129,7 +129,7 @@ that symbol in the named part for the line. No line numbers here — they rot.
 - Sprint meridian (C3): split image alignment, accent 0, docked branding: _mrdSvg _mrdViewport _mrdFrame _mrdInject _mrdSetRange _mrdOpenBranding _mrdCloseBranding _mrdUndoTo _mrdHover _mrdUnhover _mrdCr15Clear _meridianF8SlowSave _tlEditNode _tlEdit _tidelineTocDrag _tidelineFire _tidelineHold _tidelineRows _tidelineTitle
 - Sprint tideline (CR22-CR25): image paste placement stress test: _tlAspects _tlBases _tlPaste _tlMeasure _tlCase
 - Review fixes: app markers, inline paste, cols AI edit, review cycle,: _rfxPast _rfxPlant _tlColors _tlCanvas _tlPasteCanvas _tlPasteBig _tlLoaded _tlStressMeasure _tlStressCase
-- Review fixes: image grid and image paste: _rfiCanvas _rfiSrc _rfiPasteFile _rfiPng
+- Review fixes: image grid and image paste: _rfiCanvas _rfiSrc _rfiPasteFile _rfiPng _hfeZoomed _hfeZoomables _hfeTocPanel _hfeTocOpen _hfeHits _hfeTextNode
 - UI TEST RUNNER COMPONENT: computeDeckFingerprint DEMO_DECK_FP_TITLE VelaUITestRunner
 
 ### part-demo.jsx
@@ -326,10 +326,10 @@ add_lane add_item batch_add_items remove_item remove_lane rename_item rename_lan
 ## Navigability debt (WARN — candidates for banners or splits)
 
 - part-imports.jsx: 898-line unbannered stretch after line 516
-- part-blocks.jsx: 781-line unbannered stretch after line 1038
+- part-blocks.jsx: 781-line unbannered stretch after line 1084
 - part-canvas.jsx: 499-line unbannered stretch after line 24
-- part-slidepanel.jsx: 531-line unbannered stretch after line 241
-- part-slidepanel.jsx: 415-line unbannered stretch after line 1092
+- part-slidepanel.jsx: 545-line unbannered stretch after line 241
+- part-slidepanel.jsx: 415-line unbannered stretch after line 1107
 - part-uitest.jsx: 616-line unbannered stretch after line 1230
 - part-uitest2.jsx: 448-line unbannered stretch after line 2
 - part-uitest2.jsx: 593-line unbannered stretch after line 1457
