@@ -210,5 +210,56 @@ check("spliceStartupPatch replaces the pristine null sentinel", spliced2.include
   }
 }
 
+// ── 7 (HS1/HS4): export from the serve.py dev preview (--ai) ─────────────
+// The app scrapes its own source from the page's text/babel tag. Build that page
+// with the REAL serve.py (AI on, so it holds the channel port + secret token),
+// take the tag text exactly as the browser would, and export it. The export must
+// compile (no second UMD shim, no second mount) and must not carry the channel
+// port or token: the file is shared with other people.
+{
+  const { execFileSync } = require("child_process");
+  let served = null;
+  try {
+    served = JSON.parse(execFileSync("python3", ["-c",
+      "import sys, json\n" +
+      "sys.path.insert(0, sys.argv[1])\n" +
+      "import serve\n" +
+      "srv = serve.VelaLocalServer(sys.argv[2], port=0, no_open=True, channel_port=47123, no_auth=True, ai_enabled=True)\n" +
+      "deck = json.load(open(sys.argv[3], encoding='utf-8'))\n" +
+      "sys.stdout.write(json.dumps({'html': srv._prepare_html(deck, 'demo.vela'), 'token': srv._channel_token}))",
+      path.join(REPO, "tools/vela-dev/scripts"), path.join(REPO, "examples"), DEMO_DECK_PATH],
+      { encoding: "utf8", maxBuffer: 256 * 1024 * 1024 }));
+  } catch (e) { check("serve.py _prepare_html runs", false, e.message); }
+  if (served) {
+    const open = '<script type="text/babel">';
+    const at = served.html.indexOf(open);
+    const tagText = served.html.slice(at + open.length, served.html.indexOf("</script>", at));
+    check("HS1 served source really holds the channel token (test not vacuous)", served.token.length > 20 && tagText.includes(served.token));
+    check("HS1 served source really holds the channel port (test not vacuous)", /^const VELA_CHANNEL_PORT = 47123;/m.test(tagText));
+    let svHtml = null;
+    try { svHtml = buildStandaloneHtml(tagText, deck, { footer: false, babel: Babel }); }
+    catch (e) { check("HS4 export works from the serve.py preview source", false, e.message.slice(0, 200)); }
+    if (svHtml) {
+      const code = extractAppScriptContent(svHtml);
+      let compileErr = null;
+      try { new vm.Script(code); } catch (e) { compileErr = e.message; }
+      check("HS4 serve.py-sourced export compiles (no duplicate declaration)", compileErr === null, compileErr);
+      const count = (t, re) => (t.match(re) || []).length;
+      const base = extractAppScriptContent(htmlNoFooter);
+      check("HS4 one shim only (no second hooks destructure)", count(code, /useState,\s*useReducer,\s*useEffect/g) === count(base, /useState,\s*useReducer,\s*useEffect/g));
+      check("HS4 one mount only (the preview's own mount is stripped)", count(code, /_createRoot\(/g) === count(base, /_createRoot\(/g));
+      check("HS1 export carries no channel token", !svHtml.includes(served.token));
+      check("HS1 export resets the channel port to 0", code.includes("const VELA_CHANNEL_PORT=0;") && !svHtml.includes("47123"));
+      check("HS1 export resets the channel token to empty", code.includes('const VELA_CHANNEL_TOKEN="";'));
+      check("HS1 export resets local mode", code.includes("const VELA_LOCAL_MODE=false;"));
+      check("HS4 current deck spliced", code.includes(deck.deckTitle));
+    }
+  }
+  // Deck text that looks like a channel declaration is spliced verbatim, never rewritten.
+  const forged = { ...deck, deckTitle: "x\nconst VELA_CHANNEL_TOKEN = \"keep\";\n" };
+  const fCode = extractAppScriptContent(buildStandaloneHtml(jsxSource, forged, { footer: false, babel: Babel }));
+  check("HS1 deck text that looks like the token declaration is spliced verbatim", fCode.includes('const VELA_CHANNEL_TOKEN = \\"keep\\";\\n'));
+}
+
 console.log(`\n  ${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

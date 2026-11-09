@@ -43,7 +43,9 @@ async function velaDir() {
 // Read the gatekeeper's loopback port + auth token. The extension is launched
 // by Neutralino in parallel with the webview, so the files may not exist for a
 // beat — poll briefly before giving up (AI then renders as unavailable).
-async function readHandshake() {
+// `bound` ({ deadline, now }, optional): stop polling when the next poll would
+// pass the deadline. Only the manual rescan sets it (see detect).
+async function readHandshake(bound) {
   let dir;
   try { dir = await velaDir(); } catch { return null; }
   // Each Vela window's gatekeeper keys its handshake by Neutralino's NL_PORT, so
@@ -60,14 +62,15 @@ async function readHandshake() {
         if (port && token) return { port, token };
       } catch { /* not written yet */ }
     }
+    if (bound && !(bound.now() + 150 < bound.deadline)) break;
     await sleep(150);
   }
   return null;
 }
 
-async function ensureHandshake() {
+async function ensureHandshake(bound) {
   if (handshake) return handshake;
-  handshake = await readHandshake();
+  handshake = await readHandshake(bound);
   return handshake;
 }
 
@@ -120,10 +123,18 @@ function availableList() {
 // a new-hash exe), so an early attempt sees no handshake files yet — that is a
 // transient "not up yet", retryable. A gatekeeper that answers with no agent
 // installed is a real negative that should stop the retry.
-async function detect() {
+async function detect(bound) {
   let gatekeeperUp = false;
   try {
-    const data = await extFetch("/detect", {}, 15000);
+    let timeoutMs = 15000;
+    if (bound) {
+      // Manual rescan: the handshake poll AND the /detect request together fit
+      // the remaining budget. A slow gatekeeper (first agent --version run) is
+      // aborted at the deadline instead of holding the click for up to 15 s.
+      if (!(await ensureHandshake(bound))) throw new Error("AI agent is not available");
+      timeoutMs = Math.max(1, Math.min(15000, bound.deadline - bound.now()));
+    }
+    const data = await extFetch("/detect", {}, timeoutMs);
     gatekeeperUp = true;
     detected = data.providers || {};
   } catch {
@@ -146,12 +157,14 @@ async function detect() {
 // Every attempt is reported to onAttempt(gatekeeperUp, or null on error).
 // `maxNegatives` (optional) stops after that many "gatekeeper answered, no
 // agent" answers; only the manual rescan sets it (see rescan below).
+// `boundAttempts` (optional) bounds each attempt itself by the deadline; only
+// the manual rescan sets it. The launch-time probe keeps its per-call timeouts.
 // `now` / `wait` are injectable for tests (fake clock).
-async function probeUntilReady({ deadline, onAttempt, maxNegatives, now = () => Date.now(), wait = sleep } = {}) {
+async function probeUntilReady({ deadline, onAttempt, maxNegatives, boundAttempts, now = () => Date.now(), wait = sleep } = {}) {
   let delay = 500, negatives = 0;
   for (;;) {
     let up = null;
-    try { up = await detect(); } catch { up = null; }
+    try { up = await detect(boundAttempts ? { deadline, now } : undefined); } catch { up = null; }
     if (onAttempt) { try { onAttempt(up); } catch {} }
     if (activeId && detected?.[activeId]?.available) return true;
     if (up === true && maxNegatives > 0 && ++negatives >= maxNegatives) return false;
@@ -171,7 +184,7 @@ async function probeUntilReady({ deadline, onAttempt, maxNegatives, now = () => 
 const RESCAN_BUDGET_MS = 3000;
 const RESCAN_MAX_NEGATIVES = 2; // gatekeeper answers "no agent": stop after this many
 function rescan({ onAttempt, now = () => Date.now(), wait = sleep } = {}) {
-  return probeUntilReady({ deadline: now() + RESCAN_BUDGET_MS, maxNegatives: RESCAN_MAX_NEGATIVES, onAttempt, now, wait });
+  return probeUntilReady({ deadline: now() + RESCAN_BUDGET_MS, maxNegatives: RESCAN_MAX_NEGATIVES, boundAttempts: true, onAttempt, now, wait });
 }
 
 export const agents = {

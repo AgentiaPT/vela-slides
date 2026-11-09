@@ -47,9 +47,12 @@ function titleLabel(raw) {
     // Emoji joiner: kept only between two non-ASCII characters (pictographs).
     if (ch === ZWJ && i > 0 && i < cps.length - 1 &&
         cps[i - 1].codePointAt(0) > 0x7f && cps[i + 1].codePointAt(0) > 0x7f) { out += ch; continue; }
-    if (TITLE_DROP.test(ch)) { run = 0; continue; }
+    // A DROPPED character does not reset the combining-mark run: the marks on
+    // each side of it join into one run in the output, so the cap must hold
+    // across it. Only a kept character resets the run.
+    if (TITLE_DROP.test(ch)) continue;
     if (/\s/.test(ch)) { out += " "; run = 0; continue; } // tab, newline, NBSP... -> space
-    if (TITLE_CONTROL.test(ch)) { run = 0; continue; }
+    if (TITLE_CONTROL.test(ch)) continue;
     if (TITLE_COMBINING.test(ch)) { if (++run > MAX_COMBINING_RUN) continue; } else run = 0;
     out += ch;
   }

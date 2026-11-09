@@ -28,13 +28,15 @@ async function test(name, fn) { try { await fn(); ok(name); } catch (e) { bad(na
 const tick = (ms = 20) => new Promise((r) => setTimeout(r, ms));
 
 // ── Load a fresh, isolated module instance bound to a given Neutralino mock ──
-function buildModule(Neu, consoleMock) {
+function buildModule(Neu, consoleMock, opts) {
   let body = SRC
     .replace(/import\s*\{[^}]*\}\s*from\s*["']\.\/fs-guard\.js["'];?/, "")
     .replace("export const deckIO", "const deckIO");
   // Shrink the real backoff so the retry tests run fast (fidelity of the delay
   // values is pinned separately by the source assertion below).
   body = body.replace(/const SAVE_RETRY_DELAYS = \[[^\]]*\];/, "const SAVE_RETRY_DELAYS = [5, 5];");
+  // Shrink the native-call timeout only for the tests that drive a hung call.
+  if (opts && opts.timeoutMs) body = body.replace(/const NATIVE_CALL_TIMEOUT_MS = \d+;/, `const NATIVE_CALL_TIMEOUT_MS = ${opts.timeoutMs};`);
   body += "\n;return { deckIO, state, flushSave, flushNow, onWatchEvent, saveCurrent, sigOf, byteLen, MAX_DECK_BYTES, WATCHER_IGNORE_MS };";
   const fsGuard = { allow() {}, install() {}, roots() { return []; } };
   // eslint-disable-next-line no-new-func
@@ -622,15 +624,39 @@ const PATH = "/decks/a.vela";
     assert((await settleOf(p)) === false, "openDeck left the dropped save pending");
     assert(!N.files[PATH], "dropped save was written");
   });
-  await test("A8 openDeck settles the dropped save with false even when the read fails", async () => {
-    const N = makeNeu({});
-    const m = buildModule(N);
-    m.state.folder = "/decks"; m.state.currentPath = PATH;
-    const p = m.saveCurrent(DECK());
-    let threw = false;
-    try { await m.deckIO.openDeck("/decks/missing.vela"); } catch { threw = true; }
-    assert(threw, "openDeck of a missing file did not throw");
-    assert((await settleOf(p)) === false, "dropped save stayed pending after a failed open");
+  // HC4: a failed open (missing or malformed file) leaves the current deck as it
+  // was: its pending save still flushes and its watcher keeps running.
+  for (const [label, files] of [["missing file", {}], ["malformed .vela", { "/decks/bad.vela": "{ not json" }]]) {
+    await test(`HC4 failed open (${label}) keeps the current deck's pending save and watcher`, async () => {
+      const N = makeNeu({ files: { ...files, [PATH]: JSON.stringify({ v: 0 }) } });
+      let removed = 0, created = 0;
+      N.filesystem.createWatcher = async () => { created++; return 7; };
+      N.filesystem.removeWatcher = async () => { removed++; };
+      const m = buildModule(N, recordingConsole());
+      m.state.folder = "/decks";
+      await m.deckIO.openDeck(PATH);
+      assert(m.state.watcherId === 7 && created === 1, "watcher not started on the good open");
+      const p = m.saveCurrent({ ...DECK(), deckTitle: "EDIT" });
+      let threw = false;
+      try { await m.deckIO.openDeck(label === "missing file" ? "/decks/missing.vela" : "/decks/bad.vela"); } catch { threw = true; }
+      assert(threw, "failed open did not throw to the caller");
+      assert(m.deckIO.currentPath() === PATH, "currentPath moved: " + m.deckIO.currentPath());
+      assert(m.state.watcherId === 7 && removed === 0, "failed open stopped the current deck's watcher");
+      assert(m.state.switching === false, "switching stayed true");
+      await tick(260); // longer than SAVE_DEBOUNCE_MS (200): the kept save flushes
+      assert((await settleOf(p)) === true, "pending save of the current deck was dropped");
+      assert(titleOn(N) === "EDIT", "edit not on disk: " + N.files[PATH]);
+    });
+  }
+  await test("HC4 nl-boot shows a failed open in the picker (textContent, basename), not only in the console", async () => {
+    const boot = fs.readFileSync(path.join(__dirname, "..", "vela-neutralino", "resources", "js", "nl-boot.js"), "utf8");
+    const html = fs.readFileSync(path.join(__dirname, "..", "vela-neutralino", "resources", "index.html"), "utf8");
+    const close = boot.slice(boot.indexOf("async function closePicker("), boot.indexOf("async function showPickerError("));
+    assert(/catch \(e\) \{[\s\S]*showPickerError\(selectedPath\)/.test(close), "closePicker catch does not surface the error");
+    const fn = boot.slice(boot.indexOf("async function showPickerError("), boot.indexOf("function promptForDeck("));
+    assert(/errorEl\.textContent = /.test(fn) && !/innerHTML/.test(fn), "error text not set via textContent");
+    assert(/split\("\/"\)\.pop\(\)/.test(fn), "error does not reduce the path to a basename");
+    assert(/id="deck-picker-error"/.test(html), "picker error element missing in index.html");
   });
   await test("A8 newDeck settles a dropped pending save with false", async () => {
     const N = makeNeu({});
@@ -649,6 +675,103 @@ const PATH = "/decks/a.vela";
     const p = m.saveCurrent(DECK());
     await m.deckIO.reselectFolder();
     assert((await settleOf(p)) === false, "reselectFolder left the dropped save pending");
+  });
+
+  // HC1: one native writeFile that never settles must not stop later saves.
+  // Each native call has a bounded timeout; a timed-out write is a failed attempt
+  // (pending kept). If it lands late, the newest confirmed bytes are put back.
+  const hungFirstWrite = (N, onFirst) => {
+    const realWrite = N.filesystem.writeFile;
+    let n = 0;
+    N.filesystem.writeFile = (p, d) => (n++ === 0 ? onFirst(p, d) : realWrite(p, d));
+    return () => n;
+  };
+  await test("HC1 hung write then a newer save: the newer save writes and resolves true", async () => {
+    const N = makeNeu({});
+    const writes = hungFirstWrite(N, () => new Promise(() => {}));
+    const m = buildModule(N, recordingConsole(), { timeoutMs: 30 });
+    m.state.folder = "/decks"; m.state.currentPath = PATH;
+    const pA = m.saveCurrent({ ...DECK(), deckTitle: "A" });
+    m.flushNow();
+    await tick(10);
+    const pB = m.saveCurrent({ ...DECK(), deckTitle: "B" });
+    m.flushNow();
+    await tick(120);
+    assert((await settleOf(pA)) === false, "hung save did not resolve false");
+    assert((await settleOf(pB)) === true, "newer save did not resolve true (chain wedged)");
+    assert(writes() === 2 && titleOn(N) === "B", "newer bytes not on disk: " + N.files[PATH]);
+    assert(m.deckIO.saveStatus().state === "saved", "status: " + m.deckIO.saveStatus().state);
+  });
+  await test("HC1 hung write then Retry: the run fails, keeps pending, and Retry writes it", async () => {
+    const N = makeNeu({});
+    hungFirstWrite(N, () => new Promise(() => {}));
+    const m = buildModule(N, recordingConsole(), { timeoutMs: 30 });
+    m.state.folder = "/decks"; m.state.currentPath = PATH;
+    const pA = m.saveCurrent({ ...DECK(), deckTitle: "A" });
+    m.flushNow();
+    await tick(80);
+    assert((await settleOf(pA)) === false, "hung save did not settle false after the timeout");
+    assert(m.deckIO.saveStatus().state === "failed", "no failed status: " + m.deckIO.saveStatus().state);
+    assert(m.state.pendingDeck && m.state.pendingDeck.deckTitle === "A", "pending not kept after the timeout");
+    await m.deckIO.flushNow(); // Retry
+    assert(titleOn(N) === "A", "Retry did not write the pending deck");
+    assert(m.deckIO.saveStatus().state === "saved", "status after Retry: " + m.deckIO.saveStatus().state);
+  });
+  await test("HC1 late completion of the hung write after a newer save leaves the newer bytes", async () => {
+    const N = makeNeu({ files: { [PATH]: JSON.stringify({ deckTitle: "OLD" }) } });
+    const g = gate();
+    hungFirstWrite(N, async (p, d) => { await g.p; N.files[p] = d; });
+    const m = buildModule(N, recordingConsole(), { timeoutMs: 30 });
+    m.state.folder = "/decks"; m.state.currentPath = PATH;
+    let reloaded = 0;
+    m.deckIO.onDeckLoaded(() => { reloaded++; });
+    const pA = m.saveCurrent({ ...DECK(), deckTitle: "A" });
+    m.flushNow();
+    await tick(60);
+    const pB = m.saveCurrent({ ...DECK(), deckTitle: "B" });
+    await m.flushNow();
+    assert((await pB) === true && titleOn(N) === "B", "newer save not confirmed");
+    assert((await settleOf(pA)) === false, "hung save did not resolve false");
+    g.open(); // the stray A write lands now, after B resolved true
+    await tick(40);
+    assert(titleOn(N) === "B", "late stray write left older bytes on disk: " + titleOn(N));
+    assert(reloaded === 0, "stray bytes were reloaded into the app as an external edit");
+    assert(m.state.strays.length === 0, "stray not forgotten after the repair");
+  });
+  await test("HC1 a stray that lands without ever settling is caught by the watcher and repaired", async () => {
+    const N = makeNeu({ files: { [PATH]: JSON.stringify({ deckTitle: "OLD" }) } });
+    let landA = null;
+    hungFirstWrite(N, (p, d) => { landA = () => { N.files[p] = d; }; return new Promise(() => {}); });
+    const m = buildModule(N, recordingConsole(), { timeoutMs: 30 });
+    m.state.folder = "/decks"; m.state.currentPath = PATH;
+    let reloaded = 0;
+    m.deckIO.onDeckLoaded(() => { reloaded++; });
+    m.saveCurrent({ ...DECK(), deckTitle: "A" });
+    m.flushNow();
+    await tick(60);
+    const pB = m.saveCurrent({ ...DECK(), deckTitle: "B" });
+    await m.flushNow();
+    assert((await pB) === true, "newer save not confirmed");
+    landA(); // bytes land, the native promise never answers
+    m.state.lastWriteAt = 0; // outside the cheap echo window
+    m.onWatchEvent({ detail: { dir: "/decks", filename: "a.vela", action: "modified" } });
+    await tick(40);
+    assert(reloaded === 0, "stray bytes were reloaded into the app as an external edit");
+    assert(titleOn(N) === "B", "stray bytes left on disk: " + titleOn(N));
+  });
+  await test("HC1 a timed-out save does not wedge saves for another deck", async () => {
+    const N = makeNeu({ files: { "/decks/b.vela": JSON.stringify({ deckTitle: "Bfile" }) } });
+    hungFirstWrite(N, () => new Promise(() => {}));
+    const m = buildModule(N, recordingConsole(), { timeoutMs: 30 });
+    m.state.folder = "/decks"; m.state.currentPath = PATH;
+    m.saveCurrent({ ...DECK(), deckTitle: "A" });
+    m.flushNow();
+    await tick(5);
+    await m.deckIO.openDeck("/decks/b.vela");
+    const pB = m.saveCurrent({ ...DECK(), deckTitle: "B2" });
+    await tick(320);
+    assert((await settleOf(pB)) === true, "save for the other deck wedged");
+    assert(JSON.parse(N.files["/decks/b.vela"]).deckTitle === "B2", "other deck not written");
   });
 
   console.log(`\n${pass} passed, ${fail} failed`);

@@ -223,7 +223,7 @@ async function boot() {
 // selection commits a path via the `resolve` handle.
 
 const picker = {
-  el: null, list: null, folderEl: null, countEl: null, changeBtn: null,
+  el: null, list: null, folderEl: null, countEl: null, changeBtn: null, errorEl: null,
   decks: [], focusIdx: 0,
   resolve: null,
   onSelect: null,
@@ -236,6 +236,7 @@ function ensurePickerBound() {
   picker.folderEl = $("deck-picker-folder");
   picker.countEl = $("deck-picker-count");
   picker.changeBtn = $("deck-picker-change");
+  picker.errorEl = $("deck-picker-error");
 
   picker.changeBtn.onclick = async () => {
     try {
@@ -311,6 +312,7 @@ function renderPickerList() {
 
 async function openPicker() {
   ensurePickerBound();
+  if (picker.errorEl) { picker.errorEl.hidden = true; picker.errorEl.textContent = ""; }
   await refreshPicker();
   picker.el.classList.add("open");
 }
@@ -342,7 +344,25 @@ async function closePicker(selectedPath) {
       }
     } catch (e) {
       console.error("[nl-boot] openDeck failed:", e);
+      // The current deck stays open (deck-io keeps its pending save and its
+      // watcher). Tell the user in the picker, not only in the console.
+      showPickerError(selectedPath);
     }
+  }
+}
+
+// Show a failed open in the deck picker (the shell's own UI). textContent only,
+// and a basename only: the file name comes from disk, and the full path and the
+// raw error stay shell-side (console).
+async function showPickerError(path) {
+  try {
+    await openPicker();
+    if (!picker.errorEl) return;
+    const name = String(path == null ? "" : path).replace(/\\/g, "/").split("/").pop();
+    picker.errorEl.textContent = `Could not open ${name}: it is not a valid Vela deck, or it could not be read. Your current deck is still open.`;
+    picker.errorEl.hidden = false;
+  } catch (e) {
+    console.error("[nl-boot] could not show the open error:", e);
   }
 }
 

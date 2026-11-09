@@ -286,6 +286,16 @@ function makeNeu() {
     assert(Neu.calls.focus > 1, "no re-arm on return: " + Neu.calls.focus);
   });
 
+  // HC5: the combining-mark cap holds across dropped (hidden) characters.
+  await test("HC5 title combining-mark cap holds across dropped hidden characters", () => {
+    const { mod } = loadGlue({ window: { setTitle: async () => {} } });
+    const maxRun = (t) => { let run = 0, best = 0; for (const c of Array.from(t)) { run = /[\p{Mn}\p{Me}]/u.test(c) ? run + 1 : 0; best = Math.max(best, run); } return best; };
+    for (const v of ["a\u0301\u0302\u200b\u0303\u0304\u200b\u0305\u0306", "a\u0301\u0302\u{e0041}\u0303\u0304", "b\u0301\u0302\u0000\u0303\u0304"]) {
+      const t = mod.windowTitleFor(v);
+      assert(maxRun(t) <= 2, `combining run ${maxRun(t)} in ${JSON.stringify(t)}`);
+    }
+  });
+
   // ─────────── CR19 ───────────
   function loadAgents(gk) {
     // gk: { up(): bool (handshake files present), port, agentFrom (fake ms) }
@@ -395,6 +405,55 @@ function makeNeu() {
     h.setFiles(5001, "tok");
     const found = await h.agents.rescan({ now: h.clock.now, wait: h.clock.wait });
     assert(found === true && h.agents.available() === true, "agent not found by rescan");
+  });
+  // HC2: the manual rescan is bounded END TO END (~3 s), also when one /detect
+  // request is slow (first agent --version run). Real timers, real clock.
+  function loadAgentsRealClock(gk) {
+    const Neu = {
+      os: { getEnv: async (k) => (k === "HOME" ? "/home/u" : "") },
+      filesystem: {
+        readFile: async (p) => {
+          if (!gk.files) throw new Error("ENOENT");
+          if (p.endsWith(".port")) return "4242";
+          if (p.endsWith(".token")) return "tok";
+          throw new Error("ENOENT");
+        },
+      },
+    };
+    const fetchMock = (url, opts) => new Promise((res, rej) => {
+      gk.calls++;
+      const t = setTimeout(() => res({ status: 200, ok: true, json: async () => ({ ok: true, providers: { "claude-code": { id: "claude-code", label: "Claude Code", available: true, version: "1.0" } } }) }), gk.latency);
+      opts.signal.addEventListener("abort", () => { gk.aborted++; clearTimeout(t); rej(new Error("AbortError")); });
+    });
+    const src = stripEsm(fs.readFileSync(path.join(JS, "agents-bridge.js"), "utf8")) + "\n;return { agents };";
+    // eslint-disable-next-line no-new-func
+    return new Function("Neutralino", "fsGuard", "configStore", "window", "fetch", "AbortController", src)(
+      Neu, { allow() {} }, { getAgent: async () => null, setAgent: async () => {} }, { NL_PORT: "7000" }, fetchMock, AbortController).agents;
+  }
+  await test("HC2 manual rescan with a slow /detect (6 s) answers within the ~3 s budget", async () => {
+    const gk = { files: true, latency: 6000, calls: 0, aborted: 0 };
+    const agents = loadAgentsRealClock(gk);
+    const t0 = Date.now();
+    const found = await agents.rescan();
+    const took = Date.now() - t0;
+    assert(found === false, "reported found");
+    assert(took < 3600, "rescan took " + took + " ms");
+    assert(gk.aborted === 1, "slow /detect not aborted at the deadline: aborted=" + gk.aborted);
+  });
+  await test("HC2 manual rescan without handshake files stays within the ~3 s budget", async () => {
+    const gk = { files: false, latency: 0, calls: 0, aborted: 0 };
+    const agents = loadAgentsRealClock(gk);
+    const t0 = Date.now();
+    const found = await agents.rescan();
+    const took = Date.now() - t0;
+    assert(found === false && gk.calls === 0, "reported found / fetched without a handshake");
+    assert(took < 3600, "rescan took " + took + " ms");
+  });
+  await test("HC2 launch-time probe keeps its per-call timeout (a slow /detect still answers)", async () => {
+    const gk = { files: true, latency: 1500, calls: 0, aborted: 0 };
+    const agents = loadAgentsRealClock(gk);
+    const found = await agents.probeUntilReady({ deadline: Date.now() + 500 });
+    assert(found === true && gk.aborted === 0, "launch probe aborted a slow /detect (found=" + found + ")");
   });
   await test("meridian-CR19 nl-boot boot loop uses probeUntilReady, rescan uses agents.rescan; no new native call", () => {
     const boot = fs.readFileSync(path.join(JS, "nl-boot.js"), "utf8");

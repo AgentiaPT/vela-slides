@@ -158,7 +158,9 @@ def _encode(value, fallback, max_len, keep_ws, fold):
             # Format/private-use/unassigned have no visible form to preserve, so
             # there is nothing to make visible by escaping — drop them. The
             # bidi class is the reason: keeping them would reorder the display.
-            combining_run = 0
+            # Do NOT reset combining_run: the marks on each side of a dropped
+            # character join into one run in the output, so the cap must hold
+            # across it.
             continue
 
         if category == "Cs":
