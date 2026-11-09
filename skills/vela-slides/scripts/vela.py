@@ -693,7 +693,10 @@ def _turbo_encode_block(block, palette):
         return [18, quads, block.get("xLeft", ""), block.get("xRight", ""),
                 block.get("yTop", ""), block.get("yBottom", "")]
     if t == "checklist":
-        items = [[i.get("text", ""), i.get("status", "pending")]
+        # A plain-string item (valid in the app and validate.py) stays a bare
+        # string, so it decodes back unchanged.
+        items = [i if isinstance(i, str) else
+                 [i.get("text", ""), i.get("status", "pending")]
                  + ([i["label"]] if i.get("label") else [])
                  for i in block.get("items", [])]
         return [19, items, block.get("size", ""),
@@ -904,6 +907,9 @@ def _turbo_decode_block(arr, palette):
     if tid == 19:  # checklist
         items = []
         for i in arr[1]:
+            if isinstance(i, str):
+                items.append(i)
+                continue
             item = {"text": i[0], "status": i[1]}
             if len(i) > 2 and i[2]: item["label"] = i[2]
             items.append(item)
