@@ -8974,7 +8974,63 @@ function fmtElapsed(totalSeconds) {
   const r = s % 60;
   return `${m}:${String(r).padStart(2, "0")}`;
 }
-function PresenterView({ current, next, index, total, duration, elapsed, branding, onClose, currentStory, nextStory, detourReturn }) {
+// Session card (v13.80, layout "C"): NOW clock; with a live session also time
+// left, time bar, pace verdict and pace track. Every value is a number or a
+// code-built string from the pace helpers; colours come from the static
+// SESSION_PACE_COLORS map; widths/lefts are clamped fractions. A label on the
+// pace track uses left:X% + translateX(-X%), so it stays inside the track at
+// 0 % and 100 %. YOU sits above and SHOULD BE below, so they never overlap.
+function PresenterSessionCard({ nowMs, session, pace, estimated, youNum, shouldNum, onEditSession }) {
+  const lab = { display: "block", fontFamily: FONT.mono, fontSize: 13, color: "#94a3b8", letterSpacing: "0.06em" };
+  const clock = <span data-testid="presenter-clock" style={{ display: "block", fontFamily: FONT.mono, fontSize: 56, fontWeight: 700, color: "#fff", lineHeight: 1.05 }}>{fmtClock(nowMs)}</span>;
+  const card = { flexShrink: 0, background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 10 };
+  if (!session || !pace) return (
+    <div data-testid="presenter-session-panel" style={{ ...card, padding: "14px 18px" }}>
+      <span style={lab}>NOW</span>
+      {clock}
+      <button type="button" data-testid="presenter-session-set" onClick={onEditSession} title="Set session end" aria-label="Set session end" style={{ marginTop: 12, width: "100%", padding: "8px 12px", fontFamily: FONT.mono, fontSize: 14, fontWeight: 600, color: "#e2e8f0", background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.2)", borderRadius: 6, cursor: "pointer" }}>{"🕒"} Set session end</button>
+    </div>
+  );
+  const pc = (f) => `${(Math.max(0, Math.min(1, f)) * 100).toFixed(2)}%`;
+  const paceColor = SESSION_PACE_COLORS[pace.paceKey] || SESSION_PACE_COLORS.white;
+  const leftColor = SESSION_PACE_COLORS[pace.timeLeftKey] || SESSION_PACE_COLORS.white;
+  const leftText = `${pace.over ? "+" : ""}${fmtCountdown(pace.timeLeftSec)}`;
+  const you = pc(pace.youFrac), should = pc(pace.shouldFrac);
+  const tag = (frac, extra) => ({ position: "absolute", left: frac, transform: `translateX(-${frac})`, whiteSpace: "nowrap", fontFamily: FONT.mono, fontSize: 13, fontWeight: 700, ...extra });
+  return (
+    <div data-testid="presenter-session-panel" style={card}>
+      <button type="button" onClick={onEditSession} title="Edit session end" aria-label={`Session: ${leftText} ${pace.over ? "over" : "left"}, ${pace.verdict}. Edit session end`}
+        style={{ display: "block", width: "100%", textAlign: "left", padding: "14px 18px", background: "none", border: "none", color: "#e2e8f0", cursor: "pointer", font: "inherit" }}>
+        <span style={lab}>NOW</span>
+        {clock}
+        <span style={{ ...lab, marginTop: 10 }}>TIME LEFT</span>
+        <span data-testid="presenter-time-left" style={{ display: "block", fontFamily: FONT.mono, fontSize: 34, fontWeight: 700, color: leftColor, lineHeight: 1.15 }}>{leftText}</span>
+        <span data-testid="presenter-time-bar" style={{ display: "block", position: "relative", height: 8, marginTop: 8, borderRadius: 4, background: "rgba(255,255,255,0.12)", overflow: "hidden" }}>
+          <span style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: pace.over ? "100%" : pc(pace.elapsedFrac), background: leftColor, borderRadius: 4 }} />
+        </span>
+        <span style={{ display: "flex", justifyContent: "space-between", marginTop: 6, fontFamily: FONT.mono, fontSize: 13, color: "#94a3b8" }}>
+          <span>started {fmtClock(session.start)}</span><span>ends {fmtClock(session.end)}</span>
+        </span>
+        <span style={{ ...lab, marginTop: 12 }}>PACE</span>
+        <span data-testid="presenter-pace" style={{ display: "block", fontFamily: FONT.mono, fontSize: 22, fontWeight: 700, color: paceColor, lineHeight: 1.25 }}>{pace.verdict}</span>
+        <span style={{ display: "block", position: "relative", height: 18, marginTop: 8 }}>
+          <span style={tag(you, { top: 0, color: "#fff" })}>YOU · slide {youNum ?? "–"}</span>
+        </span>
+        <span data-testid="presenter-pace-track" style={{ display: "block", position: "relative", height: 8, marginTop: 4, borderRadius: 4, background: "rgba(255,255,255,0.12)" }}>
+          <span data-testid="presenter-pace-should" style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: should, background: paceColor, borderRadius: 4 }} />
+          <span aria-hidden="true" style={{ position: "absolute", top: -5, bottom: -5, width: 3, left: should, transform: `translateX(-${should})`, background: paceColor, borderRadius: 1 }} />
+          <span data-testid="presenter-pace-you" style={{ position: "absolute", top: -5, bottom: -5, width: 3, left: you, transform: `translateX(-${you})`, background: "#fff", borderRadius: 1 }} />
+        </span>
+        <span style={{ display: "block", position: "relative", height: 18, marginTop: 6 }}>
+          <span style={tag(should, { top: 0, color: paceColor })}>SHOULD BE · slide {shouldNum ?? "–"}</span>
+        </span>
+        <span style={{ display: "block", marginTop: 8, fontFamily: FONT.mono, fontSize: 13, color: "#94a3b8", lineHeight: 1.4 }}>slides left need {fmtCountdown(pace.need)} · you have {fmtCountdown(Math.max(0, pace.have))}</span>
+        {estimated > 0 && <span style={{ display: "block", marginTop: 4, fontFamily: FONT.mono, fontSize: 13, color: "#64748b", fontStyle: "italic" }}>~ {estimated} slides estimated (no duration)</span>}
+      </button>
+    </div>
+  );
+}
+function PresenterView({ current, next, index, total, duration, elapsed, branding, onClose, currentStory, nextStory, detourReturn, sessionCard }) {
   const notes = (current?.notes || "").trim();
   // Story slide: the NEXT step can still be on this slide (nextStory set), so
   // NEXT then shows the current slide at that step, labelled "image k/N" or
@@ -9011,13 +9067,14 @@ function PresenterView({ current, next, index, total, duration, elapsed, brandin
             </div>}
           </div>
         </div>
-        <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 8, minWidth: 180, maxWidth: 320 }}>
+        <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 8, minWidth: 180, maxWidth: 320, minHeight: 0, overflowY: "auto" }}>
           <div style={{ fontFamily: FONT.mono, fontSize: 10, color: "#64748b", letterSpacing: "0.05em" }}>NEXT ▸{nextInSlide && <span data-testid="presenter-next-story"> {nextStoryLabel}</span>}</div>
-          <div data-testid="presenter-next" style={{ borderRadius: 8, overflow: "hidden", border: "1px solid rgba(255,255,255,0.15)", opacity: 0.85 }}>
+          <div data-testid="presenter-next" style={{ flexShrink: 0, borderRadius: 8, overflow: "hidden", border: "1px solid rgba(255,255,255,0.15)", opacity: 0.85 }}>
             {/* One key for both NEXT thumbs: no remount (shimmer) when the story ends. */}
             {nextInSlide ? <GalleryThumb key="next" slide={current} slideIdx={index} total={total} branding={branding} story={nextStory} />
               : next ? <GalleryThumb key="next" slide={next} slideIdx={index + 1} total={total} branding={branding} /> : <div style={{ aspectRatio: "16/9", display: "flex", alignItems: "center", justifyContent: "center", color: "#64748b", fontFamily: FONT.mono, fontSize: 13, background: "rgba(255,255,255,0.03)", borderRadius: 8 }}>End</div>}
           </div>
+          {sessionCard && <PresenterSessionCard {...sessionCard} />}
         </div>
       </div>
     </div>
@@ -9767,6 +9824,10 @@ function useToolbarCompact(ref, key) {
   return hide;
 }
 
+// Present edge bar (v13.80): the T-key hide choice. Memory only, for the page
+// session; module-level so it survives SlidePanel remounts. Never stored.
+const VELA_SESSION_BAR = { hidden: false };
+
 function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, branding, guidelines, isMobile, fontScale, actionsRef, onRibbonUpdate }) {
   const deckEpochRef = useRef(state._deckEpoch);
   deckEpochRef.current = state._deckEpoch;
@@ -10017,10 +10078,12 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
   // Presenter-view elapsed timer (CR-08): starts fresh each time Present mode
   // is entered, stops (and hides the presenter view) on exit.
   useEffect(() => {
-    if (!fullscreen) { presentStartRef.current = null; setPresentElapsed(0); setPresenterView(false); return; }
+    if (!fullscreen) { presentStartRef.current = null; setPresentElapsed(0); setPresenterView(false); setSessionDialogOpen(false); return; }
     presentStartRef.current = Date.now();
     setPresentElapsed(0);
-    const id = setInterval(() => { setPresentElapsed(Math.round((Date.now() - presentStartRef.current) / 1000)); }, 1000);
+    setNowMs(Date.now());
+    // One 1 s tick for the elapsed timer and the session clock / pace (v13.80).
+    const id = setInterval(() => { setPresentElapsed(Math.round((Date.now() - presentStartRef.current) / 1000)); setNowMs(Date.now()); }, 1000);
     return () => clearInterval(id);
   }, [fullscreen]); // eslint-disable-line -- intentionally minimal deps, mirrors prevFullscreen effect above
   useEffect(() => { setEditingDuration(false); setShowCommentPopover(false); }, [slideIndex]);
@@ -10101,6 +10164,30 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
   useEffect(() => { if (!fullscreen) setPresentEdit(false); }, [fullscreen]);
   const [presentElapsed, setPresentElapsed] = useState(0); // seconds since Present mode was entered
   const presentStartRef = useRef(null);
+  // ── Session end (v13.80): clock, pace, Present edge bar, dialog. Present only.
+  // Pace follows the Present numbering (presentSequence); during a detour it
+  // uses the return slide (detour.ret, with that item's own title-card offset).
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  const [sessionDialogOpen, setSessionDialogOpen] = useState(false);
+  const sessionDialogOpenRef = useRef(false);
+  sessionDialogOpenRef.current = sessionDialogOpen;
+  const [sessionBarHidden, setSessionBarHidden] = useState(() => VELA_SESSION_BAR.hidden);
+  const paceItemId = detour ? detour.ret.id : concept.id;
+  const sessionSeq = useMemo(() => { const seq = presentSequence(lanes, paceItemId); return { seq, est: sessionEstimates(seq) }; }, [lanes, paceItemId]);
+  const paceRawIdx = (() => {
+    if (!detour) return slideIndex - presOffset;
+    let retItem = null;
+    for (const l of lanes || []) for (const it of (l && l.items) || []) if (it && it.id === detour.ret.id) retItem = it;
+    return detour.ret.index - (retItem && retItem.presentCard ? 1 : 0);
+  })();
+  const paceIdx = sessionSeqIndex(sessionSeq.seq, paceItemId, paceRawIdx);
+  // On-slide counter: restarts when the pace position changes (not on a detour).
+  const slideEnterRef = useRef({ key: null, at: 0 });
+  const paceSlideKey = fullscreen ? `${paceItemId}|${detour ? detour.ret.index : slideIndex}` : null;
+  if (slideEnterRef.current.key !== paceSlideKey) slideEnterRef.current = { key: paceSlideKey, at: Date.now() };
+  const sessionLive = fullscreen ? liveSession(state.session, nowMs) : null;
+  const sessionPace = sessionLive ? computeSessionPace(sessionSeq.est, paceIdx, Math.max(0, (nowMs - slideEnterRef.current.at) / 1000), sessionLive, nowMs) : null;
+  const closeSessionDialog = () => { setSessionDialogOpen(false); containerRef.current?.focus({ preventScroll: true }); };
   const [showNewSlide, setShowNewSlide] = useState(false);
   const [newSlidePrompt, setNewSlidePrompt] = useState("");
   const [newSlideImage, setNewSlideImage] = useState(null);
@@ -10698,6 +10785,14 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       if (e.key === "g" && !e.metaKey && !e.ctrlKey && !e.shiftKey && !["INPUT", "TEXTAREA"].includes(document.activeElement?.tagName)) {
         e.preventDefault(); setGallery((v) => !v);
       }
+      // T → hide/show the session edge bar (Present only; no modifiers; not
+      // in a text field; not while a dialog is open). Memory only (v13.80).
+      if (fullscreen && (e.key === "t" || e.key === "T") && !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey && VELA_OPEN_CHROME.modals.size === 0 && !sessionDialogOpenRef.current) {
+        const ae = document.activeElement;
+        if (!(ae && (["INPUT", "TEXTAREA", "SELECT"].includes(ae.tagName) || ae.isContentEditable))) {
+          e.preventDefault(); setSessionBarHidden((v) => { VELA_SESSION_BAR.hidden = !v; return !v; }); return;
+        }
+      }
       // S → presenter view toggle (Present mode only)
       if (fullscreen && e.key === "s" && !e.metaKey && !e.ctrlKey && !e.shiftKey && !["INPUT", "TEXTAREA"].includes(document.activeElement?.tagName)) {
         e.preventDefault(); setPresenterView((v) => !v);
@@ -10787,6 +10882,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
     // layering here: a zoom, gallery or presenter view closes first and Present stays.
     const onFsChange = () => {
       if (document.fullscreenElement || !fullscreen) return;
+      if (sessionDialogOpenRef.current) { setSessionDialogOpen(false); return; } // browser Esc: the session dialog closes first
       if (VELA_OPEN_CHROME.zooms.size > 0) { window.dispatchEvent(new Event("vela-close-zoom")); return; }
       if (VELA_OPEN_CHROME.panels.size > 0) { window.dispatchEvent(new Event("vela-close-panel")); return; }
       if (showGalleryRef.current) { setGallery(false); return; }
@@ -11198,6 +11294,13 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
         <div key={slideIndex} className="slide-transition-fade" style={{ position: "relative", width: "100%", height: "100%" }}>
           <FullscreenSlide key={`deck-${state._deckEpoch}`} slide={presSlides[slideIndex]} index={slideIndex} total={presSlides.length} innerRef={slideRef} branding={presSlides[slideIndex]?._virtual ? null : branding} editable={!isStudent && !presSlides[slideIndex]?._virtual} onEdit={isStudent || presSlides[slideIndex]?._virtual ? undefined : handleSlideEdit} onBlockEdit={isStudent || presSlides[slideIndex]?._virtual ? undefined : runBlockEdit} blockEditing={isStudent ? null : blockEditing} fontScale={fontScale} mode="fill" forceEdit={presentEdit && !isStudent} displayIndex={globalSlideIndex - presOffset} displayTotal={globalSlideTotal} hideSlideNumber={!!detour} story={story} onStoryJump={story ? onStoryJump : undefined} onStoryZoomOut={story ? onStoryZoomOut : undefined} />
         </div>
+        {/* Session edge bar (v13.80): fill = SHOULD BE, white tick = YOU, colour =
+            pace verdict. Numbers are clamped fractions; colours are static. It
+            takes no clicks and hides under the presenter view and the gallery. */}
+        {sessionPace && !sessionBarHidden && !showPresenterView && !showGallery && <div data-testid="present-session-bar" aria-hidden="true" style={{ position: "absolute", left: 0, right: 0, bottom: 0, height: 5, zIndex: 15, pointerEvents: "none", background: "rgba(255,255,255,0.14)" }}>
+          <div style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: `${(Math.max(0, Math.min(1, sessionPace.shouldFrac)) * 100).toFixed(2)}%`, background: SESSION_PACE_COLORS[sessionPace.paceKey] || SESSION_PACE_COLORS.white, pointerEvents: "none" }} />
+          <div style={{ position: "absolute", top: 0, bottom: 0, width: 3, left: `${(Math.max(0, Math.min(1, sessionPace.youFrac)) * 100).toFixed(2)}%`, transform: `translateX(-${(Math.max(0, Math.min(1, sessionPace.youFrac)) * 100).toFixed(2)}%)`, background: "#fff", pointerEvents: "none" }} />
+        </div>}
         {!isMobile && <PresenterTOC slides={presSlides} slideIndex={slideIndex} onJump={(i) => dispatch({ type: "SET_SLIDE_INDEX", index: i })} lanes={lanes} currentConceptId={concept.id} dispatch={dispatch} onDetour={onDetour} />}
                 {fontScale !== 1 && <div style={{ position: "absolute", top: 12, right: 16, fontFamily: FONT.mono, fontSize: 13, fontWeight: 700, color: T.accent, background: T.bgPanel + "e0", padding: "3px 10px", borderRadius: 4, border: `1px solid ${T.accent}40`, zIndex: 20, letterSpacing: "0.05em", pointerEvents: "none" }}>FONT {Math.round(fontScale * 100)}%</div>}
         {improving && <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, padding: "10px 20px", background: "rgba(0,0,0,0.82)", backdropFilter: "blur(6px)", display: "flex", alignItems: "center", gap: 12, zIndex: 20 }}>
@@ -11253,8 +11356,15 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
         for (let i = slideIndex + 1; i < presSlides.length; i++) if (!presSlides[i].hidden) { nextIdx = i; break; }
         // NEXT on a story slide is its next step; after the last step, the next slide.
         const nextStory = story ? storyNext(story, storyN) : null;
-        return <PresenterView current={presSlides[slideIndex]} next={nextStory ? presSlides[slideIndex] : nextIdx >= 0 ? presSlides[nextIdx] : null} currentStory={story} nextStory={nextStory || undefined} index={globalSlideIndex - presOffset} total={globalSlideTotal} duration={presSlides[slideIndex]?.duration || 0} elapsed={presentElapsed} branding={branding} onClose={() => setPresenterView(false)} detourReturn={detour ? detourReturnTitle(lanes, detour.ret) : null} />;
+        return <PresenterView current={presSlides[slideIndex]} next={nextStory ? presSlides[slideIndex] : nextIdx >= 0 ? presSlides[nextIdx] : null} currentStory={story} nextStory={nextStory || undefined} index={globalSlideIndex - presOffset} total={globalSlideTotal} duration={presSlides[slideIndex]?.duration || 0} elapsed={presentElapsed} branding={branding} onClose={() => setPresenterView(false)} detourReturn={detour ? detourReturnTitle(lanes, detour.ret) : null}
+          sessionCard={{ nowMs, session: sessionLive, pace: sessionPace, estimated: sessionSeq.est.estimated, youNum: sessionSeq.seq[paceIdx]?.num, shouldNum: sessionPace ? sessionSeq.seq[sessionPace.shouldIdx]?.num : undefined, onEditSession: () => setSessionDialogOpen(true) }} />;
       })()}
+      {/* Session dialog INSIDE the Present root: App-level modals are outside the
+          browser-fullscreen element and would be invisible here. */}
+      {sessionDialogOpen && <SessionEndDialog session={sessionLive} stored={!!sanitizeSession(state.session)} lanes={lanes}
+        onSet={(s) => { const v = sanitizeSession(s); if (v) dispatch({ type: "SET_SESSION", session: v }); closeSessionDialog(); }}
+        onClear={() => { dispatch({ type: "SET_SESSION", session: null }); closeSessionDialog(); }}
+        onClose={closeSessionDialog} />}
     </div>
   );
 
@@ -20935,6 +21045,268 @@ uiSuite("session-ingress", [
   }},
 ]);
 
+// ── Session end: Present-side UI (v13.80, P2) ─────────────────────────
+// Present root = the fixed inset:0 zIndex 9999 element. Each test restores:
+// session null, dialog closed, presenter view closed, Present left.
+const _sesUiRoot = () => _$$("div").find((d) => d.style.position === "fixed" && d.style.inset === "0px" && d.style.zIndex === "9999");
+const _sesUiPresent = async () => {
+  await _editorSetup();
+  document.activeElement?.blur(); await _wait(100);
+  _key("f");
+  await _waitFor(() => !_$("header") && _sesUiRoot(), 2000);
+};
+const _sesUiLeave = async () => {
+  const hooks = _hooks();
+  if (_$("[data-testid='session-cancel']")) { _click("[data-testid='session-cancel']"); await _waitFor(() => !_$("[data-testid='session-dialog']"), 1500).catch(() => {}); }
+  if (_$("[data-testid='presenter-view']")) { _click("[data-testid='presenter-toggle']"); await _waitFor(() => !_$("[data-testid='presenter-view']"), 1500).catch(() => {}); }
+  hooks.setSessionForTest?.(null);
+  VELA_SESSION_BAR.hidden = false;
+  await _exitFullscreen();
+};
+const _sesUiSet = (el, value) => {
+  Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set.call(el, String(value));
+  el.dispatchEvent(new Event("input", { bubbles: true }));
+};
+const _sesUiOpenPresenter = async () => {
+  document.activeElement?.blur(); await _wait(80);
+  _key("s");
+  await _waitFor(() => _$("[data-testid='presenter-session-panel']"), 2000);
+};
+const _sesUiNeedHooks = () => {
+  const hooks = _hooks();
+  if (!hooks.setSessionForTest || !hooks.getSessionForTest) throw new Error("session test hooks missing");
+  return hooks;
+};
+
+uiSuite("session-presenter-panel", [
+  { name: "SP1: no session -> clock and Set session end button; dialog opens INSIDE the Present root", fn: async () => {
+    const hooks = _sesUiNeedHooks();
+    try {
+      hooks.setSessionForTest(null);
+      await _sesUiPresent();
+      await _sesUiOpenPresenter();
+      const clock = _$("[data-testid='presenter-clock']");
+      if (!clock || !/^\d\d:\d\d$/.test(clock.textContent.trim())) throw new Error("presenter-clock missing or not HH:MM: " + clock?.textContent);
+      if (_$("[data-testid='presenter-time-left']")) throw new Error("time left shown without a session");
+      const btn = _$("[data-testid='presenter-session-set']");
+      if (!btn || btn.tagName !== "BUTTON") throw new Error("presenter-session-set is not a button");
+      _click(btn);
+      const dlg = await _waitFor(() => _$("[data-testid='session-dialog']"), 1500);
+      if (!_sesUiRoot()?.contains(dlg)) throw new Error("session dialog is not inside the Present root");
+      await _waitFor(() => document.activeElement === _$("[data-testid='session-end-input']"), 1000).catch(() => { throw new Error("focus is not on the End input"); });
+      if (_$("[data-testid='session-clear']")) throw new Error("Clear shown without a stored session");
+      if (!_$("[data-testid='session-set']").disabled) throw new Error("Set enabled with an empty End");
+    } finally { await _sesUiLeave(); }
+  }},
+  { name: "SP2: chip 30 sets End = Start + 30; Set stores 30 min; panel shows every pace element", fn: async () => {
+    const hooks = _sesUiNeedHooks();
+    try {
+      hooks.setSessionForTest(null);
+      await _sesUiPresent();
+      await _sesUiOpenPresenter();
+      _click("[data-testid='presenter-session-set']");
+      await _waitFor(() => _$("[data-testid='session-dialog']"), 1500);
+      _click("[data-testid='session-chip-30']");
+      await _wait(80);
+      const st = _$("[data-testid='session-start-input']").value, en = _$("[data-testid='session-end-input']").value;
+      const r = resolveSessionTimes(st, en, Date.now());
+      if (!r || r.end - r.start !== 1800000) throw new Error(`chip 30 gave ${st} -> ${en}`);
+      if (_$("[data-testid='session-minutes-input']").value !== "30") throw new Error("minutes field not 30");
+      _click("[data-testid='session-set']");
+      await _waitFor(() => !_$("[data-testid='session-dialog']"), 1500);
+      const s = hooks.getSessionForTest();
+      if (!s || s.end - s.start !== 1800000) throw new Error("stored session is not 30 min: " + JSON.stringify(s));
+      if (!_$("[data-testid='presenter-view']")) throw new Error("Set closed the presenter view");
+      for (const id of ["presenter-clock", "presenter-time-left", "presenter-time-bar", "presenter-pace", "presenter-pace-track", "presenter-pace-you", "presenter-pace-should"]) {
+        await _waitFor(() => _$(`[data-testid='${id}']`), 1500).catch(() => { throw new Error(`${id} missing with a session`); });
+      }
+      if (_$("[data-testid='presenter-session-set']")) throw new Error("Set button still shown with a session");
+    } finally { await _sesUiLeave(); }
+  }},
+  { name: "SP3: verdict matches computeSessionPace (over and not-yet-started); colour follows the verdict", fn: async () => {
+    const hooks = _sesUiNeedHooks();
+    const cands = (ses) => [0, 1000, 2000].map((d) => computeSessionPace({ est: [60] }, 0, 0, ses, Date.now() - d).verdict);
+    try {
+      await _sesUiPresent();
+      await _sesUiOpenPresenter();
+      const over = { start: Date.now() - 40 * 60000, end: Date.now() - 10 * 60000 };
+      hooks.setSessionForTest(over);
+      const tl = await _waitFor(() => _$("[data-testid='presenter-time-left']"), 2000);
+      await _wait(50);
+      const v1 = _$("[data-testid='presenter-pace']").textContent;
+      if (!cands(over).includes(v1)) throw new Error(`over verdict "${v1}" not in ${JSON.stringify(cands(over))}`);
+      if (!tl.textContent.startsWith("+")) throw new Error("time left does not count up when over: " + tl.textContent);
+      const before = { start: Date.now() + 5 * 60000, end: Date.now() + 35 * 60000 };
+      hooks.setSessionForTest(before);
+      await _waitFor(() => /^starts in /.test(_$("[data-testid='presenter-pace']")?.textContent || ""), 2000);
+      const v2 = _$("[data-testid='presenter-pace']").textContent;
+      if (!cands(before).includes(v2)) throw new Error(`before verdict "${v2}" not in ${JSON.stringify(cands(before))}`);
+      const live = { start: Date.now() - 47 * 60000, end: Date.now() + 28 * 60000 };
+      hooks.setSessionForTest(live);
+      await _waitFor(() => !/^starts in /.test(_$("[data-testid='presenter-pace']")?.textContent || ""), 2000);
+      const pv = _$("[data-testid='presenter-pace']");
+      const t = pv.textContent;
+      const key = /ahead/.test(t) ? "green" : t === "on pace" ? "white" : /behind/.test(t) ? null : "x";
+      if (key === "x") throw new Error("unexpected live verdict: " + t);
+      const rgb = (hex) => `rgb(${parseInt(hex.slice(1, 3), 16)}, ${parseInt(hex.slice(3, 5), 16)}, ${parseInt(hex.slice(5, 7), 16)})`;
+      const ok = key ? [rgb(SESSION_PACE_COLORS[key])] : [rgb(SESSION_PACE_COLORS.amber), rgb(SESSION_PACE_COLORS.red)];
+      if (!ok.includes(getComputedStyle(pv).color)) throw new Error(`verdict colour ${getComputedStyle(pv).color} does not match "${t}"`);
+      if (!_$("[data-testid='presenter-pace-you']") || !_$("[data-testid='presenter-pace-should']")) throw new Error("pace ticks missing");
+      if (!/YOU · slide \d+/.test(_$("[data-testid='presenter-session-panel']").textContent) || !/SHOULD BE · slide \d+/.test(_$("[data-testid='presenter-session-panel']").textContent)) throw new Error("YOU / SHOULD BE labels missing");
+    } finally { await _sesUiLeave(); }
+  }},
+  { name: "SP4: keys in the dialog do not reach Present; Escape closes only the dialog", fn: async () => {
+    const hooks = _sesUiNeedHooks();
+    try {
+      hooks.setSessionForTest(null);
+      await _sesUiPresent();
+      _key("ArrowRight"); await _wait(300);
+      await _sesUiOpenPresenter();
+      _click("[data-testid='presenter-session-set']");
+      await _waitFor(() => _$("[data-testid='session-dialog']"), 1500);
+      const pos = _slidePos();
+      const chip = _$("[data-testid='session-chip-15']");
+      chip.focus();
+      for (const k of ["ArrowRight", "ArrowLeft", " ", "s", "t", "g", "e", "n"]) { _key(k); await _wait(60); }
+      if (!_$("[data-testid='session-dialog']")) throw new Error("a key typed on a dialog button closed the dialog");
+      if (!_$("[data-testid='presenter-view']")) throw new Error("a key typed in the dialog closed the presenter view");
+      if (_slidePos() !== pos) throw new Error(`slide moved while the dialog was open: ${pos} -> ${_slidePos()}`);
+      // Focus outside the dialog (Present root): the capture trap still holds keys.
+      _sesUiRoot().focus();
+      _key("ArrowRight"); await _wait(200);
+      if (_slidePos() !== pos) throw new Error("ArrowRight with focus outside the dialog moved the slide");
+      _$("[data-testid='session-end-input']").focus();
+      _key("Escape");
+      await _waitFor(() => !_$("[data-testid='session-dialog']"), 1500);
+      await _wait(150);
+      if (!_$("[data-testid='presenter-view']")) throw new Error("Escape in the dialog closed the presenter view");
+      if (_$("header")) throw new Error("Escape in the dialog left Present");
+      if (hooks.getSessionForTest() !== null) throw new Error("Escape changed the session");
+    } finally { await _sesUiLeave(); }
+  }},
+  { name: "SP5: invalid input keeps Set disabled and Enter inert; Enter sets a valid value", fn: async () => {
+    const hooks = _sesUiNeedHooks();
+    try {
+      hooks.setSessionForTest(null);
+      await _sesUiPresent();
+      await _sesUiOpenPresenter();
+      _click("[data-testid='presenter-session-set']");
+      await _waitFor(() => _$("[data-testid='session-dialog']"), 1500);
+      const min = _$("[data-testid='session-minutes-input']");
+      _sesUiSet(min, "0"); await _wait(60);
+      if (!_$("[data-testid='session-set']").disabled) throw new Error("Set enabled for 0 minutes");
+      _sesUiSet(min, "1441"); await _wait(60);
+      if (!_$("[data-testid='session-set']").disabled) throw new Error("Set enabled for 1441 minutes");
+      min.focus(); _key("Enter"); await _wait(150);
+      if (!_$("[data-testid='session-dialog']") || hooks.getSessionForTest() !== null) throw new Error("Enter acted on invalid input");
+      _sesUiSet(min, "45"); await _wait(60);
+      if (_$("[data-testid='session-set']").disabled) throw new Error("Set disabled for 45 minutes");
+      min.focus(); _key("Enter");
+      await _waitFor(() => !_$("[data-testid='session-dialog']"), 1500);
+      const s = hooks.getSessionForTest();
+      if (!s || s.end - s.start !== 45 * 60000) throw new Error("Enter did not store 45 min: " + JSON.stringify(s));
+    } finally { await _sesUiLeave(); }
+  }},
+  { name: "SP6: card opens the dialog with the stored times; Cancel keeps, Clear removes", fn: async () => {
+    const hooks = _sesUiNeedHooks();
+    try {
+      const ses = { start: Date.now() - 10 * 60000, end: Date.now() + 50 * 60000 };
+      hooks.setSessionForTest(ses);
+      await _sesUiPresent();
+      await _sesUiOpenPresenter();
+      const cardBtn = await _waitFor(() => _$("[data-testid='presenter-session-panel'] button[aria-label*='Edit session end']"), 1500);
+      _click(cardBtn);
+      await _waitFor(() => _$("[data-testid='session-dialog']"), 1500);
+      if (_$("[data-testid='session-start-input']").value !== fmtClock(ses.start) || _$("[data-testid='session-end-input']").value !== fmtClock(ses.end)) throw new Error("dialog does not show the stored times");
+      _click("[data-testid='session-chip-90']"); await _wait(60);
+      _click("[data-testid='session-cancel']");
+      await _waitFor(() => !_$("[data-testid='session-dialog']"), 1500);
+      _ssEq(hooks.getSessionForTest(), ses, "Cancel changed the session");
+      _click(_$("[data-testid='presenter-session-panel'] button"));
+      await _waitFor(() => _$("[data-testid='session-clear']"), 1500);
+      _click("[data-testid='session-clear']");
+      await _waitFor(() => hooks.getSessionForTest() === null, 1500).catch(() => { throw new Error("Clear did not remove the session"); });
+      await _waitFor(() => _$("[data-testid='presenter-session-set']"), 1500);
+    } finally { await _sesUiLeave(); }
+  }},
+  { name: "SP7: S and Escape of the presenter view are unchanged with a session", fn: async () => {
+    const hooks = _sesUiNeedHooks();
+    try {
+      hooks.setSessionForTest({ start: Date.now() - 60000, end: Date.now() + 30 * 60000 });
+      await _sesUiPresent();
+      await _sesUiOpenPresenter();
+      _key("s");
+      await _waitFor(() => !_$("[data-testid='presenter-view']"), 1500);
+      await _sesUiOpenPresenter();
+      _key("Escape");
+      await _waitFor(() => !_$("[data-testid='presenter-view']"), 1500);
+      await _wait(150);
+      if (_$("header")) throw new Error("first Esc left Present");
+    } finally { await _sesUiLeave(); }
+  }},
+]);
+
+uiSuite("session-edge-bar", [
+  { name: "EB1: live session -> bar shows, takes no clicks; T hides and shows; Shift+T / Ctrl+T do nothing", fn: async () => {
+    const hooks = _sesUiNeedHooks();
+    try {
+      hooks.setSessionForTest({ start: Date.now() - 10 * 60000, end: Date.now() + 20 * 60000 });
+      await _sesUiPresent();
+      const bar = await _waitFor(() => _$("[data-testid='present-session-bar']"), 2000);
+      if (!_sesUiRoot().contains(bar)) throw new Error("bar is not inside the Present root");
+      if (getComputedStyle(bar).pointerEvents !== "none") throw new Error("bar takes pointer events");
+      if (bar.getBoundingClientRect().height > 6) throw new Error("bar is too tall");
+      document.activeElement?.blur();
+      _key("t");
+      await _waitFor(() => !_$("[data-testid='present-session-bar']"), 1500).catch(() => { throw new Error("T did not hide the bar"); });
+      _key("T", { shiftKey: true }); await _wait(120);
+      _key("t", { ctrlKey: true }); await _wait(120);
+      if (_$("[data-testid='present-session-bar']")) throw new Error("a modified T changed the bar");
+      _key("t");
+      await _waitFor(() => _$("[data-testid='present-session-bar']"), 1500).catch(() => { throw new Error("T did not show the bar"); });
+    } finally { await _sesUiLeave(); }
+  }},
+  { name: "EB2: the hide choice is kept when Present is left and entered again", fn: async () => {
+    const hooks = _sesUiNeedHooks();
+    try {
+      hooks.setSessionForTest({ start: Date.now() - 10 * 60000, end: Date.now() + 20 * 60000 });
+      await _sesUiPresent();
+      await _waitFor(() => _$("[data-testid='present-session-bar']"), 2000);
+      document.activeElement?.blur(); _key("t");
+      await _waitFor(() => !_$("[data-testid='present-session-bar']"), 1500);
+      await _exitFullscreen();
+      await _sesUiPresent();
+      await _wait(300);
+      if (_$("[data-testid='present-session-bar']")) throw new Error("hide choice lost after re-entering Present");
+      document.activeElement?.blur(); _key("t");
+      await _waitFor(() => _$("[data-testid='present-session-bar']"), 1500);
+    } finally { await _sesUiLeave(); }
+  }},
+  { name: "EB3: no bar over the presenter view, without a session, for an expired session, or in the editor", fn: async () => {
+    const hooks = _sesUiNeedHooks();
+    try {
+      hooks.setSessionForTest({ start: Date.now() - 10 * 60000, end: Date.now() + 20 * 60000 });
+      await _sesUiPresent();
+      await _waitFor(() => _$("[data-testid='present-session-bar']"), 2000);
+      await _sesUiOpenPresenter();
+      if (_$("[data-testid='present-session-bar']")) throw new Error("bar shown with the presenter view open");
+      _key("s");
+      await _waitFor(() => !_$("[data-testid='presenter-view']"), 1500);
+      hooks.setSessionForTest(null);
+      await _waitFor(() => !_$("[data-testid='present-session-bar']"), 1500).catch(() => { throw new Error("bar shown without a session"); });
+      hooks.setSessionForTest({ start: Date.now() - 270 * 60000, end: Date.now() - 240 * 60000 });
+      await _wait(1300);
+      if (hooks.getSessionForTest() === null) throw new Error("stale session did not reach state");
+      if (_$("[data-testid='present-session-bar']")) throw new Error("bar shown for an expired session");
+      hooks.setSessionForTest({ start: Date.now() - 10 * 60000, end: Date.now() + 20 * 60000 });
+      await _waitFor(() => _$("[data-testid='present-session-bar']"), 2000);
+      await _exitFullscreen();
+      await _wait(200);
+      if (_$("[data-testid='present-session-bar']")) throw new Error("bar shown in the editor");
+    } finally { await _sesUiLeave(); }
+  }},
+]);
+
 // ━━━ UI TEST RUNNER COMPONENT ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 // Demo deck guard — UI tests only run against the original demo deck
@@ -28416,6 +28788,116 @@ function NewDeckDialog({ onClose, onSubmit }) {
           style={{ padding: "8px 20px", fontSize: 14, fontFamily: FONT.body, fontWeight: 600, color: "#fff", background: T.accent, border: "none", borderRadius: 6, cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}>
           {"🚀"} Create & Build
         </button>
+      </div>
+    </ModalBackdrop>
+  );
+}
+
+// ━━━ Session End Dialog (v13.80) ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Sets the deck-level session { start, end } (epoch ms). Start / End are
+// "HH:MM" (input type=time); Minutes and the chips set End = Start + N.
+// The result always goes through resolveSessionTimes (-> sanitizeSession), so
+// onSet only ever gets a sanitized 2-key object. All text is code-built.
+// Props: session = the LIVE session or null (prefills the fields); stored =
+// a valid session is in the deck, also a stale one (shows Clear; default
+// !!session); lanes = for the "deck needs" pre-check; onSet(session),
+// onClear(), onClose(). The parent dispatches SET_SESSION and closes.
+// Key isolation: this dialog can open over Present / Presenter view, whose
+// shortcuts are window keydown listeners. Keys typed in the dialog stop at
+// its wrapper (React stopPropagation = native, before window listeners).
+// Keys whose target is OUTSIDE the dialog (focus fell back to the Present
+// root after a click on the padding) are stopped by a window CAPTURE trap
+// while the dialog is open. Esc closes the dialog only, never Present.
+const SESSION_CHIPS = [15, 30, 45, 60, 90];
+function SessionEndDialog({ session, stored, lanes, onSet, onClear, onClose }) {
+  const live = sanitizeSession(session);
+  const hasStored = stored === undefined ? !!live : !!stored;
+  const [openNow] = useState(() => Date.now());
+  const [start, setStart] = useState(() => fmtClock(live ? live.start : openNow));
+  const [end, setEnd] = useState(() => (live ? fmtClock(live.end) : ""));
+  const [minutes, setMinutes] = useState(() => (live ? String(Math.round((live.end - live.start) / 60000)) : ""));
+  const rootRef = useRef(null);
+  const endRef = useRef(null);
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+  // Base date: an unchanged Start of a live session keeps that session's own
+  // date (a session that crosses midnight re-sets unchanged); else today.
+  const base = live && start === fmtClock(live.start) ? live.start : openNow;
+  const startMs = (hhmm) => { const r = resolveSessionTimes(hhmm, hhmm, base); return r ? r.start : null; };
+  const resolved = resolveSessionTimes(start, end, base);
+  const parseMin = (v) => (/^\d{1,4}$/.test(v) && +v >= 1 && +v <= 1440 ? +v : null);
+  const endFor = (st, n) => { const s0 = startMs(st); return s0 == null || n == null ? null : fmtClock(s0 + n * 60000); };
+  const minFor = (st, en) => { const r = resolveSessionTimes(st, en, base); return r ? String(Math.round((r.end - r.start) / 60000)) : ""; };
+  const onStart = (v) => {
+    setStart(v);
+    const n = parseMin(minutes);
+    if (n != null) { const e = endFor(v, n); if (e) setEnd(e); } else setMinutes(minFor(v, end));
+  };
+  const onEnd = (v) => { setEnd(v); setMinutes(minFor(start, v)); };
+  const onMinutes = (v) => { setMinutes(v); const e = endFor(start, parseMin(v)); if (e) setEnd(e); };
+  const set = () => { const r = resolveSessionTimes(start, end, base); if (r) onSet(r); };
+  const needMin = Math.round(sessionEstimates(presentSequence(lanes)).total / 60);
+  const lenMin = resolved ? Math.round((resolved.end - resolved.start) / 60000) : null;
+  useEffect(() => {
+    const prev = document.activeElement;
+    endRef.current?.focus();
+    const trap = (e) => {
+      const root = rootRef.current;
+      if (root && e.target instanceof Node && root.contains(e.target)) return; // the wrapper handles it
+      e.stopImmediatePropagation();
+      if (e.key === "Escape") { e.preventDefault(); onCloseRef.current(); }
+    };
+    window.addEventListener("keydown", trap, true);
+    return () => {
+      window.removeEventListener("keydown", trap, true);
+      // Focus back to the opener when it is still on the page.
+      if (prev && prev !== document.body && prev.isConnected && typeof prev.focus === "function") prev.focus({ preventScroll: true });
+    };
+  }, []);
+  const stop = (e) => e.stopPropagation();
+  const onKeyDown = (e) => {
+    e.stopPropagation();
+    if (e.key === "Escape") { e.preventDefault(); onClose(); return; }
+    // Enter = Set; on a focused button Enter keeps its normal click.
+    if (e.key === "Enter" && !e.shiftKey && !(e.target && e.target.tagName === "BUTTON")) { e.preventDefault(); if (resolved) set(); }
+  };
+  const lbl = { fontFamily: FONT.mono, fontSize: 13, fontWeight: 600, color: T.textMuted, display: "block", marginBottom: 5 };
+  const inp = { width: "100%", padding: "8px 10px", fontSize: 15, fontFamily: FONT.mono, color: T.text, background: T.bgInput, border: `1px solid ${T.border}`, borderRadius: 8, outline: "none", boxSizing: "border-box" };
+  const curMin = parseMin(minutes);
+  return (
+    <ModalBackdrop onClose={onClose}>
+      <div ref={rootRef} data-testid="session-dialog" role="dialog" aria-modal="true" aria-label="Session end" tabIndex={-1} onKeyDown={onKeyDown} onKeyUp={stop} onKeyPress={stop} style={{ outline: "none" }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
+          <span style={{ fontFamily: FONT.display, fontSize: 18, fontWeight: 700, color: T.text }}>{"🕒"} Session end</span>
+          <button type="button" onClick={onClose} aria-label="Close" title="Close" style={{ background: "none", border: "none", color: T.textDim, cursor: "pointer", fontSize: 18, padding: 4 }}>✕</button>
+        </div>
+        <div style={{ display: "flex", gap: 12, marginBottom: 14 }}>
+          <label style={{ flex: 1, minWidth: 0 }}><span style={lbl}>Start</span>
+            <input data-testid="session-start-input" type="time" value={start} onChange={(e) => onStart(e.target.value)} style={inp} /></label>
+          <label style={{ flex: 1, minWidth: 0 }}><span style={lbl}>End</span>
+            <input ref={endRef} data-testid="session-end-input" type="time" value={end} onChange={(e) => onEnd(e.target.value)} style={inp} /></label>
+          <label style={{ flex: 1, minWidth: 0 }}><span style={lbl}>Minutes</span>
+            <input data-testid="session-minutes-input" type="number" min={1} max={1440} step={1} value={minutes} onChange={(e) => onMinutes(e.target.value)} style={inp} /></label>
+        </div>
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 14 }}>
+          {SESSION_CHIPS.map((n) => (
+            <button key={n} type="button" data-testid={`session-chip-${n}`} aria-pressed={curMin === n} onClick={() => onMinutes(String(n))}
+              style={{ padding: "6px 12px", fontSize: 13, fontFamily: FONT.mono, fontWeight: 600, color: curMin === n ? "#fff" : T.textMuted, background: curMin === n ? T.accent : T.bgInput, border: `1px solid ${curMin === n ? T.accent : T.border}`, borderRadius: 6, cursor: "pointer" }}>{n} min</button>
+          ))}
+        </div>
+        <div data-testid="session-summary" style={{ fontFamily: FONT.mono, fontSize: 13, color: resolved ? T.text : T.red, marginBottom: 6 }}>
+          {resolved ? `Now ${fmtClock(Date.now())} → ends ${fmtClock(resolved.end)} (${lenMin} min)` : "Enter a start and an end (1 min to 24 h)"}
+        </div>
+        <div data-testid="session-precheck" style={{ fontFamily: FONT.mono, fontSize: 13, color: T.textMuted, marginBottom: 18 }}>
+          {`Deck needs ~${needMin} min`}{lenMin != null ? ` · session is ${lenMin} min` : ""}
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          {hasStored && <button type="button" data-testid="session-clear" onClick={onClear} style={S.btn({ padding: "8px 14px", fontSize: 14, color: T.red, borderRadius: 6 })}>Clear</button>}
+          <span style={{ flex: 1 }} />
+          <button type="button" data-testid="session-cancel" onClick={onClose} style={S.btn({ padding: "8px 16px", fontSize: 14, color: T.textMuted, borderRadius: 6 })}>Cancel</button>
+          <button type="button" data-testid="session-set" onClick={set} disabled={!resolved}
+            style={{ padding: "8px 20px", fontSize: 14, fontFamily: FONT.body, fontWeight: 600, color: "#fff", background: T.accent, border: "none", borderRadius: 6, cursor: resolved ? "pointer" : "not-allowed", opacity: resolved ? 1 : 0.45 }}>Set</button>
+        </div>
       </div>
     </ModalBackdrop>
   );

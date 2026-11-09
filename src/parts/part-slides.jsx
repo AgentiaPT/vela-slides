@@ -787,7 +787,63 @@ function fmtElapsed(totalSeconds) {
   const r = s % 60;
   return `${m}:${String(r).padStart(2, "0")}`;
 }
-function PresenterView({ current, next, index, total, duration, elapsed, branding, onClose, currentStory, nextStory, detourReturn }) {
+// Session card (v13.80, layout "C"): NOW clock; with a live session also time
+// left, time bar, pace verdict and pace track. Every value is a number or a
+// code-built string from the pace helpers; colours come from the static
+// SESSION_PACE_COLORS map; widths/lefts are clamped fractions. A label on the
+// pace track uses left:X% + translateX(-X%), so it stays inside the track at
+// 0 % and 100 %. YOU sits above and SHOULD BE below, so they never overlap.
+function PresenterSessionCard({ nowMs, session, pace, estimated, youNum, shouldNum, onEditSession }) {
+  const lab = { display: "block", fontFamily: FONT.mono, fontSize: 13, color: "#94a3b8", letterSpacing: "0.06em" };
+  const clock = <span data-testid="presenter-clock" style={{ display: "block", fontFamily: FONT.mono, fontSize: 56, fontWeight: 700, color: "#fff", lineHeight: 1.05 }}>{fmtClock(nowMs)}</span>;
+  const card = { flexShrink: 0, background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 10 };
+  if (!session || !pace) return (
+    <div data-testid="presenter-session-panel" style={{ ...card, padding: "14px 18px" }}>
+      <span style={lab}>NOW</span>
+      {clock}
+      <button type="button" data-testid="presenter-session-set" onClick={onEditSession} title="Set session end" aria-label="Set session end" style={{ marginTop: 12, width: "100%", padding: "8px 12px", fontFamily: FONT.mono, fontSize: 14, fontWeight: 600, color: "#e2e8f0", background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.2)", borderRadius: 6, cursor: "pointer" }}>{"🕒"} Set session end</button>
+    </div>
+  );
+  const pc = (f) => `${(Math.max(0, Math.min(1, f)) * 100).toFixed(2)}%`;
+  const paceColor = SESSION_PACE_COLORS[pace.paceKey] || SESSION_PACE_COLORS.white;
+  const leftColor = SESSION_PACE_COLORS[pace.timeLeftKey] || SESSION_PACE_COLORS.white;
+  const leftText = `${pace.over ? "+" : ""}${fmtCountdown(pace.timeLeftSec)}`;
+  const you = pc(pace.youFrac), should = pc(pace.shouldFrac);
+  const tag = (frac, extra) => ({ position: "absolute", left: frac, transform: `translateX(-${frac})`, whiteSpace: "nowrap", fontFamily: FONT.mono, fontSize: 13, fontWeight: 700, ...extra });
+  return (
+    <div data-testid="presenter-session-panel" style={card}>
+      <button type="button" onClick={onEditSession} title="Edit session end" aria-label={`Session: ${leftText} ${pace.over ? "over" : "left"}, ${pace.verdict}. Edit session end`}
+        style={{ display: "block", width: "100%", textAlign: "left", padding: "14px 18px", background: "none", border: "none", color: "#e2e8f0", cursor: "pointer", font: "inherit" }}>
+        <span style={lab}>NOW</span>
+        {clock}
+        <span style={{ ...lab, marginTop: 10 }}>TIME LEFT</span>
+        <span data-testid="presenter-time-left" style={{ display: "block", fontFamily: FONT.mono, fontSize: 34, fontWeight: 700, color: leftColor, lineHeight: 1.15 }}>{leftText}</span>
+        <span data-testid="presenter-time-bar" style={{ display: "block", position: "relative", height: 8, marginTop: 8, borderRadius: 4, background: "rgba(255,255,255,0.12)", overflow: "hidden" }}>
+          <span style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: pace.over ? "100%" : pc(pace.elapsedFrac), background: leftColor, borderRadius: 4 }} />
+        </span>
+        <span style={{ display: "flex", justifyContent: "space-between", marginTop: 6, fontFamily: FONT.mono, fontSize: 13, color: "#94a3b8" }}>
+          <span>started {fmtClock(session.start)}</span><span>ends {fmtClock(session.end)}</span>
+        </span>
+        <span style={{ ...lab, marginTop: 12 }}>PACE</span>
+        <span data-testid="presenter-pace" style={{ display: "block", fontFamily: FONT.mono, fontSize: 22, fontWeight: 700, color: paceColor, lineHeight: 1.25 }}>{pace.verdict}</span>
+        <span style={{ display: "block", position: "relative", height: 18, marginTop: 8 }}>
+          <span style={tag(you, { top: 0, color: "#fff" })}>YOU · slide {youNum ?? "–"}</span>
+        </span>
+        <span data-testid="presenter-pace-track" style={{ display: "block", position: "relative", height: 8, marginTop: 4, borderRadius: 4, background: "rgba(255,255,255,0.12)" }}>
+          <span data-testid="presenter-pace-should" style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: should, background: paceColor, borderRadius: 4 }} />
+          <span aria-hidden="true" style={{ position: "absolute", top: -5, bottom: -5, width: 3, left: should, transform: `translateX(-${should})`, background: paceColor, borderRadius: 1 }} />
+          <span data-testid="presenter-pace-you" style={{ position: "absolute", top: -5, bottom: -5, width: 3, left: you, transform: `translateX(-${you})`, background: "#fff", borderRadius: 1 }} />
+        </span>
+        <span style={{ display: "block", position: "relative", height: 18, marginTop: 6 }}>
+          <span style={tag(should, { top: 0, color: paceColor })}>SHOULD BE · slide {shouldNum ?? "–"}</span>
+        </span>
+        <span style={{ display: "block", marginTop: 8, fontFamily: FONT.mono, fontSize: 13, color: "#94a3b8", lineHeight: 1.4 }}>slides left need {fmtCountdown(pace.need)} · you have {fmtCountdown(Math.max(0, pace.have))}</span>
+        {estimated > 0 && <span style={{ display: "block", marginTop: 4, fontFamily: FONT.mono, fontSize: 13, color: "#64748b", fontStyle: "italic" }}>~ {estimated} slides estimated (no duration)</span>}
+      </button>
+    </div>
+  );
+}
+function PresenterView({ current, next, index, total, duration, elapsed, branding, onClose, currentStory, nextStory, detourReturn, sessionCard }) {
   const notes = (current?.notes || "").trim();
   // Story slide: the NEXT step can still be on this slide (nextStory set), so
   // NEXT then shows the current slide at that step, labelled "image k/N" or
@@ -824,13 +880,14 @@ function PresenterView({ current, next, index, total, duration, elapsed, brandin
             </div>}
           </div>
         </div>
-        <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 8, minWidth: 180, maxWidth: 320 }}>
+        <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 8, minWidth: 180, maxWidth: 320, minHeight: 0, overflowY: "auto" }}>
           <div style={{ fontFamily: FONT.mono, fontSize: 10, color: "#64748b", letterSpacing: "0.05em" }}>NEXT ▸{nextInSlide && <span data-testid="presenter-next-story"> {nextStoryLabel}</span>}</div>
-          <div data-testid="presenter-next" style={{ borderRadius: 8, overflow: "hidden", border: "1px solid rgba(255,255,255,0.15)", opacity: 0.85 }}>
+          <div data-testid="presenter-next" style={{ flexShrink: 0, borderRadius: 8, overflow: "hidden", border: "1px solid rgba(255,255,255,0.15)", opacity: 0.85 }}>
             {/* One key for both NEXT thumbs: no remount (shimmer) when the story ends. */}
             {nextInSlide ? <GalleryThumb key="next" slide={current} slideIdx={index} total={total} branding={branding} story={nextStory} />
               : next ? <GalleryThumb key="next" slide={next} slideIdx={index + 1} total={total} branding={branding} /> : <div style={{ aspectRatio: "16/9", display: "flex", alignItems: "center", justifyContent: "center", color: "#64748b", fontFamily: FONT.mono, fontSize: 13, background: "rgba(255,255,255,0.03)", borderRadius: 8 }}>End</div>}
           </div>
+          {sessionCard && <PresenterSessionCard {...sessionCard} />}
         </div>
       </div>
     </div>

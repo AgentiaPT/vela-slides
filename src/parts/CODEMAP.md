@@ -81,13 +81,13 @@ that symbol in the named part for the line. No line numbers here — they rot.
 - Presenter TOC — slide-out panel on left edge in fullscreen: getSlideSource getSlideTitle PRESENT_SEARCH_SKIP slideSearchTexts matchPresentSlide detourReturnTitle PresenterTOC
 - Gallery Thumbnail — shimmer loading overlay until slide renders: GALLERY_SHIMMER_ID _ensureGalleryShimmer GalleryThumb
 - Comment Popover (review mode): CommentPopover
-- PresenterView — CR-08: single-screen speaker dashboard shown from: fmtElapsed PresenterView GALLERY_MODULE_COLORS GalleryView
+- PresenterView — CR-08: single-screen speaker dashboard shown from: fmtElapsed PresenterSessionCard PresenterView GALLERY_MODULE_COLORS GalleryView
 - Vera Teacher Panel — student mode companion in fullscreen: TeacherMessage
 - Offline Study Notes — static panel that renders slide.studyNotes: StaticStudyPanel
 - StudentPanel — dispatcher: static studyNotes first, else live Vera: StudentPanel TeacherPanel SectionPicker
 
 ### part-slidepanel.jsx
-- Slide Panel — editor slide view, fullscreen/presenter nav, per-slide AI actions: VIEW_SWITCH_SEGMENTS VIEW_SWITCH_PAD VIEW_SWITCH_LABEL_EXTRA ViewSwitch dragHasOnlyImageFiles TB_COMPACT_PAD_X useToolbarCompact SlidePanel
+- Slide Panel — editor slide view, fullscreen/presenter nav, per-slide AI actions: VIEW_SWITCH_SEGMENTS VIEW_SWITCH_PAD VIEW_SWITCH_LABEL_EXTRA ViewSwitch dragHasOnlyImageFiles TB_COMPACT_PAD_X useToolbarCompact VELA_SESSION_BAR SlidePanel
 
 ### part-list.jsx
 - (file preamble): _velaDrag _setDrag _clearDrag
@@ -137,6 +137,7 @@ that symbol in the named part for the line. No line numbers here — they rot.
 - WP5: story images, image file drop, tile reorder: _wp5Sel _wp5Key _wp5Deck _wp5Fs _wp5Cur _wp5ImgSrcs _wp5Imgs _wp5Inject _wp5UndoTo _wp5Enter _wp5Exit _wp5Layer _wp5CurThumb _wp5ZoomedAt _wp5Grid _wp5Step _wp5OnSlide _wp5Toast _wp5Drop _wp5Aspect _wp5NoBlob
 - WP5b: story steps by wheel and swipe, Preview, phone layout, large images: _wp5bFsEl _wp5bWheel _wp5bState _wp5bWheelStep _wp5bTouch _wp5bSwipe _wp5bSwipeStep _wp5bHold _wp5bPhone _wp5bInside _wp5bOverlap _wp5bBox _wp5bBig _wp5bLayerImg _tbEl _tbButtons _tbOneRow _tbAtWidth _pdSel _pdOnSlide _pdSame _pdPrepare _pdEnterPresent _pdJump
 - Session end (v13.80): sanitizer, pace math, deck ingress: _SS_T0 _ssEq _ssNoNaN _ssSeq _ssSes
+- Session end: Present-side UI (v13.80, P2): _sesUiRoot _sesUiPresent _sesUiLeave _sesUiSet _sesUiOpenPresenter _sesUiNeedHooks
 - UI TEST RUNNER COMPONENT: computeDeckFingerprint DEMO_DECK_FP_TITLE VelaUITestRunner
 
 ### part-demo.jsx
@@ -208,6 +209,7 @@ that symbol in the named part for the line. No line numbers here — they rot.
 - Changelog Dialog: ChangelogDialog
 - Comments Panel (review sidebar): CommentsPanel
 - New Deck Dialog: NewDeckDialog
+- Session End Dialog (v13.80): SESSION_CHIPS SessionEndDialog
 - Keyboard Shortcuts Overlay: _questionKey ShortcutHelp
 - Session Cost Badge: fmtCost fmtTokens CostBadge
 - Agent status chip (Neutralino desktop only): AgentStatusChip AgentSettingsDialog
@@ -277,7 +279,7 @@ keyboard ternaries) or are currently unused — check before assuming a UI exist
 - SET_LOADING: part-chat.jsx
 - SET_REVIEW_MODE: part-app-modals.jsx part-app.jsx part-demo.jsx part-slidepanel.jsx
 - SET_SECTION_COLLAPSED: part-demo.jsx part-list.jsx
-- SET_SESSION: part-app.jsx
+- SET_SESSION: part-app.jsx part-slidepanel.jsx
 - SET_SLIDES: (no direct dispatch site)
 - SET_SLIDE_INDEX: part-app.jsx part-chat.jsx part-list.jsx part-slidepanel.jsx part-slides.jsx
 - SET_SLIDE_SELECTION: part-demo.jsx part-list.jsx
@@ -336,7 +338,7 @@ add_lane add_item batch_add_items remove_item remove_lane rename_item rename_lan
 - part-imports.jsx: 929-line unbannered stretch after line 518
 - part-blocks.jsx: 806-line unbannered stretch after line 1265
 - part-canvas.jsx: 581-line unbannered stretch after line 150
-- part-slidepanel.jsx: 437-line unbannered stretch after line 1403
+- part-slidepanel.jsx: 451-line unbannered stretch after line 1442
 - part-uitest.jsx: 616-line unbannered stretch after line 1230
 - part-uitest2.jsx: 448-line unbannered stretch after line 2
 - part-uitest2.jsx: 593-line unbannered stretch after line 1457

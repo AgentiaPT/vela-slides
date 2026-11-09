@@ -85,6 +85,10 @@ function useToolbarCompact(ref, key) {
   return hide;
 }
 
+// Present edge bar (v13.80): the T-key hide choice. Memory only, for the page
+// session; module-level so it survives SlidePanel remounts. Never stored.
+const VELA_SESSION_BAR = { hidden: false };
+
 function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, branding, guidelines, isMobile, fontScale, actionsRef, onRibbonUpdate }) {
   const deckEpochRef = useRef(state._deckEpoch);
   deckEpochRef.current = state._deckEpoch;
@@ -335,10 +339,12 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
   // Presenter-view elapsed timer (CR-08): starts fresh each time Present mode
   // is entered, stops (and hides the presenter view) on exit.
   useEffect(() => {
-    if (!fullscreen) { presentStartRef.current = null; setPresentElapsed(0); setPresenterView(false); return; }
+    if (!fullscreen) { presentStartRef.current = null; setPresentElapsed(0); setPresenterView(false); setSessionDialogOpen(false); return; }
     presentStartRef.current = Date.now();
     setPresentElapsed(0);
-    const id = setInterval(() => { setPresentElapsed(Math.round((Date.now() - presentStartRef.current) / 1000)); }, 1000);
+    setNowMs(Date.now());
+    // One 1 s tick for the elapsed timer and the session clock / pace (v13.80).
+    const id = setInterval(() => { setPresentElapsed(Math.round((Date.now() - presentStartRef.current) / 1000)); setNowMs(Date.now()); }, 1000);
     return () => clearInterval(id);
   }, [fullscreen]); // eslint-disable-line -- intentionally minimal deps, mirrors prevFullscreen effect above
   useEffect(() => { setEditingDuration(false); setShowCommentPopover(false); }, [slideIndex]);
@@ -419,6 +425,30 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
   useEffect(() => { if (!fullscreen) setPresentEdit(false); }, [fullscreen]);
   const [presentElapsed, setPresentElapsed] = useState(0); // seconds since Present mode was entered
   const presentStartRef = useRef(null);
+  // ── Session end (v13.80): clock, pace, Present edge bar, dialog. Present only.
+  // Pace follows the Present numbering (presentSequence); during a detour it
+  // uses the return slide (detour.ret, with that item's own title-card offset).
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  const [sessionDialogOpen, setSessionDialogOpen] = useState(false);
+  const sessionDialogOpenRef = useRef(false);
+  sessionDialogOpenRef.current = sessionDialogOpen;
+  const [sessionBarHidden, setSessionBarHidden] = useState(() => VELA_SESSION_BAR.hidden);
+  const paceItemId = detour ? detour.ret.id : concept.id;
+  const sessionSeq = useMemo(() => { const seq = presentSequence(lanes, paceItemId); return { seq, est: sessionEstimates(seq) }; }, [lanes, paceItemId]);
+  const paceRawIdx = (() => {
+    if (!detour) return slideIndex - presOffset;
+    let retItem = null;
+    for (const l of lanes || []) for (const it of (l && l.items) || []) if (it && it.id === detour.ret.id) retItem = it;
+    return detour.ret.index - (retItem && retItem.presentCard ? 1 : 0);
+  })();
+  const paceIdx = sessionSeqIndex(sessionSeq.seq, paceItemId, paceRawIdx);
+  // On-slide counter: restarts when the pace position changes (not on a detour).
+  const slideEnterRef = useRef({ key: null, at: 0 });
+  const paceSlideKey = fullscreen ? `${paceItemId}|${detour ? detour.ret.index : slideIndex}` : null;
+  if (slideEnterRef.current.key !== paceSlideKey) slideEnterRef.current = { key: paceSlideKey, at: Date.now() };
+  const sessionLive = fullscreen ? liveSession(state.session, nowMs) : null;
+  const sessionPace = sessionLive ? computeSessionPace(sessionSeq.est, paceIdx, Math.max(0, (nowMs - slideEnterRef.current.at) / 1000), sessionLive, nowMs) : null;
+  const closeSessionDialog = () => { setSessionDialogOpen(false); containerRef.current?.focus({ preventScroll: true }); };
   const [showNewSlide, setShowNewSlide] = useState(false);
   const [newSlidePrompt, setNewSlidePrompt] = useState("");
   const [newSlideImage, setNewSlideImage] = useState(null);
@@ -1016,6 +1046,14 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       if (e.key === "g" && !e.metaKey && !e.ctrlKey && !e.shiftKey && !["INPUT", "TEXTAREA"].includes(document.activeElement?.tagName)) {
         e.preventDefault(); setGallery((v) => !v);
       }
+      // T → hide/show the session edge bar (Present only; no modifiers; not
+      // in a text field; not while a dialog is open). Memory only (v13.80).
+      if (fullscreen && (e.key === "t" || e.key === "T") && !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey && VELA_OPEN_CHROME.modals.size === 0 && !sessionDialogOpenRef.current) {
+        const ae = document.activeElement;
+        if (!(ae && (["INPUT", "TEXTAREA", "SELECT"].includes(ae.tagName) || ae.isContentEditable))) {
+          e.preventDefault(); setSessionBarHidden((v) => { VELA_SESSION_BAR.hidden = !v; return !v; }); return;
+        }
+      }
       // S → presenter view toggle (Present mode only)
       if (fullscreen && e.key === "s" && !e.metaKey && !e.ctrlKey && !e.shiftKey && !["INPUT", "TEXTAREA"].includes(document.activeElement?.tagName)) {
         e.preventDefault(); setPresenterView((v) => !v);
@@ -1105,6 +1143,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
     // layering here: a zoom, gallery or presenter view closes first and Present stays.
     const onFsChange = () => {
       if (document.fullscreenElement || !fullscreen) return;
+      if (sessionDialogOpenRef.current) { setSessionDialogOpen(false); return; } // browser Esc: the session dialog closes first
       if (VELA_OPEN_CHROME.zooms.size > 0) { window.dispatchEvent(new Event("vela-close-zoom")); return; }
       if (VELA_OPEN_CHROME.panels.size > 0) { window.dispatchEvent(new Event("vela-close-panel")); return; }
       if (showGalleryRef.current) { setGallery(false); return; }
@@ -1516,6 +1555,13 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
         <div key={slideIndex} className="slide-transition-fade" style={{ position: "relative", width: "100%", height: "100%" }}>
           <FullscreenSlide key={`deck-${state._deckEpoch}`} slide={presSlides[slideIndex]} index={slideIndex} total={presSlides.length} innerRef={slideRef} branding={presSlides[slideIndex]?._virtual ? null : branding} editable={!isStudent && !presSlides[slideIndex]?._virtual} onEdit={isStudent || presSlides[slideIndex]?._virtual ? undefined : handleSlideEdit} onBlockEdit={isStudent || presSlides[slideIndex]?._virtual ? undefined : runBlockEdit} blockEditing={isStudent ? null : blockEditing} fontScale={fontScale} mode="fill" forceEdit={presentEdit && !isStudent} displayIndex={globalSlideIndex - presOffset} displayTotal={globalSlideTotal} hideSlideNumber={!!detour} story={story} onStoryJump={story ? onStoryJump : undefined} onStoryZoomOut={story ? onStoryZoomOut : undefined} />
         </div>
+        {/* Session edge bar (v13.80): fill = SHOULD BE, white tick = YOU, colour =
+            pace verdict. Numbers are clamped fractions; colours are static. It
+            takes no clicks and hides under the presenter view and the gallery. */}
+        {sessionPace && !sessionBarHidden && !showPresenterView && !showGallery && <div data-testid="present-session-bar" aria-hidden="true" style={{ position: "absolute", left: 0, right: 0, bottom: 0, height: 5, zIndex: 15, pointerEvents: "none", background: "rgba(255,255,255,0.14)" }}>
+          <div style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: `${(Math.max(0, Math.min(1, sessionPace.shouldFrac)) * 100).toFixed(2)}%`, background: SESSION_PACE_COLORS[sessionPace.paceKey] || SESSION_PACE_COLORS.white, pointerEvents: "none" }} />
+          <div style={{ position: "absolute", top: 0, bottom: 0, width: 3, left: `${(Math.max(0, Math.min(1, sessionPace.youFrac)) * 100).toFixed(2)}%`, transform: `translateX(-${(Math.max(0, Math.min(1, sessionPace.youFrac)) * 100).toFixed(2)}%)`, background: "#fff", pointerEvents: "none" }} />
+        </div>}
         {!isMobile && <PresenterTOC slides={presSlides} slideIndex={slideIndex} onJump={(i) => dispatch({ type: "SET_SLIDE_INDEX", index: i })} lanes={lanes} currentConceptId={concept.id} dispatch={dispatch} onDetour={onDetour} />}
                 {fontScale !== 1 && <div style={{ position: "absolute", top: 12, right: 16, fontFamily: FONT.mono, fontSize: 13, fontWeight: 700, color: T.accent, background: T.bgPanel + "e0", padding: "3px 10px", borderRadius: 4, border: `1px solid ${T.accent}40`, zIndex: 20, letterSpacing: "0.05em", pointerEvents: "none" }}>FONT {Math.round(fontScale * 100)}%</div>}
         {improving && <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, padding: "10px 20px", background: "rgba(0,0,0,0.82)", backdropFilter: "blur(6px)", display: "flex", alignItems: "center", gap: 12, zIndex: 20 }}>
@@ -1571,8 +1617,15 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
         for (let i = slideIndex + 1; i < presSlides.length; i++) if (!presSlides[i].hidden) { nextIdx = i; break; }
         // NEXT on a story slide is its next step; after the last step, the next slide.
         const nextStory = story ? storyNext(story, storyN) : null;
-        return <PresenterView current={presSlides[slideIndex]} next={nextStory ? presSlides[slideIndex] : nextIdx >= 0 ? presSlides[nextIdx] : null} currentStory={story} nextStory={nextStory || undefined} index={globalSlideIndex - presOffset} total={globalSlideTotal} duration={presSlides[slideIndex]?.duration || 0} elapsed={presentElapsed} branding={branding} onClose={() => setPresenterView(false)} detourReturn={detour ? detourReturnTitle(lanes, detour.ret) : null} />;
+        return <PresenterView current={presSlides[slideIndex]} next={nextStory ? presSlides[slideIndex] : nextIdx >= 0 ? presSlides[nextIdx] : null} currentStory={story} nextStory={nextStory || undefined} index={globalSlideIndex - presOffset} total={globalSlideTotal} duration={presSlides[slideIndex]?.duration || 0} elapsed={presentElapsed} branding={branding} onClose={() => setPresenterView(false)} detourReturn={detour ? detourReturnTitle(lanes, detour.ret) : null}
+          sessionCard={{ nowMs, session: sessionLive, pace: sessionPace, estimated: sessionSeq.est.estimated, youNum: sessionSeq.seq[paceIdx]?.num, shouldNum: sessionPace ? sessionSeq.seq[sessionPace.shouldIdx]?.num : undefined, onEditSession: () => setSessionDialogOpen(true) }} />;
       })()}
+      {/* Session dialog INSIDE the Present root: App-level modals are outside the
+          browser-fullscreen element and would be invisible here. */}
+      {sessionDialogOpen && <SessionEndDialog session={sessionLive} stored={!!sanitizeSession(state.session)} lanes={lanes}
+        onSet={(s) => { const v = sanitizeSession(s); if (v) dispatch({ type: "SET_SESSION", session: v }); closeSessionDialog(); }}
+        onClear={() => { dispatch({ type: "SET_SESSION", session: null }); closeSessionDialog(); }}
+        onClose={closeSessionDialog} />}
     </div>
   );
 

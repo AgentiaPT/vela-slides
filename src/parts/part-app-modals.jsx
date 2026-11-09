@@ -584,6 +584,116 @@ function NewDeckDialog({ onClose, onSubmit }) {
   );
 }
 
+// ━━━ Session End Dialog (v13.80) ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Sets the deck-level session { start, end } (epoch ms). Start / End are
+// "HH:MM" (input type=time); Minutes and the chips set End = Start + N.
+// The result always goes through resolveSessionTimes (-> sanitizeSession), so
+// onSet only ever gets a sanitized 2-key object. All text is code-built.
+// Props: session = the LIVE session or null (prefills the fields); stored =
+// a valid session is in the deck, also a stale one (shows Clear; default
+// !!session); lanes = for the "deck needs" pre-check; onSet(session),
+// onClear(), onClose(). The parent dispatches SET_SESSION and closes.
+// Key isolation: this dialog can open over Present / Presenter view, whose
+// shortcuts are window keydown listeners. Keys typed in the dialog stop at
+// its wrapper (React stopPropagation = native, before window listeners).
+// Keys whose target is OUTSIDE the dialog (focus fell back to the Present
+// root after a click on the padding) are stopped by a window CAPTURE trap
+// while the dialog is open. Esc closes the dialog only, never Present.
+const SESSION_CHIPS = [15, 30, 45, 60, 90];
+function SessionEndDialog({ session, stored, lanes, onSet, onClear, onClose }) {
+  const live = sanitizeSession(session);
+  const hasStored = stored === undefined ? !!live : !!stored;
+  const [openNow] = useState(() => Date.now());
+  const [start, setStart] = useState(() => fmtClock(live ? live.start : openNow));
+  const [end, setEnd] = useState(() => (live ? fmtClock(live.end) : ""));
+  const [minutes, setMinutes] = useState(() => (live ? String(Math.round((live.end - live.start) / 60000)) : ""));
+  const rootRef = useRef(null);
+  const endRef = useRef(null);
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+  // Base date: an unchanged Start of a live session keeps that session's own
+  // date (a session that crosses midnight re-sets unchanged); else today.
+  const base = live && start === fmtClock(live.start) ? live.start : openNow;
+  const startMs = (hhmm) => { const r = resolveSessionTimes(hhmm, hhmm, base); return r ? r.start : null; };
+  const resolved = resolveSessionTimes(start, end, base);
+  const parseMin = (v) => (/^\d{1,4}$/.test(v) && +v >= 1 && +v <= 1440 ? +v : null);
+  const endFor = (st, n) => { const s0 = startMs(st); return s0 == null || n == null ? null : fmtClock(s0 + n * 60000); };
+  const minFor = (st, en) => { const r = resolveSessionTimes(st, en, base); return r ? String(Math.round((r.end - r.start) / 60000)) : ""; };
+  const onStart = (v) => {
+    setStart(v);
+    const n = parseMin(minutes);
+    if (n != null) { const e = endFor(v, n); if (e) setEnd(e); } else setMinutes(minFor(v, end));
+  };
+  const onEnd = (v) => { setEnd(v); setMinutes(minFor(start, v)); };
+  const onMinutes = (v) => { setMinutes(v); const e = endFor(start, parseMin(v)); if (e) setEnd(e); };
+  const set = () => { const r = resolveSessionTimes(start, end, base); if (r) onSet(r); };
+  const needMin = Math.round(sessionEstimates(presentSequence(lanes)).total / 60);
+  const lenMin = resolved ? Math.round((resolved.end - resolved.start) / 60000) : null;
+  useEffect(() => {
+    const prev = document.activeElement;
+    endRef.current?.focus();
+    const trap = (e) => {
+      const root = rootRef.current;
+      if (root && e.target instanceof Node && root.contains(e.target)) return; // the wrapper handles it
+      e.stopImmediatePropagation();
+      if (e.key === "Escape") { e.preventDefault(); onCloseRef.current(); }
+    };
+    window.addEventListener("keydown", trap, true);
+    return () => {
+      window.removeEventListener("keydown", trap, true);
+      // Focus back to the opener when it is still on the page.
+      if (prev && prev !== document.body && prev.isConnected && typeof prev.focus === "function") prev.focus({ preventScroll: true });
+    };
+  }, []);
+  const stop = (e) => e.stopPropagation();
+  const onKeyDown = (e) => {
+    e.stopPropagation();
+    if (e.key === "Escape") { e.preventDefault(); onClose(); return; }
+    // Enter = Set; on a focused button Enter keeps its normal click.
+    if (e.key === "Enter" && !e.shiftKey && !(e.target && e.target.tagName === "BUTTON")) { e.preventDefault(); if (resolved) set(); }
+  };
+  const lbl = { fontFamily: FONT.mono, fontSize: 13, fontWeight: 600, color: T.textMuted, display: "block", marginBottom: 5 };
+  const inp = { width: "100%", padding: "8px 10px", fontSize: 15, fontFamily: FONT.mono, color: T.text, background: T.bgInput, border: `1px solid ${T.border}`, borderRadius: 8, outline: "none", boxSizing: "border-box" };
+  const curMin = parseMin(minutes);
+  return (
+    <ModalBackdrop onClose={onClose}>
+      <div ref={rootRef} data-testid="session-dialog" role="dialog" aria-modal="true" aria-label="Session end" tabIndex={-1} onKeyDown={onKeyDown} onKeyUp={stop} onKeyPress={stop} style={{ outline: "none" }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
+          <span style={{ fontFamily: FONT.display, fontSize: 18, fontWeight: 700, color: T.text }}>{"🕒"} Session end</span>
+          <button type="button" onClick={onClose} aria-label="Close" title="Close" style={{ background: "none", border: "none", color: T.textDim, cursor: "pointer", fontSize: 18, padding: 4 }}>✕</button>
+        </div>
+        <div style={{ display: "flex", gap: 12, marginBottom: 14 }}>
+          <label style={{ flex: 1, minWidth: 0 }}><span style={lbl}>Start</span>
+            <input data-testid="session-start-input" type="time" value={start} onChange={(e) => onStart(e.target.value)} style={inp} /></label>
+          <label style={{ flex: 1, minWidth: 0 }}><span style={lbl}>End</span>
+            <input ref={endRef} data-testid="session-end-input" type="time" value={end} onChange={(e) => onEnd(e.target.value)} style={inp} /></label>
+          <label style={{ flex: 1, minWidth: 0 }}><span style={lbl}>Minutes</span>
+            <input data-testid="session-minutes-input" type="number" min={1} max={1440} step={1} value={minutes} onChange={(e) => onMinutes(e.target.value)} style={inp} /></label>
+        </div>
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 14 }}>
+          {SESSION_CHIPS.map((n) => (
+            <button key={n} type="button" data-testid={`session-chip-${n}`} aria-pressed={curMin === n} onClick={() => onMinutes(String(n))}
+              style={{ padding: "6px 12px", fontSize: 13, fontFamily: FONT.mono, fontWeight: 600, color: curMin === n ? "#fff" : T.textMuted, background: curMin === n ? T.accent : T.bgInput, border: `1px solid ${curMin === n ? T.accent : T.border}`, borderRadius: 6, cursor: "pointer" }}>{n} min</button>
+          ))}
+        </div>
+        <div data-testid="session-summary" style={{ fontFamily: FONT.mono, fontSize: 13, color: resolved ? T.text : T.red, marginBottom: 6 }}>
+          {resolved ? `Now ${fmtClock(Date.now())} → ends ${fmtClock(resolved.end)} (${lenMin} min)` : "Enter a start and an end (1 min to 24 h)"}
+        </div>
+        <div data-testid="session-precheck" style={{ fontFamily: FONT.mono, fontSize: 13, color: T.textMuted, marginBottom: 18 }}>
+          {`Deck needs ~${needMin} min`}{lenMin != null ? ` · session is ${lenMin} min` : ""}
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          {hasStored && <button type="button" data-testid="session-clear" onClick={onClear} style={S.btn({ padding: "8px 14px", fontSize: 14, color: T.red, borderRadius: 6 })}>Clear</button>}
+          <span style={{ flex: 1 }} />
+          <button type="button" data-testid="session-cancel" onClick={onClose} style={S.btn({ padding: "8px 16px", fontSize: 14, color: T.textMuted, borderRadius: 6 })}>Cancel</button>
+          <button type="button" data-testid="session-set" onClick={set} disabled={!resolved}
+            style={{ padding: "8px 20px", fontSize: 14, fontFamily: FONT.body, fontWeight: 600, color: "#fff", background: T.accent, border: "none", borderRadius: 6, cursor: resolved ? "pointer" : "not-allowed", opacity: resolved ? 1 : 0.45 }}>Set</button>
+        </div>
+      </div>
+    </ModalBackdrop>
+  );
+}
+
 // ━━━ Keyboard Shortcuts Overlay ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 const _questionKey = (e) => e.key === "?";
 function ShortcutHelp({ onClose }) {

@@ -5169,6 +5169,268 @@ uiSuite("session-ingress", [
   }},
 ]);
 
+// ── Session end: Present-side UI (v13.80, P2) ─────────────────────────
+// Present root = the fixed inset:0 zIndex 9999 element. Each test restores:
+// session null, dialog closed, presenter view closed, Present left.
+const _sesUiRoot = () => _$$("div").find((d) => d.style.position === "fixed" && d.style.inset === "0px" && d.style.zIndex === "9999");
+const _sesUiPresent = async () => {
+  await _editorSetup();
+  document.activeElement?.blur(); await _wait(100);
+  _key("f");
+  await _waitFor(() => !_$("header") && _sesUiRoot(), 2000);
+};
+const _sesUiLeave = async () => {
+  const hooks = _hooks();
+  if (_$("[data-testid='session-cancel']")) { _click("[data-testid='session-cancel']"); await _waitFor(() => !_$("[data-testid='session-dialog']"), 1500).catch(() => {}); }
+  if (_$("[data-testid='presenter-view']")) { _click("[data-testid='presenter-toggle']"); await _waitFor(() => !_$("[data-testid='presenter-view']"), 1500).catch(() => {}); }
+  hooks.setSessionForTest?.(null);
+  VELA_SESSION_BAR.hidden = false;
+  await _exitFullscreen();
+};
+const _sesUiSet = (el, value) => {
+  Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set.call(el, String(value));
+  el.dispatchEvent(new Event("input", { bubbles: true }));
+};
+const _sesUiOpenPresenter = async () => {
+  document.activeElement?.blur(); await _wait(80);
+  _key("s");
+  await _waitFor(() => _$("[data-testid='presenter-session-panel']"), 2000);
+};
+const _sesUiNeedHooks = () => {
+  const hooks = _hooks();
+  if (!hooks.setSessionForTest || !hooks.getSessionForTest) throw new Error("session test hooks missing");
+  return hooks;
+};
+
+uiSuite("session-presenter-panel", [
+  { name: "SP1: no session -> clock and Set session end button; dialog opens INSIDE the Present root", fn: async () => {
+    const hooks = _sesUiNeedHooks();
+    try {
+      hooks.setSessionForTest(null);
+      await _sesUiPresent();
+      await _sesUiOpenPresenter();
+      const clock = _$("[data-testid='presenter-clock']");
+      if (!clock || !/^\d\d:\d\d$/.test(clock.textContent.trim())) throw new Error("presenter-clock missing or not HH:MM: " + clock?.textContent);
+      if (_$("[data-testid='presenter-time-left']")) throw new Error("time left shown without a session");
+      const btn = _$("[data-testid='presenter-session-set']");
+      if (!btn || btn.tagName !== "BUTTON") throw new Error("presenter-session-set is not a button");
+      _click(btn);
+      const dlg = await _waitFor(() => _$("[data-testid='session-dialog']"), 1500);
+      if (!_sesUiRoot()?.contains(dlg)) throw new Error("session dialog is not inside the Present root");
+      await _waitFor(() => document.activeElement === _$("[data-testid='session-end-input']"), 1000).catch(() => { throw new Error("focus is not on the End input"); });
+      if (_$("[data-testid='session-clear']")) throw new Error("Clear shown without a stored session");
+      if (!_$("[data-testid='session-set']").disabled) throw new Error("Set enabled with an empty End");
+    } finally { await _sesUiLeave(); }
+  }},
+  { name: "SP2: chip 30 sets End = Start + 30; Set stores 30 min; panel shows every pace element", fn: async () => {
+    const hooks = _sesUiNeedHooks();
+    try {
+      hooks.setSessionForTest(null);
+      await _sesUiPresent();
+      await _sesUiOpenPresenter();
+      _click("[data-testid='presenter-session-set']");
+      await _waitFor(() => _$("[data-testid='session-dialog']"), 1500);
+      _click("[data-testid='session-chip-30']");
+      await _wait(80);
+      const st = _$("[data-testid='session-start-input']").value, en = _$("[data-testid='session-end-input']").value;
+      const r = resolveSessionTimes(st, en, Date.now());
+      if (!r || r.end - r.start !== 1800000) throw new Error(`chip 30 gave ${st} -> ${en}`);
+      if (_$("[data-testid='session-minutes-input']").value !== "30") throw new Error("minutes field not 30");
+      _click("[data-testid='session-set']");
+      await _waitFor(() => !_$("[data-testid='session-dialog']"), 1500);
+      const s = hooks.getSessionForTest();
+      if (!s || s.end - s.start !== 1800000) throw new Error("stored session is not 30 min: " + JSON.stringify(s));
+      if (!_$("[data-testid='presenter-view']")) throw new Error("Set closed the presenter view");
+      for (const id of ["presenter-clock", "presenter-time-left", "presenter-time-bar", "presenter-pace", "presenter-pace-track", "presenter-pace-you", "presenter-pace-should"]) {
+        await _waitFor(() => _$(`[data-testid='${id}']`), 1500).catch(() => { throw new Error(`${id} missing with a session`); });
+      }
+      if (_$("[data-testid='presenter-session-set']")) throw new Error("Set button still shown with a session");
+    } finally { await _sesUiLeave(); }
+  }},
+  { name: "SP3: verdict matches computeSessionPace (over and not-yet-started); colour follows the verdict", fn: async () => {
+    const hooks = _sesUiNeedHooks();
+    const cands = (ses) => [0, 1000, 2000].map((d) => computeSessionPace({ est: [60] }, 0, 0, ses, Date.now() - d).verdict);
+    try {
+      await _sesUiPresent();
+      await _sesUiOpenPresenter();
+      const over = { start: Date.now() - 40 * 60000, end: Date.now() - 10 * 60000 };
+      hooks.setSessionForTest(over);
+      const tl = await _waitFor(() => _$("[data-testid='presenter-time-left']"), 2000);
+      await _wait(50);
+      const v1 = _$("[data-testid='presenter-pace']").textContent;
+      if (!cands(over).includes(v1)) throw new Error(`over verdict "${v1}" not in ${JSON.stringify(cands(over))}`);
+      if (!tl.textContent.startsWith("+")) throw new Error("time left does not count up when over: " + tl.textContent);
+      const before = { start: Date.now() + 5 * 60000, end: Date.now() + 35 * 60000 };
+      hooks.setSessionForTest(before);
+      await _waitFor(() => /^starts in /.test(_$("[data-testid='presenter-pace']")?.textContent || ""), 2000);
+      const v2 = _$("[data-testid='presenter-pace']").textContent;
+      if (!cands(before).includes(v2)) throw new Error(`before verdict "${v2}" not in ${JSON.stringify(cands(before))}`);
+      const live = { start: Date.now() - 47 * 60000, end: Date.now() + 28 * 60000 };
+      hooks.setSessionForTest(live);
+      await _waitFor(() => !/^starts in /.test(_$("[data-testid='presenter-pace']")?.textContent || ""), 2000);
+      const pv = _$("[data-testid='presenter-pace']");
+      const t = pv.textContent;
+      const key = /ahead/.test(t) ? "green" : t === "on pace" ? "white" : /behind/.test(t) ? null : "x";
+      if (key === "x") throw new Error("unexpected live verdict: " + t);
+      const rgb = (hex) => `rgb(${parseInt(hex.slice(1, 3), 16)}, ${parseInt(hex.slice(3, 5), 16)}, ${parseInt(hex.slice(5, 7), 16)})`;
+      const ok = key ? [rgb(SESSION_PACE_COLORS[key])] : [rgb(SESSION_PACE_COLORS.amber), rgb(SESSION_PACE_COLORS.red)];
+      if (!ok.includes(getComputedStyle(pv).color)) throw new Error(`verdict colour ${getComputedStyle(pv).color} does not match "${t}"`);
+      if (!_$("[data-testid='presenter-pace-you']") || !_$("[data-testid='presenter-pace-should']")) throw new Error("pace ticks missing");
+      if (!/YOU · slide \d+/.test(_$("[data-testid='presenter-session-panel']").textContent) || !/SHOULD BE · slide \d+/.test(_$("[data-testid='presenter-session-panel']").textContent)) throw new Error("YOU / SHOULD BE labels missing");
+    } finally { await _sesUiLeave(); }
+  }},
+  { name: "SP4: keys in the dialog do not reach Present; Escape closes only the dialog", fn: async () => {
+    const hooks = _sesUiNeedHooks();
+    try {
+      hooks.setSessionForTest(null);
+      await _sesUiPresent();
+      _key("ArrowRight"); await _wait(300);
+      await _sesUiOpenPresenter();
+      _click("[data-testid='presenter-session-set']");
+      await _waitFor(() => _$("[data-testid='session-dialog']"), 1500);
+      const pos = _slidePos();
+      const chip = _$("[data-testid='session-chip-15']");
+      chip.focus();
+      for (const k of ["ArrowRight", "ArrowLeft", " ", "s", "t", "g", "e", "n"]) { _key(k); await _wait(60); }
+      if (!_$("[data-testid='session-dialog']")) throw new Error("a key typed on a dialog button closed the dialog");
+      if (!_$("[data-testid='presenter-view']")) throw new Error("a key typed in the dialog closed the presenter view");
+      if (_slidePos() !== pos) throw new Error(`slide moved while the dialog was open: ${pos} -> ${_slidePos()}`);
+      // Focus outside the dialog (Present root): the capture trap still holds keys.
+      _sesUiRoot().focus();
+      _key("ArrowRight"); await _wait(200);
+      if (_slidePos() !== pos) throw new Error("ArrowRight with focus outside the dialog moved the slide");
+      _$("[data-testid='session-end-input']").focus();
+      _key("Escape");
+      await _waitFor(() => !_$("[data-testid='session-dialog']"), 1500);
+      await _wait(150);
+      if (!_$("[data-testid='presenter-view']")) throw new Error("Escape in the dialog closed the presenter view");
+      if (_$("header")) throw new Error("Escape in the dialog left Present");
+      if (hooks.getSessionForTest() !== null) throw new Error("Escape changed the session");
+    } finally { await _sesUiLeave(); }
+  }},
+  { name: "SP5: invalid input keeps Set disabled and Enter inert; Enter sets a valid value", fn: async () => {
+    const hooks = _sesUiNeedHooks();
+    try {
+      hooks.setSessionForTest(null);
+      await _sesUiPresent();
+      await _sesUiOpenPresenter();
+      _click("[data-testid='presenter-session-set']");
+      await _waitFor(() => _$("[data-testid='session-dialog']"), 1500);
+      const min = _$("[data-testid='session-minutes-input']");
+      _sesUiSet(min, "0"); await _wait(60);
+      if (!_$("[data-testid='session-set']").disabled) throw new Error("Set enabled for 0 minutes");
+      _sesUiSet(min, "1441"); await _wait(60);
+      if (!_$("[data-testid='session-set']").disabled) throw new Error("Set enabled for 1441 minutes");
+      min.focus(); _key("Enter"); await _wait(150);
+      if (!_$("[data-testid='session-dialog']") || hooks.getSessionForTest() !== null) throw new Error("Enter acted on invalid input");
+      _sesUiSet(min, "45"); await _wait(60);
+      if (_$("[data-testid='session-set']").disabled) throw new Error("Set disabled for 45 minutes");
+      min.focus(); _key("Enter");
+      await _waitFor(() => !_$("[data-testid='session-dialog']"), 1500);
+      const s = hooks.getSessionForTest();
+      if (!s || s.end - s.start !== 45 * 60000) throw new Error("Enter did not store 45 min: " + JSON.stringify(s));
+    } finally { await _sesUiLeave(); }
+  }},
+  { name: "SP6: card opens the dialog with the stored times; Cancel keeps, Clear removes", fn: async () => {
+    const hooks = _sesUiNeedHooks();
+    try {
+      const ses = { start: Date.now() - 10 * 60000, end: Date.now() + 50 * 60000 };
+      hooks.setSessionForTest(ses);
+      await _sesUiPresent();
+      await _sesUiOpenPresenter();
+      const cardBtn = await _waitFor(() => _$("[data-testid='presenter-session-panel'] button[aria-label*='Edit session end']"), 1500);
+      _click(cardBtn);
+      await _waitFor(() => _$("[data-testid='session-dialog']"), 1500);
+      if (_$("[data-testid='session-start-input']").value !== fmtClock(ses.start) || _$("[data-testid='session-end-input']").value !== fmtClock(ses.end)) throw new Error("dialog does not show the stored times");
+      _click("[data-testid='session-chip-90']"); await _wait(60);
+      _click("[data-testid='session-cancel']");
+      await _waitFor(() => !_$("[data-testid='session-dialog']"), 1500);
+      _ssEq(hooks.getSessionForTest(), ses, "Cancel changed the session");
+      _click(_$("[data-testid='presenter-session-panel'] button"));
+      await _waitFor(() => _$("[data-testid='session-clear']"), 1500);
+      _click("[data-testid='session-clear']");
+      await _waitFor(() => hooks.getSessionForTest() === null, 1500).catch(() => { throw new Error("Clear did not remove the session"); });
+      await _waitFor(() => _$("[data-testid='presenter-session-set']"), 1500);
+    } finally { await _sesUiLeave(); }
+  }},
+  { name: "SP7: S and Escape of the presenter view are unchanged with a session", fn: async () => {
+    const hooks = _sesUiNeedHooks();
+    try {
+      hooks.setSessionForTest({ start: Date.now() - 60000, end: Date.now() + 30 * 60000 });
+      await _sesUiPresent();
+      await _sesUiOpenPresenter();
+      _key("s");
+      await _waitFor(() => !_$("[data-testid='presenter-view']"), 1500);
+      await _sesUiOpenPresenter();
+      _key("Escape");
+      await _waitFor(() => !_$("[data-testid='presenter-view']"), 1500);
+      await _wait(150);
+      if (_$("header")) throw new Error("first Esc left Present");
+    } finally { await _sesUiLeave(); }
+  }},
+]);
+
+uiSuite("session-edge-bar", [
+  { name: "EB1: live session -> bar shows, takes no clicks; T hides and shows; Shift+T / Ctrl+T do nothing", fn: async () => {
+    const hooks = _sesUiNeedHooks();
+    try {
+      hooks.setSessionForTest({ start: Date.now() - 10 * 60000, end: Date.now() + 20 * 60000 });
+      await _sesUiPresent();
+      const bar = await _waitFor(() => _$("[data-testid='present-session-bar']"), 2000);
+      if (!_sesUiRoot().contains(bar)) throw new Error("bar is not inside the Present root");
+      if (getComputedStyle(bar).pointerEvents !== "none") throw new Error("bar takes pointer events");
+      if (bar.getBoundingClientRect().height > 6) throw new Error("bar is too tall");
+      document.activeElement?.blur();
+      _key("t");
+      await _waitFor(() => !_$("[data-testid='present-session-bar']"), 1500).catch(() => { throw new Error("T did not hide the bar"); });
+      _key("T", { shiftKey: true }); await _wait(120);
+      _key("t", { ctrlKey: true }); await _wait(120);
+      if (_$("[data-testid='present-session-bar']")) throw new Error("a modified T changed the bar");
+      _key("t");
+      await _waitFor(() => _$("[data-testid='present-session-bar']"), 1500).catch(() => { throw new Error("T did not show the bar"); });
+    } finally { await _sesUiLeave(); }
+  }},
+  { name: "EB2: the hide choice is kept when Present is left and entered again", fn: async () => {
+    const hooks = _sesUiNeedHooks();
+    try {
+      hooks.setSessionForTest({ start: Date.now() - 10 * 60000, end: Date.now() + 20 * 60000 });
+      await _sesUiPresent();
+      await _waitFor(() => _$("[data-testid='present-session-bar']"), 2000);
+      document.activeElement?.blur(); _key("t");
+      await _waitFor(() => !_$("[data-testid='present-session-bar']"), 1500);
+      await _exitFullscreen();
+      await _sesUiPresent();
+      await _wait(300);
+      if (_$("[data-testid='present-session-bar']")) throw new Error("hide choice lost after re-entering Present");
+      document.activeElement?.blur(); _key("t");
+      await _waitFor(() => _$("[data-testid='present-session-bar']"), 1500);
+    } finally { await _sesUiLeave(); }
+  }},
+  { name: "EB3: no bar over the presenter view, without a session, for an expired session, or in the editor", fn: async () => {
+    const hooks = _sesUiNeedHooks();
+    try {
+      hooks.setSessionForTest({ start: Date.now() - 10 * 60000, end: Date.now() + 20 * 60000 });
+      await _sesUiPresent();
+      await _waitFor(() => _$("[data-testid='present-session-bar']"), 2000);
+      await _sesUiOpenPresenter();
+      if (_$("[data-testid='present-session-bar']")) throw new Error("bar shown with the presenter view open");
+      _key("s");
+      await _waitFor(() => !_$("[data-testid='presenter-view']"), 1500);
+      hooks.setSessionForTest(null);
+      await _waitFor(() => !_$("[data-testid='present-session-bar']"), 1500).catch(() => { throw new Error("bar shown without a session"); });
+      hooks.setSessionForTest({ start: Date.now() - 270 * 60000, end: Date.now() - 240 * 60000 });
+      await _wait(1300);
+      if (hooks.getSessionForTest() === null) throw new Error("stale session did not reach state");
+      if (_$("[data-testid='present-session-bar']")) throw new Error("bar shown for an expired session");
+      hooks.setSessionForTest({ start: Date.now() - 10 * 60000, end: Date.now() + 20 * 60000 });
+      await _waitFor(() => _$("[data-testid='present-session-bar']"), 2000);
+      await _exitFullscreen();
+      await _wait(200);
+      if (_$("[data-testid='present-session-bar']")) throw new Error("bar shown in the editor");
+    } finally { await _sesUiLeave(); }
+  }},
+]);
+
 // ━━━ UI TEST RUNNER COMPONENT ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 // Demo deck guard — UI tests only run against the original demo deck
