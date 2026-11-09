@@ -23,11 +23,14 @@ Complete reference for all Vela v12 slide block types (27 total).
   "contentFlex": 1,                             // flex ratio for left column (cols/split layouts)
   "imageFlex": 1,                               // flex ratio for right column (cols/split layouts)
   "splitGap": 32,                               // gap between columns in px (cols/split layouts)
-  "imageCols": 3                                // pin the column count for a run of adjacent image blocks (integer 1-6; omit = auto)
+  "imageCols": 3,                               // pin the column count for a run of adjacent image blocks (integer 1-6; omit = auto)
+  "story": true                                 // present the slide's images one by one (strict boolean; needs 2+ images)
 }
 ```
 
 **Image runs:** two or more adjacent `image` blocks are laid out as a balanced grid whose column count is chosen automatically. Set `imageCols` to pin it.
+
+**Story mode:** `story: true` makes Present show the slide's top-level images one at a time (each zooms to full size, then the slide returns to the grid). Only the value `true` is kept; anything else is dropped. The image `caption` is the tile title; story mode numbers it `N ·`. A slide with fewer than 2 images ignores `story`.
 
 **Numeric slide fields are type- and range-checked on load:** `imageCols` is coerced to an integer and clamped to 1–6; `gap` and `splitGap` to 0–200 px; `contentFlex`/`imageFlex` to 0.1–20. A non-numeric value is dropped, and the renderer default applies.
 
@@ -149,6 +152,7 @@ Inline image block.
   "type": "image",
   "src": "data:image/... or URL",
   "caption": "Optional caption",
+  "alt": "Optional alt text",
   "maxWidth": "80%",
   "shadow": true,
   "rounded": true

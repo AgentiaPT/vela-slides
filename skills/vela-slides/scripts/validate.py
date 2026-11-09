@@ -225,8 +225,21 @@ def validate(path):
                 has_cols_content = slide.get("layout") == "cols" and (bool(slide.get("L")) or bool(slide.get("R")))
                 if not blocks and not has_cols_content:
                     warnings.append(f"{loc}: Empty blocks array")
-                if len(blocks) > 7:
+                # A run of adjacent image blocks renders as ONE grid, so it
+                # counts as one block for the overflow hint.
+                eff_blocks = 0
+                prev_img = False
+                for _b in blocks:
+                    is_img = isinstance(_b, dict) and _b.get("type") == "image"
+                    if not (is_img and prev_img):
+                        eff_blocks += 1
+                    prev_img = is_img
+                if eff_blocks > 7:
                     warnings.append(f"{loc}: {len(blocks)} blocks — may overflow (max 7 recommended)")
+
+                # story (present the slide's images one by one) — strict boolean
+                if "story" in slide and not isinstance(slide["story"], bool):
+                    errors.append(f"{loc}: story must be a boolean (true or false)")
 
                 for bi, block in enumerate(blocks):
                     check_block_gradients(block, f"{loc}/B{bi+1}", errors)

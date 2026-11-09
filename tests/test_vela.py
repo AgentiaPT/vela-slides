@@ -549,6 +549,7 @@ def test_security():
         ("tests/test_block_toolbar_clip.cjs", "Block toolbar clip (CR4)"),
         ("tests/test_icon_picker_escape.cjs", "Icon picker Escape (CR5)"),
         ("tests/test_deck_key_allowlist.cjs", "Deck-ingress key allowlist (drop/survive/clamp/depth)"),
+        ("tests/test_story_logic.cjs",        "Story images (state machine, drop filter, grid plans)"),
         ("tests/test_reducer.cjs",            "Reducer state transitions (62 actions + UNDO/REDO)"),
         ("tests/test_engine_tools.cjs",       "Vera engine tools + ReAct caps (G1/G3/G4)"),
         ("tests/test_block_render.cjs",       "Block renderers (27 types via renderToStaticMarkup)"),
@@ -3991,6 +3992,109 @@ def test_bg_gradient_validation():
         shutil.rmtree(tmpdir, ignore_errors=True)
 
 
+def test_story_slide_fields():
+    print("\n── Story Slide Field (validate + compact/turbo) ──")
+
+    sys.path.insert(0, SCRIPTS)
+    try:
+        from vela import expand_deck, compact_deck, turbo_deck, unturbo_deck
+    except Exception as e:
+        fail("Import vela.py helpers", str(e))
+        return
+
+    def deck_with(slide_extra, blocks=None):
+        s = {"title": "S", "bg": "#0f172a", "color": "#e2e8f0", "accent": "#3b82f6",
+             "duration": 60, "blocks": blocks or [{"type": "heading", "text": "Hi", "size": "2xl"}]}
+        s.update(slide_extra)
+        return {"deckTitle": "Story Test",
+                "lanes": [{"title": "Main", "items": [{"title": "T", "status": "done", "slides": [s]}]}]}
+
+    def run_validate(deck):
+        tmpdir = tempfile.mkdtemp()
+        try:
+            p = os.path.join(tmpdir, "n.vela")
+            with open(p, "w", encoding="utf-8") as f:
+                json.dump(deck, f)
+            return subprocess.run([sys.executable, os.path.join(SCRIPTS, "validate.py"), p],
+                                  capture_output=True, text=True)
+        finally:
+            shutil.rmtree(tmpdir, ignore_errors=True)
+
+    def slide0(d):
+        return d["lanes"][0]["items"][0]["slides"][0]
+
+    # 1. validate: story must be a boolean
+    for extra, label in [({"story": True}, "story: true"), ({"story": False}, "story: false"), ({}, "story absent")]:
+        r = run_validate(deck_with(extra))
+        if r.returncode == 0:
+            ok(f"validate.py accepts {label}")
+        else:
+            fail(f"validate.py accepts {label}", r.stdout + r.stderr)
+    for val in ("true", 1, {}, None):
+        r = run_validate(deck_with({"story": val}))
+        out = r.stdout + r.stderr
+        if r.returncode != 0 and "story must be a boolean" in out:
+            ok(f"validate.py rejects story: {val!r}")
+        else:
+            fail(f"validate.py rejects story: {val!r}", f"rc={r.returncode} out={out[:300]}")
+
+    # 2. compact round-trip keeps story (unknown slide keys pass through)
+    deck = deck_with({"story": True})
+    rt = expand_deck(compact_deck(copy.deepcopy(deck)))
+    if slide0(rt).get("story") is True:
+        ok("compact → expand round-trip preserves story")
+    else:
+        fail("compact → expand round-trip story", f"got {slide0(rt).get('story')!r}")
+
+    # 3. turbo round-trips: story alone, story + imageCols, story + studyNotes, plain
+    for extra, label in [
+        ({"story": True}, "story"),
+        ({"story": True, "imageCols": 3}, "story + imageCols"),
+        ({"story": True, "studyNotes": {"text": "n"}}, "story + studyNotes"),
+        ({"story": True, "imageCols": 2, "studyNotes": {"text": "n"}}, "story + imageCols + studyNotes"),
+    ]:
+        d = deck_with(extra)
+        back = unturbo_deck(copy.deepcopy(turbo_deck(copy.deepcopy(d))))
+        b0 = slide0(back)
+        if b0.get("story") is True and b0.get("imageCols") == extra.get("imageCols") \
+                and b0.get("studyNotes") == extra.get("studyNotes"):
+            ok(f"turbo → unturbo round-trip preserves {label}")
+        else:
+            fail(f"turbo → unturbo round-trip {label}", f"got {b0!r}")
+    arr = turbo_deck(deck_with({"story": True}))[1][0][1][0][3][0]
+    if len(arr) == 13 and arr[10] is None and arr[11] is None and arr[12] is True:
+        ok("turbo story-only slide uses null placeholders at 10 and 11")
+    else:
+        fail("turbo story positional encoding", f"arr tail={arr[10:]!r}")
+    plain = turbo_deck(deck_with({}))[1][0][1][0][3][0]
+    if len(plain) == 10:
+        ok("turbo keeps length 10 for slides without story")
+    else:
+        fail("turbo plain slide length", f"len={len(plain)}")
+    off = turbo_deck(deck_with({"story": False}))[1][0][1][0][3][0]
+    if len(off) == 10:
+        ok("turbo omits story: false")
+    else:
+        fail("turbo story: false length", f"len={len(off)}")
+
+    # 4. overflow hint: a run of adjacent images counts as one block
+    def imgs(n):
+        return [{"type": "image", "src": "data:image/png;base64,AAAA"} for _ in range(n)]
+    r = run_validate(deck_with({}, blocks=imgs(10)))
+    if r.returncode == 0 and "may overflow" not in r.stdout + r.stderr:
+        ok("validate.py: 10 adjacent images do not trigger the >7 blocks warning")
+    else:
+        fail("validate.py 10-image run warning", (r.stdout + r.stderr)[:300])
+    mixed = []
+    for _ in range(8):
+        mixed += [{"type": "text", "text": "t"}]
+    r = run_validate(deck_with({}, blocks=mixed))
+    if "may overflow" in r.stdout + r.stderr:
+        ok("validate.py: 8 non-image blocks still warn")
+    else:
+        fail("validate.py 8-block warning kept", (r.stdout + r.stderr)[:300])
+
+
 # ━━━ Deck-Ingress Key Allowlist (structural) ━━━━━━━━━━━━━━━━━━━━━━
 def test_deck_key_allowlist_structure():
     print("\n── Deck-Ingress Key Allowlist ──")
@@ -4999,6 +5103,7 @@ if __name__ == "__main__":
         test_checklist_label_roundtrip()
         test_study_notes()
         test_slide_numeric_fields()
+        test_story_slide_fields()
         test_bg_gradient_validation()
         test_deck_key_allowlist_structure()
         test_pdf_title_cards()
