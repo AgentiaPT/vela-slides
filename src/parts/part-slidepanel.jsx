@@ -38,6 +38,10 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
   pasteLiveRef.current = { moduleId: concept.id, index: slideIndex };
   const pasteQueueRef = useRef(Promise.resolve());
   const emptyPasteKeyRef = useRef(new Map());
+  // A queued paste reads the live lanes through lanesRef, which stops updating
+  // when this panel unmounts: drop the paste then, never write from a stale list.
+  const pasteMountedRef = useRef(true);
+  useEffect(() => { pasteMountedRef.current = true; return () => { pasteMountedRef.current = false; }; }, []);
   const aiOk = useAIAvailable();
 
   // Virtual title card for presentation mode
@@ -497,6 +501,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       });
       // Don't return here — if it's not JSON, let image paste proceed
     }
+    // HI6: one paste event can carry several images. Queue every one, in order.
     for (const item of items) {
       if (item.type.startsWith("image/")) {
         e.preventDefault(); const blob = item.getAsFile(); const reader = new FileReader();
@@ -507,6 +512,9 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
         // slide an earlier queued paste made from it (pasteResolveTarget). It then
         // builds the change from that CURRENT slide. If the target is gone, or the
         // user changed it, the paste is dropped. Never write back a stale copy.
+        // HI8: the target is found in its own module's live slide list (lanesRef),
+        // so a paste still lands on its target when the user switches to another
+        // module before it applies, as it does for a slide switch.
         const moduleId = concept.id, epoch = deckEpochRef.current, empty = !slides.length;
         let target = empty ? null : slides[slideIndex];
         if (empty) { const keys = emptyPasteKeyRef.current; target = keys.get(moduleId) || {}; keys.set(moduleId, target); }
@@ -514,11 +522,13 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
         const bodyProbe = empty ? null : pasteBodyProbe(containerRef.current, target);
         const data = new Promise((res) => { reader.onload = () => res(compressSlideImage(reader.result)); reader.onerror = () => res(null); });
         reader.readAsDataURL(blob);
-        const live = () => deckEpochRef.current === epoch && pasteLiveRef.current.moduleId === moduleId;
+        const modSlides = () => { const it = findItem(lanesRef.current || [], moduleId); return it && Array.isArray(it.slides) ? it.slides : null; };
+        const live = () => deckEpochRef.current === epoch && pasteMountedRef.current && !!modSlides();
+        const onScreen = () => pasteLiveRef.current.moduleId === moduleId;
         // Wait until a dispatch below has rendered, then link the new slide object.
         const settle = async (from, before, src) => {
-          for (let k = 0; k < 60 && slidesRef.current === before; k++) await new Promise((r) => setTimeout(r, 16));
-          if (live()) pasteRecordSuccessor(from, before, slidesRef.current, src);
+          for (let k = 0; k < 60 && modSlides() === before; k++) await new Promise((r) => setTimeout(r, 16));
+          if (live()) pasteRecordSuccessor(from, before, modSlides(), src);
         };
         const apply = async () => {
           const raw = await data;
@@ -528,42 +538,47 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
           // (undecodable type, canvas too large, read error) must not add an empty
           // image block, and a src the reducer changes would break the successor
           // link for the rest of the burst.
-          const compressed = raw ? sanitizeImageDataUri(sanitizeUrl(raw, ["data:"])) : "";
+          let compressed = raw ? sanitizeImageDataUri(sanitizeUrl(raw, ["data:"])) : "";
+          // HI4: an allowed MIME type with bytes that do not decode passes the
+          // data-URI check (compressImage returns its input on a decode error).
+          // Decode the result here: an image with no size is not added.
+          if (compressed) { const z = await imageNaturalSize(compressed); if (!(z.w > 0 && z.h > 0)) compressed = ""; }
           if (!compressed) { showNavToast("This image could not be pasted", null, true); return; }
+          if (!live()) return;
           // Empty module → brand-new full-bleed solo-image slide (additive). Later
           // pastes of the same burst go onto that slide.
-          if (empty && !pasteResolveTarget(target, slidesRef.current)) {
-            const before = slidesRef.current;
+          if (empty && !pasteResolveTarget(target, modSlides())) {
+            const before = modSlides();
             dispatch({ type: "ADD_SLIDE", id: moduleId, slide: { blocks: [{ type: "image", src: compressed }] } });
             await settle(target, before, compressed); return;
           }
           let cur = null, sizes = null;
           for (let tries = 0; tries < 4 && !cur; tries++) {
-            const c = live() ? pasteResolveTarget(target, slidesRef.current) : null;
+            const c = live() ? pasteResolveTarget(target, modSlides()) : null;
             if (!c) return;
             // Natural sizes give the aspects and the upscale caps for the layout choice.
             sizes = await Promise.all([...(c.blocks || []).filter((b) => b.type === "image").map((b) => b.src), compressed].map((src) => imageNaturalSize(src)));
             // Resolve again, in the same task as the dispatch below; start over if it moved on.
-            if (live() && pasteResolveTarget(target, slidesRef.current) === c) cur = c;
+            if (live() && pasteResolveTarget(target, modSlides()) === c) cur = c;
           }
           if (!cur) return;
           const aspects = sizes.map((z) => (z.w > 0 && z.h > 0 ? z.w / z.h : 1)), aspect = aspects[aspects.length - 1];
           rememberImageAspect(compressed, aspect);
-          const before = slidesRef.current, at = before.indexOf(cur);
+          const before = modSlides(), at = before.indexOf(cur);
           const curImgBlocks = (cur.blocks || []).filter((b) => b.type === "image");
           const curImgs = curImgBlocks.length;
           // Overflow cap: at most 5 images per slide. A 6th image spills onto a new
           // image-only slide inserted after this one rather than over-packing the grid.
           if (curImgs >= 5) {
             dispatch({ type: "INSERT_SLIDES", id: moduleId, index: at + 1, slides: [{ blocks: [{ type: "image", src: compressed }] }] });
-            dispatch({ type: "SET_SLIDE_INDEX", index: at + 1 });
+            if (onScreen()) dispatch({ type: "SET_SLIDE_INDEX", index: at + 1 });
             await settle(cur, before, compressed); return;
           }
           const patch = { blocks: [...(cur.blocks || []), { type: "image", src: compressed }] };
           const n = curImgs + 1; // image count after this paste
           // The body height is measured on screen. Measure again while the slide is
           // on screen (an earlier paste of the burst can have changed its layout).
-          const probe = (pasteLiveRef.current.index === at && pasteBodyProbe(containerRef.current, cur)) || bodyProbe;
+          const probe = (onScreen() && pasteLiveRef.current.index === at && pasteBodyProbe(containerRef.current, cur)) || bodyProbe;
           // Layout-aware paste: place the image beside existing body content rather
           // than always stacking it below. pasteImageLayout() respects an explicit
           // author layout and otherwise keeps the layout (stack or image-right) that
@@ -593,7 +608,6 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
         };
         // Log a fault (never swallow it silently); the catch keeps the queue alive.
         pasteQueueRef.current = pasteQueueRef.current.then(apply).catch((err) => { console.warn("Vela: image paste failed", err); });
-        break;
       }
     }
   }, [concept.id, slideIndex, slides, dispatch, showNavToast]);

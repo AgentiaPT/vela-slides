@@ -3728,6 +3728,119 @@ uiSuite("review-fix-image", [
   }},
 ], { setup: _selectFirstModule });
 
+// ── Bug-hunt round 1 fixes: image paste and placement ───────────────────
+const _h1Heavy = [{ type: "heading", text: "H1 heavy" }, { type: "bullets", items: ["one long bullet point with lots of words in it to wrap", "two long bullet point with lots of words in it to wrap", "three long bullet point with lots of words in it", "four long bullet point with lots of words in it", "five long bullet point with lots of words", "six long bullet point with lots of words", "seven long bullet point"] }, { type: "text", text: "Footer text that must stay on the slide." }];
+const _h1CellWidths = (vp) => Array.from(vp.querySelectorAll("[data-testid='image-grid-cell']")).map((c) => c.getBoundingClientRect().width);
+const _h1Imgs = (vp) => Array.from(vp.querySelectorAll("img")).filter((im) => im.complete && im.naturalWidth > 0);
+const _h1Paste = (files) => {
+  const dt = new DataTransfer(); files.forEach((f) => dt.items.add(f));
+  _mrdViewport().dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true }));
+};
+const _h1Heading = async (mark) => _mrdInject([{ type: "heading", text: mark }], { imageCols: undefined }, (vp) => vp?.textContent.includes(mark) && !vp.querySelector("img") ? vp : null);
+uiSuite("hunt1-fix-image", [
+  { name: "HI1: same-aspect photos next to a wide banner are drawn at the same size", fn: async () => {
+    const past = _hooks().getHistoryCounts().past;
+    try {
+      const blocks = [{ type: "image", src: _rfiSrc(1200, 200, 0) }, ...[1, 2, 3, 4].map((k) => ({ type: "image", src: _rfiSrc(400, 300, k) }))];
+      await _mrdInject(blocks, { imageCols: undefined }, (v) => _tlLoaded(v) === 5 ? v : null);
+      await _wait(500); await _mrdFrame();
+      const photos = _tlMeasure().imgs.slice(1).map((i) => i.w);
+      if (photos.length !== 4) throw new Error(`${photos.length} photos rendered`);
+      if (Math.min(...photos) < 0.98 * Math.max(...photos)) throw new Error(`photo widths differ: ${photos.map((w) => w.toFixed(0)).join(", ")}`);
+    } finally { await _mrdUndoTo(past); }
+  }},
+  { name: "HI2: wide banners under heavy text shrink; the text keeps its size", fn: async () => {
+    const past = _hooks().getHistoryCounts().past;
+    try {
+      let vp = await _mrdInject(_h1Heavy, { imageCols: undefined }, (v) => v?.textContent.includes("H1 heavy") && !v.querySelector("img") ? v : null);
+      await _wait(300); await _mrdFrame();
+      const h0 = vp.querySelector("[data-block-type='heading']").getBoundingClientRect().height;
+      const banners = [0, 1, 2, 3].map((k) => ({ type: "image", src: _rfiSrc(2000, 100, k) }));
+      vp = await _mrdInject([..._h1Heavy, ...banners], { imageCols: undefined }, (v) => _tlLoaded(v) === 4 ? v : null);
+      await _wait(600); await _mrdFrame();
+      const h1 = vp.querySelector("[data-block-type='heading']").getBoundingClientRect().height, m = _tlMeasure();
+      if (m.outside) throw new Error(`${m.outside} text block(s) off the slide`);
+      if (h1 < 0.97 * h0) throw new Error(`the text was scaled down: heading ${h0.toFixed(1)} -> ${h1.toFixed(1)} px`);
+    } finally { await _mrdUndoTo(past); }
+  }},
+  { name: "HI3: an evicted image aspect is measured again; the on-screen grid does not change", fn: async () => {
+    const past = _hooks().getHistoryCounts().past;
+    try {
+      const blocks = [{ type: "image", src: _rfiSrc(150, 450, 0) }, { type: "image", src: _rfiSrc(640, 360, 1) }];
+      let vp = await _mrdInject(blocks, { imageCols: undefined }, (v) => _tlLoaded(v) === 2 ? v : null);
+      await _wait(500); await _mrdFrame();
+      const before = _h1CellWidths(vp);
+      if (!(before.length === 2 && before[1] > 2 * before[0])) throw new Error(`precondition: expected aspect-sized cells, got ${before.map((w) => w.toFixed(0)).join(", ")}`);
+      blocks.forEach((b) => IMAGE_ASPECT_CACHE.delete(b.src));
+      // Re-render without a layout change (speakerNotes is not a layout input).
+      vp = await _mrdInject(blocks, { imageCols: undefined, speakerNotes: "h1-hi3" }, (v) => v);
+      await _wait(500); await _mrdFrame();
+      const after = _h1CellWidths(vp);
+      if (!blocks.every((b) => IMAGE_ASPECT_CACHE.has(b.src))) throw new Error("the evicted aspects were not measured again");
+      if (after.some((w, k) => Math.abs(w - before[k]) > 1)) throw new Error(`grid changed after eviction: ${before.map((w) => w.toFixed(0))} -> ${after.map((w) => w.toFixed(0))}`);
+    } finally { await _mrdUndoTo(past); }
+  }},
+  { name: "HI4: a corrupt image with an allowed type shows a notice and adds no block", fn: async () => {
+    const past = _hooks().getHistoryCounts().past;
+    try {
+      await _h1Heading("H1-HI4");
+      _h1Paste([new File(["this is not a png at all, garbage bytes"], "bad.png", { type: "image/png" })]);
+      _h1Paste([await _rfiPng(140, 90, 1)]);
+      const notice = await _waitFor(() => document.querySelector("[data-testid='paste-notice']"), 4000).catch(() => null);
+      await _waitFor(() => _h1Imgs(_mrdViewport()).length >= 1, 5000).catch(() => {});
+      await _wait(400);
+      const n = _mrdViewport().querySelectorAll("[data-block-type='image']").length;
+      if (n !== 1) throw new Error(`${n} image block(s) on the slide (expected 1)`);
+      if (!notice) throw new Error("no notice for the image that could not be pasted");
+    } finally { await _mrdUndoTo(past); }
+  }},
+  { name: "HI6: one paste event with two images pastes both, in order", fn: async () => {
+    const past = _hooks().getHistoryCounts().past;
+    try {
+      await _h1Heading("H1-HI6");
+      _h1Paste([await _rfiPng(140, 90, 0), await _rfiPng(220, 90, 1)]);
+      let got = [];
+      await _waitFor(() => { got = _h1Imgs(_mrdViewport()).map((im) => im.naturalWidth); return got.length >= 2; }, 5000).catch(() => {});
+      if (got.join(",") !== "140,220") throw new Error(`images on the slide: ${got.join(",") || "none"} (expected 140,220)`);
+    } finally { await _mrdUndoTo(past); }
+  }},
+  { name: "HI7: a transparent PNG keeps its transparency", fn: async () => {
+    const past = _hooks().getHistoryCounts().past;
+    try {
+      await _h1Heading("H1-HI7");
+      const cv = document.createElement("canvas"); cv.width = 200; cv.height = 100;
+      const g = cv.getContext("2d"); g.fillStyle = "#3b82f6"; g.fillRect(40, 20, 120, 60);
+      const blob = await new Promise((r) => cv.toBlob(r, "image/png"));
+      _h1Paste([new File([blob], "alpha.png", { type: "image/png" })]);
+      const img = await _waitFor(() => _h1Imgs(_mrdViewport())[0], 5000);
+      if (!/^data:image\/png;base64,/.test(img.getAttribute("src"))) throw new Error(`stored as ${img.getAttribute("src").slice(0, 22)}`);
+      const t = document.createElement("canvas"); t.width = img.naturalWidth; t.height = img.naturalHeight;
+      const tg = t.getContext("2d"); tg.drawImage(img, 0, 0);
+      const corner = tg.getImageData(0, 0, 1, 1).data[3], mid = tg.getImageData(100, 50, 1, 1).data[3];
+      if (corner !== 0 || mid !== 255) throw new Error(`alpha corner ${corner} / center ${mid} (expected 0 / 255)`);
+    } finally { await _mrdUndoTo(past); }
+  }},
+  { name: "HI8: pastes queued before a module switch land on their original slide, in order", fn: async () => {
+    const past = _hooks().getHistoryCounts().past;
+    try {
+      await _h1Heading("H1-HI8");
+      const rows = _$$(".concept-row");
+      if (rows.length < 2) throw new Error("the test deck needs two modules");
+      const from = _hooks().getSelection();
+      const files = [await _rfiPng(120, 90, 0), await _rfiPng(160, 90, 1), await _rfiPng(200, 90, 2)];
+      files.forEach((f) => _h1Paste([f]));
+      _click(rows[1]);
+      await _waitFor(() => { const s = _hooks().getSelection(); return s && s.itemId !== from.itemId; }, 2000);
+      await _wait(2500);
+      _click(rows[0]);
+      await _waitFor(() => { const s = _hooks().getSelection(); return s && s.itemId === from.itemId; }, 2000);
+      const vp = await _waitFor(() => { const v = _mrdViewport(); return v?.textContent.includes("H1-HI8") && _h1Imgs(v).length >= 3 ? v : null; }, 4000).catch(() => null);
+      const got = vp ? _h1Imgs(vp).map((im) => im.naturalWidth).join(",") : "none";
+      if (got !== "120,160,200") throw new Error(`images on the original slide: ${got} (expected 120,160,200)`);
+    } finally { await _mrdUndoTo(past); }
+  }},
+], { setup: _selectFirstModule });
+
 // ━━━ UI TEST RUNNER COMPONENT ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 // Demo deck guard — UI tests only run against the original demo deck

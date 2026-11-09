@@ -103,6 +103,17 @@ const VELA_TESTS = [
     return p.rows.length === 1 && p.rows[0].cells[1].f > 0.7 && p.area > eq.area * 1.6;
   } },
   { name: "imageGridPlan CR23: equal aspects keep uniform cells", fn: () => imageGridPlan([1.78, 1.78, 1.78, 1.78, 1.78], 864, 400, 12, 3).rows.every((r) => r.cells.every((c) => Math.abs(c.f - 1 / 3) < 1e-9 || Math.abs(c.f - 1 / 2) < 1e-9 || c.f === 1)) },
+  { name: "imageGridPlan HI1: same-aspect images get the same size; none below half its uniform-grid area", fn: () => {
+    const drawn = (a, W, H, fb) => {
+      const p = imageGridPlan(a, W, H, 12, fb), out = [], avail = H - 12 * (p.rows.length - 1), sum = p.rows.reduce((t, r) => t + r.hw, 0);
+      for (const r of p.rows) for (const c of r.cells) out[c.i] = Math.min((W - 12 * r.gc) * c.f, avail * r.hw / sum * a[c.i]);
+      return out;
+    };
+    const same = (w) => Math.min(...w) >= 0.98 * Math.max(...w);
+    const f = drawn([6, 4 / 3, 4 / 3, 4 / 3, 4 / 3], 864, 468, 3), c = drawn([8, 4 / 3, 4 / 3], 416, 468, 2), x = drawn([20, 4 / 3, 0.75], 416, 468, 2);
+    const xBase = imageGridPlan([20, 4 / 3, 0.75], 416, 468, 12, 2, 2);
+    return same(f.slice(1)) && same(c.slice(1)) && x[1] >= 202 * Math.SQRT1_2 && x[2] >= 171 * Math.SQRT1_2 && xBase.cols === 2;
+  }},
   { name: "imageGridPlan CR23: pinned imageCols forces a uniform grid", fn: () => { const p = imageGridPlan([4, 0.5], 864, 468, 12, 2, 3); return p.cols === 3 && p.rows[0].cells.every((c) => c.f === 1 / 3); } },
   { name: "imageGridPlan CR23: no box → count default, area 0", fn: () => { const p = imageGridPlan([1, 2, 3], 0, 0, 12, 3); return p.cols === 3 && p.area === 0; } },
   { name: "pasteLayoutArea: honors the author's imageCols like the renderer", fn: () => {
