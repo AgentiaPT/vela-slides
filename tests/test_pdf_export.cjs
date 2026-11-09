@@ -62,6 +62,9 @@ const DECK = (() => {
       { bg: "#0f172a", color: "#e2e8f0", accent: "#3b82f6", blocks: [{ type: "text", text: GLYPH_TEXT }] },
       // ++underline++ (v13.78 WP7): the vector path fills one underline rect after ET.
       { bg: "#0f172a", color: "#e2e8f0", accent: "#3b82f6", blocks: [{ type: "text", text: "Plain C++ text and ++Underlined++ word." }] },
+      // FX3: the text run after an inline span starts with a space. The vector
+      // path must keep that gap and must not stretch the run to cover it.
+      { bg: "#0f172a", color: "#e2e8f0", accent: "#3b82f6", blocks: [{ type: "text", text: "Spacing **Bold** and *Ital* and [Link](https://example.com) and tail" }] },
     ] }] }],
   };
   // Unique per-process path so concurrent runs (parallel CI stacks / devs) can't
@@ -357,6 +360,24 @@ function assertPdf(label, buf, expectedPages, { vector }) {
     const ulRects = ulBlocks.reduce((n, b) => n + (b.match(/ re f\n/g) || []).length, 0);
     check(`[${label}] ++underline++ draws exactly one underline rect after ET`, ulRects === 1, `rects=${ulRects}`);
     check(`[${label}] "C++" stays literal in a Tj run`, /\((?:[^()\\]|\\.)*C\+\+(?:[^()\\]|\\.)*\)\s*Tj/.test(text));
+    // FX3: a run that follows an inline span keeps its leading gap. Its Td x is
+    // past the underline rect's right edge (x+w) by about one space, not flush.
+    const ulM = ulBlocks.join('').match(/ rg ([\d.-]+) [\d.-]+ ([\d.]+) [\d.]+ re f\n/);
+    const wordM = text.match(/([\d.-]+) [\d.-]+ Td\n(?:[\d.-]+ Tc\n)?\(word\.\) Tj/);
+    const ulEnd = ulM ? parseFloat(ulM[1]) + parseFloat(ulM[2]) : NaN;
+    const gap = wordM ? parseFloat(wordM[1]) - ulEnd : NaN;
+    check(`[${label}] run after ++underline++ keeps its space (gap > 2pt)`, gap > 2, `gap=${gap}`);
+    // ...and is not stretched: the short "and " runs after **bold**, *italic*
+    // and a link get about the same Tc as the plain first run, not the space's
+    // width spread over their glyphs.
+    const tcOf = (s) => [...text.matchAll(new RegExp('Td\\n(?:([\\d.-]+) Tc\\n)?\\(' + s + '\\) Tj', 'g'))]
+      .map(m => parseFloat(m[1] || '0'));
+    const tcPlain = tcOf('Spacing ')[0];
+    const tcAnd = tcOf('and (?:tail)?');
+    check(`[${label}] spacing fixture: plain run + 3 runs after inline spans found`,
+      Number.isFinite(tcPlain) && tcAnd.length === 3, `plain=${tcPlain} and=${JSON.stringify(tcAnd)}`);
+    check(`[${label}] runs after **bold** / *italic* / link are not stretched (Tc <= plain Tc + 1)`,
+      tcAnd.length === 3 && tcAnd.every(t => t <= tcPlain + 1), `plain=${tcPlain} and=${JSON.stringify(tcAnd)}`);
     // CR05: WinAnsi symbols are encoded as their real byte inside Tj text runs
     // (drawn with the run's font at text size), never dropped, never imaged.
     const tjRuns = (text.match(/\((?:[^()\\]|\\.)*\)\s*Tj/g) || []).join("\n");

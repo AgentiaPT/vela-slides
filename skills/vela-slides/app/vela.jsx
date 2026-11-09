@@ -22453,6 +22453,12 @@ function getTextLines(textNode, containerRect) {
   }
   if (parts.length === 0) return [];
 
+  // Measure each line from its first non-space char. The line TEXT drops leading
+  // whitespace, so the measured range must drop it too: a text node that follows
+  // an inline span (" and more") otherwise reports x at the space and a width
+  // that includes it — the vector PDF then draws the run flush against the span
+  // and spreads the space's width over the glyphs as Tc (letter-spacing).
+  const lead = (s, e) => { while (s < e && /\s/.test(text[s])) s++; return s; };
   let lineStart = 0;
   let lineTop = null;
 
@@ -22469,7 +22475,7 @@ function getTextLines(textNode, containerRect) {
     } else if (Math.abs(rect.top - lineTop) > 3) {
       // New line — flush previous
       const prevEnd = parts[pi - 1] ? parts[pi - 1].end : p.start;
-      range.setStart(textNode, lineStart);
+      range.setStart(textNode, lead(lineStart, prevEnd));
       range.setEnd(textNode, prevEnd);
       const lr = range.getBoundingClientRect();
       const lt = text.substring(lineStart, prevEnd).replace(/^\s+/, "");
@@ -22493,7 +22499,7 @@ function getTextLines(textNode, containerRect) {
 
   // Last line
   const lastEnd = parts[parts.length - 1].end;
-  range.setStart(textNode, lineStart);
+  range.setStart(textNode, lead(lineStart, lastEnd));
   range.setEnd(textNode, lastEnd);
   const lr = range.getBoundingClientRect();
   const lt = text.substring(lineStart, lastEnd).replace(/^\s+/, "");
