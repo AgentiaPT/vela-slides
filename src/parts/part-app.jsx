@@ -948,11 +948,20 @@ export default function App() {
   const importDeck = (e) => { const file = e.target.files?.[0]; if (!file) return; e.target.value = ""; loadDeckFile(file); };
 
   const [fileDragOver, setFileDragOver] = useState(false);
+  const [fileDragImages, setFileDragImages] = useState(false); // the drag holds only image files
+  const [fileDragTaken, setFileDragTaken] = useState(false); // a child (editor slide panel) takes this drag
   const dragCountRef = useRef(0);
-  const handleGlobalDragEnter = useCallback((e) => { e.preventDefault(); if (e.dataTransfer?.types?.includes("Files")) { dragCountRef.current++; setFileDragOver(true); } }, []);
+  const fullscreenRef = useRef(false); fullscreenRef.current = !!state.fullscreen;
+  const handleGlobalDragEnter = useCallback((e) => { e.preventDefault(); if (e.dataTransfer?.types?.includes("Files")) { dragCountRef.current++; setFileDragOver(true); setFileDragImages(dragHasOnlyImageFiles(e.dataTransfer)); } }, []);
   const handleGlobalDragLeave = useCallback((e) => { e.preventDefault(); dragCountRef.current--; if (dragCountRef.current <= 0) { dragCountRef.current = 0; setFileDragOver(false); } }, []);
-  const handleGlobalDragOver = useCallback((e) => { e.preventDefault(); e.dataTransfer.dropEffect = "copy"; }, []);
-  const handleGlobalDrop = useCallback((e) => { e.preventDefault(); e.stopPropagation(); dragCountRef.current = 0; setFileDragOver(false); const file = e.dataTransfer?.files?.[0]; if (file) loadDeckFile(file); }, [loadDeckFile]);
+  // A child (the editor slide panel, for image files) that takes the drag calls
+  // preventDefault first; the shell then hides its own overlay over that child.
+  const handleGlobalDragOver = useCallback((e) => { const taken = e.isDefaultPrevented(); e.preventDefault(); e.dataTransfer.dropEffect = "copy"; setFileDragTaken(taken); }, []);
+  // A drop a child took (images added to a slide) must not also load as a deck.
+  const handleGlobalDrop = useCallback((e) => { const taken = e.isDefaultPrevented(); e.preventDefault(); e.stopPropagation(); dragCountRef.current = 0; setFileDragOver(false); setFileDragTaken(false); if (taken) return;
+    // Present has no slide to drop on: an images-only drop is told so, never loaded as a deck.
+    if (fullscreenRef.current && dragHasOnlyImageFiles(e.dataTransfer)) { slideActionsRef.current?.showToast?.("Exit Present to add images"); return; }
+    const file = e.dataTransfer?.files?.[0]; if (file) loadDeckFile(file); }, [loadDeckFile]);
 
   // Title editing
   const startEditTitle = () => { setTitleDraft(state.deckTitle || "Untitled"); setEditingTitle(true); };
@@ -1024,11 +1033,11 @@ export default function App() {
       onDragEnter={handleGlobalDragEnter} onDragLeave={handleGlobalDragLeave} onDragOver={handleGlobalDragOver} onDrop={handleGlobalDrop}>
       <style>{getCss()}</style>
       <input ref={fileInputRef} type="file" accept=".json,.vela" onChange={importDeck} style={{ display: "none" }} />
-      {fileDragOver && <div style={{ position: "absolute", inset: 0, zIndex: 99999, background: "rgba(59,130,246,0.12)", backdropFilter: "blur(4px)", display: "flex", alignItems: "center", justifyContent: "center", pointerEvents: "none" }}>
+      {fileDragOver && !fileDragTaken && <div style={{ position: "absolute", inset: 0, zIndex: 99999, background: "rgba(59,130,246,0.12)", backdropFilter: "blur(4px)", display: "flex", alignItems: "center", justifyContent: "center", pointerEvents: "none" }}>
         <div style={{ background: T.bgPanel, border: `2px dashed ${T.accent}`, borderRadius: 16, padding: "40px 60px", display: "flex", flexDirection: "column", alignItems: "center", gap: 12, boxShadow: "0 20px 60px rgba(0,0,0,0.4)" }}>
-          <span style={{ fontSize: 40 }}>📂</span>
-          <span style={{ fontFamily: FONT.display, fontSize: 18, fontWeight: 700, color: T.text }}>Drop deck to load</span>
-          <span style={{ fontFamily: FONT.mono, fontSize: 11, color: T.textDim }}>.json or .vela</span>
+          <span style={{ fontSize: 40 }}>{fileDragImages ? "🖼️" : "📂"}</span>
+          <span style={{ fontFamily: FONT.display, fontSize: 18, fontWeight: 700, color: T.text }}>{fileDragImages ? (state.fullscreen ? "Exit Present to add images" : "Drop on a slide to add images") : "Drop deck to load"}</span>
+          {!fileDragImages && <span style={{ fontFamily: FONT.mono, fontSize: 11, color: T.textDim }}>.json or .vela</span>}
         </div>
       </div>}
 

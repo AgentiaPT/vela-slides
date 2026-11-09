@@ -140,7 +140,7 @@ const velaClipboardReadSlides = async () => {
 
 const VELA_VERSION = "13.78";
 const VELA_CHANGELOG = [
-  { v: "13.78", d: ["Images: up to 10 per slide; overflow goes to a new slide.", "Images: drag image files from your computer onto a slide.", "Images: drag tiles to reorder.", "Story mode: present a slide's images one by one.", "Export: expand story slides to one page per image (PDF/PPTX)."] },
+  { v: "13.78", d: ["Images: up to 10 per slide; overflow goes to a new slide.", "Images: drag image files from your computer onto a slide.", "Images: drag tiles to reorder.", "Story mode: present a slide's images one by one.", "Export: expand story slides to one page per image (PDF/PPTX).", "Text: Ctrl+U underline is saved and shows everywhere (++text++).", "Images: dropped files use the same ordered, safe queue as pasted images."] },
   { v: "13.77", d: ["Two-column slides: edits to a column block (link, text, hide, delete) are saved; before, they were lost.", "Link boxes accept a bare domain (example.com) or an email address; before, these were saved as an empty link.", "Desktop: outside edits to decks up to 50 MB now reload live (was 5 MB).", "Present: Esc exits fullscreen, also inside Claude.ai artifacts.", "Esc closes the gallery, presenter view, image zoom or an open dialog first.", "Present toolbar: removed the duplicate gallery icon; presenter view uses a notes icon.", "Image zoom fills the window again (it was limited to the scaled slide).", "Zoom: arrow keys step through the images on the slide; past the first or last image they close the zoom.", "Present toolbar stays faint until you point at it.", "Editor: Ctrl+E toggles the TOC (as in present mode); [ also works with AltGr keyboards."] },
   { v: "13.76", d: ["TOC: dragging a slide or section near the list edge auto-scrolls the list.", "TOC: moving a slide to a section in an earlier lane no longer loses the slide.", "Images: a pasted image on an empty slide fills the slide, not one half.", "Images: grids pick rows and columns by image aspect ratio.", "Images: solo and wide images fill the free slide area.", "Images: images shrink to fit, so text below an image stays on the slide.", "Editing: all text in checklist, comparison, matrix, number-row, progress and flow blocks is editable inline.", "Checklist: type a status name to change the status; custom status labels survive compact/turbo formats."] },
   { v: "13.75", d: ["Editor: mark slides reviewed (✓); Review cycle makes arrow keys skip reviewed slides.", "View switch (editor | presenter | gallery) next to Present.", "Gallery: hide/unhide a slide beside delete; TOC: delete icon on slide rows (undoable).", "Fullscreen nav icons stay visible on any slide background.", "Branding: right-side settings pane; accent line removable at 0px.", "Block toolbar stays visible on full-bleed images; link badges sit right after the text.", "Vector PDF: € and other WinAnsi symbols render as text at correct size.", "validate: reports a gradient in solid-color bg fields (use bgGradient).", "Opening or switching a deck keeps lane/module ids.", "Desktop: window title shows the deck title; keyboard works after alt-tab; AI agents detected on first start; HTML export fixed."] },
@@ -2310,8 +2310,12 @@ function storyImageList(slide, presenting) {
     out.push({ idx, src: b.src, alt: typeof b.alt === "string" ? b.alt : "" });
   };
   blocks.forEach((b, i) => add(b, i));
-  L.forEach((b, i) => add(b, blocks.length + i));
-  R.forEach((b, i) => add(b, blocks.length + L.length + i));
+  // L/R columns are drawn only in the "cols" layout; elsewhere they are not on
+  // the slide, so they must not become story steps or export pages.
+  if (slide.layout === "cols") {
+    L.forEach((b, i) => add(b, blocks.length + i));
+    R.forEach((b, i) => add(b, blocks.length + L.length + i));
+  }
   return out;
 }
 // Story is on only for an explicit `true` and at least two images.
@@ -2661,7 +2665,7 @@ function useSwipe(ref, { onLeft, onRight, threshold = 50 } = {}) {
 const BLOCK_REFERENCE = `Slide: { blocks: [...], bg?, bgGradient?: "linear-gradient(...)", color?, accent?, align?, verticalAlign?, padding?, gap?, duration?: seconds_integer, layout?: "stack"|"image-right"|"image-left"|"cols", contentFlex?, imageFlex?, splitGap?, imageCols?: 1-6, story?: true, L?: [...], R?: [...] }
 Numeric slide fields are range-checked on load: imageCols is an integer 1-6, gap/splitGap 0-200, contentFlex/imageFlex 0.1-20. imageCols pins the column count for a run of adjacent image blocks (omit for automatic). story:true = Present shows the slide's images one by one (needs 2+ images); an image caption is its tile title.
 Layout: "stack" (default) = vertical column. "image-right"/"image-left" = splits content blocks and image blocks side-by-side. "cols" = explicit two-column layout using L (left blocks) and R (right blocks) arrays. blocks renders full-width above columns (optional header). contentFlex/imageFlex control column ratio (default 1:1). splitGap controls gap between columns (default 32).
-Inline formatting: All text supports **bold**, *italic*, ***bold+italic*** using markdown syntax (also __bold__ and _italic_). Use in headings, text, bullets, callouts, etc.
+Inline formatting: All text supports **bold**, *italic*, ***bold+italic***, ~~strike~~ and ++underline++ using markdown syntax (also __bold__ and _italic_). ++ marks only a whole word or phrase (C++ and i++ stay literal). Use in headings, text, bullets, callouts, etc.
 Links: ANY block can have an optional "link" property: {type:"text", text:"Read the paper", link:"https://..."} — renders clickable. For sources/citations, ALWAYS use a descriptive text block or badge with link property instead of putting raw URLs in text. E.g. {type:"badge", text:"📎 Yao et al., ReAct (2022)", icon:"ExternalLink", link:"https://arxiv.org/abs/2210.03629"} or {type:"text", text:"Source: Snorkel AI Blog", size:"sm", link:"https://snorkel.ai/blog/..."}
 Block types:
 - heading: {type:"heading", text, size:"xs|sm|md|lg|xl|2xl|3xl|4xl", color?, weight?, align?, icon?:"Zap", iconColor?}
@@ -3027,7 +3031,147 @@ class SlideErrorBoundary extends React.Component {
 }
 
 // ━━━ Editable Text ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// ━━━ Inline Formatting: **bold**, *italic*, ***both***, ~~strike~~ ━━━
+// ━━━ Inline Formatting: **bold**, *italic*, ***both***, ~~strike~~, ++underline++ ━━━
+// ++underline++ delimiters are STRICT (flanking), so existing text never changes:
+// "C++", "i++ and j++", "a ++ b ++ c", "x+++y" and a lone "++" stay literal.
+// An opening "++" must not follow a letter, digit or "+", and the next character
+// must be a non-space that is not "+". A closing "++" must follow a non-space that
+// is not "+", and must not precede a letter, digit or "+". A span never crosses a
+// newline (parseInline renders line by line). No regex lookbehind: older Safari
+// rejects it at parse time, which would break the whole app. Linear time: when a
+// valid opener has no closer on its line, no later opener on that line has one.
+const UL_EDGE_WORD = /[\p{L}\p{N}+]/u;
+const UL_SPACE = /\s/;
+function ulCharBefore(s, i) {
+  if (i <= 0) return "";
+  const c = s.charCodeAt(i - 1);
+  return (c >= 0xDC00 && c <= 0xDFFF && i >= 2) ? s.slice(i - 2, i) : s[i - 1];
+}
+function ulCharAt(s, i) { return i < s.length ? String.fromCodePoint(s.codePointAt(i)) : ""; }
+// First strict ++…++ span at or after `from`: [start, end) incl. delimiters, or null.
+function findUnderlineSpan(s, from) {
+  if (typeof s !== "string") return null;
+  let o = s.indexOf("++", from || 0);
+  while (o >= 0) {
+    const prev = ulCharBefore(s, o), next = ulCharAt(s, o + 2);
+    if (!UL_EDGE_WORD.test(prev) && next && next !== "+" && !UL_SPACE.test(next)) {
+      const nl = s.indexOf("\n", o);
+      const lim = nl < 0 ? s.length : nl;
+      let c = s.indexOf("++", o + 3);
+      while (c >= 0 && c + 2 <= lim) {
+        const before = ulCharBefore(s, c), after = ulCharAt(s, c + 2);
+        if (before !== "+" && !UL_SPACE.test(before) && !UL_EDGE_WORD.test(after)) return [o, c + 2];
+        c = s.indexOf("++", c + 1);
+      }
+      if (nl < 0) return null;
+      o = s.indexOf("++", nl + 1);
+      continue;
+    }
+    o = s.indexOf("++", o + 1);
+  }
+  return null;
+}
+function findUnderlineSpans(s) {
+  const spans = [];
+  let at = 0, sp;
+  while ((sp = findUnderlineSpan(s, at))) { spans.push(sp); at = sp[1]; }
+  return spans;
+}
+
+// Markdown inline -> HTML for the contentEditable editor. Escape FIRST, then add
+// only code-generated tags: deck text can never become live markup here (a deck
+// "<u ...>" string stays literal text). Underline runs last, on the escaped
+// string (entities start with "&" and end with ";", so flanking is unchanged).
+function inlineMdToHtml(t) {
+  if (!t) return "";
+  const h = t
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    .replace(/\*\*\*(.+?)\*\*\*/g, "<strong><em>$1</em></strong>")
+    .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
+    .replace(/\*(.+?)\*/g, "<em>$1</em>")
+    .replace(/___(.+?)___/g, "<strong><em>$1</em></strong>")
+    .replace(/__(.+?)__/g, "<strong>$1</strong>")
+    .replace(/_(.+?)_/g, "<em>$1</em>")
+    .replace(/~~(.+?)~~/g, "<s>$1</s>");
+  let out = "", at = 0;
+  for (const [a, b] of findUnderlineSpans(h)) { out += h.slice(at, a) + "<u>" + h.slice(a + 2, b - 2) + "</u>"; at = b; }
+  return (out + h.slice(at)).replace(/\n/g, "<br>");
+}
+
+// contentEditable HTML -> markdown inline. Only real U elements become ++…++
+// (never a styled span). An underline that cannot round-trip under the strict
+// rules (mid-word, or one that would pair with literal "++" text) is dropped,
+// not saved as stray "++" characters; the text itself is always kept.
+const UL_OPEN = { ul: 1 }, UL_CLOSE = { ul: 2 };
+function inlineHtmlToMd(root) {
+  const segs = [];
+  const walk = (el) => {
+    let r = "";
+    const emit = (x) => { if (x) { segs.push(x); r += x; } };
+    for (const n of el.childNodes) {
+      if (n.nodeType === 3) { emit(n.textContent); }
+      else if (n.nodeName === "BR") { emit("\n"); }
+      else if (n.nodeName === "STRONG" || n.nodeName === "B") { emit("**"); r += walk(n); emit("**"); }
+      else if (n.nodeName === "EM" || n.nodeName === "I") { emit("*"); r += walk(n); emit("*"); }
+      else if (n.nodeName === "S" || n.nodeName === "DEL" || n.nodeName === "STRIKE") { emit("~~"); r += walk(n); emit("~~"); }
+      else if (n.nodeName === "U") { segs.push(UL_OPEN); r += walk(n); segs.push(UL_CLOSE); }
+      else if (n.nodeName === "DIV" || n.nodeName === "P") {
+        if (r.length > 0 && !r.endsWith("\n")) emit("\n");
+        r += walk(n);
+      }
+      else { r += walk(n); }
+    }
+    return r;
+  };
+  walk(root);
+  // Plain text + outermost underline ranges (nested U inside U is redundant).
+  let S = "";
+  const raw = [];
+  let depth = 0, start = 0;
+  for (const x of segs) {
+    if (x === UL_OPEN) { if (depth++ === 0) start = S.length; }
+    else if (x === UL_CLOSE) { if (--depth === 0) raw.push([start, S.length]); }
+    else S += x;
+  }
+  if (!raw.length) return S;
+  // Split at newlines, move edge whitespace outside, merge touching ranges.
+  const live = [];
+  for (const [a0, b0] of raw) {
+    let a = a0;
+    while (a < b0) {
+      const nl = S.indexOf("\n", a);
+      let b = (nl < 0 || nl >= b0) ? b0 : nl;
+      const next = b < b0 ? b + 1 : b0;
+      let x = a;
+      while (x < b && UL_SPACE.test(S[x])) x++;
+      while (b > x && UL_SPACE.test(S[b - 1])) b--;
+      if (x < b) {
+        const last = live[live.length - 1];
+        if (last && last[1] === x) last[1] = b; else live.push([x, b]);
+      }
+      a = next;
+    }
+  }
+  // Keep only ranges that the renderer will parse back as exactly that span.
+  let keep = live;
+  for (;;) {
+    let out = "", at = 0;
+    const pos = [];
+    for (const [a, b] of keep) {
+      out += S.slice(at, a);
+      const o = out.length;
+      out += "++" + S.slice(a, b) + "++";
+      pos.push(o + ":" + out.length);
+      at = b;
+    }
+    out += S.slice(at);
+    const found = new Set(findUnderlineSpans(out).map(([a, b]) => a + ":" + b));
+    const next = keep.filter((_, i) => found.has(pos[i]));
+    if (next.length === keep.length) return out;
+    keep = next;
+  }
+}
+
 // ctx (optional): { glossary?, keyPrefix? } — when provided, also parses markdown
 // links [label](https://…) → sanitized <a>, and [label](#term) → <GlossaryLink>.
 // All existing call sites omit ctx and behavior is identical to before.
@@ -3072,7 +3216,7 @@ function parseInline(text, ctx) {
   const parseLine = (line, lineKey) => {
     // Fast path: no link, no formatting → return untouched
     const hasLink = line.includes("[") && line.includes("](");
-    const hasFmt = line.includes("*") || line.includes("__") || line.includes("~~");
+    const hasFmt = line.includes("*") || line.includes("__") || line.includes("~~") || line.includes("++");
     if (!hasLink && !hasFmt) return line;
 
     // Pass 1: extract [label](target) link spans into sentinel placeholders
@@ -3087,24 +3231,58 @@ function parseInline(text, ctx) {
       });
     }
 
-    // Pass 2: existing bold/italic/strike tokenizer on the sentinel-bearing string
+    // Pass 2: existing bold/italic/strike tokenizer on the sentinel-bearing string,
+    // plus strict ++underline++ (findUnderlineSpan). Underline is ONE level deep and
+    // combines with the other marks: a ++…++ span's content runs through the
+    // bold/italic/strike tokenizer ("++**x**++"), and a bold/italic/strike token's
+    // text is split into underline spans ("**++x++**"). (Unlike ~~, which does not
+    // nest with the other marks in this renderer.) A line with no strict ++ pair
+    // tokenizes exactly as before.
     if (!hasFmt && linkTokens.length === 0) return working;
     const parts = [];
     if (hasFmt) {
       const re = /(\*\*\*(.+?)\*\*\*|\*\*(.+?)\*\*|\*(.+?)\*|___(.+?)___|__(.+?)__|_(.+?)_|~~(.+?)~~)/g;
-      let last = 0, m;
-      while ((m = re.exec(working)) !== null) {
-        if (m.index > last) parts.push(working.slice(last, m.index));
-        if (m[2]) parts.push({ text: m[2], bold: true, italic: true });
-        else if (m[3]) parts.push({ text: m[3], bold: true });
-        else if (m[4]) parts.push({ text: m[4], italic: true });
-        else if (m[5]) parts.push({ text: m[5], bold: true, italic: true });
-        else if (m[6]) parts.push({ text: m[6], bold: true });
-        else if (m[7]) parts.push({ text: m[7], italic: true });
-        else if (m[8]) parts.push({ text: m[8], strike: true });
-        last = m.index + m[0].length;
-      }
-      if (last < working.length) parts.push(working.slice(last));
+      const toPart = (m) => m[2] ? { text: m[2], bold: true, italic: true }
+        : m[3] ? { text: m[3], bold: true }
+        : m[4] ? { text: m[4], italic: true }
+        : m[5] ? { text: m[5], bold: true, italic: true }
+        : m[6] ? { text: m[6], bold: true }
+        : m[7] ? { text: m[7], italic: true }
+        : m[8] ? { text: m[8], strike: true } : null;
+      const splitUl = (p, out) => {
+        let at = 0;
+        for (const [a, b] of findUnderlineSpans(p.text)) {
+          if (a > at) out.push({ ...p, text: p.text.slice(at, a) });
+          out.push({ ...p, text: p.text.slice(a + 2, b - 2), underline: true });
+          at = b;
+        }
+        if (at === 0) out.push(p);
+        else if (at < p.text.length) out.push({ ...p, text: p.text.slice(at) });
+      };
+      // ul=false for underline content: depth stays one level.
+      const tokenize = (str, ul, out) => {
+        let last = 0, u = null, uDone = !ul;
+        for (;;) {
+          if (!uDone && (!u || u[0] < last)) { u = findUnderlineSpan(str, last); if (!u) uDone = true; }
+          re.lastIndex = last; // the recursive call below reuses `re`
+          const m = re.exec(str);
+          if (u && !uDone && (!m || u[0] < m.index)) {
+            if (u[0] > last) out.push(str.slice(last, u[0]));
+            const inner = [];
+            tokenize(str.slice(u[0] + 2, u[1] - 2), false, inner);
+            for (const q of inner) out.push(typeof q === "string" ? { text: q, underline: true } : { ...q, underline: true });
+            last = u[1];
+            continue;
+          }
+          if (!m) break;
+          if (m.index > last) out.push(str.slice(last, m.index));
+          const p = toPart(m);
+          if (p) { if (ul) splitUl(p, out); else out.push(p); }
+          last = m.index + m[0].length;
+        }
+        if (last < str.length) out.push(str.slice(last));
+      };
+      tokenize(working, working.includes("++"), parts);
     } else {
       parts.push(working);
     }
@@ -3122,7 +3300,7 @@ function parseInline(text, ctx) {
       } else {
         const children = spliceSentinels(p.text, linkTokens, `${keyPrefix}-${lineKey}-s${i}`);
         out.push(
-          <span key={`${keyPrefix}-${lineKey}-s${i}`} style={{ fontWeight: p.bold ? 700 : undefined, fontStyle: p.italic ? "italic" : undefined, textDecoration: p.strike ? "line-through" : undefined }}>
+          <span key={`${keyPrefix}-${lineKey}-s${i}`} data-vela-u={p.underline ? "1" : undefined} style={{ fontWeight: p.bold ? 700 : undefined, fontStyle: p.italic ? "italic" : undefined, textDecoration: p.strike ? (p.underline ? "line-through underline" : "line-through") : (p.underline ? "underline" : undefined) }}>
             {children.length === 1 ? children[0] : children}
           </span>
         );
@@ -3214,46 +3392,19 @@ const EDIT_PLACEHOLDER = "Text";
 
 // controlled: show only the saved `text` prop after a commit (no optimistic local
 // copy), for callers whose onSave normalizes the value (checklist status label).
-function EditableText({ text, onSave, editable, style, multiline, className, prefix, suffix, controlled }) {
-  const [editing, setEditing] = useState(false);
+// autoEdit: start in edit mode on mount (the image "+ Add title" chip); default off.
+// onEditEnd: called after an edit ends (commit or cancel), whatever the value.
+function EditableText({ text, onSave, editable, style, multiline, className, prefix, suffix, controlled, autoEdit, onEditEnd }) {
+  const [editing, setEditing] = useState(() => !!autoEdit && !!editable && !!onSave);
   const [hovered, setHovered] = useState(false);
   const [localText, setLocalText] = useState(text);
   const ref = useRef(null);
 
   useEffect(() => { setLocalText(text); }, [text]);
 
-  // Convert markdown inline to HTML for WYSIWYG editing
-  const mdToHtml = (t) => {
-    if (!t) return "";
-    return t
-      .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
-      .replace(/\*\*\*(.+?)\*\*\*/g, "<strong><em>$1</em></strong>")
-      .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
-      .replace(/\*(.+?)\*/g, "<em>$1</em>")
-      .replace(/___(.+?)___/g, "<strong><em>$1</em></strong>")
-      .replace(/__(.+?)__/g, "<strong>$1</strong>")
-      .replace(/_(.+?)_/g, "<em>$1</em>")
-      .replace(/~~(.+?)~~/g, "<s>$1</s>")
-      .replace(/\n/g, "<br>");
-  };
-
-  // Convert contentEditable HTML back to markdown
-  const htmlToMd = (el) => {
-    let r = "";
-    for (const n of el.childNodes) {
-      if (n.nodeType === 3) { r += n.textContent; }
-      else if (n.nodeName === "BR") { r += "\n"; }
-      else if (n.nodeName === "STRONG" || n.nodeName === "B") { r += "**" + htmlToMd(n) + "**"; }
-      else if (n.nodeName === "EM" || n.nodeName === "I") { r += "*" + htmlToMd(n) + "*"; }
-      else if (n.nodeName === "S" || n.nodeName === "DEL" || n.nodeName === "STRIKE") { r += "~~" + htmlToMd(n) + "~~"; }
-      else if (n.nodeName === "DIV" || n.nodeName === "P") {
-        if (r.length > 0 && !r.endsWith("\n")) r += "\n";
-        r += htmlToMd(n);
-      }
-      else { r += htmlToMd(n); }
-    }
-    return r;
-  };
+  // Markdown inline <-> HTML for WYSIWYG editing (top-level, shared + testable).
+  const mdToHtml = inlineMdToHtml;
+  const htmlToMd = inlineHtmlToMd;
 
   useEffect(() => {
     if (!editing || !ref.current) return;
@@ -3269,13 +3420,14 @@ function EditableText({ text, onSave, editable, style, multiline, className, pre
 
   const commit = () => {
     const el = ref.current;
-    if (!el) { setEditing(false); setHovered(false); return; }
+    if (!el) { setEditing(false); setHovered(false); onEditEnd?.(); return; }
     const v = htmlToMd(el).trim();
     if (v !== text) { if (!controlled) setLocalText(v); onSave(v); }
     setEditing(false);
     setHovered(false);
+    onEditEnd?.();
   };
-  const cancel = () => { setEditing(false); setHovered(false); };
+  const cancel = () => { setEditing(false); setHovered(false); onEditEnd?.(); };
   const begin = (e) => { e.stopPropagation(); e.preventDefault(); setEditing(true); };
 
   const onKey = (e) => {
@@ -3286,6 +3438,8 @@ function EditableText({ text, onSave, editable, style, multiline, className, pre
     if (e.key === "Enter" && !multiline && !e.shiftKey) { e.preventDefault(); commit(); }
     if ((e.ctrlKey || e.metaKey) && e.key === "b") { e.preventDefault(); document.execCommand("bold"); }
     if ((e.ctrlKey || e.metaKey) && e.key === "i") { e.preventDefault(); document.execCommand("italic"); }
+    // Explicit like b/i: same result in every browser (Firefox maps Ctrl+U to view-source).
+    if ((e.ctrlKey || e.metaKey) && e.key === "u") { e.preventDefault(); document.execCommand("underline"); }
   };
   // Paste plain text only. The browser's default rich paste puts clipboard HTML
   // (for example a copied web image with a remote src) into the live editable
@@ -4119,6 +4273,10 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
   // the comparison/matrix cases read pinKey/setPinKey directly for their columns.
   const [pinKey, setPinKey] = useState(null);
   const _pin = { key: pinKey, set: setPinKey };
+  // Image "+ Add title" chip (editor only): mounted only while the image is
+  // hovered or a new caption is being typed, so a plain render adds no DOM.
+  const [chipHover, setChipHover] = useState(false);
+  const [chipAdding, setChipAdding] = useState(false);
   switch (block.type) {
 
     case "heading": {
@@ -4158,7 +4316,16 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
         minHeight: 0,
         overflow: "hidden",
       } : null;
-      return <ZoomWrap enabled={!!block.src && !block._solo} link={block.link} fill={!!block._gridCell}><div className={cls} style={{ display: "flex", flexDirection: "column", alignItems: block.align === "left" ? "flex-start" : block.align === "right" ? "flex-end" : "center", ...(block._solo ? { flex: 1, width: "100%", justifyContent: "center" } : {}), ...(block._gridCell ? { flex: 1, minHeight: 0, minWidth: 0, width: "100%", justifyContent: "center", position: "relative" } : {}), ...block.style }}>
+      // Story flags are set by SlideContent after sanitization (never deck keys):
+      // _storyN = 1-based story number (caption prefix + data-story-idx),
+      // _storyNav = a tile click jumps to the story image (no ZoomWrap zoom),
+      // _captionChip = this surface may offer the editor "+ Add title" chip.
+      const storyN = Number.isInteger(block._storyN) && block._storyN > 0 ? block._storyN : undefined;
+      const showChip = !!block._captionChip && canEdit && !!block.src && !block.caption && !block._storyNav;
+      const captionStyle = { fontFamily: FONT.body, fontSize: SIZES.sm, color: st.textDim, marginTop: 8, flexShrink: 0 };
+      return <ZoomWrap enabled={!!block.src && !block._solo && !block._storyNav} link={block.link} fill={!!block._gridCell}><div className={cls} data-story-idx={storyN}
+        onMouseEnter={block._captionChip ? () => setChipHover(true) : undefined} onMouseLeave={block._captionChip ? () => setChipHover(false) : undefined}
+        style={{ display: "flex", flexDirection: "column", alignItems: block.align === "left" ? "flex-start" : block.align === "right" ? "flex-end" : "center", ...(block._solo ? { flex: 1, width: "100%", justifyContent: "center" } : {}), ...(block._gridCell ? { flex: 1, minHeight: 0, minWidth: 0, width: "100%", justifyContent: "center", position: "relative" } : {}), ...(block._storyNav && block.src ? { cursor: "zoom-in" } : {}), ...block.style }}>
         {block._gridCell ? <div data-image-grid-media="" style={gridMediaStyle}>
           {block.src ? <GridCellImage src={block.src} alt={block.alt || ""} style={
           // Absolutely fill the grid cell so the row height is driven ONLY by the
@@ -4173,7 +4340,13 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
           ? { width: "100%", height: "100%", objectFit: block.fit || "contain", borderRadius: 0 }
           : { maxWidth: block.maxWidth || "100%", maxHeight: block.maxHeight ?? "100%", borderRadius: block.rounded ?? 8, objectFit: block.fit || "contain", boxShadow: block.shadow ? "0 8px 32px rgba(0,0,0,0.3)" : "none" }
         } /> : <div style={{ padding: 32, color: st.textDim, fontFamily: FONT.mono, fontSize: 11 }}>Paste image (Ctrl+V)</div>}
-        {block.caption && <EditableText text={block.caption} editable={textEditable} onSave={(v) => onChange?.({ caption: v })} style={{ fontFamily: FONT.body, fontSize: SIZES.sm, color: st.textDim, marginTop: 8, flexShrink: 0 }} />}
+        {block.caption && <EditableText text={block.caption} editable={textEditable} onSave={(v) => onChange?.({ caption: v })} prefix={storyN ? `${storyN} · ` : undefined} style={captionStyle} />}
+        {!block.caption && chipAdding && canEdit && <EditableText text="" autoEdit editable={textEditable} onSave={(v) => { if (v) onChange?.({ caption: v }); }} onEditEnd={() => { setChipAdding(false); setChipHover(false); }} style={captionStyle} />}
+        {showChip && chipHover && !chipAdding && <div data-no-pdf="" data-testid="caption-chip" role="button" tabIndex={0}
+          onClick={(e) => { e.stopPropagation(); e.preventDefault(); setChipAdding(true); }}
+          onMouseDown={(e) => e.stopPropagation()}
+          onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.stopPropagation(); e.preventDefault(); setChipAdding(true); } }}
+          style={{ position: "absolute", left: "50%", bottom: 8, transform: "translateX(-50%)", zIndex: 6, padding: "2px 8px", borderRadius: 10, background: "rgba(15,23,42,0.78)", color: "#e2e8f0", fontFamily: FONT.mono, fontSize: 10, whiteSpace: "nowrap", cursor: "pointer", boxShadow: "0 2px 6px rgba(0,0,0,0.35)" }}>+ Add title</div>}
       </div></ZoomWrap>;
     }
 
@@ -4948,6 +5121,130 @@ function BrandingOverlay({ branding, index, total, displayIndex, displayTotal, s
 // which regime it is in; an outward offset is only safe when a padding gutter
 // is guaranteed to exist.
 //
+// ━━━ Story zoom layer (story images in Present) ━━━━━━━━━━━━━━━━━━━
+// Shows story image k (1-based) over the slide while story.zoomed, with an
+// index rail of thumbnails on the right. It renders nothing when not zoomed
+// (after the zoom-out animation), so a slide without story keeps its DOM.
+// Every <img> uses the src of the slide's own (already sanitized) image block,
+// as a React attribute; the accent reaches CSS only through cssColor().
+const STORY_RAIL_W = 64;
+const STORY_THUMB_H = 36;
+function storyPrefersReducedMotion() {
+  try { return !!window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches; } catch (_) { return false; }
+}
+// Box (center + size) of an image with aspect a (w/h) drawn objectFit:contain in rect r.
+function storyContainBox(r, a) {
+  const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+  if (!(a > 0) || !(r.width > 0) || !(r.height > 0)) return { cx, cy, w: r.width, h: r.height };
+  const w = Math.min(r.width, r.height * a);
+  return { cx, cy, w, h: w / a };
+}
+function StoryZoomLayer({ items, story, animate, onJump, onZoomOut, hostRef, pad, accent }) {
+  const n = items.length;
+  const zoomed = !!story && story.zoomed === true && Number.isInteger(story.k) && story.k >= 1 && story.k <= n;
+  const kNow = zoomed ? story.k : 0;
+  // Derived state from the previous render: on zoom-out, image k stays on
+  // screen for its shrink animation (closingK), then the effect unmounts it.
+  const [trackK, setTrackK] = useState(kNow);
+  const [closingK, setClosingK] = useState(0);
+  if (trackK !== kNow) {
+    setTrackK(kNow);
+    setClosingK(!kNow && trackK && animate && !storyPrefersReducedMotion() ? trackK : 0);
+  }
+  const displayK = kNow || closingK;
+  const boxRef = useRef(null);
+  const imgRef = useRef(null);
+  const railRef = useRef(null);
+  const lastKRef = useRef(0);
+
+  // Transform that puts the zoomed image box over story tile k (null: no tile).
+  const tileTransform = (k) => {
+    const host = hostRef.current, box = boxRef.current;
+    if (!host || !box) return null;
+    const tile = host.querySelector(`[data-story-idx="${k | 0}"]`);
+    const tileImg = tile && tile.querySelector("img");
+    if (!tileImg) return null;
+    const tr = tileImg.getBoundingClientRect();
+    const scale = host.offsetWidth > 0 ? host.getBoundingClientRect().width / host.offsetWidth : 1;
+    if (!(tr.width > 0) || !(scale > 0)) return null;
+    const nat = imgRef.current && imgRef.current.naturalWidth > 0 ? imgRef.current : tileImg;
+    const a = nat.naturalWidth > 0 && nat.naturalHeight > 0 ? nat.naturalWidth / nat.naturalHeight : 0;
+    const from = storyContainBox(tr, a), to = storyContainBox(box.getBoundingClientRect(), a);
+    if (!(to.w > 0)) return null;
+    return `translate(${(from.cx - to.cx) / scale}px, ${(from.cy - to.cy) / scale}px) scale(${from.w / to.w})`;
+  };
+
+  useLayoutEffect(() => {
+    const prevK = lastKRef.current;
+    lastKRef.current = kNow;
+    const box = boxRef.current, rail = railRef.current, img = imgRef.current;
+    if (!box) return;
+    const motion = !!animate && !storyPrefersReducedMotion();
+    if (kNow && !prevK) {
+      // Zoom in: fly from the tile to the zoomed box; the rail fades in.
+      box.style.transition = "none"; box.style.transform = ""; box.style.opacity = "";
+      if (rail) { rail.style.transition = "none"; rail.style.opacity = motion ? "0" : ""; }
+      if (!motion) return;
+      const from = tileTransform(kNow);
+      if (from) box.style.transform = from; else box.style.opacity = "0";
+      void box.offsetWidth;
+      box.style.transition = "transform 350ms ease-out, opacity 350ms ease-out";
+      box.style.transform = ""; box.style.opacity = "";
+      if (rail) { void rail.offsetWidth; rail.style.transition = "opacity 150ms ease-out"; rail.style.opacity = ""; }
+      return;
+    }
+    if (kNow && prevK && kNow !== prevK) {
+      // Image to image: the new image slides in from the side it comes from.
+      if (!motion || !img) return;
+      const dir = kNow > prevK ? 1 : -1;
+      img.style.transition = "none"; img.style.transform = `translateX(${dir * 30}%)`; img.style.opacity = "0";
+      void img.offsetWidth;
+      img.style.transition = "transform 250ms ease-out, opacity 250ms ease-out";
+      img.style.transform = ""; img.style.opacity = "";
+      return;
+    }
+    if (!kNow && closingK) {
+      // Zoom out: shrink back into the tile, then unmount.
+      const to = tileTransform(closingK);
+      let done = false;
+      const finish = () => { if (done) return; done = true; setClosingK(0); };
+      const onEnd = (e) => { if (e.target === box) finish(); };
+      box.style.transition = "transform 300ms ease-in-out, opacity 300ms ease-in-out";
+      if (to) box.style.transform = to; else box.style.opacity = "0";
+      if (rail) { rail.style.transition = "opacity 150ms ease-out"; rail.style.opacity = "0"; }
+      box.addEventListener("transitionend", onEnd);
+      const t = setTimeout(finish, 360);
+      return () => { clearTimeout(t); box.removeEventListener("transitionend", onEnd); };
+    }
+  }, [kNow, closingK]);
+
+  if (!displayK) return null;
+  const item = items[displayK - 1];
+  if (!item) return null;
+  const live = zoomed;
+  return (
+    <div data-story-layer="" onClick={live && onZoomOut ? (e) => { e.stopPropagation(); onZoomOut(); } : undefined}
+      style={{ position: "absolute", inset: 0, padding: pad, boxSizing: "border-box", zIndex: 4, display: "flex", flexDirection: "row", gap: 8, cursor: live && onZoomOut ? "zoom-out" : "default", pointerEvents: live ? "auto" : "none" }}>
+      <div ref={boxRef} data-story-image="" style={{ flex: 1, minWidth: 0, minHeight: 0, position: "relative" }}>
+        <img key={displayK} ref={imgRef} src={item.src} alt={item.alt} draggable={false} style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "contain", display: "block" }} />
+      </div>
+      <div ref={railRef} data-story-rail="" style={{ width: STORY_RAIL_W + 6, flexShrink: 0, padding: 3, boxSizing: "border-box", display: "flex", flexDirection: "column", justifyContent: "center", gap: 6, minHeight: 0, overflow: "hidden" }}>
+        {items.map((it, j) => {
+          const cur = j + 1 === displayK;
+          const ts = { width: STORY_RAIL_W, height: STORY_THUMB_H, flex: `0 1 ${STORY_THUMB_H}px`, minHeight: 12, padding: 0, margin: 0, border: "none", borderRadius: 4, overflow: "hidden", boxSizing: "border-box", background: "rgba(127,127,127,0.16)", opacity: cur ? 1 : 0.55, outline: cur ? `2px solid ${accent}` : "none", outlineOffset: 1, cursor: onJump ? "pointer" : "default", display: "block" };
+          const thumb = <img src={it.src} alt="" draggable={false} style={{ width: "100%", height: "100%", objectFit: "contain", display: "block", pointerEvents: "none" }} />;
+          // Thumbs are buttons only when the surface can jump (Present). A mouse
+          // click must not focus the button: Space would then press it again.
+          return onJump
+            ? <button key={j} type="button" aria-label={`Image ${j + 1}`} aria-current={cur ? "true" : undefined}
+                onMouseDown={(e) => e.preventDefault()} onClick={(e) => { e.stopPropagation(); onJump(j + 1); }} style={ts}>{thumb}</button>
+            : <div key={j} aria-current={cur ? "true" : undefined} style={ts}>{thumb}</div>;
+        })}
+      </div>
+    </div>
+  );
+}
+
 // ━━━ Slide Content ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // ━━━ Inline Comment Card (review mode) ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 function InlineCommentCard({ comment, itemId, slideIndex, dispatch }) {
@@ -4966,7 +5263,7 @@ function InlineCommentCard({ comment, itemId, slideIndex, dispatch }) {
   );
 }
 
-function SlideContent({ slide, index, total, branding, editable, onEdit, presenting, onBlockEdit, blockEditing, fontScale = 1, reviewMode, itemId, dispatch: externalDispatch, displayIndex, displayTotal }) {
+function SlideContent({ slide, index, total, branding, editable, onEdit, presenting, onBlockEdit, blockEditing, fontScale = 1, reviewMode, itemId, dispatch: externalDispatch, displayIndex, displayTotal, story, storyAnimate, onStoryJump, onStoryZoomOut, presentSurface }) {
   const st = { text: slide.color || T.text, muted: slide.mutedColor || T.textMuted, textDim: T.textDim, accent: slide.accent || T.accent, border: T.border, codeBg: T.codeBg };
   // Hidden elements (CR: hide any element). In presentation they are removed
   // entirely — no render, no layout — so a slide can carry a title that only
@@ -4991,6 +5288,24 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
   const colsRMediaOnly = isMediaOnlyColumn(colsR);
   const hasMediaOnlyColumn = colsLMediaOnly || colsRMediaOnly;
   const hasDirectColumnImage = colsL.some((b) => b?.type === "image") || colsR.some((b) => b?.type === "image");
+  // Story images. storyImageList indexes the raw slide arrays; this render
+  // drops hidden blocks when presenting, so map each raw index to the index
+  // renderBlockWithComments sees. A present surface (also with presentEdit)
+  // uses the Present list, so the numbers match what SlidePanel steps through.
+  const storyList = slide.story === true ? storyImageList(slide, true) : [];
+  const storyActive = storyIsActive(slide, storyList);
+  const storyNumOf = new Map();
+  if (storyActive) {
+    const rB = Array.isArray(slide.blocks) ? slide.blocks : [], rL = Array.isArray(slide.L) ? slide.L : [], rR = Array.isArray(slide.R) ? slide.R : [];
+    const visBefore = (arr, j) => { if (!presenting) return j; let c = 0; for (let q = 0; q < j; q++) if (!(arr[q] && arr[q].hidden)) c++; return c; };
+    storyList.forEach((it, pos) => {
+      const r = it.idx < rB.length ? visBefore(rB, it.idx)
+        : it.idx < rB.length + rL.length ? blocks.length + visBefore(rL, it.idx - rB.length)
+        : blocks.length + colsL.length + visBefore(rR, it.idx - rB.length - rL.length);
+      if (!storyNumOf.has(r)) storyNumOf.set(r, pos + 1);
+    });
+  }
+  const storyZoomed = storyActive && !!story && story.zoomed === true && Number.isInteger(story.k) && story.k >= 1 && story.k <= storyList.length;
   // Deck values must not reach CSS directly. Unknown values use the normal
   // layout default instead of becoming an invalid justifyContent value.
   const verticalAlignToJustify = (value) => {
@@ -5046,6 +5361,14 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
   const [gridBoxes, setGridBoxes] = useState({});
   const [, setAspectTick] = useState(0);
   const [hoveredBlock, setHoveredBlock] = useState(null);
+  // Editor tile drag reorder: { key, idxs, from, order, rects, snap } while a
+  // drag runs (order[q] = position in idxs of the block shown in slot q).
+  const [tileDrag, setTileDrag] = useState(null);
+  const [hoverCell, setHoverCell] = useState(null);
+  const tileDragRef = useRef(null);
+  tileDragRef.current = tileDrag;
+  const tileDragLatest = useRef(null);
+  tileDragLatest.current = { slide, onEdit };
   const [itemHovered, setItemHovered] = useState(false); // an inner item's chrome is hovered → hide block toolbar
   const [editingLink, setEditingLink] = useState(null);
   const [editingBlockIdx, setEditingBlockIdx] = useState(null);
@@ -5113,6 +5436,52 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
     const [key, arr, j] = blockSlot(blockIdx);
     onEdit({ [key]: arr.map((b, i) => i === j ? { ...b, ...blockPatch } : b) });
   }, [onEdit, blocks, colsL, colsR]);
+
+  // Window listeners for a running tile drag: move = live reflow, up = one
+  // onEdit({blocks}) (one undo step), Esc / cancel / blur = no change.
+  const tileDragOn = tileDrag ? tileDrag.key : null;
+  useEffect(() => {
+    if (tileDragOn == null) return;
+    const move = (e) => {
+      const d = tileDragRef.current; if (!d) return;
+      const t = d.rects.findIndex((r) => e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom);
+      const cur = d.order.indexOf(d.from);
+      if (t < 0 || t === cur) return;
+      const order = d.order.slice(); order.splice(cur, 1); order.splice(t, 0, d.from);
+      setTileDrag({ ...d, order });
+    };
+    const cancel = () => setTileDrag(null);
+    const up = () => {
+      const d = tileDragRef.current;
+      setTileDrag(null);
+      const { slide: s, onEdit: edit } = tileDragLatest.current || {};
+      if (!d || !edit || !s || d.order.every((p, q) => p === q)) return;
+      // Fail closed if the slide changed during the drag.
+      const arr = s.blocks;
+      if (arr !== d.snap || !Array.isArray(arr) || d.idxs.some((i) => !arr[i] || arr[i].type !== "image")) return;
+      const next = arr.slice();
+      d.idxs.forEach((slotIdx, q) => { next[slotIdx] = arr[d.idxs[d.order[q]]]; });
+      edit({ blocks: next });
+    };
+    const key = (e) => { if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); cancel(); } };
+    const block = (e) => e.preventDefault();
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+    window.addEventListener("pointercancel", cancel);
+    window.addEventListener("blur", cancel);
+    window.addEventListener("keydown", key, true);
+    document.addEventListener("selectstart", block);
+    document.addEventListener("dragstart", block);
+    return () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      window.removeEventListener("pointercancel", cancel);
+      window.removeEventListener("blur", cancel);
+      window.removeEventListener("keydown", key, true);
+      document.removeEventListener("selectstart", block);
+      document.removeEventListener("dragstart", block);
+    };
+  }, [tileDragOn]);
 
   const handleBlockRemove = useCallback((blockIdx) => {
     if (!onEdit) return;
@@ -5535,8 +5904,31 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
   };
 
   // Render a block followed by its inline comments
-  const renderBlockWithComments = (b, i) => {
-    const block = renderBlockItem(b, i);
+  const renderBlockWithComments = (b0, i) => {
+    // Story / caption-chip flags go on top-level image blocks only, after
+    // sanitization (renderer-private "_" keys). Without story and outside the
+    // editor no flag is set, so the render is unchanged.
+    let b = b0, jump = 0;
+    if (b0 && b0.type === "image") {
+      const sn = storyActive ? storyNumOf.get(i) : undefined;
+      const nav = !!(sn && onStoryJump && b0.src && !b0.link);
+      const chip = !!(editable && onEdit && !presenting && !presentSurface);
+      if (sn || nav || chip) b = { ...b0, ...(sn ? { _storyN: sn } : {}), ...(nav ? { _storyNav: true } : {}), ...(chip ? { _captionChip: true } : {}) };
+      if (nav) jump = sn;
+    }
+    let block = renderBlockItem(b, i);
+    if (jump) {
+      // A click on the tile image (not on its caption or editor chrome) jumps
+      // to that story image. Capture phase, so ZoomWrap-style handlers below
+      // never see it. Adds a handler only, no DOM attribute.
+      block = React.cloneElement(block, { onClickCapture: (e) => {
+        const t = e.target;
+        if (!t || typeof t.closest !== "function" || !t.closest("[data-image-grid-media], img")) return;
+        if (t.closest("button, [contenteditable='true'], [data-testid='caption-chip']")) return;
+        e.stopPropagation(); e.preventDefault();
+        onStoryJump(jump);
+      } });
+    }
     const comments = renderInlineComments(i);
     if (!comments) return [block];
     return [block, ...comments];
@@ -5568,8 +5960,14 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
     // placed absolutely from the plan (row height = its share hw, cell width = its
     // share f of the row width after gaps; a short row is centered). The cells
     // stay flat siblings keyed by block, so a new plan moves them, never remounts.
-    const maxW = idxs.map((bi) => { const z = IMAGE_NATURAL_SIZE.get(blocks[bi].src); return z && z.w > 0 ? z.w * GRID_IMG_MAX_UPSCALE : 0; });
-    const plan = imageGridPlan(idxs.map((bi) => IMAGE_ASPECT_CACHE.get(blocks[bi].src)), box?.[0], box?.[1], gap, gridColsFor(runLen, region), slide.imageCols ? Math.min(6, Math.max(1, slide.imageCols | 0)) : 0, maxW);
+    // Editor tile drag: while a drag runs, slot q shows block idxs[order[q]], so
+    // the plan reflows live. DOM order stays idxs (cells only move), so a drag
+    // never re-inserts nodes. Without a drag, seq === idxs (render unchanged).
+    const drag = tileDrag && tileDrag.key === gridKey && tileDrag.idxs.length === runLen && tileDrag.idxs.every((v, q) => v === idxs[q]) ? tileDrag : null;
+    const seq = drag ? drag.order.map((p) => idxs[p]) : idxs;
+    const canReorder = !!(editable && onEdit && !presenting && !presentSurface && runLen >= 2 && !isSoloImage);
+    const maxW = seq.map((bi) => { const z = IMAGE_NATURAL_SIZE.get(blocks[bi].src); return z && z.w > 0 ? z.w * GRID_IMG_MAX_UPSCALE : 0; });
+    const plan = imageGridPlan(seq.map((bi) => IMAGE_ASPECT_CACHE.get(blocks[bi].src)), box?.[0], box?.[1], gap, gridColsFor(runLen, region), slide.imageCols ? Math.min(6, Math.max(1, slide.imageCols | 0)) : 0, maxW);
     const rows = plan.rows.length;
     const hwSum = plan.rows.reduce((t, r) => t + r.hw, 0) || 1, gapsH = gap * (rows - 1);
     const len = (pct, px) => `calc(${pct * 100}% + ${px}px)`;
@@ -5604,7 +6002,8 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
     return (
       <div key={`__imgrid-${idxs[0]}`} data-testid="image-grid" data-image-grid={region} data-image-count={runLen} data-image-grid-key={gridKey} data-image-cols={plan.cols} data-image-rows={rows}
         style={{ position: "relative", flex: gridHeight == null ? "1 1 0" : "0 0 auto", height: gridHeight == null ? undefined : gridHeight, maxHeight: "100%", minHeight: minGridH, minWidth: 0, width: "100%" }}>
-        {idxs.map((bi, k) => {
+        {idxs.map((bi, p) => {
+          const k = drag ? drag.order.indexOf(p) : p;
           // A solo image fills the slide: keep its _solo flag, so it is not click-to-zoom.
           const rendered = renderBlockWithComments({ ...blocks[bi], _gridCell: true, ...(isSoloImage ? { _solo: true } : {}), ...(isSoloImage && blocks[bi].rounded == null ? { rounded: 0 } : {}) }, bi);
           const [blockEl, ...rest] = rendered;
@@ -5614,8 +6013,21 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
             style: { ...(blockEl.props.style || {}), display: "flex", flexDirection: "column", flex: 1, minHeight: 0, minWidth: 0, width: "100%" },
           });
           return (
-            <div key={`__imgcell-${bi}`} data-testid="image-grid-cell" style={{ position: "absolute", ...cellPos[k], display: "flex", flexDirection: "column", minWidth: 0, minHeight: 0 }}>
+            <div key={`__imgcell-${bi}`} data-testid="image-grid-cell"
+              onMouseEnter={canReorder ? () => setHoverCell(bi) : undefined} onMouseLeave={canReorder ? () => setHoverCell((h) => (h === bi ? null : h)) : undefined}
+              style={{ position: "absolute", ...cellPos[k], display: "flex", flexDirection: "column", minWidth: 0, minHeight: 0, ...(drag ? { transition: "top 0.18s ease, left 0.18s ease, width 0.18s ease, height 0.18s ease" } : {}), ...(drag && drag.from === p ? { zIndex: 3, opacity: 0.8 } : {}) }}>
               {filled}{rest}
+              {canReorder && (drag ? drag.from === p : hoverCell === bi) && <div data-no-pdf="" data-testid="tile-drag-handle" title="Drag to reorder"
+                onPointerDown={(e) => {
+                  if (e.button !== 0) return;
+                  e.preventDefault(); e.stopPropagation();
+                  const grid = e.currentTarget.closest('[data-testid="image-grid"]');
+                  const cells = grid ? Array.from(grid.children).filter((c) => c.getAttribute("data-testid") === "image-grid-cell") : [];
+                  if (cells.length !== runLen) return;
+                  setTileDrag({ key: gridKey, idxs: idxs.slice(), from: p, order: idxs.map((_, q) => q), rects: cells.map((c) => c.getBoundingClientRect()), snap: slide.blocks });
+                }}
+                onClick={(e) => e.stopPropagation()} onMouseDown={(e) => e.stopPropagation()}
+                style={{ position: "absolute", top: 6, left: "50%", transform: "translateX(-50%)", zIndex: 12, width: 24, height: 18, borderRadius: 4, background: "rgba(15,23,42,0.78)", color: "#e2e8f0", fontSize: 13, lineHeight: "18px", textAlign: "center", cursor: drag ? "grabbing" : "grab", touchAction: "none", userSelect: "none", boxShadow: "0 2px 6px rgba(0,0,0,0.35)" }}>⠿</div>}
             </div>
           );
         })}
@@ -5716,11 +6128,12 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
   return (
     <SlideErrorBoundary>
       <div ref={outerRef} data-vela-slide-content="" style={{ height: "100%", padding: pad, position: "relative", overflow: "visible", boxSizing: "border-box", display: "flex", flexDirection: "column", ...bgStyle }}>
-        <div ref={innerRef} style={{ position: "relative", zIndex: 2, display: "flex", flexDirection: isSplit ? "row" : "column", justifyContent: isSplit ? "stretch" : fitJustify, alignItems: isSplit ? "stretch" : (align === "center" ? "center" : "stretch"), textAlign: align, gap: isSplit ? (slide.splitGap || 32) : (slide.gap || 12), transform: fitScale < 1 ? `scale(${fitScale})` : "none", transformOrigin: "top left", width: fitScale < 1 ? `${100 / fitScale}%` : "100%", height: fitScale < 1 ? `${100 / fitScale}%` : "100%", maxWidth: fitScale < 1 ? `${100 / fitScale}%` : "100%", flex: fitScale < 1 ? undefined : 1, flexShrink: fitScale < 1 && (isSplit || isCols) ? 0 : undefined, boxSizing: "border-box" }}>
+        <div ref={innerRef} style={{ position: "relative", zIndex: 2, display: "flex", flexDirection: isSplit ? "row" : "column", justifyContent: isSplit ? "stretch" : fitJustify, alignItems: isSplit ? "stretch" : (align === "center" ? "center" : "stretch"), textAlign: align, gap: isSplit ? (slide.splitGap || 32) : (slide.gap || 12), transform: fitScale < 1 ? `scale(${fitScale})` : "none", transformOrigin: "top left", width: fitScale < 1 ? `${100 / fitScale}%` : "100%", height: fitScale < 1 ? `${100 / fitScale}%` : "100%", maxWidth: fitScale < 1 ? `${100 / fitScale}%` : "100%", flex: fitScale < 1 ? undefined : 1, flexShrink: fitScale < 1 && (isSplit || isCols) ? 0 : undefined, boxSizing: "border-box", ...(storyZoomed ? { visibility: "hidden" } : {}) }}>
           <ItemHoverContext.Provider value={setItemHovered}>
             {renderBlocks()}
           </ItemHoverContext.Provider>
         </div>
+        {storyActive && story && <StoryZoomLayer items={storyList} story={story} animate={!!storyAnimate} onJump={onStoryJump} onZoomOut={onStoryZoomOut} hostRef={outerRef} pad={pad} accent={cssColor(slide.accent) || T.accent} />}
         {/* Slide-level comments (no blockIndex) — top-right */}
         {reviewMode && externalDispatch && (() => {
           const unanchored = slideComments.filter((c) => c.blockIndex == null);
@@ -5896,7 +6309,8 @@ function innerReducer(state, a) {
     // sanitizeSlide). The STARTUP_PATCH.slides path dispatches raw deck JSON here, making
     // those zero-click. Sanitize the merged slide through the canonical sanitizeSlide (a
     // fresh object — no shared-ref mutation), matching the LOAD_LANES backstop.
-    case "UPDATE_SLIDE": _dirtyMods.add(a.id); return mapItems((i) => i.id === a.id ? { ...i, slides: i.slides.map((s, idx) => { if (idx !== a.index) return s; const p = a.patch || {}; const updated = a.merge ? { ...s, ...p } : { title: s.title, duration: s.duration, ...p }; if (s.timeLock && !a.merge && !("timeLock" in p)) { updated.timeLock = true; updated.duration = s.duration; } return sanitizeSlide(updated) || s; }) } : i);
+    // A replace (merge:false, e.g. an AI rewrite of the blocks) keeps story mode unless the patch sets `story`.
+    case "UPDATE_SLIDE": _dirtyMods.add(a.id); return mapItems((i) => i.id === a.id ? { ...i, slides: i.slides.map((s, idx) => { if (idx !== a.index) return s; const p = a.patch || {}; const updated = a.merge ? { ...s, ...p } : { title: s.title, duration: s.duration, ...p }; if (s.timeLock && !a.merge && !("timeLock" in p)) { updated.timeLock = true; updated.duration = s.duration; } if (s.story === true && !a.merge && !("story" in p)) updated.story = true; return sanitizeSlide(updated) || s; }) } : i);
     case "REMOVE_SLIDE": _dirtyMods.add(a.id); return mapItems((i) => i.id === a.id ? { ...i, slides: i.slides.filter((_, idx) => idx !== a.index) } : i);
     // Multi-slide delete as a SINGLE history-producing reduce (PowerPoint parity:
     // one gesture = one Ctrl+Z). Removes all `indices` from one module at once.
@@ -7658,7 +8072,7 @@ function computeSlideLayoutStats(slideEl) {
 }
 
 // ━━━ Virtual Slide ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-function VirtualSlide({ slide, index, total, innerRef, branding, editable, onEdit, mode = "fit-width", onBlockEdit, blockEditing, fontScale, virtualW, virtualH, bordered, reviewMode, itemId, dispatch: externalDispatch, displayIndex, displayTotal, forceEdit }) {
+function VirtualSlide({ slide, index, total, innerRef, branding, editable, onEdit, mode = "fit-width", onBlockEdit, blockEditing, fontScale, virtualW, virtualH, bordered, reviewMode, itemId, dispatch: externalDispatch, displayIndex, displayTotal, forceEdit, story, storyAnimate, onStoryJump, onStoryZoomOut }) {
   const outerRef = useRef(null);
   const isFill = mode === "fill";
 
@@ -7719,6 +8133,10 @@ function VirtualSlide({ slide, index, total, innerRef, branding, editable, onEdi
   const bg = cssColor(slide?.bg) || cssGradient(slide?.bgGradient) || T.slideBg;
   const isFullscreen = mode === "fit-viewport" || isFill;
   const aspectRatio = `${vw}/${vh}`;
+  // The Present surface (fullscreen, not the editor's bordered viewport). It
+  // stays a present surface with presentEdit on, so editor-only chrome such as
+  // the caption chip and tile drag never shows there.
+  const presentSurface = isFullscreen && !bordered;
 
   return (
     <div ref={outerRef} style={isFullscreen
@@ -7731,7 +8149,8 @@ function VirtualSlide({ slide, index, total, innerRef, branding, editable, onEdi
         transform: isFullscreen ? `translate(${offset.x}px, ${offset.y}px) scale(${scale})` : `scale(${scale})`,
         transformOrigin: "top left", background: bg, position: "absolute", top: 0, left: 0,
       }}>
-        {slide && <SlideContent key={`${index}-${vw}-${vh}`} slide={slide} index={index} total={total} branding={branding} editable={editable} onEdit={onEdit} presenting={((mode === "fit-viewport" || isFill) && !bordered) && !forceEdit} onBlockEdit={onBlockEdit} blockEditing={blockEditing} fontScale={fontScale} reviewMode={reviewMode} itemId={itemId} dispatch={externalDispatch} displayIndex={displayIndex} displayTotal={displayTotal} />}
+        {slide && <SlideContent key={`${index}-${vw}-${vh}`} slide={slide} index={index} total={total} branding={branding} editable={editable} onEdit={onEdit} presenting={((mode === "fit-viewport" || isFill) && !bordered) && !forceEdit} onBlockEdit={onBlockEdit} blockEditing={blockEditing} fontScale={fontScale} reviewMode={reviewMode} itemId={itemId} dispatch={externalDispatch} displayIndex={displayIndex} displayTotal={displayTotal}
+          story={story} storyAnimate={storyAnimate === undefined ? presentSurface : !!storyAnimate} onStoryJump={onStoryJump} onStoryZoomOut={onStoryZoomOut} presentSurface={presentSurface} />}
       </div>
     </div>
   );
@@ -8157,7 +8576,7 @@ function _ensureGalleryShimmer() {
   style.textContent = `@keyframes velaGalleryShimmer{0%{background-position:-200% 0}100%{background-position:200% 0}}`;
   document.head.appendChild(style);
 }
-function GalleryThumb({ slide, slideIdx, total, branding }) {
+function GalleryThumb({ slide, slideIdx, total, branding, story }) {
   const [loaded, setLoaded] = useState(false);
   useEffect(() => {
     _ensureGalleryShimmer();
@@ -8169,7 +8588,7 @@ function GalleryThumb({ slide, slideIdx, total, branding }) {
     : "linear-gradient(90deg, rgba(0,0,0,0.03) 25%, rgba(0,0,0,0.07) 50%, rgba(0,0,0,0.03) 75%)";
   return (
     <div style={{ width: "100%", aspectRatio: "16/9", position: "relative", overflow: "hidden" }}>
-      <VirtualSlide slide={slide} index={slideIdx} total={total} branding={branding} editable={false} mode="fit-width" bordered />
+      <VirtualSlide slide={slide} index={slideIdx} total={total} branding={branding} editable={false} mode="fit-width" bordered story={story} storyAnimate={false} />
       {!loaded && (
         <div style={{ position: "absolute", inset: 0, zIndex: 2, background: cssColor(slide?.bg) || T.slideBg, display: "flex", alignItems: "center", justifyContent: "center", borderRadius: 6, transition: "opacity 0.3s ease" }}>
           <div style={{ width: "60%", height: 6, borderRadius: 3, backgroundImage: shimmerBg, backgroundSize: "200% 100%", animation: "velaGalleryShimmer 1.4s ease-in-out infinite" }} />
@@ -8230,8 +8649,14 @@ function fmtElapsed(totalSeconds) {
   const r = s % 60;
   return `${m}:${String(r).padStart(2, "0")}`;
 }
-function PresenterView({ current, next, index, total, duration, elapsed, branding, onClose }) {
+function PresenterView({ current, next, index, total, duration, elapsed, branding, onClose, currentStory, nextStory }) {
   const notes = (current?.notes || "").trim();
+  // Story slide: the NEXT step can still be on this slide (nextStory set), so
+  // NEXT then shows the current slide at that step, labelled "image k/N" or
+  // "overview". Without nextStory, NEXT is the next slide as before.
+  const nextInSlide = !!(nextStory && current);
+  const nextStoryN = nextInSlide ? storyImageList(current, true).length : 0;
+  const nextStoryLabel = nextInSlide ? (nextStory.zoomed ? `image ${nextStory.k}/${nextStoryN}` : "overview") : "";
   const studyNotes = (current?.studyNotes?.text || "").trim();
   return (
     <div data-testid="presenter-view" onClick={(e) => e.stopPropagation()} style={{ position: "fixed", inset: 0, zIndex: 10000, background: "#0a0d14", color: "#e2e8f0", display: "flex", flexDirection: "column", overflow: "hidden" }}>
@@ -8248,7 +8673,7 @@ function PresenterView({ current, next, index, total, duration, elapsed, brandin
         <div style={{ flex: 2, display: "flex", flexDirection: "column", gap: 10, minWidth: 0 }}>
           <div style={{ fontFamily: FONT.mono, fontSize: 10, color: "#64748b", letterSpacing: "0.05em" }}>NOW</div>
           <div style={{ flex: 1, minHeight: 0, borderRadius: 10, overflow: "hidden", border: "2px solid #3b82f6", boxShadow: "0 0 24px rgba(59,130,246,0.25)", display: "flex", alignItems: "center" }}>
-            {current ? <GalleryThumb slide={current} slideIdx={index} total={total} branding={branding} /> : <div style={{ width: "100%", padding: 40, textAlign: "center", color: "#64748b" }}>No slide</div>}
+            {current ? <GalleryThumb slide={current} slideIdx={index} total={total} branding={branding} story={currentStory} /> : <div style={{ width: "100%", padding: 40, textAlign: "center", color: "#64748b" }}>No slide</div>}
           </div>
           <div data-testid="presenter-notes" style={{ flexShrink: 0, maxHeight: "38%", overflowY: "auto", background: "rgba(255,255,255,0.05)", borderRadius: 8, padding: 14 }}>
             <div style={{ fontFamily: FONT.mono, fontSize: 10, color: "#64748b", letterSpacing: "0.05em", marginBottom: 6 }}>📝 SPEAKER NOTES</div>
@@ -8260,9 +8685,10 @@ function PresenterView({ current, next, index, total, duration, elapsed, brandin
           </div>
         </div>
         <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 8, minWidth: 180, maxWidth: 320 }}>
-          <div style={{ fontFamily: FONT.mono, fontSize: 10, color: "#64748b", letterSpacing: "0.05em" }}>NEXT ▸</div>
+          <div style={{ fontFamily: FONT.mono, fontSize: 10, color: "#64748b", letterSpacing: "0.05em" }}>NEXT ▸{nextInSlide && <span data-testid="presenter-next-story"> {nextStoryLabel}</span>}</div>
           <div data-testid="presenter-next" style={{ borderRadius: 8, overflow: "hidden", border: "1px solid rgba(255,255,255,0.15)", opacity: 0.85 }}>
-            {next ? <GalleryThumb slide={next} slideIdx={index + 1} total={total} branding={branding} /> : <div style={{ aspectRatio: "16/9", display: "flex", alignItems: "center", justifyContent: "center", color: "#64748b", fontFamily: FONT.mono, fontSize: 13, background: "rgba(255,255,255,0.03)", borderRadius: 8 }}>End</div>}
+            {nextInSlide ? <GalleryThumb key="next-story" slide={current} slideIdx={index} total={total} branding={branding} story={nextStory} />
+              : next ? <GalleryThumb slide={next} slideIdx={index + 1} total={total} branding={branding} /> : <div style={{ aspectRatio: "16/9", display: "flex", alignItems: "center", justifyContent: "center", color: "#64748b", fontFamily: FONT.mono, fontSize: 13, background: "rgba(255,255,255,0.03)", borderRadius: 8 }}>End</div>}
           </div>
         </div>
       </div>
@@ -8954,6 +9380,14 @@ function ViewSwitch({ mode, onSet, disabled, compact, onDark, testid = "view-swi
   </div>;
 }
 
+// True when a drag carries only files of the drop allowlist (IMAGE_DROP_MIME).
+// Reads item kind/type only (a file name is not exposed during a drag).
+function dragHasOnlyImageFiles(dt) {
+  if (!dt || !dt.types || !Array.prototype.includes.call(dt.types, "Files")) return false;
+  const items = dt.items ? Array.prototype.slice.call(dt.items) : [];
+  return items.length > 0 && items.every((it) => !!it && it.kind === "file" && typeof it.type === "string" && IMAGE_DROP_MIME.has(it.type));
+}
+
 function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, branding, guidelines, isMobile, fontScale, actionsRef, onRibbonUpdate }) {
   const deckEpochRef = useRef(state._deckEpoch);
   deckEpochRef.current = state._deckEpoch;
@@ -8980,6 +9414,68 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
     return buildTitleCardSlide(concept, lane, branding);
   }, [concept.presentCard, concept.id, concept.title, concept.slides, lanes, branding]);
   const presSlides = useMemo(() => fullscreen && titleCard ? [titleCard, ...slides] : slides, [fullscreen, titleCard, slides]);
+
+  // ── Story mode: present a slide's images one by one ──
+  // Only in Present (never the editor, never student mode) and only on a slide
+  // with story:true and >= 2 images. Every other slide gets story undefined, so
+  // its render and navigation stay exactly as before. State is { k, zoomed }
+  // (see storyNext/storyPrev), stored with the key of the slide it belongs to.
+  const storySlide = presSlides[slideIndex];
+  const storyList = useMemo(() => storyImageList(storySlide, true), [storySlide]);
+  const storyN = storyList.length;
+  const storyOn = fullscreen && state?.veraMode !== "student" && storyIsActive(storySlide, storyList);
+  const storyKey = `${state._deckEpoch}|${concept.id}|${slideIndex}|${fullscreen ? 1 : 0}`;
+  // -1 only while a back step (arrow, wheel, swipe) is about to land: a story
+  // slide reached that way opens on its last image. Every other entry is forward.
+  const storyEnterDirRef = useRef(1);
+  // A back step with the Overview open still enters the next slide forward.
+  const storyEnterBack = () => { storyEnterDirRef.current = showGalleryRef.current ? 1 : -1; };
+  const storyLiveRef = useRef(null); // latest state, also before React re-renders
+  const [storyRaw, setStoryRaw] = useState(null);
+  if (storyOn && !(storyRaw && storyRaw.key === storyKey)) {
+    // New slide: set the entry state during render, so the first painted frame
+    // of the slide already has it (no flash of the previous slide's state).
+    const entry = { key: storyKey, ...storyEntry(storyEnterDirRef.current < 0 ? -1 : 1, storyN) };
+    storyLiveRef.current = entry;
+    setStoryRaw(entry);
+  } else if (!storyOn && storyRaw) {
+    // Left the story slide (or Present): forget its state, so a later visit
+    // with the same key (Present entered again) starts from its entry state.
+    storyLiveRef.current = null;
+    setStoryRaw(null);
+  }
+  useEffect(() => { storyEnterDirRef.current = 1; }, [storyKey]);
+  const storyCur = storyOn && storyRaw && storyRaw.key === storyKey ? storyRaw : null;
+  const story = useMemo(() => storyCur ? { k: Math.min(storyCur.k, storyN), zoomed: storyCur.zoomed } : undefined, [storyCur, storyN]);
+  const storyLive = () => {
+    const s = storyLiveRef.current;
+    return storyOn && s && s.key === storyKey ? { k: Math.min(s.k, storyN), zoomed: s.zoomed } : null;
+  };
+  const storySet = (k, zoomed) => { const s = { key: storyKey, k, zoomed }; storyLiveRef.current = s; setStoryRaw(s); };
+  // Refs so the long-lived key/wheel/swipe/fullscreen listeners see this render.
+  // Each returns true when it consumed the input.
+  const storyStepRef = useRef(null);
+  storyStepRef.current = (dir) => {
+    if (showGalleryRef.current) return false; // the Overview navigates like a plain slide
+    const s = storyLive();
+    if (!s) return false;
+    const nx = dir > 0 ? storyNext(s, storyN) : storyPrev(s, storyN);
+    if (!nx) return false;
+    storySet(nx.k, nx.zoomed);
+    return true;
+  };
+  const storyEscRef = useRef(null);
+  storyEscRef.current = () => {
+    const s = storyLive();
+    const nx = s ? storyEsc(s) : null;
+    if (!nx) return false;
+    storySet(nx.k, nx.zoomed);
+    return true;
+  };
+  const storyJumpRef = useRef(null);
+  storyJumpRef.current = (k) => { if (storyLive() && Number.isInteger(k) && k >= 1 && k <= storyN) storySet(k, true); };
+  const onStoryJump = useCallback((k) => storyJumpRef.current(k), []);
+  const onStoryZoomOut = useCallback(() => { storyEscRef.current(); }, []);
 
   // Global slide index/total across all modules (for the on-slide page-number
   // badge). Counts only VISIBLE slides so it agrees with the header pill and the
@@ -9325,6 +9821,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       toggleBatchEdit: () => improving ? stopAll() : setShowImproveInput((v) => !v),
       toggleTiming: () => estimating ? stopEstimate() : setShowTimingScope((v) => !v),
       setPreviewRatio,
+      showToast: (msg) => showNavToast(msg, null),
       present: () => { stopAll(); dispatch({ type: "SET_FULLSCREEN", value: true }); },
       getLayoutStats: () => computeSlideLayoutStats(slideRef.current),
       // CR13: view state read by the top-bar view switcher (editor|presenter|gallery).
@@ -9363,6 +9860,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
   // Touch swipe for mobile slide navigation (crosses module boundaries like keyboard)
   useSwipe(containerRef, {
     onLeft: useCallback(() => {
+      if (storyStepRef.current(1)) return;
       const navSlides = fullscreen ? presSlides : slides;
       if (navSlides.length > 0 && slideIndex < navSlides.length - 1) {
         dispatch({ type: "SET_SLIDE_INDEX", index: slideIndex + 1 });
@@ -9379,13 +9877,16 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       }
     }, [slideIndex, slides.length, presSlides.length, fullscreen, dispatch, concept.id, flatModules, showNavToast]),
     onRight: useCallback(() => {
+      if (storyStepRef.current(-1)) return;
       if (slideIndex > 0) {
+        storyEnterBack();
         dispatch({ type: "SET_SLIDE_INDEX", index: slideIndex - 1 });
       } else {
         const mods = flatModules();
         const curIdx = mods.findIndex((m) => m.id === concept.id);
         if (curIdx >= 0 && curIdx - 1 >= 0) {
           const prev = mods[curIdx - 1];
+          storyEnterBack();
           dispatch({ type: "SELECT", id: prev.id });
           const prevPresOffset = prev.presentCard && fullscreen ? 1 : 0;
           dispatch({ type: "SET_SLIDE_INDEX", index: Math.max(0, (prev.slideCount || 1) - 1 + prevPresOffset) });
@@ -9406,6 +9907,135 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       .filter((k) => SAFE_SLIDE_KEYS.has(k))
   );
   const looksLikeSlide = (obj) => obj && typeof obj === "object" && !Array.isArray(obj) && Object.keys(obj).some((k) => SLIDE_KEYS.has(k));
+  // ── Image intake: clipboard paste and OS file drop share one pipeline ──
+  // Strict re-encode: an image that cannot be decoded, or is over the pixel cap,
+  // resolves null and is skipped (never stored as the original bytes).
+  const compressImageStrict = (dataUrl) => compressImage(dataUrl, IMG_SETTINGS.maxWidth, IMG_SETTINGS.quality, { strict: true });
+  // One paste or one drop. Counts what happened to its images for one notice.
+  const newImageBatch = (kind) => ({ kind, epoch: deckEpochRef.current, here: 0, spill: 0, spillAt: -1, spilled: false, failed: 0, dropped: 0, rejected: 0 });
+  // Queue one image (getData() resolves the re-encoded data URL, or null).
+  const enqueueImage = useCallback((getData, batch) => {
+    // Capture the target now. The image work below is async: the user can
+    // undo, delete or edit slides, or paste again, before it ends. Pastes
+    // apply one at a time, in paste order (pasteQueueRef). Each one finds its
+    // target again just before its dispatch: the same slide object, or the
+    // slide an earlier queued paste made from it (pasteResolveTarget). It then
+    // builds the change from that CURRENT slide. If the target is gone, or the
+    // user changed it, the paste is dropped. Never write back a stale copy.
+    // HI8: the target is found in its own module's live slide list (lanesRef),
+    // so a paste still lands on its target when the user switches to another
+    // module before it applies, as it does for a slide switch.
+    const moduleId = concept.id, epoch = deckEpochRef.current, empty = !slides.length;
+    let target = empty ? null : slides[slideIndex];
+    if (empty) { const keys = emptyPasteKeyRef.current; target = keys.get(moduleId) || {}; keys.set(moduleId, target); }
+    else emptyPasteKeyRef.current.delete(moduleId);
+    const bodyProbe = empty ? null : pasteBodyProbe(containerRef.current, target);
+    const modSlides = () => { const it = findItem(lanesRef.current || [], moduleId); return it && Array.isArray(it.slides) ? it.slides : null; };
+    const live = () => deckEpochRef.current === epoch && pasteMountedRef.current && !!modSlides();
+    const onScreen = () => pasteLiveRef.current.moduleId === moduleId;
+    // Wait until a dispatch below has rendered, then link the new slide object.
+    const settle = async (from, before, src) => {
+      for (let k = 0; k < 60 && modSlides() === before; k++) await new Promise((r) => setTimeout(r, 16));
+      if (live()) pasteRecordSuccessor(from, before, modSlides(), src);
+    };
+    const apply = async () => {
+      const raw = await getData();
+      if (deckEpochRef.current !== epoch) return;
+      // The reducer keeps an image src only in this canonical form (the same
+      // chain sanitizeBlock runs). Use that same value here: an empty result
+      // (undecodable type, canvas too large, read error) must not add an empty
+      // image block, and a src the reducer changes would break the successor
+      // link for the rest of the burst.
+      let compressed = raw ? sanitizeImageDataUri(sanitizeUrl(raw, ["data:"])) : "";
+      // HI4: an allowed MIME type with bytes that do not decode passes the
+      // data-URI check (compressImage returns its input on a decode error
+      // without opts.strict). Decode the result here: an image with no size is
+      // not added.
+      if (compressed) { const z = await imageNaturalSize(compressed); if (!(z.w > 0 && z.h > 0)) compressed = ""; }
+      if (!compressed) { batch.failed++; return; }
+      if (!live()) { batch.dropped++; return; }
+      // Empty module → brand-new full-bleed solo-image slide (additive). Later
+      // pastes of the same burst go onto that slide.
+      if (empty && !pasteResolveTarget(target, modSlides())) {
+        const before = modSlides();
+        dispatch({ type: "ADD_SLIDE", id: moduleId, slide: { blocks: [{ type: "image", src: compressed }] } });
+        batch.here++;
+        await settle(target, before, compressed); return;
+      }
+      let cur = null, sizes = null;
+      for (let tries = 0; tries < 4 && !cur; tries++) {
+        const c = live() ? pasteResolveTarget(target, modSlides()) : null;
+        if (!c) { batch.dropped++; return; }
+        // Natural sizes give the aspects and the upscale caps for the layout choice.
+        sizes = await Promise.all([...(c.blocks || []).filter((b) => b.type === "image").map((b) => b.src), compressed].map((src) => imageNaturalSize(src)));
+        // Resolve again, in the same task as the dispatch below; start over if it moved on.
+        if (live() && pasteResolveTarget(target, modSlides()) === c) cur = c;
+      }
+      if (!cur) { batch.dropped++; return; }
+      const aspects = sizes.map((z) => (z.w > 0 && z.h > 0 ? z.w / z.h : 1)), aspect = aspects[aspects.length - 1];
+      rememberImageAspect(compressed, aspect);
+      const before = modSlides(), at = before.indexOf(cur);
+      const curImgBlocks = (cur.blocks || []).filter((b) => b.type === "image");
+      const curImgs = curImgBlocks.length;
+      // Overflow cap: at most PASTE_MAX_IMAGES images per slide. One more spills onto a
+      // new image-only slide inserted after this one (same story setting) rather
+      // than over-packing the grid.
+      if (curImgs >= PASTE_MAX_IMAGES) {
+        dispatch({ type: "INSERT_SLIDES", id: moduleId, index: at + 1, slides: [{ blocks: [{ type: "image", src: compressed }], ...(cur.story === true ? { story: true } : {}) }] });
+        if (onScreen()) dispatch({ type: "SET_SLIDE_INDEX", index: at + 1 });
+        batch.spill++; batch.spilled = true; if (batch.spillAt < 0) batch.spillAt = at + 1;
+        await settle(cur, before, compressed); return;
+      }
+      const patch = { blocks: [...(cur.blocks || []), { type: "image", src: compressed }] };
+      const n = curImgs + 1; // image count after this paste
+      // The body height is measured on screen. Measure again while the slide is
+      // on screen (an earlier paste of the burst can have changed its layout).
+      const probe = (onScreen() && pasteLiveRef.current.index === at && pasteBodyProbe(containerRef.current, cur)) || bodyProbe;
+      // Layout-aware paste: place the image beside existing body content rather
+      // than always stacking it below. pasteImageLayout() respects an explicit
+      // author layout and otherwise keeps the layout (stack or image-right) that
+      // shows the most image area, from the body height measured on screen.
+      // CR23: a split that an earlier paste set (the slide still carries the exact
+      // layout signature that paste left) is re-evaluated for the new image count
+      // and aspects. A split the author set is kept.
+      const pasteOwned = !!cur.layout && cur.layout !== "stack" && curImgBlocks.some((b) => PASTE_LAYOUT_OWNED.get(b.src) === pasteLayoutSig(cur));
+      const basis = pasteOwned ? { ...cur, layout: undefined, contentFlex: undefined, imageFlex: undefined } : cur;
+      const layout = pasteImageLayout(basis, aspect, n, aspects, probe, sizes.map((z) => z.w));
+      if (pasteOwned && layout === "stack") { patch.layout = undefined; patch.contentFlex = undefined; patch.imageFlex = undefined; }
+      else if (layout !== "stack" && (pasteOwned || layout !== cur.layout)) {
+        patch.layout = layout;
+        // Balance the split. A single square/portrait side image is tall; at the
+        // default 1:1 split it squeezes the body text into a half-width column
+        // where it wraps past the slide height and gets auto-scaled smaller — give
+        // the content column the larger share. Two or more images grid inside their
+        // half, so an even 1:1 split gives that grid the room it needs. Only when
+        // the author hasn't pinned a ratio.
+        if (basis.contentFlex == null && basis.imageFlex == null) {
+          [patch.contentFlex, patch.imageFlex] = pasteSplitFlex(n, aspect);
+        }
+        rememberPasteLayout(compressed, { ...cur, ...patch });
+      }
+      if (batch.spilled) batch.spill++; else batch.here++;
+      dispatch({ type: "UPDATE_SLIDE", id: moduleId, index: at, patch, merge: true });
+      await settle(cur, before, compressed);
+    };
+    // Log a fault (never swallow it silently); the catch keeps the queue alive.
+    pasteQueueRef.current = pasteQueueRef.current.then(apply).catch((err) => { console.warn("Vela: image paste failed", err); });
+  }, [concept.id, slideIndex, slides, dispatch]);
+  // Runs after the batch's images in the same queue. The notice has counts only
+  // (never a file name). A plain paste or drop that fits says nothing, as before.
+  const finishImageBatch = useCallback((batch) => {
+    pasteQueueRef.current = pasteQueueRef.current.then(() => {
+      if (deckEpochRef.current !== batch.epoch) return;
+      const lost = batch.failed + batch.rejected + (batch.kind === "drop" ? batch.dropped : 0);
+      let msg = null;
+      if (batch.spill > 0) msg = `Added ${batch.here} here · ${batch.spill} on new slide ${batch.spillAt + 1}` + (lost > 0 ? ` · ${lost} not added` : "");
+      else if (lost > 0 && batch.kind === "paste") msg = "This image could not be pasted";
+      else if (lost > 0) msg = batch.here > 0 ? `Added ${batch.here} · ${lost} not added` : `${lost} image${lost === 1 ? "" : "s"} not added`;
+      if (msg) showNavToast(msg, null, true);
+    });
+  }, [showNavToast]);
+
   const handlePaste = useCallback((e) => {
     const tag = e.target?.tagName?.toLowerCase(); if (tag === "textarea" || tag === "input" || e.target?.isContentEditable) return;
     const items = e.clipboardData?.items; if (!items) return;
@@ -9429,118 +10059,75 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       });
       // Don't return here — if it's not JSON, let image paste proceed
     }
-    // HI6: one paste event can carry several images. Queue every one, in order.
+    // HI6: one paste event can carry several images. Queue every one, in order,
+    // as one batch (one notice for the event).
+    let batch = null;
     for (const item of items) {
       if (item.type.startsWith("image/")) {
         e.preventDefault(); const blob = item.getAsFile(); const reader = new FileReader();
-        // Capture the target now. The image work below is async: the user can
-        // undo, delete or edit slides, or paste again, before it ends. Pastes
-        // apply one at a time, in paste order (pasteQueueRef). Each one finds its
-        // target again just before its dispatch: the same slide object, or the
-        // slide an earlier queued paste made from it (pasteResolveTarget). It then
-        // builds the change from that CURRENT slide. If the target is gone, or the
-        // user changed it, the paste is dropped. Never write back a stale copy.
-        // HI8: the target is found in its own module's live slide list (lanesRef),
-        // so a paste still lands on its target when the user switches to another
-        // module before it applies, as it does for a slide switch.
-        const moduleId = concept.id, epoch = deckEpochRef.current, empty = !slides.length;
-        let target = empty ? null : slides[slideIndex];
-        if (empty) { const keys = emptyPasteKeyRef.current; target = keys.get(moduleId) || {}; keys.set(moduleId, target); }
-        else emptyPasteKeyRef.current.delete(moduleId);
-        const bodyProbe = empty ? null : pasteBodyProbe(containerRef.current, target);
-        const data = new Promise((res) => { reader.onload = () => res(compressSlideImage(reader.result)); reader.onerror = () => res(null); });
+        const data = new Promise((res) => { reader.onload = () => res(compressImageStrict(reader.result)); reader.onerror = () => res(null); });
         reader.readAsDataURL(blob);
-        const modSlides = () => { const it = findItem(lanesRef.current || [], moduleId); return it && Array.isArray(it.slides) ? it.slides : null; };
-        const live = () => deckEpochRef.current === epoch && pasteMountedRef.current && !!modSlides();
-        const onScreen = () => pasteLiveRef.current.moduleId === moduleId;
-        // Wait until a dispatch below has rendered, then link the new slide object.
-        const settle = async (from, before, src) => {
-          for (let k = 0; k < 60 && modSlides() === before; k++) await new Promise((r) => setTimeout(r, 16));
-          if (live()) pasteRecordSuccessor(from, before, modSlides(), src);
-        };
-        const apply = async () => {
-          const raw = await data;
-          if (deckEpochRef.current !== epoch) return;
-          // The reducer keeps an image src only in this canonical form (the same
-          // chain sanitizeBlock runs). Use that same value here: an empty result
-          // (undecodable type, canvas too large, read error) must not add an empty
-          // image block, and a src the reducer changes would break the successor
-          // link for the rest of the burst.
-          let compressed = raw ? sanitizeImageDataUri(sanitizeUrl(raw, ["data:"])) : "";
-          // HI4: an allowed MIME type with bytes that do not decode passes the
-          // data-URI check (compressImage returns its input on a decode error).
-          // Decode the result here: an image with no size is not added.
-          if (compressed) { const z = await imageNaturalSize(compressed); if (!(z.w > 0 && z.h > 0)) compressed = ""; }
-          if (!compressed) { showNavToast("This image could not be pasted", null, true); return; }
-          if (!live()) return;
-          // Empty module → brand-new full-bleed solo-image slide (additive). Later
-          // pastes of the same burst go onto that slide.
-          if (empty && !pasteResolveTarget(target, modSlides())) {
-            const before = modSlides();
-            dispatch({ type: "ADD_SLIDE", id: moduleId, slide: { blocks: [{ type: "image", src: compressed }] } });
-            await settle(target, before, compressed); return;
-          }
-          let cur = null, sizes = null;
-          for (let tries = 0; tries < 4 && !cur; tries++) {
-            const c = live() ? pasteResolveTarget(target, modSlides()) : null;
-            if (!c) return;
-            // Natural sizes give the aspects and the upscale caps for the layout choice.
-            sizes = await Promise.all([...(c.blocks || []).filter((b) => b.type === "image").map((b) => b.src), compressed].map((src) => imageNaturalSize(src)));
-            // Resolve again, in the same task as the dispatch below; start over if it moved on.
-            if (live() && pasteResolveTarget(target, modSlides()) === c) cur = c;
-          }
-          if (!cur) return;
-          const aspects = sizes.map((z) => (z.w > 0 && z.h > 0 ? z.w / z.h : 1)), aspect = aspects[aspects.length - 1];
-          rememberImageAspect(compressed, aspect);
-          const before = modSlides(), at = before.indexOf(cur);
-          const curImgBlocks = (cur.blocks || []).filter((b) => b.type === "image");
-          const curImgs = curImgBlocks.length;
-          // Overflow cap: at most 5 images per slide. A 6th image spills onto a new
-          // image-only slide inserted after this one rather than over-packing the grid.
-          if (curImgs >= 5) {
-            dispatch({ type: "INSERT_SLIDES", id: moduleId, index: at + 1, slides: [{ blocks: [{ type: "image", src: compressed }] }] });
-            if (onScreen()) dispatch({ type: "SET_SLIDE_INDEX", index: at + 1 });
-            await settle(cur, before, compressed); return;
-          }
-          const patch = { blocks: [...(cur.blocks || []), { type: "image", src: compressed }] };
-          const n = curImgs + 1; // image count after this paste
-          // The body height is measured on screen. Measure again while the slide is
-          // on screen (an earlier paste of the burst can have changed its layout).
-          const probe = (onScreen() && pasteLiveRef.current.index === at && pasteBodyProbe(containerRef.current, cur)) || bodyProbe;
-          // Layout-aware paste: place the image beside existing body content rather
-          // than always stacking it below. pasteImageLayout() respects an explicit
-          // author layout and otherwise keeps the layout (stack or image-right) that
-          // shows the most image area, from the body height measured on screen.
-          // CR23: a split that an earlier paste set (the slide still carries the exact
-          // layout signature that paste left) is re-evaluated for the new image count
-          // and aspects. A split the author set is kept.
-          const pasteOwned = !!cur.layout && cur.layout !== "stack" && curImgBlocks.some((b) => PASTE_LAYOUT_OWNED.get(b.src) === pasteLayoutSig(cur));
-          const basis = pasteOwned ? { ...cur, layout: undefined, contentFlex: undefined, imageFlex: undefined } : cur;
-          const layout = pasteImageLayout(basis, aspect, n, aspects, probe, sizes.map((z) => z.w));
-          if (pasteOwned && layout === "stack") { patch.layout = undefined; patch.contentFlex = undefined; patch.imageFlex = undefined; }
-          else if (layout !== "stack" && (pasteOwned || layout !== cur.layout)) {
-            patch.layout = layout;
-            // Balance the split. A single square/portrait side image is tall; at the
-            // default 1:1 split it squeezes the body text into a half-width column
-            // where it wraps past the slide height and gets auto-scaled smaller — give
-            // the content column the larger share. Two or more images grid inside their
-            // half, so an even 1:1 split gives that grid the room it needs. Only when
-            // the author hasn't pinned a ratio.
-            if (basis.contentFlex == null && basis.imageFlex == null) {
-              [patch.contentFlex, patch.imageFlex] = pasteSplitFlex(n, aspect);
-            }
-            rememberPasteLayout(compressed, { ...cur, ...patch });
-          }
-          dispatch({ type: "UPDATE_SLIDE", id: moduleId, index: at, patch, merge: true });
-          await settle(cur, before, compressed);
-        };
-        // Log a fault (never swallow it silently); the catch keeps the queue alive.
-        pasteQueueRef.current = pasteQueueRef.current.then(apply).catch((err) => { console.warn("Vela: image paste failed", err); });
+        if (!batch) batch = newImageBatch("paste");
+        enqueueImage(() => data, batch);
       }
     }
-  }, [concept.id, slideIndex, slides, dispatch, showNavToast]);
+    if (batch) finishImageBatch(batch);
+  }, [concept.id, slideIndex, slides, dispatch, enqueueImage, finishImageBatch]);
 
   useEffect(() => { const el = containerRef.current; if (el) { el.addEventListener("paste", handlePaste); return () => el.removeEventListener("paste", handlePaste); } }, [handlePaste]);
+
+  // ── OS file drop: image files dropped on the editor slide panel ──
+  // Only a drag of allowlisted raster files is taken here; anything else (a deck
+  // file) bubbles to the app shell, which loads decks. Never stopPropagation:
+  // the shell's drop handler must run to clear its overlay; it sees
+  // isDefaultPrevented() and does not load the files as a deck.
+  const [imageDragRect, setImageDragRect] = useState(null);
+  const imageDragTimer = useRef(null);
+  useEffect(() => () => clearTimeout(imageDragTimer.current), []);
+  const handleImageDragOver = useCallback((e) => {
+    if (!dragHasOnlyImageFiles(e.dataTransfer)) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "copy";
+    const el = containerRef.current;
+    setImageDragRect((r) => r || (el ? el.getBoundingClientRect() : null));
+    // dragover repeats while the pointer stays; a stop (cancelled drag) clears it.
+    clearTimeout(imageDragTimer.current);
+    imageDragTimer.current = setTimeout(() => setImageDragRect(null), 400);
+  }, []);
+  const handleImageDragLeave = useCallback((e) => {
+    if (e.currentTarget.contains(e.relatedTarget)) return;
+    clearTimeout(imageDragTimer.current);
+    setImageDragRect(null);
+  }, []);
+  const handleImageDrop = useCallback((e) => {
+    clearTimeout(imageDragTimer.current);
+    setImageDragRect(null);
+    const list = e.dataTransfer?.files;
+    if (!list || !list.length) return;
+    // Type, size and count caps run before any file is read (imageDropFiles).
+    const { files, rejected } = imageDropFiles(list);
+    if (!files.length) {
+      // Nothing usable. A drop of image files only (an SVG, an oversize file) is
+      // still ours and is reported; any other file falls through to the shell.
+      const all = Array.prototype.slice.call(list);
+      if (!all.every((f) => f && typeof f.type === "string" && f.type.startsWith("image/"))) return;
+      e.preventDefault();
+      showNavToast(`${all.length} image${all.length === 1 ? "" : "s"} not added`, null, true);
+      return;
+    }
+    e.preventDefault();
+    const batch = newImageBatch("drop");
+    batch.rejected = rejected;
+    // Read one file at a time, in drop order, as a data URL (no object URLs).
+    const read = (file) => () => new Promise((res) => {
+      const r = new FileReader();
+      r.onload = () => res(typeof r.result === "string" ? compressImageStrict(r.result) : null);
+      r.onerror = () => res(null);
+      try { r.readAsDataURL(file); } catch { res(null); }
+    });
+    for (const f of files) enqueueImage(read(f), batch);
+    finishImageBatch(batch);
+  }, [enqueueImage, finishImageBatch, showNavToast]);
   useEffect(() => {
     const handler = (e) => {
       if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA" || e.target.isContentEditable) return;
@@ -9605,6 +10192,8 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
           dispatch({ type: "SET_SLIDE_INDEX", index: t.i });
         }
       }
+      // Story slide in Present: arrow/space keys step through its images first.
+      if (!reviewNav && ["ArrowRight", "ArrowDown", " ", "ArrowLeft", "ArrowUp"].includes(e.key) && storyStepRef.current((e.key === "ArrowLeft" || e.key === "ArrowUp") ? -1 : 1)) { e.preventDefault(); stopAlternatives(); return; }
       if (!reviewNav && (e.key === "ArrowRight" || e.key === "ArrowDown" || e.key === " ")) {
         e.preventDefault();
         stopAlternatives(); // keep a running Improve alive across navigation
@@ -9632,12 +10221,14 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
         stopAlternatives(); // keep a running Improve alive across navigation
         const pi = navSlides.length > 0 ? prevVisible(slideIndex) : -1;
         if (pi >= 0) {
+          storyEnterBack();
           dispatch({ type: "SET_SLIDE_INDEX", index: pi });
         } else {
           let ti = curIdx - 1;
           if (fullscreen) while (ti >= 0 && !mods[ti].presentCard && mods[ti].lastVisible < 0) ti--;
           if (ti >= 0) {
             const prev = mods[ti];
+            storyEnterBack();
             dispatch({ type: "SELECT", id: prev.id });
             const prevPresOffset = prev.presentCard ? 1 : 0;
             // Fullscreen: last VISIBLE content slide (+ title-card offset), or the
@@ -9688,6 +10279,8 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       // Esc leaves Present mode. Browser fullscreen normally does this itself, but in a
       // sandboxed iframe (Claude.ai artifact) requestFullscreen fails, so the key lands here.
       // An open modal takes Esc first (it closes on the same keydown).
+      // A story slide zoomed on an image: Esc zooms out to the grid first and Present stays.
+      if (e.key === "Escape" && fullscreen && VELA_OPEN_CHROME.modals.size === 0 && storyEscRef.current()) { e.preventDefault(); return; }
       if (e.key === "Escape" && fullscreen && VELA_OPEN_CHROME.modals.size === 0) { e.preventDefault(); stopAlternatives(); dispatch({ type: "SET_FULLSCREEN", value: false }); return; }
       // Ctrl+C → copy ALL selected slides (multi-select) to system clipboard,
       // in slide order. Falls back to the active slide when nothing is multi-selected.
@@ -9760,6 +10353,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       if (VELA_OPEN_CHROME.panels.size > 0) { window.dispatchEvent(new Event("vela-close-panel")); return; }
       if (showGalleryRef.current) { setGallery(false); return; }
       if (showPresenterViewRef.current) { setPresenterView(false); return; }
+      if (storyEscRef.current()) return;
       dispatch({ type: "SET_FULLSCREEN", value: false });
     };
     document.addEventListener("fullscreenchange", onFsChange);
@@ -9784,6 +10378,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       if (Math.abs(scrollAccum.current) >= SCROLL_THRESHOLD) {
         const dir = scrollAccum.current > 0 ? 1 : -1;
         scrollAccum.current = 0;
+        if (storyStepRef.current(dir)) return; // one story step per notch
         const navSlides = fullscreen ? presSlides : slides;
         if (dir > 0) {
           // Scroll down → next slide or cross to next module
@@ -9803,12 +10398,14 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
         } else {
           // Scroll up → prev slide or cross to prev module
           if (navSlides.length > 0 && slideIndex > 0) {
+            storyEnterBack();
             dispatch({ type: "SET_SLIDE_INDEX", index: slideIndex - 1 });
           } else {
             const mods = flatModules();
             const curIdx = mods.findIndex((m) => m.id === concept.id);
             if (curIdx >= 0 && curIdx - 1 >= 0) {
               const prev = mods[curIdx - 1];
+              storyEnterBack();
               dispatch({ type: "SELECT", id: prev.id });
               const prevPresOffset = prev.presentCard && fullscreen ? 1 : 0;
               dispatch({ type: "SET_SLIDE_INDEX", index: Math.max(0, (prev.slideCount || 1) - 1 + prevPresOffset) });
@@ -10126,6 +10723,9 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
   }, [concept.id, slideIndex]);
 
   const isStudent = state?.veraMode === "student";
+  // Editor toolbar: the story toggle shows only on a slide with >= 2 images.
+  const editStoryImages = fullscreen ? 0 : storyImageList(slides[slideIndex], false).length;
+  const editStoryOn = slides[slideIndex]?.story === true;
 
   // Hidden offscreen host used to measure a slide's layout without disturbing the
   // visible view, so Improve can run in the background across navigation.
@@ -10145,7 +10745,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
             .slide-transition-fade (part-imports.jsx). Independent of the per-block
             .stg-N stagger reveal inside SlideContent, which keeps working as-is. */}
         <div key={slideIndex} className="slide-transition-fade" style={{ position: "relative", width: "100%", height: "100%" }}>
-          <FullscreenSlide key={`deck-${state._deckEpoch}`} slide={presSlides[slideIndex]} index={slideIndex} total={presSlides.length} innerRef={slideRef} branding={presSlides[slideIndex]?._virtual ? null : branding} editable={!isStudent && !presSlides[slideIndex]?._virtual} onEdit={isStudent || presSlides[slideIndex]?._virtual ? undefined : handleSlideEdit} onBlockEdit={isStudent || presSlides[slideIndex]?._virtual ? undefined : runBlockEdit} blockEditing={isStudent ? null : blockEditing} fontScale={fontScale} mode="fill" forceEdit={presentEdit && !isStudent} displayIndex={globalSlideIndex - presOffset} displayTotal={globalSlideTotal} />
+          <FullscreenSlide key={`deck-${state._deckEpoch}`} slide={presSlides[slideIndex]} index={slideIndex} total={presSlides.length} innerRef={slideRef} branding={presSlides[slideIndex]?._virtual ? null : branding} editable={!isStudent && !presSlides[slideIndex]?._virtual} onEdit={isStudent || presSlides[slideIndex]?._virtual ? undefined : handleSlideEdit} onBlockEdit={isStudent || presSlides[slideIndex]?._virtual ? undefined : runBlockEdit} blockEditing={isStudent ? null : blockEditing} fontScale={fontScale} mode="fill" forceEdit={presentEdit && !isStudent} displayIndex={globalSlideIndex - presOffset} displayTotal={globalSlideTotal} story={story} onStoryJump={story ? onStoryJump : undefined} onStoryZoomOut={story ? onStoryZoomOut : undefined} />
         </div>
         {!isMobile && <PresenterTOC slides={presSlides} slideIndex={slideIndex} onJump={(i) => dispatch({ type: "SET_SLIDE_INDEX", index: i })} lanes={lanes} currentConceptId={concept.id} dispatch={dispatch} />}
                 {fontScale !== 1 && <div style={{ position: "absolute", top: 12, right: 16, fontFamily: FONT.mono, fontSize: 13, fontWeight: 700, color: T.accent, background: T.bgPanel + "e0", padding: "3px 10px", borderRadius: 4, border: `1px solid ${T.accent}40`, zIndex: 20, letterSpacing: "0.05em", pointerEvents: "none" }}>FONT {Math.round(fontScale * 100)}%</div>}
@@ -10200,14 +10800,19 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       {showPresenterView && (() => {
         let nextIdx = -1;
         for (let i = slideIndex + 1; i < presSlides.length; i++) if (!presSlides[i].hidden) { nextIdx = i; break; }
-        return <PresenterView current={presSlides[slideIndex]} next={nextIdx >= 0 ? presSlides[nextIdx] : null} index={globalSlideIndex - presOffset} total={globalSlideTotal} duration={presSlides[slideIndex]?.duration || 0} elapsed={presentElapsed} branding={branding} onClose={() => setPresenterView(false)} />;
+        // NEXT on a story slide is its next step; after the last step, the next slide.
+        const nextStory = story ? storyNext(story, storyN) : null;
+        return <PresenterView current={presSlides[slideIndex]} next={nextStory ? presSlides[slideIndex] : nextIdx >= 0 ? presSlides[nextIdx] : null} currentStory={story} nextStory={nextStory || undefined} index={globalSlideIndex - presOffset} total={globalSlideTotal} duration={presSlides[slideIndex]?.duration || 0} elapsed={presentElapsed} branding={branding} onClose={() => setPresenterView(false)} />;
       })()}
     </div>
   );
 
   return (
-    <div ref={containerRef} tabIndex={0} className="fade-in" style={{ flex: 1, display: "flex", flexDirection: "column", background: T.bg, borderLeft: isMobile ? "none" : `1px solid ${T.border}`, outline: "none", minWidth: 0 }}>
+    <div ref={containerRef} tabIndex={0} className="fade-in" onDragOver={handleImageDragOver} onDragLeave={handleImageDragLeave} onDrop={handleImageDrop} style={{ flex: 1, display: "flex", flexDirection: "column", background: T.bg, borderLeft: isMobile ? "none" : `1px solid ${T.border}`, outline: "none", minWidth: 0 }}>
       {measureHarness}
+      {imageDragRect && <div data-testid="image-drop-overlay" style={{ position: "fixed", left: imageDragRect.left, top: imageDragRect.top, width: imageDragRect.width, height: imageDragRect.height, zIndex: 99999, background: "rgba(59,130,246,0.12)", border: `2px dashed ${T.accent}`, boxSizing: "border-box", display: "flex", alignItems: "center", justifyContent: "center", pointerEvents: "none" }}>
+        <span style={{ background: T.bgPanel, borderRadius: 12, padding: "16px 28px", fontFamily: FONT.display, fontSize: 18, fontWeight: 700, color: T.text, boxShadow: "0 20px 60px rgba(0,0,0,0.4)" }}>Drop images to add to this slide</span>
+      </div>}
       {/* The toast in the editor view: only notices raised for it (image paste). */}
       {navToast?.editor && <div data-testid="paste-notice" role="status" className={navToast.phase === "in" ? "nav-toast-in" : "nav-toast-out"} style={{ position: "fixed", bottom: 24, left: 0, right: 0, display: "flex", justifyContent: "center", zIndex: 1000, pointerEvents: "none" }}>
         <div style={{ padding: "8px 20px", borderRadius: 8, background: "rgba(0,0,0,0.78)", backdropFilter: "blur(8px)", border: `1px solid ${T.accent}30`, fontFamily: FONT.display, fontSize: 14, color: "#fff", fontWeight: 600 }}>{navToast.module}</div>
@@ -10426,6 +11031,8 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
           <button ref={moveRef} onClick={() => setShowMoveToModule((v) => !v)} title="Move to module" style={S.btn({ padding: "5px 12px", fontSize: 14, color: showMoveToModule ? T.accent : T.textDim, background: showMoveToModule ? T.accent + "20" : "transparent", borderRadius: 4, display: "flex", alignItems: "center", gap: 5 })}>📦{!isMobile && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>Move</span>}</button>
           <button onClick={() => { dispatch({ type: "REMOVE_SLIDE", id: concept.id, index: slideIndex }); dispatch({ type: "SET_SLIDE_INDEX", index: Math.max(0, slideIndex - 1) }); }} title="Delete slide (Del)" style={S.btn({ padding: "5px 12px", fontSize: 14, color: T.red + "90", borderRadius: 4, display: "flex", alignItems: "center", gap: 5 })}>🗑{!isMobile && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>Delete</span>}</button>
           <button data-testid="review-cycle-toggle" aria-pressed={reviewCycle} onClick={() => setReviewCycle((v) => !v)} title={reviewCycle ? "Review cycle on — arrow keys skip reviewed slides" : "Review cycle — arrow keys skip reviewed slides"} style={S.btn({ padding: "5px 12px", fontSize: 14, color: reviewCycle ? T.green : T.textDim, background: reviewCycle ? T.green + "20" : "transparent", borderRadius: 4, display: "flex", alignItems: "center", gap: 5 })}>✓{!isMobile && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>Review cycle</span>}</button>
+          {editStoryImages >= 2 && <button data-testid="story-toggle" aria-pressed={editStoryOn} onClick={() => handleSlideEdit({ story: editStoryOn ? undefined : true })} title={editStoryOn ? "Story on — Present shows the images one by one" : "Story — present the images one by one"} style={S.btn({ padding: "5px 12px", fontSize: 14, color: editStoryOn ? T.accent : T.textDim, background: editStoryOn ? T.accent + "20" : "transparent", borderRadius: 4, display: "flex", alignItems: "center", gap: 5 })}>🎞{!isMobile && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>Story</span>}</button>}
+          {editStoryImages >= 2 && editStoryOn && <button data-testid="story-preview" onClick={() => { stopAll(); dispatch({ type: "SET_FULLSCREEN", value: true }); }} title="Preview story — present from this slide" aria-label="Preview story" style={S.btn({ padding: "5px 12px", fontSize: 14, color: T.textDim, background: "transparent", borderRadius: 4, display: "flex", alignItems: "center", gap: 5 })}>▶{!isMobile && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>Preview</span>}</button>}
           <div style={{ width: 1, height: 22, background: T.border + "60" }} />
           <button data-testid="editor-gallery-toggle" onClick={() => setGallery((v) => !v)} title="Overview — all slides (G)" style={S.btn({ padding: "5px 12px", fontSize: 14, color: showGallery ? T.accent : T.textDim, background: showGallery ? T.accent + "20" : "transparent", borderRadius: 4, display: "flex", alignItems: "center", gap: 5 })}>🗂{!isMobile && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>Overview</span>}</button>
         </div>}
@@ -18718,6 +19325,81 @@ uiSuite("hunt1-fix-image", [
   }},
 ], { setup: _selectFirstModule });
 
+// ── WP7: Ctrl+U underline is saved as ++text++ and shows underlined ──
+// (This whole part is release-excluded by concat.py --release.)
+const _ulSaved = (marker) => {
+  const snap = _hooks().capturePostDemoFlushForTest?.();
+  let hit = null;
+  const walk = (v) => {
+    if (hit) return;
+    if (typeof v === "string") { if (v.includes(marker)) hit = v; }
+    else if (v && typeof v === "object") for (const k of Object.keys(v)) walk(v[k]);
+  };
+  walk(snap && snap.state);
+  return hit;
+};
+const _ulOpenEditor = async (vp, shown, partial) => {
+  const disp = Array.from(vp.querySelectorAll("[data-block-type='text'] div")).find((d) => (partial ? d.textContent.includes(shown) : d.textContent === shown) && d.style.cursor === "pointer");
+  if (!disp) throw new Error("text block is not editable");
+  _click(disp);
+  const ed = await _waitFor(() => vp.querySelector("[data-block-type='text'] [contenteditable]"), 1500);
+  ed.focus();
+  return ed;
+};
+uiSuite("wp7-underline", [
+  { name: "Ctrl+U saves ++text++, renders an underlined span, undo restores", fn: async () => {
+    const past = _hooks().getHistoryCounts().past;
+    try {
+      const vp = await _mrdInject([{ type: "text", text: "WP7U base" }], { layout: undefined }, (v) => v?.textContent.includes("WP7U base") ? v : null);
+      const afterInject = _hooks().getHistoryCounts().past;
+      const ed = await _ulOpenEditor(vp, "WP7U base");
+      const sel = window.getSelection(); sel.selectAllChildren(ed); sel.collapseToEnd();
+      document.execCommand("insertText", false, " under");
+      const tw = document.createTreeWalker(ed, NodeFilter.SHOW_TEXT);
+      let tn = null;
+      while (tw.nextNode()) if (tw.currentNode.textContent.includes("under")) tn = tw.currentNode;
+      if (!tn) throw new Error("typed text not found");
+      const at = tn.textContent.lastIndexOf("under");
+      const r = document.createRange(); r.setStart(tn, at); r.setEnd(tn, at + 5);
+      sel.removeAllRanges(); sel.addRange(r);
+      const ev = new KeyboardEvent("keydown", { key: "u", ctrlKey: true, bubbles: true, cancelable: true });
+      ed.dispatchEvent(ev);
+      if (!ev.defaultPrevented) throw new Error("Ctrl+U was not handled by the editor");
+      if (!ed.querySelector("u")) throw new Error("Ctrl+U did not underline the selection");
+      ed.blur();
+      const saved = await _waitFor(() => _ulSaved("WP7U base") === "WP7U base ++under++" ? true : null, 2000)
+        .catch(() => { throw new Error(`saved text is ${JSON.stringify(_ulSaved("WP7U base"))}`); });
+      if (!saved) throw new Error("not saved");
+      const span = await _waitFor(() => _mrdViewport().querySelector("[data-block-type='text'] span[data-vela-u]"), 1500);
+      if (span.textContent !== "under" || !getComputedStyle(span).textDecorationLine.includes("underline"))
+        throw new Error("rendered text has no underlined span");
+      if (_mrdViewport().textContent.includes("++")) throw new Error("the ++ markers are visible");
+      if (_hooks().getHistoryCounts().past !== afterInject + 1) throw new Error("the edit did not make one undo step");
+      _key("z", { ctrlKey: true });
+      await _waitFor(() => !_mrdViewport().querySelector("span[data-vela-u]") && _ulSaved("WP7U base") === "WP7U base", 2000)
+        .catch(() => { throw new Error("undo did not restore the text without underline"); });
+    } finally { await _mrdUndoTo(past); }
+  }},
+  { name: "literal C++ / i++ stay text; deck markup stays literal in the editor", fn: async () => {
+    const past = _hooks().getHistoryCounts().past;
+    try {
+      const txt = 'C++ and i++ <u onclick="window.__wp7ul=1">z</u> ++y++';
+      const vp = await _mrdInject([{ type: "text", text: txt }], { layout: undefined }, (v) => v?.textContent.includes("C++ and i++") ? v : null);
+      const spans = vp.querySelectorAll("[data-block-type='text'] span[data-vela-u]");
+      if (spans.length !== 1 || spans[0].textContent !== "y") throw new Error(`expected one underline span "y", got ${spans.length}`);
+      if (vp.querySelector("[data-block-type='text'] u")) throw new Error("deck <u> became markup");
+      // Ingress sanitizing may strip the tag text; either way it must never be markup.
+      const ed = await _ulOpenEditor(vp, "C++ and i++", true);
+      const us = ed.querySelectorAll("u");
+      if (us.length !== 1 || us[0].textContent !== "y" || us[0].attributes.length) throw new Error("editor HTML has deck markup");
+      if (ed.querySelector("[onclick]")) throw new Error("deck markup became live in the editor");
+      ed.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+      await _waitFor(() => !_$("[contenteditable='true']"), 1500);
+      if (window.__wp7ul) throw new Error("deck handler ran");
+    } finally { await _mrdUndoTo(past); }
+  }},
+], { setup: _selectFirstModule });
+
 // ━━━ UI TEST RUNNER COMPONENT ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 // Demo deck guard — UI tests only run against the original demo deck
@@ -21970,6 +22652,9 @@ function extractTextRuns(container, containerRect) {
         fontStyle,
         fontFamily,
         letterSpacing,
+        // ++underline++ spans from parseInline carry data-vela-u (a code-set
+        // marker, not computed text-decoration, so links keep their old output).
+        ...(parent.closest("[data-vela-u]") ? { underline: true } : {}),
       });
     }
   }
@@ -22797,6 +23482,9 @@ function buildVectorPdf(pages, pageW, pageH, fonts, showBranding) {
       }
 
       content += "BT\n";
+      // Underline rects are path operators: they cannot sit inside BT/ET, so
+      // collect them here and fill them after ET.
+      let underlines = "";
       for (const run of page.textRuns) {
         const fontTag = pickFont(run.fontFamily, run.fontWeight, run.fontStyle);
         content += `${fontTag} ${run.fontSize.toFixed(1)} Tf\n`;
@@ -22835,10 +23523,17 @@ function buildVectorPdf(pages, pageW, pageH, fonts, showBranding) {
         if (Math.abs(tc) > 0.01) {
           content += "0 Tc\n";
         }
+        if (run.underline && run.w > 0) {
+          const th = Math.max(0.5, run.fontSize * 0.06);
+          const uy = pdfY - run.fontSize * 0.12 - th;
+          underlines += `${run.color.r.toFixed(3)} ${run.color.g.toFixed(3)} ${run.color.b.toFixed(3)} rg `
+            + `${run.x.toFixed(1)} ${uy.toFixed(1)} ${run.w.toFixed(1)} ${th.toFixed(2)} re f\n`;
+        }
         // Reset position for next run
         content += `${(-run.x).toFixed(1)} ${(-pdfY).toFixed(1)} Td\n`;
       }
       content += "ET\n";
+      if (underlines) content += "q\n" + underlines + "Q\n";
     }
 
     // Watermark (only when branding toggle is on)
@@ -24609,7 +25304,7 @@ function pptxEllipse(id, e) {
 }
 
 // t: { x,y,w,h, text, fontSize?|size?, color, bold?|fontWeight?, italic?|fontStyle?, font?|fontFamily?, align?,
-//      runs?: [ [ {text, bold?, italic?}, … ], … ] }
+//      runs?: [ [ {text, bold?, italic?, underline?}, … ], … ] }
 // One text box per source text element; PowerPoint reflows/wraps within the box.
 // `runs` (from pptxExtractTextBoxes) is an array of LINES, each an array of styled
 // runs — so inline **bold** / *italic* segments emit as separate <a:r> runs within
@@ -24624,7 +25319,7 @@ function pptxTextSp(id, t) {
   const algn = ({ left: "l", center: "ctr", right: "r", justify: "just", start: "l", end: "r" })[alignRaw] || "l";
   const hex = pptxColorHex(t.color) || "000000";
   const font = pptxFontName(t.font || t.fontFamily);
-  const mkRPr = (b, i) => `<a:rPr lang="en-US" sz="${pptxCpt(size)}"${b ? ' b="1"' : ""}${i ? ' i="1"' : ""} dirty="0">`
+  const mkRPr = (b, i, u) => `<a:rPr lang="en-US" sz="${pptxCpt(size)}"${b ? ' b="1"' : ""}${i ? ' i="1"' : ""}${u ? ' u="sng"' : ""} dirty="0">`
     + `<a:solidFill><a:srgbClr val="${hex}"/></a:solidFill>`
     + `<a:latin typeface="${pptxEsc(font)}"/><a:cs typeface="${pptxEsc(font)}"/></a:rPr>`;
   const emptyPara = `<a:endParaRPr lang="en-US" sz="${pptxCpt(size)}"/>`; // blank line — keep the paragraph, no run
@@ -24640,7 +25335,7 @@ function pptxTextSp(id, t) {
   if (Array.isArray(t.runs)) {
     paras = t.runs.map((lineRuns) => {
       const body = (lineRuns && lineRuns.length)
-        ? lineRuns.map((r) => `<a:r>${mkRPr(!!r.bold, !!r.italic)}<a:t>${pptxEsc(r.text)}</a:t></a:r>`).join("")
+        ? lineRuns.map((r) => `<a:r>${mkRPr(!!r.bold, !!r.italic, !!r.underline)}<a:t>${pptxEsc(r.text)}</a:t></a:r>`).join("")
         : emptyPara;
       return `<a:p><a:pPr algn="${algn}"/>${body}</a:p>`;
     }).join("");
@@ -25227,10 +25922,12 @@ function pptxExtractTextBoxes(container, containerRect) {
     // <br> starts a new line/paragraph (explicit "\n" in source); a block-level
     // child is left for the walker to emit as its own box (NOT marked seen here).
     const lines = [[]];
-    const pushRun = (txt, bold, italic) => { if (txt) lines[lines.length - 1].push({ text: txt, bold, italic }); };
-    const walkInline = (node, bold, italic) => {
+    // underline: only parseInline's ++underline++ spans (data-vela-u, a code-set
+    // marker) — not computed text-decoration, so link runs keep their old output.
+    const pushRun = (txt, bold, italic, underline) => { if (txt) lines[lines.length - 1].push(underline ? { text: txt, bold, italic, underline } : { text: txt, bold, italic }); };
+    const walkInline = (node, bold, italic, underline) => {
       for (const n of node.childNodes) {
-        if (n.nodeType === 3) { pushRun(n.textContent, bold, italic); continue; }
+        if (n.nodeType === 3) { pushRun(n.textContent, bold, italic, underline); continue; }
         if (n.nodeType !== 1) continue;
         if (n.tagName === "BR") { lines.push([]); continue; }
         if (String(n.tagName).toLowerCase() === "svg") continue; // icons handled separately
@@ -25238,18 +25935,19 @@ function pptxExtractTextBoxes(container, containerRect) {
         const cs = window.getComputedStyle(n);
         const b = bold || (parseInt(cs.fontWeight) || 400) >= 600;
         const it = italic || (String(cs.fontStyle).indexOf("italic") >= 0);
+        const u = underline || n.hasAttribute("data-vela-u");
         seen.add(n); // absorb this inline element so its text nodes don't spawn a box
-        walkInline(n, b, it);
+        walkInline(n, b, it, u);
       }
     };
     const baseBold = (parseInt(style.fontWeight) || 400) >= 600;
     const baseItalic = String(style.fontStyle).indexOf("italic") >= 0;
-    walkInline(blockEl, baseBold, baseItalic);
+    walkInline(blockEl, baseBold, baseItalic, blockEl.hasAttribute("data-vela-u"));
 
     // Normalize whitespace per line: collapse runs of whitespace to single spaces,
     // trim the outer edges, drop emptied runs, then apply text-transform per run.
     const runs = lines.map((lineRuns) => {
-      let rs = lineRuns.map((r) => ({ text: r.text.replace(/\s+/g, " "), bold: r.bold, italic: r.italic }));
+      let rs = lineRuns.map((r) => (r.underline ? { text: r.text.replace(/\s+/g, " "), bold: r.bold, italic: r.italic, underline: true } : { text: r.text.replace(/\s+/g, " "), bold: r.bold, italic: r.italic }));
       if (rs.length) {
         rs[0].text = rs[0].text.replace(/^\s+/, "");
         rs[rs.length - 1].text = rs[rs.length - 1].text.replace(/\s+$/, "");
@@ -27666,11 +28364,20 @@ export default function App() {
   const importDeck = (e) => { const file = e.target.files?.[0]; if (!file) return; e.target.value = ""; loadDeckFile(file); };
 
   const [fileDragOver, setFileDragOver] = useState(false);
+  const [fileDragImages, setFileDragImages] = useState(false); // the drag holds only image files
+  const [fileDragTaken, setFileDragTaken] = useState(false); // a child (editor slide panel) takes this drag
   const dragCountRef = useRef(0);
-  const handleGlobalDragEnter = useCallback((e) => { e.preventDefault(); if (e.dataTransfer?.types?.includes("Files")) { dragCountRef.current++; setFileDragOver(true); } }, []);
+  const fullscreenRef = useRef(false); fullscreenRef.current = !!state.fullscreen;
+  const handleGlobalDragEnter = useCallback((e) => { e.preventDefault(); if (e.dataTransfer?.types?.includes("Files")) { dragCountRef.current++; setFileDragOver(true); setFileDragImages(dragHasOnlyImageFiles(e.dataTransfer)); } }, []);
   const handleGlobalDragLeave = useCallback((e) => { e.preventDefault(); dragCountRef.current--; if (dragCountRef.current <= 0) { dragCountRef.current = 0; setFileDragOver(false); } }, []);
-  const handleGlobalDragOver = useCallback((e) => { e.preventDefault(); e.dataTransfer.dropEffect = "copy"; }, []);
-  const handleGlobalDrop = useCallback((e) => { e.preventDefault(); e.stopPropagation(); dragCountRef.current = 0; setFileDragOver(false); const file = e.dataTransfer?.files?.[0]; if (file) loadDeckFile(file); }, [loadDeckFile]);
+  // A child (the editor slide panel, for image files) that takes the drag calls
+  // preventDefault first; the shell then hides its own overlay over that child.
+  const handleGlobalDragOver = useCallback((e) => { const taken = e.isDefaultPrevented(); e.preventDefault(); e.dataTransfer.dropEffect = "copy"; setFileDragTaken(taken); }, []);
+  // A drop a child took (images added to a slide) must not also load as a deck.
+  const handleGlobalDrop = useCallback((e) => { const taken = e.isDefaultPrevented(); e.preventDefault(); e.stopPropagation(); dragCountRef.current = 0; setFileDragOver(false); setFileDragTaken(false); if (taken) return;
+    // Present has no slide to drop on: an images-only drop is told so, never loaded as a deck.
+    if (fullscreenRef.current && dragHasOnlyImageFiles(e.dataTransfer)) { slideActionsRef.current?.showToast?.("Exit Present to add images"); return; }
+    const file = e.dataTransfer?.files?.[0]; if (file) loadDeckFile(file); }, [loadDeckFile]);
 
   // Title editing
   const startEditTitle = () => { setTitleDraft(state.deckTitle || "Untitled"); setEditingTitle(true); };
@@ -27742,11 +28449,11 @@ export default function App() {
       onDragEnter={handleGlobalDragEnter} onDragLeave={handleGlobalDragLeave} onDragOver={handleGlobalDragOver} onDrop={handleGlobalDrop}>
       <style>{getCss()}</style>
       <input ref={fileInputRef} type="file" accept=".json,.vela" onChange={importDeck} style={{ display: "none" }} />
-      {fileDragOver && <div style={{ position: "absolute", inset: 0, zIndex: 99999, background: "rgba(59,130,246,0.12)", backdropFilter: "blur(4px)", display: "flex", alignItems: "center", justifyContent: "center", pointerEvents: "none" }}>
+      {fileDragOver && !fileDragTaken && <div style={{ position: "absolute", inset: 0, zIndex: 99999, background: "rgba(59,130,246,0.12)", backdropFilter: "blur(4px)", display: "flex", alignItems: "center", justifyContent: "center", pointerEvents: "none" }}>
         <div style={{ background: T.bgPanel, border: `2px dashed ${T.accent}`, borderRadius: 16, padding: "40px 60px", display: "flex", flexDirection: "column", alignItems: "center", gap: 12, boxShadow: "0 20px 60px rgba(0,0,0,0.4)" }}>
-          <span style={{ fontSize: 40 }}>📂</span>
-          <span style={{ fontFamily: FONT.display, fontSize: 18, fontWeight: 700, color: T.text }}>Drop deck to load</span>
-          <span style={{ fontFamily: FONT.mono, fontSize: 11, color: T.textDim }}>.json or .vela</span>
+          <span style={{ fontSize: 40 }}>{fileDragImages ? "🖼️" : "📂"}</span>
+          <span style={{ fontFamily: FONT.display, fontSize: 18, fontWeight: 700, color: T.text }}>{fileDragImages ? (state.fullscreen ? "Exit Present to add images" : "Drop on a slide to add images") : "Drop deck to load"}</span>
+          {!fileDragImages && <span style={{ fontFamily: FONT.mono, fontSize: 11, color: T.textDim }}>.json or .vela</span>}
         </div>
       </div>}
 

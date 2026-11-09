@@ -60,6 +60,8 @@ const DECK = (() => {
       // WinAnsi symbols (€ etc.) must be real text at text size, not emoji images.
       // The one real emoji keeps the image path. (meridian CR05)
       { bg: "#0f172a", color: "#e2e8f0", accent: "#3b82f6", blocks: [{ type: "text", text: GLYPH_TEXT }] },
+      // ++underline++ (v13.78 WP7): the vector path fills one underline rect after ET.
+      { bg: "#0f172a", color: "#e2e8f0", accent: "#3b82f6", blocks: [{ type: "text", text: "Plain C++ text and ++Underlined++ word." }] },
     ] }] }],
   };
   // Unique per-process path so concurrent runs (parallel CI stacks / devs) can't
@@ -349,6 +351,12 @@ function assertPdf(label, buf, expectedPages, { vector }) {
     }
     check(`[${label}] extractable slide text present in a "(…) Tj" run`, !!hit,
       hit ? `matched "${hit}"` : `none of ${JSON.stringify(words)}`);
+    // ++underline++: exactly one filled underline rect, in a q…Q block after ET
+    // (path operators are not valid inside BT/ET); "C++" stays literal text.
+    const ulBlocks = text.match(/ET\nq\n(?:[\d.]+ [\d.]+ [\d.]+ rg [\d.-]+ [\d.-]+ [\d.]+ [\d.]+ re f\n)+Q\n/g) || [];
+    const ulRects = ulBlocks.reduce((n, b) => n + (b.match(/ re f\n/g) || []).length, 0);
+    check(`[${label}] ++underline++ draws exactly one underline rect after ET`, ulRects === 1, `rects=${ulRects}`);
+    check(`[${label}] "C++" stays literal in a Tj run`, /\((?:[^()\\]|\\.)*C\+\+(?:[^()\\]|\\.)*\)\s*Tj/.test(text));
     // CR05: WinAnsi symbols are encoded as their real byte inside Tj text runs
     // (drawn with the run's font at text size), never dropped, never imaged.
     const tjRuns = (text.match(/\((?:[^()\\]|\\.)*\)\s*Tj/g) || []).join("\n");

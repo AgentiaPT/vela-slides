@@ -47,7 +47,7 @@ Pre-authored companion content that renders in the 🎓 student panel with **zer
 ```json
 {
   "studyNotes": {
-    "text": "Markdown body. Supports **bold**, *italic*, ~~strike~~, [label](https://example.com), and [X-Ray term](#agent).",
+    "text": "Markdown body. Supports **bold**, *italic*, ~~strike~~, ++underline++, [label](https://example.com), and [X-Ray term](#agent).",
     "diagram": "<svg viewBox='0 0 320 140'>...</svg>",
     "questions": ["Why does X happen?", "How does Y relate to Z?"],
     "glossary": {
@@ -61,7 +61,7 @@ Pre-authored companion content that renders in the 🎓 student panel with **zer
 ```
 
 **Field reference:**
-- `text` *(required, string, ≤ 4000 chars, warn at 2000)* — markdown body, rendered via the same `parseInline` + `ChatMarkdown` pipeline used by live Vera chat. Supports `**bold**`, `*italic*`, `***both***`, `~~strike~~`, `__underscores__`, `[label](https://…)` external links, and `[label](#term)` X-Ray glossary refs.
+- `text` *(required, string, ≤ 4000 chars, warn at 2000)* — markdown body, rendered via the same `parseInline` + `ChatMarkdown` pipeline used by live Vera chat. Supports `**bold**`, `*italic*`, `***both***`, `~~strike~~`, `++underline++`, `__underscores__`, `[label](https://…)` external links, and `[label](#term)` X-Ray glossary refs.
 - `diagram` *(optional, string, ≤ 8000 chars)* — one complete, well-formed inline SVG. Rendered under the text body via `sanitizeSvgMarkup` (DOMParser-based strip of `<script>`, event handlers, `javascript:/data:/vbscript:` URIs).
 - `questions` *(optional, array, max 6, each ≤ 160 chars)* — pre-authored follow-up questions. When the Claude API / MCP channel is reachable they render as clickable buttons that send the question into the live Vera Teacher flow; otherwise they render as static "Questions to ponder" bullets.
 - `glossary` *(optional, object, max 24 entries)* — `{ termKey: { definition: string ≤ 400 chars, url?: sanitized URL } }`. Keys are lowercased and `[^\w-]` stripped on load, so match is case-insensitive. The inline syntax `[label](#term)` looks up the entry and renders a Kindle-style popover with the definition + optional "Learn more" link. Unknown terms render as plain label text.

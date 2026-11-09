@@ -731,6 +731,9 @@ function extractTextRuns(container, containerRect) {
         fontStyle,
         fontFamily,
         letterSpacing,
+        // ++underline++ spans from parseInline carry data-vela-u (a code-set
+        // marker, not computed text-decoration, so links keep their old output).
+        ...(parent.closest("[data-vela-u]") ? { underline: true } : {}),
       });
     }
   }

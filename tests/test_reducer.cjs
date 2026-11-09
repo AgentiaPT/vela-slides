@@ -315,6 +315,19 @@ const clearTrackers = () => { _dirtyMods.clear(); _deletedMods.clear(); _loadedM
   assert("UPDATE_SLIDE honors timeLock (duration + flag preserved)", r.timeLock === true && r.duration === 45);
 }
 {
+  // UPDATE_SLIDE replace keeps story:true when the patch has no story key; a patch story key wins
+  const s = slide(1, { story: true, blocks: [{ type: "image", src: "data:image/png;base64,AAAA" }] });
+  const st = present([lane("l1", [item("m1", [s])])], "m1");
+  const kept = findItem(innerReducer(st, { type: "UPDATE_SLIDE", id: "m1", index: 0, merge: false, patch: { blocks: [{ type: "heading", text: "z" }] } }), "m1").slides[0];
+  assert("UPDATE_SLIDE replace keeps story", kept.story === true && kept.blocks[0].text === "z");
+  const off = findItem(innerReducer(st, { type: "UPDATE_SLIDE", id: "m1", index: 0, merge: false, patch: { story: undefined, blocks: [] } }), "m1").slides[0];
+  assert("UPDATE_SLIDE replace with story key clears story", off.story === undefined);
+  const plain = findItem(innerReducer(present([lane("l1", [item("m1", [slide(1)])])], "m1"), { type: "UPDATE_SLIDE", id: "m1", index: 0, merge: false, patch: { blocks: [] } }), "m1").slides[0];
+  assert("UPDATE_SLIDE replace adds no story to a plain slide", !("story" in plain));
+  const toggled = findItem(innerReducer(st, { type: "UPDATE_SLIDE", id: "m1", index: 0, merge: true, patch: { story: undefined } }), "m1").slides[0];
+  assert("UPDATE_SLIDE merge story undefined turns story off", toggled.story === undefined);
+}
+{
   // UPDATE_SLIDE re-sanitize scrubs a CSS auto-load color scalar
   const out = innerReducer(present([lane("l1", [item("m1", [slide(1)])])], "m1"), { type: "UPDATE_SLIDE", id: "m1", index: 0, merge: true, patch: { bg: "url(http://x/a.png)" } });
   const r = findItem(out, "m1").slides[0];

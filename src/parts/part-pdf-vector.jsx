@@ -751,6 +751,9 @@ function buildVectorPdf(pages, pageW, pageH, fonts, showBranding) {
       }
 
       content += "BT\n";
+      // Underline rects are path operators: they cannot sit inside BT/ET, so
+      // collect them here and fill them after ET.
+      let underlines = "";
       for (const run of page.textRuns) {
         const fontTag = pickFont(run.fontFamily, run.fontWeight, run.fontStyle);
         content += `${fontTag} ${run.fontSize.toFixed(1)} Tf\n`;
@@ -789,10 +792,17 @@ function buildVectorPdf(pages, pageW, pageH, fonts, showBranding) {
         if (Math.abs(tc) > 0.01) {
           content += "0 Tc\n";
         }
+        if (run.underline && run.w > 0) {
+          const th = Math.max(0.5, run.fontSize * 0.06);
+          const uy = pdfY - run.fontSize * 0.12 - th;
+          underlines += `${run.color.r.toFixed(3)} ${run.color.g.toFixed(3)} ${run.color.b.toFixed(3)} rg `
+            + `${run.x.toFixed(1)} ${uy.toFixed(1)} ${run.w.toFixed(1)} ${th.toFixed(2)} re f\n`;
+        }
         // Reset position for next run
         content += `${(-run.x).toFixed(1)} ${(-pdfY).toFixed(1)} Td\n`;
       }
       content += "ET\n";
+      if (underlines) content += "q\n" + underlines + "Q\n";
     }
 
     // Watermark (only when branding toggle is on)

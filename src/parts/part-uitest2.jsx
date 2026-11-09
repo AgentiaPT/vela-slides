@@ -4010,6 +4010,81 @@ uiSuite("hunt1-fix-image", [
   }},
 ], { setup: _selectFirstModule });
 
+// ── WP7: Ctrl+U underline is saved as ++text++ and shows underlined ──
+// (This whole part is release-excluded by concat.py --release.)
+const _ulSaved = (marker) => {
+  const snap = _hooks().capturePostDemoFlushForTest?.();
+  let hit = null;
+  const walk = (v) => {
+    if (hit) return;
+    if (typeof v === "string") { if (v.includes(marker)) hit = v; }
+    else if (v && typeof v === "object") for (const k of Object.keys(v)) walk(v[k]);
+  };
+  walk(snap && snap.state);
+  return hit;
+};
+const _ulOpenEditor = async (vp, shown, partial) => {
+  const disp = Array.from(vp.querySelectorAll("[data-block-type='text'] div")).find((d) => (partial ? d.textContent.includes(shown) : d.textContent === shown) && d.style.cursor === "pointer");
+  if (!disp) throw new Error("text block is not editable");
+  _click(disp);
+  const ed = await _waitFor(() => vp.querySelector("[data-block-type='text'] [contenteditable]"), 1500);
+  ed.focus();
+  return ed;
+};
+uiSuite("wp7-underline", [
+  { name: "Ctrl+U saves ++text++, renders an underlined span, undo restores", fn: async () => {
+    const past = _hooks().getHistoryCounts().past;
+    try {
+      const vp = await _mrdInject([{ type: "text", text: "WP7U base" }], { layout: undefined }, (v) => v?.textContent.includes("WP7U base") ? v : null);
+      const afterInject = _hooks().getHistoryCounts().past;
+      const ed = await _ulOpenEditor(vp, "WP7U base");
+      const sel = window.getSelection(); sel.selectAllChildren(ed); sel.collapseToEnd();
+      document.execCommand("insertText", false, " under");
+      const tw = document.createTreeWalker(ed, NodeFilter.SHOW_TEXT);
+      let tn = null;
+      while (tw.nextNode()) if (tw.currentNode.textContent.includes("under")) tn = tw.currentNode;
+      if (!tn) throw new Error("typed text not found");
+      const at = tn.textContent.lastIndexOf("under");
+      const r = document.createRange(); r.setStart(tn, at); r.setEnd(tn, at + 5);
+      sel.removeAllRanges(); sel.addRange(r);
+      const ev = new KeyboardEvent("keydown", { key: "u", ctrlKey: true, bubbles: true, cancelable: true });
+      ed.dispatchEvent(ev);
+      if (!ev.defaultPrevented) throw new Error("Ctrl+U was not handled by the editor");
+      if (!ed.querySelector("u")) throw new Error("Ctrl+U did not underline the selection");
+      ed.blur();
+      const saved = await _waitFor(() => _ulSaved("WP7U base") === "WP7U base ++under++" ? true : null, 2000)
+        .catch(() => { throw new Error(`saved text is ${JSON.stringify(_ulSaved("WP7U base"))}`); });
+      if (!saved) throw new Error("not saved");
+      const span = await _waitFor(() => _mrdViewport().querySelector("[data-block-type='text'] span[data-vela-u]"), 1500);
+      if (span.textContent !== "under" || !getComputedStyle(span).textDecorationLine.includes("underline"))
+        throw new Error("rendered text has no underlined span");
+      if (_mrdViewport().textContent.includes("++")) throw new Error("the ++ markers are visible");
+      if (_hooks().getHistoryCounts().past !== afterInject + 1) throw new Error("the edit did not make one undo step");
+      _key("z", { ctrlKey: true });
+      await _waitFor(() => !_mrdViewport().querySelector("span[data-vela-u]") && _ulSaved("WP7U base") === "WP7U base", 2000)
+        .catch(() => { throw new Error("undo did not restore the text without underline"); });
+    } finally { await _mrdUndoTo(past); }
+  }},
+  { name: "literal C++ / i++ stay text; deck markup stays literal in the editor", fn: async () => {
+    const past = _hooks().getHistoryCounts().past;
+    try {
+      const txt = 'C++ and i++ <u onclick="window.__wp7ul=1">z</u> ++y++';
+      const vp = await _mrdInject([{ type: "text", text: txt }], { layout: undefined }, (v) => v?.textContent.includes("C++ and i++") ? v : null);
+      const spans = vp.querySelectorAll("[data-block-type='text'] span[data-vela-u]");
+      if (spans.length !== 1 || spans[0].textContent !== "y") throw new Error(`expected one underline span "y", got ${spans.length}`);
+      if (vp.querySelector("[data-block-type='text'] u")) throw new Error("deck <u> became markup");
+      // Ingress sanitizing may strip the tag text; either way it must never be markup.
+      const ed = await _ulOpenEditor(vp, "C++ and i++", true);
+      const us = ed.querySelectorAll("u");
+      if (us.length !== 1 || us[0].textContent !== "y" || us[0].attributes.length) throw new Error("editor HTML has deck markup");
+      if (ed.querySelector("[onclick]")) throw new Error("deck markup became live in the editor");
+      ed.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+      await _waitFor(() => !_$("[contenteditable='true']"), 1500);
+      if (window.__wp7ul) throw new Error("deck handler ran");
+    } finally { await _mrdUndoTo(past); }
+  }},
+], { setup: _selectFirstModule });
+
 // ━━━ UI TEST RUNNER COMPONENT ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 // Demo deck guard — UI tests only run against the original demo deck

@@ -20,6 +20,130 @@
 // which regime it is in; an outward offset is only safe when a padding gutter
 // is guaranteed to exist.
 //
+// ━━━ Story zoom layer (story images in Present) ━━━━━━━━━━━━━━━━━━━
+// Shows story image k (1-based) over the slide while story.zoomed, with an
+// index rail of thumbnails on the right. It renders nothing when not zoomed
+// (after the zoom-out animation), so a slide without story keeps its DOM.
+// Every <img> uses the src of the slide's own (already sanitized) image block,
+// as a React attribute; the accent reaches CSS only through cssColor().
+const STORY_RAIL_W = 64;
+const STORY_THUMB_H = 36;
+function storyPrefersReducedMotion() {
+  try { return !!window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches; } catch (_) { return false; }
+}
+// Box (center + size) of an image with aspect a (w/h) drawn objectFit:contain in rect r.
+function storyContainBox(r, a) {
+  const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+  if (!(a > 0) || !(r.width > 0) || !(r.height > 0)) return { cx, cy, w: r.width, h: r.height };
+  const w = Math.min(r.width, r.height * a);
+  return { cx, cy, w, h: w / a };
+}
+function StoryZoomLayer({ items, story, animate, onJump, onZoomOut, hostRef, pad, accent }) {
+  const n = items.length;
+  const zoomed = !!story && story.zoomed === true && Number.isInteger(story.k) && story.k >= 1 && story.k <= n;
+  const kNow = zoomed ? story.k : 0;
+  // Derived state from the previous render: on zoom-out, image k stays on
+  // screen for its shrink animation (closingK), then the effect unmounts it.
+  const [trackK, setTrackK] = useState(kNow);
+  const [closingK, setClosingK] = useState(0);
+  if (trackK !== kNow) {
+    setTrackK(kNow);
+    setClosingK(!kNow && trackK && animate && !storyPrefersReducedMotion() ? trackK : 0);
+  }
+  const displayK = kNow || closingK;
+  const boxRef = useRef(null);
+  const imgRef = useRef(null);
+  const railRef = useRef(null);
+  const lastKRef = useRef(0);
+
+  // Transform that puts the zoomed image box over story tile k (null: no tile).
+  const tileTransform = (k) => {
+    const host = hostRef.current, box = boxRef.current;
+    if (!host || !box) return null;
+    const tile = host.querySelector(`[data-story-idx="${k | 0}"]`);
+    const tileImg = tile && tile.querySelector("img");
+    if (!tileImg) return null;
+    const tr = tileImg.getBoundingClientRect();
+    const scale = host.offsetWidth > 0 ? host.getBoundingClientRect().width / host.offsetWidth : 1;
+    if (!(tr.width > 0) || !(scale > 0)) return null;
+    const nat = imgRef.current && imgRef.current.naturalWidth > 0 ? imgRef.current : tileImg;
+    const a = nat.naturalWidth > 0 && nat.naturalHeight > 0 ? nat.naturalWidth / nat.naturalHeight : 0;
+    const from = storyContainBox(tr, a), to = storyContainBox(box.getBoundingClientRect(), a);
+    if (!(to.w > 0)) return null;
+    return `translate(${(from.cx - to.cx) / scale}px, ${(from.cy - to.cy) / scale}px) scale(${from.w / to.w})`;
+  };
+
+  useLayoutEffect(() => {
+    const prevK = lastKRef.current;
+    lastKRef.current = kNow;
+    const box = boxRef.current, rail = railRef.current, img = imgRef.current;
+    if (!box) return;
+    const motion = !!animate && !storyPrefersReducedMotion();
+    if (kNow && !prevK) {
+      // Zoom in: fly from the tile to the zoomed box; the rail fades in.
+      box.style.transition = "none"; box.style.transform = ""; box.style.opacity = "";
+      if (rail) { rail.style.transition = "none"; rail.style.opacity = motion ? "0" : ""; }
+      if (!motion) return;
+      const from = tileTransform(kNow);
+      if (from) box.style.transform = from; else box.style.opacity = "0";
+      void box.offsetWidth;
+      box.style.transition = "transform 350ms ease-out, opacity 350ms ease-out";
+      box.style.transform = ""; box.style.opacity = "";
+      if (rail) { void rail.offsetWidth; rail.style.transition = "opacity 150ms ease-out"; rail.style.opacity = ""; }
+      return;
+    }
+    if (kNow && prevK && kNow !== prevK) {
+      // Image to image: the new image slides in from the side it comes from.
+      if (!motion || !img) return;
+      const dir = kNow > prevK ? 1 : -1;
+      img.style.transition = "none"; img.style.transform = `translateX(${dir * 30}%)`; img.style.opacity = "0";
+      void img.offsetWidth;
+      img.style.transition = "transform 250ms ease-out, opacity 250ms ease-out";
+      img.style.transform = ""; img.style.opacity = "";
+      return;
+    }
+    if (!kNow && closingK) {
+      // Zoom out: shrink back into the tile, then unmount.
+      const to = tileTransform(closingK);
+      let done = false;
+      const finish = () => { if (done) return; done = true; setClosingK(0); };
+      const onEnd = (e) => { if (e.target === box) finish(); };
+      box.style.transition = "transform 300ms ease-in-out, opacity 300ms ease-in-out";
+      if (to) box.style.transform = to; else box.style.opacity = "0";
+      if (rail) { rail.style.transition = "opacity 150ms ease-out"; rail.style.opacity = "0"; }
+      box.addEventListener("transitionend", onEnd);
+      const t = setTimeout(finish, 360);
+      return () => { clearTimeout(t); box.removeEventListener("transitionend", onEnd); };
+    }
+  }, [kNow, closingK]);
+
+  if (!displayK) return null;
+  const item = items[displayK - 1];
+  if (!item) return null;
+  const live = zoomed;
+  return (
+    <div data-story-layer="" onClick={live && onZoomOut ? (e) => { e.stopPropagation(); onZoomOut(); } : undefined}
+      style={{ position: "absolute", inset: 0, padding: pad, boxSizing: "border-box", zIndex: 4, display: "flex", flexDirection: "row", gap: 8, cursor: live && onZoomOut ? "zoom-out" : "default", pointerEvents: live ? "auto" : "none" }}>
+      <div ref={boxRef} data-story-image="" style={{ flex: 1, minWidth: 0, minHeight: 0, position: "relative" }}>
+        <img key={displayK} ref={imgRef} src={item.src} alt={item.alt} draggable={false} style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "contain", display: "block" }} />
+      </div>
+      <div ref={railRef} data-story-rail="" style={{ width: STORY_RAIL_W + 6, flexShrink: 0, padding: 3, boxSizing: "border-box", display: "flex", flexDirection: "column", justifyContent: "center", gap: 6, minHeight: 0, overflow: "hidden" }}>
+        {items.map((it, j) => {
+          const cur = j + 1 === displayK;
+          const ts = { width: STORY_RAIL_W, height: STORY_THUMB_H, flex: `0 1 ${STORY_THUMB_H}px`, minHeight: 12, padding: 0, margin: 0, border: "none", borderRadius: 4, overflow: "hidden", boxSizing: "border-box", background: "rgba(127,127,127,0.16)", opacity: cur ? 1 : 0.55, outline: cur ? `2px solid ${accent}` : "none", outlineOffset: 1, cursor: onJump ? "pointer" : "default", display: "block" };
+          const thumb = <img src={it.src} alt="" draggable={false} style={{ width: "100%", height: "100%", objectFit: "contain", display: "block", pointerEvents: "none" }} />;
+          // Thumbs are buttons only when the surface can jump (Present). A mouse
+          // click must not focus the button: Space would then press it again.
+          return onJump
+            ? <button key={j} type="button" aria-label={`Image ${j + 1}`} aria-current={cur ? "true" : undefined}
+                onMouseDown={(e) => e.preventDefault()} onClick={(e) => { e.stopPropagation(); onJump(j + 1); }} style={ts}>{thumb}</button>
+            : <div key={j} aria-current={cur ? "true" : undefined} style={ts}>{thumb}</div>;
+        })}
+      </div>
+    </div>
+  );
+}
+
 // ━━━ Slide Content ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // ━━━ Inline Comment Card (review mode) ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 function InlineCommentCard({ comment, itemId, slideIndex, dispatch }) {
@@ -38,7 +162,7 @@ function InlineCommentCard({ comment, itemId, slideIndex, dispatch }) {
   );
 }
 
-function SlideContent({ slide, index, total, branding, editable, onEdit, presenting, onBlockEdit, blockEditing, fontScale = 1, reviewMode, itemId, dispatch: externalDispatch, displayIndex, displayTotal }) {
+function SlideContent({ slide, index, total, branding, editable, onEdit, presenting, onBlockEdit, blockEditing, fontScale = 1, reviewMode, itemId, dispatch: externalDispatch, displayIndex, displayTotal, story, storyAnimate, onStoryJump, onStoryZoomOut, presentSurface }) {
   const st = { text: slide.color || T.text, muted: slide.mutedColor || T.textMuted, textDim: T.textDim, accent: slide.accent || T.accent, border: T.border, codeBg: T.codeBg };
   // Hidden elements (CR: hide any element). In presentation they are removed
   // entirely — no render, no layout — so a slide can carry a title that only
@@ -63,6 +187,24 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
   const colsRMediaOnly = isMediaOnlyColumn(colsR);
   const hasMediaOnlyColumn = colsLMediaOnly || colsRMediaOnly;
   const hasDirectColumnImage = colsL.some((b) => b?.type === "image") || colsR.some((b) => b?.type === "image");
+  // Story images. storyImageList indexes the raw slide arrays; this render
+  // drops hidden blocks when presenting, so map each raw index to the index
+  // renderBlockWithComments sees. A present surface (also with presentEdit)
+  // uses the Present list, so the numbers match what SlidePanel steps through.
+  const storyList = slide.story === true ? storyImageList(slide, true) : [];
+  const storyActive = storyIsActive(slide, storyList);
+  const storyNumOf = new Map();
+  if (storyActive) {
+    const rB = Array.isArray(slide.blocks) ? slide.blocks : [], rL = Array.isArray(slide.L) ? slide.L : [], rR = Array.isArray(slide.R) ? slide.R : [];
+    const visBefore = (arr, j) => { if (!presenting) return j; let c = 0; for (let q = 0; q < j; q++) if (!(arr[q] && arr[q].hidden)) c++; return c; };
+    storyList.forEach((it, pos) => {
+      const r = it.idx < rB.length ? visBefore(rB, it.idx)
+        : it.idx < rB.length + rL.length ? blocks.length + visBefore(rL, it.idx - rB.length)
+        : blocks.length + colsL.length + visBefore(rR, it.idx - rB.length - rL.length);
+      if (!storyNumOf.has(r)) storyNumOf.set(r, pos + 1);
+    });
+  }
+  const storyZoomed = storyActive && !!story && story.zoomed === true && Number.isInteger(story.k) && story.k >= 1 && story.k <= storyList.length;
   // Deck values must not reach CSS directly. Unknown values use the normal
   // layout default instead of becoming an invalid justifyContent value.
   const verticalAlignToJustify = (value) => {
@@ -118,6 +260,14 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
   const [gridBoxes, setGridBoxes] = useState({});
   const [, setAspectTick] = useState(0);
   const [hoveredBlock, setHoveredBlock] = useState(null);
+  // Editor tile drag reorder: { key, idxs, from, order, rects, snap } while a
+  // drag runs (order[q] = position in idxs of the block shown in slot q).
+  const [tileDrag, setTileDrag] = useState(null);
+  const [hoverCell, setHoverCell] = useState(null);
+  const tileDragRef = useRef(null);
+  tileDragRef.current = tileDrag;
+  const tileDragLatest = useRef(null);
+  tileDragLatest.current = { slide, onEdit };
   const [itemHovered, setItemHovered] = useState(false); // an inner item's chrome is hovered → hide block toolbar
   const [editingLink, setEditingLink] = useState(null);
   const [editingBlockIdx, setEditingBlockIdx] = useState(null);
@@ -185,6 +335,52 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
     const [key, arr, j] = blockSlot(blockIdx);
     onEdit({ [key]: arr.map((b, i) => i === j ? { ...b, ...blockPatch } : b) });
   }, [onEdit, blocks, colsL, colsR]);
+
+  // Window listeners for a running tile drag: move = live reflow, up = one
+  // onEdit({blocks}) (one undo step), Esc / cancel / blur = no change.
+  const tileDragOn = tileDrag ? tileDrag.key : null;
+  useEffect(() => {
+    if (tileDragOn == null) return;
+    const move = (e) => {
+      const d = tileDragRef.current; if (!d) return;
+      const t = d.rects.findIndex((r) => e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom);
+      const cur = d.order.indexOf(d.from);
+      if (t < 0 || t === cur) return;
+      const order = d.order.slice(); order.splice(cur, 1); order.splice(t, 0, d.from);
+      setTileDrag({ ...d, order });
+    };
+    const cancel = () => setTileDrag(null);
+    const up = () => {
+      const d = tileDragRef.current;
+      setTileDrag(null);
+      const { slide: s, onEdit: edit } = tileDragLatest.current || {};
+      if (!d || !edit || !s || d.order.every((p, q) => p === q)) return;
+      // Fail closed if the slide changed during the drag.
+      const arr = s.blocks;
+      if (arr !== d.snap || !Array.isArray(arr) || d.idxs.some((i) => !arr[i] || arr[i].type !== "image")) return;
+      const next = arr.slice();
+      d.idxs.forEach((slotIdx, q) => { next[slotIdx] = arr[d.idxs[d.order[q]]]; });
+      edit({ blocks: next });
+    };
+    const key = (e) => { if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); cancel(); } };
+    const block = (e) => e.preventDefault();
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+    window.addEventListener("pointercancel", cancel);
+    window.addEventListener("blur", cancel);
+    window.addEventListener("keydown", key, true);
+    document.addEventListener("selectstart", block);
+    document.addEventListener("dragstart", block);
+    return () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      window.removeEventListener("pointercancel", cancel);
+      window.removeEventListener("blur", cancel);
+      window.removeEventListener("keydown", key, true);
+      document.removeEventListener("selectstart", block);
+      document.removeEventListener("dragstart", block);
+    };
+  }, [tileDragOn]);
 
   const handleBlockRemove = useCallback((blockIdx) => {
     if (!onEdit) return;
@@ -607,8 +803,31 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
   };
 
   // Render a block followed by its inline comments
-  const renderBlockWithComments = (b, i) => {
-    const block = renderBlockItem(b, i);
+  const renderBlockWithComments = (b0, i) => {
+    // Story / caption-chip flags go on top-level image blocks only, after
+    // sanitization (renderer-private "_" keys). Without story and outside the
+    // editor no flag is set, so the render is unchanged.
+    let b = b0, jump = 0;
+    if (b0 && b0.type === "image") {
+      const sn = storyActive ? storyNumOf.get(i) : undefined;
+      const nav = !!(sn && onStoryJump && b0.src && !b0.link);
+      const chip = !!(editable && onEdit && !presenting && !presentSurface);
+      if (sn || nav || chip) b = { ...b0, ...(sn ? { _storyN: sn } : {}), ...(nav ? { _storyNav: true } : {}), ...(chip ? { _captionChip: true } : {}) };
+      if (nav) jump = sn;
+    }
+    let block = renderBlockItem(b, i);
+    if (jump) {
+      // A click on the tile image (not on its caption or editor chrome) jumps
+      // to that story image. Capture phase, so ZoomWrap-style handlers below
+      // never see it. Adds a handler only, no DOM attribute.
+      block = React.cloneElement(block, { onClickCapture: (e) => {
+        const t = e.target;
+        if (!t || typeof t.closest !== "function" || !t.closest("[data-image-grid-media], img")) return;
+        if (t.closest("button, [contenteditable='true'], [data-testid='caption-chip']")) return;
+        e.stopPropagation(); e.preventDefault();
+        onStoryJump(jump);
+      } });
+    }
     const comments = renderInlineComments(i);
     if (!comments) return [block];
     return [block, ...comments];
@@ -640,8 +859,14 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
     // placed absolutely from the plan (row height = its share hw, cell width = its
     // share f of the row width after gaps; a short row is centered). The cells
     // stay flat siblings keyed by block, so a new plan moves them, never remounts.
-    const maxW = idxs.map((bi) => { const z = IMAGE_NATURAL_SIZE.get(blocks[bi].src); return z && z.w > 0 ? z.w * GRID_IMG_MAX_UPSCALE : 0; });
-    const plan = imageGridPlan(idxs.map((bi) => IMAGE_ASPECT_CACHE.get(blocks[bi].src)), box?.[0], box?.[1], gap, gridColsFor(runLen, region), slide.imageCols ? Math.min(6, Math.max(1, slide.imageCols | 0)) : 0, maxW);
+    // Editor tile drag: while a drag runs, slot q shows block idxs[order[q]], so
+    // the plan reflows live. DOM order stays idxs (cells only move), so a drag
+    // never re-inserts nodes. Without a drag, seq === idxs (render unchanged).
+    const drag = tileDrag && tileDrag.key === gridKey && tileDrag.idxs.length === runLen && tileDrag.idxs.every((v, q) => v === idxs[q]) ? tileDrag : null;
+    const seq = drag ? drag.order.map((p) => idxs[p]) : idxs;
+    const canReorder = !!(editable && onEdit && !presenting && !presentSurface && runLen >= 2 && !isSoloImage);
+    const maxW = seq.map((bi) => { const z = IMAGE_NATURAL_SIZE.get(blocks[bi].src); return z && z.w > 0 ? z.w * GRID_IMG_MAX_UPSCALE : 0; });
+    const plan = imageGridPlan(seq.map((bi) => IMAGE_ASPECT_CACHE.get(blocks[bi].src)), box?.[0], box?.[1], gap, gridColsFor(runLen, region), slide.imageCols ? Math.min(6, Math.max(1, slide.imageCols | 0)) : 0, maxW);
     const rows = plan.rows.length;
     const hwSum = plan.rows.reduce((t, r) => t + r.hw, 0) || 1, gapsH = gap * (rows - 1);
     const len = (pct, px) => `calc(${pct * 100}% + ${px}px)`;
@@ -676,7 +901,8 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
     return (
       <div key={`__imgrid-${idxs[0]}`} data-testid="image-grid" data-image-grid={region} data-image-count={runLen} data-image-grid-key={gridKey} data-image-cols={plan.cols} data-image-rows={rows}
         style={{ position: "relative", flex: gridHeight == null ? "1 1 0" : "0 0 auto", height: gridHeight == null ? undefined : gridHeight, maxHeight: "100%", minHeight: minGridH, minWidth: 0, width: "100%" }}>
-        {idxs.map((bi, k) => {
+        {idxs.map((bi, p) => {
+          const k = drag ? drag.order.indexOf(p) : p;
           // A solo image fills the slide: keep its _solo flag, so it is not click-to-zoom.
           const rendered = renderBlockWithComments({ ...blocks[bi], _gridCell: true, ...(isSoloImage ? { _solo: true } : {}), ...(isSoloImage && blocks[bi].rounded == null ? { rounded: 0 } : {}) }, bi);
           const [blockEl, ...rest] = rendered;
@@ -686,8 +912,21 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
             style: { ...(blockEl.props.style || {}), display: "flex", flexDirection: "column", flex: 1, minHeight: 0, minWidth: 0, width: "100%" },
           });
           return (
-            <div key={`__imgcell-${bi}`} data-testid="image-grid-cell" style={{ position: "absolute", ...cellPos[k], display: "flex", flexDirection: "column", minWidth: 0, minHeight: 0 }}>
+            <div key={`__imgcell-${bi}`} data-testid="image-grid-cell"
+              onMouseEnter={canReorder ? () => setHoverCell(bi) : undefined} onMouseLeave={canReorder ? () => setHoverCell((h) => (h === bi ? null : h)) : undefined}
+              style={{ position: "absolute", ...cellPos[k], display: "flex", flexDirection: "column", minWidth: 0, minHeight: 0, ...(drag ? { transition: "top 0.18s ease, left 0.18s ease, width 0.18s ease, height 0.18s ease" } : {}), ...(drag && drag.from === p ? { zIndex: 3, opacity: 0.8 } : {}) }}>
               {filled}{rest}
+              {canReorder && (drag ? drag.from === p : hoverCell === bi) && <div data-no-pdf="" data-testid="tile-drag-handle" title="Drag to reorder"
+                onPointerDown={(e) => {
+                  if (e.button !== 0) return;
+                  e.preventDefault(); e.stopPropagation();
+                  const grid = e.currentTarget.closest('[data-testid="image-grid"]');
+                  const cells = grid ? Array.from(grid.children).filter((c) => c.getAttribute("data-testid") === "image-grid-cell") : [];
+                  if (cells.length !== runLen) return;
+                  setTileDrag({ key: gridKey, idxs: idxs.slice(), from: p, order: idxs.map((_, q) => q), rects: cells.map((c) => c.getBoundingClientRect()), snap: slide.blocks });
+                }}
+                onClick={(e) => e.stopPropagation()} onMouseDown={(e) => e.stopPropagation()}
+                style={{ position: "absolute", top: 6, left: "50%", transform: "translateX(-50%)", zIndex: 12, width: 24, height: 18, borderRadius: 4, background: "rgba(15,23,42,0.78)", color: "#e2e8f0", fontSize: 13, lineHeight: "18px", textAlign: "center", cursor: drag ? "grabbing" : "grab", touchAction: "none", userSelect: "none", boxShadow: "0 2px 6px rgba(0,0,0,0.35)" }}>⠿</div>}
             </div>
           );
         })}
@@ -788,11 +1027,12 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
   return (
     <SlideErrorBoundary>
       <div ref={outerRef} data-vela-slide-content="" style={{ height: "100%", padding: pad, position: "relative", overflow: "visible", boxSizing: "border-box", display: "flex", flexDirection: "column", ...bgStyle }}>
-        <div ref={innerRef} style={{ position: "relative", zIndex: 2, display: "flex", flexDirection: isSplit ? "row" : "column", justifyContent: isSplit ? "stretch" : fitJustify, alignItems: isSplit ? "stretch" : (align === "center" ? "center" : "stretch"), textAlign: align, gap: isSplit ? (slide.splitGap || 32) : (slide.gap || 12), transform: fitScale < 1 ? `scale(${fitScale})` : "none", transformOrigin: "top left", width: fitScale < 1 ? `${100 / fitScale}%` : "100%", height: fitScale < 1 ? `${100 / fitScale}%` : "100%", maxWidth: fitScale < 1 ? `${100 / fitScale}%` : "100%", flex: fitScale < 1 ? undefined : 1, flexShrink: fitScale < 1 && (isSplit || isCols) ? 0 : undefined, boxSizing: "border-box" }}>
+        <div ref={innerRef} style={{ position: "relative", zIndex: 2, display: "flex", flexDirection: isSplit ? "row" : "column", justifyContent: isSplit ? "stretch" : fitJustify, alignItems: isSplit ? "stretch" : (align === "center" ? "center" : "stretch"), textAlign: align, gap: isSplit ? (slide.splitGap || 32) : (slide.gap || 12), transform: fitScale < 1 ? `scale(${fitScale})` : "none", transformOrigin: "top left", width: fitScale < 1 ? `${100 / fitScale}%` : "100%", height: fitScale < 1 ? `${100 / fitScale}%` : "100%", maxWidth: fitScale < 1 ? `${100 / fitScale}%` : "100%", flex: fitScale < 1 ? undefined : 1, flexShrink: fitScale < 1 && (isSplit || isCols) ? 0 : undefined, boxSizing: "border-box", ...(storyZoomed ? { visibility: "hidden" } : {}) }}>
           <ItemHoverContext.Provider value={setItemHovered}>
             {renderBlocks()}
           </ItemHoverContext.Provider>
         </div>
+        {storyActive && story && <StoryZoomLayer items={storyList} story={story} animate={!!storyAnimate} onJump={onStoryJump} onZoomOut={onStoryZoomOut} hostRef={outerRef} pad={pad} accent={cssColor(slide.accent) || T.accent} />}
         {/* Slide-level comments (no blockIndex) — top-right */}
         {reviewMode && externalDispatch && (() => {
           const unanchored = slideComments.filter((c) => c.blockIndex == null);

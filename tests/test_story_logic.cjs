@@ -68,7 +68,7 @@ assert("drop MIME set: no svg, has png/jpeg/gif/webp/avif/bmp",
   const slide = {
     blocks: [{ type: "heading", text: "H" }, img("A", { alt: "a" }), img("B", { hidden: true }), { type: "image" }, img("C"),
       { type: "grid", items: [{ blocks: [img("N")] }] }],
-    L: [img("D")], R: [{ type: "text", text: "t" }, img("E")],
+    layout: "cols", L: [img("D")], R: [{ type: "text", text: "t" }, img("E")],
   };
   const edit = storyImageList(slide, false);
   eq("list (editor): order + index space", edit.map((e) => [e.idx, e.src.slice(-1)]), [[1, "A"], [2, "B"], [4, "C"], [6, "D"], [8, "E"]]);
@@ -76,6 +76,12 @@ assert("drop MIME set: no svg, has png/jpeg/gif/webp/avif/bmp",
   eq("list (presenting): hidden excluded, idx kept", pres.map((e) => [e.idx, e.src.slice(-1)]), [[1, "A"], [4, "C"], [6, "D"], [8, "E"]]);
   assert("list: alt carried, default empty", edit[0].alt === "a" && edit[1].alt === "");
   assert("list: grid-nested and src-less excluded", !edit.some((e) => e.src.endsWith("N")) && edit.length === 5);
+  // L/R are drawn only in the "cols" layout: on any other layout they are not
+  // on the slide, so they must not become story steps or export pages.
+  for (const layout of [undefined, "stack", "image-left", "image-right"]) {
+    const s2 = { ...slide, layout };
+    eq("list: L/R ignored when layout=" + layout, storyImageList(s2, false).map((e) => e.idx), [1, 2, 4]);
+  }
   eq("list: null/garbage slide", [storyImageList(null, true), storyImageList({}, false), storyImageList({ blocks: "x", L: 1 }, false)], [[], [], []]);
   assert("isActive: needs story===true and >=2", storyIsActive({ story: true }, [1, 2]) && !storyIsActive({ story: true }, [1])
     && !storyIsActive({ story: "true" }, [1, 2]) && !storyIsActive({ story: 1 }, [1, 2]) && !storyIsActive({}, [1, 2]) && !storyIsActive(null, [1, 2]));

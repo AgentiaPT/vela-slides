@@ -112,6 +112,18 @@ const md1 = (blocks, slideExtra, deckExtra) => deckToMarkdown(deckWith(blocks, s
   hasSub(md, "line1  \nline2", "newline becomes markdown hard break (two spaces + \\n)");
 }
 
+// ── ++underline++ stays literal plain text (v13.78 WP7) ────────────
+{
+  const md = md1([
+    { type: "text", text: "say ++two words++ and **++x++**" },
+    { type: "text", text: "C++ and i++ stay" },
+    { type: "bullets", items: ["++item++"] },
+  ]);
+  hasLine(md, "say ++two words++ and **++x++**", "++underline++ kept literally in text");
+  hasLine(md, "C++ and i++ stay", "C++ / i++ unchanged");
+  hasSub(md, "++item++", "++underline++ kept literally in a bullet");
+}
+
 // ── badge ──────────────────────────────────────────────────────────
 hasLine(md1([{ type: "badge", text: "NEW" }]), "**NEW**", "badge -> bold");
 

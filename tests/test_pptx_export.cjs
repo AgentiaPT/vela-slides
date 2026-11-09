@@ -443,11 +443,30 @@ async function driveStoryExport(browser, deckPath, mode) {
         const oneBox = withText.length === 1;
         const hasBoldRun = !!(box && box.runs && box.runs.some((ln) => ln.some((r) => r.bold && /Drag-and-drop/.test(r.text))));
         const fullText = !!(box && /Slide sorter\.\s*Drag-and-drop\s*reorder\./.test(String(box.text).replace(/\n/g, ' ')));
+        // (d) ++underline++: the emitter writes u="sng" ONLY on the underlined run; the
+        //     extractor marks only a data-vela-u span's run (not a link's underline).
+        const uXml = pptxTextSp(4, { x: 0, y: 0, w: 300, h: 40, fontSize: 18, color: { r: 0, g: 0, b: 0, a: 1 },
+          runs: [[{ text: 'plain ' }, { text: 'under', underline: true }, { text: ' end' }]] });
+        const uEmit = (uXml.match(/ u="sng"/g) || []).length === 1
+          && /<a:rPr[^>]* u="sng"[^>]*>[\s\S]*?<a:t>under<\/a:t>/.test(uXml)
+          && (xml.match(/ u="/g) || []).length === 0;
+        const uHost = document.createElement('div');
+        uHost.style.cssText = 'position:absolute;left:0;top:0;width:400px';
+        uHost.innerHTML = '<div style="color:#fff;font-size:16px">Plain <span data-vela-u="1" style="text-decoration:underline">'
+          + 'under<span style="font-weight:700">bold</span></span> <a href="https://example.com" style="text-decoration:underline">link</a></div>';
+        document.body.appendChild(uHost);
+        let uBoxes = [];
+        try { uBoxes = pptxExtractTextBoxes(uHost, uHost.getBoundingClientRect()) || []; } catch (e) {}
+        document.body.removeChild(uHost);
+        const uRuns = [].concat(...((uBoxes[0] && uBoxes[0].runs) || []));
+        const uExtract = uBoxes.length === 1 && uRuns.some((r) => r.underline && r.text === 'under')
+          && uRuns.some((r) => r.underline && r.bold && r.text === 'bold')
+          && !uRuns.some((r) => r.underline && /Plain|link/.test(r.text));
         const circBox = circBoxes.find((b) => String(b.text).trim() === '1');
         const centered = !!(circBox && circBox.align === 'center');
         document.body.removeChild(host);
         document.body.removeChild(circ);
-        return { runCount, boldAttrCount, boldOnRightRun, oneBox, hasBoldRun, fullText, centered };
+        return { runCount, boldAttrCount, boldOnRightRun, oneBox, hasBoldRun, fullText, centered, uEmit, uExtract };
       });
       if (inlineFmt === null) {
         check('inline-fmt unit: emitter/extractor reachable in page scope', false, 'pptxTextSp/pptxExtractTextBoxes not global');
@@ -458,6 +477,8 @@ async function driveStoryExport(browser, deckPath, mode) {
           inlineFmt.oneBox && inlineFmt.hasBoldRun && inlineFmt.fullText, JSON.stringify(inlineFmt));
         check('flex-center: a justify-content:center glyph (step-number circle) exports align="center"',
           inlineFmt.centered, JSON.stringify(inlineFmt));
+        check('inline underline: u="sng" only on the underlined run; extractor marks only ++underline++ spans (not links)',
+          inlineFmt.uEmit && inlineFmt.uExtract, JSON.stringify(inlineFmt));
       }
 
       // Regression: a single-line text box (metric number, badge, short title) must

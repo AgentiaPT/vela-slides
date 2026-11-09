@@ -33,7 +33,7 @@ that symbol in the named part for the line. No line numbers here — they rot.
 
 ### part-blocks.jsx
 - Error Boundary: SlideErrorBoundary
-- Inline Formatting: **bold**, *italic*, ***both***, ~~strike~~: parseInline
+- Inline Formatting: **bold**, *italic*, ***both***, ~~strike~~, ++underline++: UL_EDGE_WORD UL_SPACE ulCharBefore ulCharAt findUnderlineSpan findUnderlineSpans inlineMdToHtml UL_OPEN inlineHtmlToMd parseInline
 - X-Ray Glossary Link — inline popover for [term](#key) refs: GlossaryLink EDIT_PLACEHOLDER EditableText EditPlaceholder SvgEditText
 - Block Helpers: stg COL_TOOLBAR_PAD patchItemAt removeItemAt setItemLink itemLinkOf addItemAt moveItemAt _noPin reorderCtl itemReorder blankItemFor PLACEHOLDER_FIELDS cloneGridCell clonePoint newItemFor
 - Add-Item Affordance — "+ add" button shown only in edit mode: AddItem ItemText IconBubble
@@ -52,6 +52,7 @@ that symbol in the named part for the line. No line numbers here — they rot.
 - Branding Overlay: BrandingOverlay
 
 ### part-canvas.jsx
+- Story zoom layer (story images in Present): STORY_RAIL_W STORY_THUMB_H storyPrefersReducedMotion storyContainBox StoryZoomLayer
 - Inline Comment Card (review mode): InlineCommentCard SlideContent
 
 ### part-reducer.jsx
@@ -85,7 +86,7 @@ that symbol in the named part for the line. No line numbers here — they rot.
 - StudentPanel — dispatcher: static studyNotes first, else live Vera: StudentPanel TeacherPanel SectionPicker
 
 ### part-slidepanel.jsx
-- Slide Panel — editor slide view, fullscreen/presenter nav, per-slide AI actions: VIEW_SWITCH_SEGMENTS VIEW_SWITCH_PAD VIEW_SWITCH_LABEL_EXTRA ViewSwitch SlidePanel
+- Slide Panel — editor slide view, fullscreen/presenter nav, per-slide AI actions: VIEW_SWITCH_SEGMENTS VIEW_SWITCH_PAD VIEW_SWITCH_LABEL_EXTRA ViewSwitch dragHasOnlyImageFiles SlidePanel
 
 ### part-list.jsx
 - (file preamble): _velaDrag _setDrag _clearDrag
@@ -131,6 +132,7 @@ that symbol in the named part for the line. No line numbers here — they rot.
 - Review fixes: app markers, inline paste, cols AI edit, review cycle,: _rfxPast _rfxPlant _tlColors _tlCanvas _tlPasteCanvas _tlPasteBig _tlLoaded _tlStressMeasure _tlStressCase
 - Review fixes: image grid and image paste: _rfiCanvas _rfiSrc _rfiPasteFile _rfiPng _hfeZoomed _hfeZoomables _hfeTocPanel _hfeTocOpen _hfeHits _hfeTextNode
 - Bug-hunt round 1 fixes: image paste and placement: _h1Heavy _h1CellWidths _h1Imgs _h1Paste _h1Heading
+- WP7: Ctrl+U underline is saved as ++text++ and shows underlined: _ulSaved _ulOpenEditor
 - UI TEST RUNNER COMPONENT: computeDeckFingerprint DEMO_DECK_FP_TITLE VelaUITestRunner
 
 ### part-demo.jsx
@@ -327,10 +329,9 @@ add_lane add_item batch_add_items remove_item remove_lane rename_item rename_lan
 ## Navigability debt (WARN — candidates for banners or splits)
 
 - part-imports.jsx: 898-line unbannered stretch after line 516
-- part-blocks.jsx: 781-line unbannered stretch after line 1084
-- part-canvas.jsx: 509-line unbannered stretch after line 24
-- part-slidepanel.jsx: 555-line unbannered stretch after line 245
-- part-slidepanel.jsx: 415-line unbannered stretch after line 1121
+- part-blocks.jsx: 800-line unbannered stretch after line 1234
+- part-canvas.jsx: 581-line unbannered stretch after line 148
+- part-slidepanel.jsx: 425-line unbannered stretch after line 1292
 - part-uitest.jsx: 616-line unbannered stretch after line 1230
 - part-uitest2.jsx: 448-line unbannered stretch after line 2
 - part-uitest2.jsx: 593-line unbannered stretch after line 1457
@@ -339,6 +340,6 @@ add_lane add_item batch_add_items remove_item remove_lane rename_item rename_lan
 - part-demo.jsx: 373-line unbannered stretch after line 917
 - part-pdf.jsx: 414-line unbannered stretch after line 582
 - part-pdf-vector.jsx: 441-line unbannered stretch after line 2
-- part-pdf-vector.jsx: 480-line unbannered stretch after line 459
-- part-pdf-vector.jsx: 551-line unbannered stretch after line 1204
-- part-pptx.jsx: no level-1 banners (1188 lines)
+- part-pdf-vector.jsx: 490-line unbannered stretch after line 459
+- part-pdf-vector.jsx: 551-line unbannered stretch after line 1214
+- part-pptx.jsx: no level-1 banners (1191 lines)

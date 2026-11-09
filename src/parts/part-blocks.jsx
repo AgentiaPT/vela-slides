@@ -17,7 +17,147 @@ class SlideErrorBoundary extends React.Component {
 }
 
 // ━━━ Editable Text ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// ━━━ Inline Formatting: **bold**, *italic*, ***both***, ~~strike~~ ━━━
+// ━━━ Inline Formatting: **bold**, *italic*, ***both***, ~~strike~~, ++underline++ ━━━
+// ++underline++ delimiters are STRICT (flanking), so existing text never changes:
+// "C++", "i++ and j++", "a ++ b ++ c", "x+++y" and a lone "++" stay literal.
+// An opening "++" must not follow a letter, digit or "+", and the next character
+// must be a non-space that is not "+". A closing "++" must follow a non-space that
+// is not "+", and must not precede a letter, digit or "+". A span never crosses a
+// newline (parseInline renders line by line). No regex lookbehind: older Safari
+// rejects it at parse time, which would break the whole app. Linear time: when a
+// valid opener has no closer on its line, no later opener on that line has one.
+const UL_EDGE_WORD = /[\p{L}\p{N}+]/u;
+const UL_SPACE = /\s/;
+function ulCharBefore(s, i) {
+  if (i <= 0) return "";
+  const c = s.charCodeAt(i - 1);
+  return (c >= 0xDC00 && c <= 0xDFFF && i >= 2) ? s.slice(i - 2, i) : s[i - 1];
+}
+function ulCharAt(s, i) { return i < s.length ? String.fromCodePoint(s.codePointAt(i)) : ""; }
+// First strict ++…++ span at or after `from`: [start, end) incl. delimiters, or null.
+function findUnderlineSpan(s, from) {
+  if (typeof s !== "string") return null;
+  let o = s.indexOf("++", from || 0);
+  while (o >= 0) {
+    const prev = ulCharBefore(s, o), next = ulCharAt(s, o + 2);
+    if (!UL_EDGE_WORD.test(prev) && next && next !== "+" && !UL_SPACE.test(next)) {
+      const nl = s.indexOf("\n", o);
+      const lim = nl < 0 ? s.length : nl;
+      let c = s.indexOf("++", o + 3);
+      while (c >= 0 && c + 2 <= lim) {
+        const before = ulCharBefore(s, c), after = ulCharAt(s, c + 2);
+        if (before !== "+" && !UL_SPACE.test(before) && !UL_EDGE_WORD.test(after)) return [o, c + 2];
+        c = s.indexOf("++", c + 1);
+      }
+      if (nl < 0) return null;
+      o = s.indexOf("++", nl + 1);
+      continue;
+    }
+    o = s.indexOf("++", o + 1);
+  }
+  return null;
+}
+function findUnderlineSpans(s) {
+  const spans = [];
+  let at = 0, sp;
+  while ((sp = findUnderlineSpan(s, at))) { spans.push(sp); at = sp[1]; }
+  return spans;
+}
+
+// Markdown inline -> HTML for the contentEditable editor. Escape FIRST, then add
+// only code-generated tags: deck text can never become live markup here (a deck
+// "<u ...>" string stays literal text). Underline runs last, on the escaped
+// string (entities start with "&" and end with ";", so flanking is unchanged).
+function inlineMdToHtml(t) {
+  if (!t) return "";
+  const h = t
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    .replace(/\*\*\*(.+?)\*\*\*/g, "<strong><em>$1</em></strong>")
+    .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
+    .replace(/\*(.+?)\*/g, "<em>$1</em>")
+    .replace(/___(.+?)___/g, "<strong><em>$1</em></strong>")
+    .replace(/__(.+?)__/g, "<strong>$1</strong>")
+    .replace(/_(.+?)_/g, "<em>$1</em>")
+    .replace(/~~(.+?)~~/g, "<s>$1</s>");
+  let out = "", at = 0;
+  for (const [a, b] of findUnderlineSpans(h)) { out += h.slice(at, a) + "<u>" + h.slice(a + 2, b - 2) + "</u>"; at = b; }
+  return (out + h.slice(at)).replace(/\n/g, "<br>");
+}
+
+// contentEditable HTML -> markdown inline. Only real U elements become ++…++
+// (never a styled span). An underline that cannot round-trip under the strict
+// rules (mid-word, or one that would pair with literal "++" text) is dropped,
+// not saved as stray "++" characters; the text itself is always kept.
+const UL_OPEN = { ul: 1 }, UL_CLOSE = { ul: 2 };
+function inlineHtmlToMd(root) {
+  const segs = [];
+  const walk = (el) => {
+    let r = "";
+    const emit = (x) => { if (x) { segs.push(x); r += x; } };
+    for (const n of el.childNodes) {
+      if (n.nodeType === 3) { emit(n.textContent); }
+      else if (n.nodeName === "BR") { emit("\n"); }
+      else if (n.nodeName === "STRONG" || n.nodeName === "B") { emit("**"); r += walk(n); emit("**"); }
+      else if (n.nodeName === "EM" || n.nodeName === "I") { emit("*"); r += walk(n); emit("*"); }
+      else if (n.nodeName === "S" || n.nodeName === "DEL" || n.nodeName === "STRIKE") { emit("~~"); r += walk(n); emit("~~"); }
+      else if (n.nodeName === "U") { segs.push(UL_OPEN); r += walk(n); segs.push(UL_CLOSE); }
+      else if (n.nodeName === "DIV" || n.nodeName === "P") {
+        if (r.length > 0 && !r.endsWith("\n")) emit("\n");
+        r += walk(n);
+      }
+      else { r += walk(n); }
+    }
+    return r;
+  };
+  walk(root);
+  // Plain text + outermost underline ranges (nested U inside U is redundant).
+  let S = "";
+  const raw = [];
+  let depth = 0, start = 0;
+  for (const x of segs) {
+    if (x === UL_OPEN) { if (depth++ === 0) start = S.length; }
+    else if (x === UL_CLOSE) { if (--depth === 0) raw.push([start, S.length]); }
+    else S += x;
+  }
+  if (!raw.length) return S;
+  // Split at newlines, move edge whitespace outside, merge touching ranges.
+  const live = [];
+  for (const [a0, b0] of raw) {
+    let a = a0;
+    while (a < b0) {
+      const nl = S.indexOf("\n", a);
+      let b = (nl < 0 || nl >= b0) ? b0 : nl;
+      const next = b < b0 ? b + 1 : b0;
+      let x = a;
+      while (x < b && UL_SPACE.test(S[x])) x++;
+      while (b > x && UL_SPACE.test(S[b - 1])) b--;
+      if (x < b) {
+        const last = live[live.length - 1];
+        if (last && last[1] === x) last[1] = b; else live.push([x, b]);
+      }
+      a = next;
+    }
+  }
+  // Keep only ranges that the renderer will parse back as exactly that span.
+  let keep = live;
+  for (;;) {
+    let out = "", at = 0;
+    const pos = [];
+    for (const [a, b] of keep) {
+      out += S.slice(at, a);
+      const o = out.length;
+      out += "++" + S.slice(a, b) + "++";
+      pos.push(o + ":" + out.length);
+      at = b;
+    }
+    out += S.slice(at);
+    const found = new Set(findUnderlineSpans(out).map(([a, b]) => a + ":" + b));
+    const next = keep.filter((_, i) => found.has(pos[i]));
+    if (next.length === keep.length) return out;
+    keep = next;
+  }
+}
+
 // ctx (optional): { glossary?, keyPrefix? } — when provided, also parses markdown
 // links [label](https://…) → sanitized <a>, and [label](#term) → <GlossaryLink>.
 // All existing call sites omit ctx and behavior is identical to before.
@@ -62,7 +202,7 @@ function parseInline(text, ctx) {
   const parseLine = (line, lineKey) => {
     // Fast path: no link, no formatting → return untouched
     const hasLink = line.includes("[") && line.includes("](");
-    const hasFmt = line.includes("*") || line.includes("__") || line.includes("~~");
+    const hasFmt = line.includes("*") || line.includes("__") || line.includes("~~") || line.includes("++");
     if (!hasLink && !hasFmt) return line;
 
     // Pass 1: extract [label](target) link spans into sentinel placeholders
@@ -77,24 +217,58 @@ function parseInline(text, ctx) {
       });
     }
 
-    // Pass 2: existing bold/italic/strike tokenizer on the sentinel-bearing string
+    // Pass 2: existing bold/italic/strike tokenizer on the sentinel-bearing string,
+    // plus strict ++underline++ (findUnderlineSpan). Underline is ONE level deep and
+    // combines with the other marks: a ++…++ span's content runs through the
+    // bold/italic/strike tokenizer ("++**x**++"), and a bold/italic/strike token's
+    // text is split into underline spans ("**++x++**"). (Unlike ~~, which does not
+    // nest with the other marks in this renderer.) A line with no strict ++ pair
+    // tokenizes exactly as before.
     if (!hasFmt && linkTokens.length === 0) return working;
     const parts = [];
     if (hasFmt) {
       const re = /(\*\*\*(.+?)\*\*\*|\*\*(.+?)\*\*|\*(.+?)\*|___(.+?)___|__(.+?)__|_(.+?)_|~~(.+?)~~)/g;
-      let last = 0, m;
-      while ((m = re.exec(working)) !== null) {
-        if (m.index > last) parts.push(working.slice(last, m.index));
-        if (m[2]) parts.push({ text: m[2], bold: true, italic: true });
-        else if (m[3]) parts.push({ text: m[3], bold: true });
-        else if (m[4]) parts.push({ text: m[4], italic: true });
-        else if (m[5]) parts.push({ text: m[5], bold: true, italic: true });
-        else if (m[6]) parts.push({ text: m[6], bold: true });
-        else if (m[7]) parts.push({ text: m[7], italic: true });
-        else if (m[8]) parts.push({ text: m[8], strike: true });
-        last = m.index + m[0].length;
-      }
-      if (last < working.length) parts.push(working.slice(last));
+      const toPart = (m) => m[2] ? { text: m[2], bold: true, italic: true }
+        : m[3] ? { text: m[3], bold: true }
+        : m[4] ? { text: m[4], italic: true }
+        : m[5] ? { text: m[5], bold: true, italic: true }
+        : m[6] ? { text: m[6], bold: true }
+        : m[7] ? { text: m[7], italic: true }
+        : m[8] ? { text: m[8], strike: true } : null;
+      const splitUl = (p, out) => {
+        let at = 0;
+        for (const [a, b] of findUnderlineSpans(p.text)) {
+          if (a > at) out.push({ ...p, text: p.text.slice(at, a) });
+          out.push({ ...p, text: p.text.slice(a + 2, b - 2), underline: true });
+          at = b;
+        }
+        if (at === 0) out.push(p);
+        else if (at < p.text.length) out.push({ ...p, text: p.text.slice(at) });
+      };
+      // ul=false for underline content: depth stays one level.
+      const tokenize = (str, ul, out) => {
+        let last = 0, u = null, uDone = !ul;
+        for (;;) {
+          if (!uDone && (!u || u[0] < last)) { u = findUnderlineSpan(str, last); if (!u) uDone = true; }
+          re.lastIndex = last; // the recursive call below reuses `re`
+          const m = re.exec(str);
+          if (u && !uDone && (!m || u[0] < m.index)) {
+            if (u[0] > last) out.push(str.slice(last, u[0]));
+            const inner = [];
+            tokenize(str.slice(u[0] + 2, u[1] - 2), false, inner);
+            for (const q of inner) out.push(typeof q === "string" ? { text: q, underline: true } : { ...q, underline: true });
+            last = u[1];
+            continue;
+          }
+          if (!m) break;
+          if (m.index > last) out.push(str.slice(last, m.index));
+          const p = toPart(m);
+          if (p) { if (ul) splitUl(p, out); else out.push(p); }
+          last = m.index + m[0].length;
+        }
+        if (last < str.length) out.push(str.slice(last));
+      };
+      tokenize(working, working.includes("++"), parts);
     } else {
       parts.push(working);
     }
@@ -112,7 +286,7 @@ function parseInline(text, ctx) {
       } else {
         const children = spliceSentinels(p.text, linkTokens, `${keyPrefix}-${lineKey}-s${i}`);
         out.push(
-          <span key={`${keyPrefix}-${lineKey}-s${i}`} style={{ fontWeight: p.bold ? 700 : undefined, fontStyle: p.italic ? "italic" : undefined, textDecoration: p.strike ? "line-through" : undefined }}>
+          <span key={`${keyPrefix}-${lineKey}-s${i}`} data-vela-u={p.underline ? "1" : undefined} style={{ fontWeight: p.bold ? 700 : undefined, fontStyle: p.italic ? "italic" : undefined, textDecoration: p.strike ? (p.underline ? "line-through underline" : "line-through") : (p.underline ? "underline" : undefined) }}>
             {children.length === 1 ? children[0] : children}
           </span>
         );
@@ -204,46 +378,19 @@ const EDIT_PLACEHOLDER = "Text";
 
 // controlled: show only the saved `text` prop after a commit (no optimistic local
 // copy), for callers whose onSave normalizes the value (checklist status label).
-function EditableText({ text, onSave, editable, style, multiline, className, prefix, suffix, controlled }) {
-  const [editing, setEditing] = useState(false);
+// autoEdit: start in edit mode on mount (the image "+ Add title" chip); default off.
+// onEditEnd: called after an edit ends (commit or cancel), whatever the value.
+function EditableText({ text, onSave, editable, style, multiline, className, prefix, suffix, controlled, autoEdit, onEditEnd }) {
+  const [editing, setEditing] = useState(() => !!autoEdit && !!editable && !!onSave);
   const [hovered, setHovered] = useState(false);
   const [localText, setLocalText] = useState(text);
   const ref = useRef(null);
 
   useEffect(() => { setLocalText(text); }, [text]);
 
-  // Convert markdown inline to HTML for WYSIWYG editing
-  const mdToHtml = (t) => {
-    if (!t) return "";
-    return t
-      .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
-      .replace(/\*\*\*(.+?)\*\*\*/g, "<strong><em>$1</em></strong>")
-      .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
-      .replace(/\*(.+?)\*/g, "<em>$1</em>")
-      .replace(/___(.+?)___/g, "<strong><em>$1</em></strong>")
-      .replace(/__(.+?)__/g, "<strong>$1</strong>")
-      .replace(/_(.+?)_/g, "<em>$1</em>")
-      .replace(/~~(.+?)~~/g, "<s>$1</s>")
-      .replace(/\n/g, "<br>");
-  };
-
-  // Convert contentEditable HTML back to markdown
-  const htmlToMd = (el) => {
-    let r = "";
-    for (const n of el.childNodes) {
-      if (n.nodeType === 3) { r += n.textContent; }
-      else if (n.nodeName === "BR") { r += "\n"; }
-      else if (n.nodeName === "STRONG" || n.nodeName === "B") { r += "**" + htmlToMd(n) + "**"; }
-      else if (n.nodeName === "EM" || n.nodeName === "I") { r += "*" + htmlToMd(n) + "*"; }
-      else if (n.nodeName === "S" || n.nodeName === "DEL" || n.nodeName === "STRIKE") { r += "~~" + htmlToMd(n) + "~~"; }
-      else if (n.nodeName === "DIV" || n.nodeName === "P") {
-        if (r.length > 0 && !r.endsWith("\n")) r += "\n";
-        r += htmlToMd(n);
-      }
-      else { r += htmlToMd(n); }
-    }
-    return r;
-  };
+  // Markdown inline <-> HTML for WYSIWYG editing (top-level, shared + testable).
+  const mdToHtml = inlineMdToHtml;
+  const htmlToMd = inlineHtmlToMd;
 
   useEffect(() => {
     if (!editing || !ref.current) return;
@@ -259,13 +406,14 @@ function EditableText({ text, onSave, editable, style, multiline, className, pre
 
   const commit = () => {
     const el = ref.current;
-    if (!el) { setEditing(false); setHovered(false); return; }
+    if (!el) { setEditing(false); setHovered(false); onEditEnd?.(); return; }
     const v = htmlToMd(el).trim();
     if (v !== text) { if (!controlled) setLocalText(v); onSave(v); }
     setEditing(false);
     setHovered(false);
+    onEditEnd?.();
   };
-  const cancel = () => { setEditing(false); setHovered(false); };
+  const cancel = () => { setEditing(false); setHovered(false); onEditEnd?.(); };
   const begin = (e) => { e.stopPropagation(); e.preventDefault(); setEditing(true); };
 
   const onKey = (e) => {
@@ -276,6 +424,8 @@ function EditableText({ text, onSave, editable, style, multiline, className, pre
     if (e.key === "Enter" && !multiline && !e.shiftKey) { e.preventDefault(); commit(); }
     if ((e.ctrlKey || e.metaKey) && e.key === "b") { e.preventDefault(); document.execCommand("bold"); }
     if ((e.ctrlKey || e.metaKey) && e.key === "i") { e.preventDefault(); document.execCommand("italic"); }
+    // Explicit like b/i: same result in every browser (Firefox maps Ctrl+U to view-source).
+    if ((e.ctrlKey || e.metaKey) && e.key === "u") { e.preventDefault(); document.execCommand("underline"); }
   };
   // Paste plain text only. The browser's default rich paste puts clipboard HTML
   // (for example a copied web image with a remote src) into the live editable
@@ -1109,6 +1259,10 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
   // the comparison/matrix cases read pinKey/setPinKey directly for their columns.
   const [pinKey, setPinKey] = useState(null);
   const _pin = { key: pinKey, set: setPinKey };
+  // Image "+ Add title" chip (editor only): mounted only while the image is
+  // hovered or a new caption is being typed, so a plain render adds no DOM.
+  const [chipHover, setChipHover] = useState(false);
+  const [chipAdding, setChipAdding] = useState(false);
   switch (block.type) {
 
     case "heading": {
@@ -1148,7 +1302,16 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
         minHeight: 0,
         overflow: "hidden",
       } : null;
-      return <ZoomWrap enabled={!!block.src && !block._solo} link={block.link} fill={!!block._gridCell}><div className={cls} style={{ display: "flex", flexDirection: "column", alignItems: block.align === "left" ? "flex-start" : block.align === "right" ? "flex-end" : "center", ...(block._solo ? { flex: 1, width: "100%", justifyContent: "center" } : {}), ...(block._gridCell ? { flex: 1, minHeight: 0, minWidth: 0, width: "100%", justifyContent: "center", position: "relative" } : {}), ...block.style }}>
+      // Story flags are set by SlideContent after sanitization (never deck keys):
+      // _storyN = 1-based story number (caption prefix + data-story-idx),
+      // _storyNav = a tile click jumps to the story image (no ZoomWrap zoom),
+      // _captionChip = this surface may offer the editor "+ Add title" chip.
+      const storyN = Number.isInteger(block._storyN) && block._storyN > 0 ? block._storyN : undefined;
+      const showChip = !!block._captionChip && canEdit && !!block.src && !block.caption && !block._storyNav;
+      const captionStyle = { fontFamily: FONT.body, fontSize: SIZES.sm, color: st.textDim, marginTop: 8, flexShrink: 0 };
+      return <ZoomWrap enabled={!!block.src && !block._solo && !block._storyNav} link={block.link} fill={!!block._gridCell}><div className={cls} data-story-idx={storyN}
+        onMouseEnter={block._captionChip ? () => setChipHover(true) : undefined} onMouseLeave={block._captionChip ? () => setChipHover(false) : undefined}
+        style={{ display: "flex", flexDirection: "column", alignItems: block.align === "left" ? "flex-start" : block.align === "right" ? "flex-end" : "center", ...(block._solo ? { flex: 1, width: "100%", justifyContent: "center" } : {}), ...(block._gridCell ? { flex: 1, minHeight: 0, minWidth: 0, width: "100%", justifyContent: "center", position: "relative" } : {}), ...(block._storyNav && block.src ? { cursor: "zoom-in" } : {}), ...block.style }}>
         {block._gridCell ? <div data-image-grid-media="" style={gridMediaStyle}>
           {block.src ? <GridCellImage src={block.src} alt={block.alt || ""} style={
           // Absolutely fill the grid cell so the row height is driven ONLY by the
@@ -1163,7 +1326,13 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
           ? { width: "100%", height: "100%", objectFit: block.fit || "contain", borderRadius: 0 }
           : { maxWidth: block.maxWidth || "100%", maxHeight: block.maxHeight ?? "100%", borderRadius: block.rounded ?? 8, objectFit: block.fit || "contain", boxShadow: block.shadow ? "0 8px 32px rgba(0,0,0,0.3)" : "none" }
         } /> : <div style={{ padding: 32, color: st.textDim, fontFamily: FONT.mono, fontSize: 11 }}>Paste image (Ctrl+V)</div>}
-        {block.caption && <EditableText text={block.caption} editable={textEditable} onSave={(v) => onChange?.({ caption: v })} style={{ fontFamily: FONT.body, fontSize: SIZES.sm, color: st.textDim, marginTop: 8, flexShrink: 0 }} />}
+        {block.caption && <EditableText text={block.caption} editable={textEditable} onSave={(v) => onChange?.({ caption: v })} prefix={storyN ? `${storyN} · ` : undefined} style={captionStyle} />}
+        {!block.caption && chipAdding && canEdit && <EditableText text="" autoEdit editable={textEditable} onSave={(v) => { if (v) onChange?.({ caption: v }); }} onEditEnd={() => { setChipAdding(false); setChipHover(false); }} style={captionStyle} />}
+        {showChip && chipHover && !chipAdding && <div data-no-pdf="" data-testid="caption-chip" role="button" tabIndex={0}
+          onClick={(e) => { e.stopPropagation(); e.preventDefault(); setChipAdding(true); }}
+          onMouseDown={(e) => e.stopPropagation()}
+          onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.stopPropagation(); e.preventDefault(); setChipAdding(true); } }}
+          style={{ position: "absolute", left: "50%", bottom: 8, transform: "translateX(-50%)", zIndex: 6, padding: "2px 8px", borderRadius: 10, background: "rgba(15,23,42,0.78)", color: "#e2e8f0", fontFamily: FONT.mono, fontSize: 10, whiteSpace: "nowrap", cursor: "pointer", boxShadow: "0 2px 6px rgba(0,0,0,0.35)" }}>+ Add title</div>}
       </div></ZoomWrap>;
     }
 

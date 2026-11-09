@@ -553,6 +553,7 @@ def test_security():
         ("tests/test_reducer.cjs",            "Reducer state transitions (62 actions + UNDO/REDO)"),
         ("tests/test_engine_tools.cjs",       "Vera engine tools + ReAct caps (G1/G3/G4)"),
         ("tests/test_block_render.cjs",       "Block renderers (27 types via renderToStaticMarkup)"),
+        ("tests/test_underline.cjs",          "++underline++ inline format (strict delimiters, edit round trip)"),
         ("tests/test_markdown_export.cjs",    "Markdown export deckToMarkdown (G7)"),
         ("tests/test_fs_guard.cjs",           "Desktop fs-guard (frozen surface + root allowlist)"),
         ("tests/test_deck_io_save.cjs",       "Desktop save state machine (CR3 no-swallow/retry/verify/echo-guard)"),
