@@ -1560,6 +1560,9 @@ function sanitizeBlock(block, depth = 0) {
     }
     if (clean.type === "flow" || clean.type === "steps" || clean.type === "timeline" || clean.type === "tag-group" || clean.type === "funnel" || clean.type === "cycle" || clean.type === "number-row" || clean.type === "checklist") {
       clean.items = clean.items.slice(0, 20).map((it) => {
+        // A checklist item may be a plain string (the renderer and validate.py
+        // accept it); keep it as sanitized text instead of dropping it.
+        if (typeof it === "string" && clean.type === "checklist") return sanitizeString(it, 1000);
         if (!it || typeof it !== "object") return null;
         const c = { ...it };
         if (c.label) c.label = sanitizeString(c.label, 200);
@@ -17906,8 +17909,11 @@ uiSuite("review-fix-editor", [
     const past = _rfxPast();
     let plant = null;
     try {
-      const el = await _mrdInject([{ type: "heading", text: "RFX toolbar", size: "2xl" }], null, (vp) => vp && vp.querySelector("[data-block-type='heading']"));
+      await _mrdInject([{ type: "heading", text: "RFX toolbar", size: "2xl" }], null, (vp) => vp && vp.querySelector("[data-block-type='heading']"));
       const barRect = async () => {
+        // Query the block each time: the slide can re-mount it after the inject.
+        await _wait(150);
+        const el = _mrdViewport().querySelector("[data-block-type='heading']");
         await _mrdHover(el);
         const bar = await _waitFor(() => el.querySelector("[data-testid='block-hover-toolbar']"), 1500);
         await _mrdFrame();
@@ -18000,6 +18006,7 @@ uiSuite("review-fix-editor", [
     const past = _rfxPast();
     try {
       await _mrdInject([{ type: "checklist", items: ["RFX alpha", "RFX beta", "RFX gamma"] }], null, (vp) => vp?.textContent.includes("RFX gamma") ? vp : null);
+      await _wait(150); // the slide can re-mount its blocks just after the inject
       await _tlEdit("PENDING", "done", "DONE");
       await _tlEdit("RFX beta", "RFX beta edited");
       const items = _hooks().getCurrentSlideForTest()?.blocks?.[0]?.items || [];
