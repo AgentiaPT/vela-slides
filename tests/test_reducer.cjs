@@ -315,6 +315,19 @@ const clearTrackers = () => { _dirtyMods.clear(); _deletedMods.clear(); _loadedM
   assert("UPDATE_SLIDE honors timeLock (duration + flag preserved)", r.timeLock === true && r.duration === 45);
 }
 {
+  // UPDATE_SLIDE replace keeps story:true when the patch has no story key; a patch story key wins
+  const s = slide(1, { story: true, blocks: [{ type: "image", src: "data:image/png;base64,AAAA" }] });
+  const st = present([lane("l1", [item("m1", [s])])], "m1");
+  const kept = findItem(innerReducer(st, { type: "UPDATE_SLIDE", id: "m1", index: 0, merge: false, patch: { blocks: [{ type: "heading", text: "z" }] } }), "m1").slides[0];
+  assert("UPDATE_SLIDE replace keeps story", kept.story === true && kept.blocks[0].text === "z");
+  const off = findItem(innerReducer(st, { type: "UPDATE_SLIDE", id: "m1", index: 0, merge: false, patch: { story: undefined, blocks: [] } }), "m1").slides[0];
+  assert("UPDATE_SLIDE replace with story key clears story", off.story === undefined);
+  const plain = findItem(innerReducer(present([lane("l1", [item("m1", [slide(1)])])], "m1"), { type: "UPDATE_SLIDE", id: "m1", index: 0, merge: false, patch: { blocks: [] } }), "m1").slides[0];
+  assert("UPDATE_SLIDE replace adds no story to a plain slide", !("story" in plain));
+  const toggled = findItem(innerReducer(st, { type: "UPDATE_SLIDE", id: "m1", index: 0, merge: true, patch: { story: undefined } }), "m1").slides[0];
+  assert("UPDATE_SLIDE merge story undefined turns story off", toggled.story === undefined);
+}
+{
   // UPDATE_SLIDE re-sanitize scrubs a CSS auto-load color scalar
   const out = innerReducer(present([lane("l1", [item("m1", [slide(1)])])], "m1"), { type: "UPDATE_SLIDE", id: "m1", index: 0, merge: true, patch: { bg: "url(http://x/a.png)" } });
   const r = findItem(out, "m1").slides[0];
@@ -364,6 +377,17 @@ const clearTrackers = () => { _dirtyMods.clear(); _deletedMods.clear(); _loadedM
   const out = innerReducer(st, { type: "MOVE_SLIDE_TO_MODULE", fromId: "A", toId: "B", index: 1, toIndex: 1 });
   assert("MOVE_SLIDE_TO_MODULE inserts at toIndex", marks(findItem(out, "B").slides).join() === "8,2,9");
   assert("MOVE_SLIDE_TO_MODULE uses toIndex as slideIndex", out.slideIndex === 1);
+}
+{
+  // Cross-lane: target section sits in an EARLIER lane than the source (two-pass fix)
+  const st = present([lane("L0", [item("B", [slide(9)])]), lane("L1", [item("A", [slide(1), slide(2)])])], "A", 0);
+  const total = (s) => s.lanes.reduce((n, l) => n + l.items.reduce((m, i) => m + i.slides.length, 0), 0);
+  const out = innerReducer(st, { type: "MOVE_SLIDE_TO_MODULE", fromId: "A", toId: "B", index: 0 });
+  assert("MOVE_SLIDE_TO_MODULE cross-lane (target earlier) delivers the slide", marks(findItem(out, "B").slides).join() === "9,1");
+  assert("MOVE_SLIDE_TO_MODULE cross-lane keeps total slide count", total(out) === total(st) && marks(findItem(out, "A").slides).join() === "2");
+  const outM = innerReducer(st, { type: "MOVE_SLIDES_TO_MODULE", fromId: "A", toId: "B", indices: [0, 1] });
+  assert("MOVE_SLIDES_TO_MODULE cross-lane (target earlier) delivers the slides", marks(findItem(outM, "B").slides).join() === "9,1,2");
+  assert("MOVE_SLIDES_TO_MODULE cross-lane keeps total slide count", total(outM) === total(st) && findItem(outM, "A").slides.length === 0);
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -647,6 +671,28 @@ const clearTrackers = () => { _dirtyMods.clear(); _deletedMods.clear(); _loadedM
   const undo3 = reducer(out3, { type: "UNDO" });
   assert("MOVE_SLIDES reversed by ONE undo (source restored)", marks(findItem(undo3.present, "src").slides).join() === "1,2,3,4", marks(findItem(undo3.present, "src").slides).join());
   assert("MOVE_SLIDES reversed by ONE undo (target restored)", marks(findItem(undo3.present, "dst").slides).join() === "9", marks(findItem(undo3.present, "dst").slides).join());
+}
+
+{
+  // meridian-CR07: TOGGLE_SLIDE_REVIEWED sets then clears `reviewed`, one undo step each.
+  clearTrackers();
+  const hist = H(present([lane("l1", [item("m1", [slide(1), slide(2)])])], "m1", 0));
+  const on = reducer(hist, { type: "TOGGLE_SLIDE_REVIEWED", id: "m1", index: 1 });
+  assert("TOGGLE_SLIDE_REVIEWED sets reviewed=true on that slide only", findItem(on.present, "m1").slides[1].reviewed === true && !("reviewed" in findItem(on.present, "m1").slides[0]));
+  assert("TOGGLE_SLIDE_REVIEWED pushes ONE history entry", on.past.length === 1, "past=" + on.past.length);
+  const off = reducer(on, { type: "TOGGLE_SLIDE_REVIEWED", id: "m1", index: 1 });
+  assert("TOGGLE_SLIDE_REVIEWED removes reviewed key on re-toggle", !("reviewed" in findItem(off.present, "m1").slides[1]));
+  const undo = reducer(on, { type: "UNDO" });
+  assert("TOGGLE_SLIDE_REVIEWED reversed by UNDO", !("reviewed" in findItem(undo.present, "m1").slides[1]));
+}
+{
+  // meridian-CR14: inline TOC delete uses REMOVE_SLIDE — one undo step restores it.
+  clearTrackers();
+  const hist = H(present([lane("l1", [item("m1", [slide(1), slide(2), slide(3)])])], "m1", 0));
+  const out = reducer(hist, { type: "REMOVE_SLIDE", id: "m1", index: 1 });
+  assert("REMOVE_SLIDE pushes ONE history entry", out.past.length === 1, "past=" + out.past.length);
+  const undo = reducer(out, { type: "UNDO" });
+  assert("REMOVE_SLIDE reversed by ONE undo", marks(findItem(undo.present, "m1").slides).join() === "1,2,3", marks(findItem(undo.present, "m1").slides).join());
 }
 
 console.log(`\n  ${pass} passed, ${fail} failed`);

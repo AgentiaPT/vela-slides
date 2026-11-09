@@ -158,6 +158,95 @@ async function driveExport(page) {
   return info;
 }
 
+
+// ── Story-slide fixtures ("Expand story slides" option) ──────────────────────
+// Solid-colour PNG data URIs built with node:zlib only, so they pass the real
+// data-image ingress allowlist. Alt text carries XML metacharacters: it reaches the
+// OOXML only through pptxEsc, so it must never appear raw in any slide part.
+function crc32(buf) {
+  let c, crc = 0xffffffff;
+  for (let n = 0; n < buf.length; n++) {
+    c = (crc ^ buf[n]) & 0xff;
+    for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    crc = (crc >>> 8) ^ c;
+  }
+  return (crc ^ 0xffffffff) >>> 0;
+}
+function pngChunk(type, data) {
+  const len = Buffer.alloc(4); len.writeUInt32BE(data.length);
+  const body = Buffer.concat([Buffer.from(type, 'latin1'), data]);
+  const crc = Buffer.alloc(4); crc.writeUInt32BE(crc32(body));
+  return Buffer.concat([len, body, crc]);
+}
+function solidPng(r, g, b, w = 400, h = 225) {
+  const zlib = require('zlib');
+  const row = Buffer.alloc(1 + w * 3);
+  for (let x = 0; x < w; x++) { row[1 + x * 3] = r; row[2 + x * 3] = g; row[3 + x * 3] = b; }
+  const raw = Buffer.concat(Array.from({ length: h }, () => row));
+  const ihdr = Buffer.alloc(13); ihdr.writeUInt32BE(w, 0); ihdr.writeUInt32BE(h, 4); ihdr[8] = 8; ihdr[9] = 2;
+  const png = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    pngChunk('IHDR', ihdr), pngChunk('IDAT', zlib.deflateSync(raw)), pngChunk('IEND', Buffer.alloc(0))]);
+  return 'data:image/png;base64,' + png.toString('base64');
+}
+const STORY_ALT = 'alt "q" <b>&amp; x</b> ]]>';
+// Slide 1 = story slide (3 visible images + 1 hidden image that must NOT get a page);
+// slide 2 = plain. ON => 1 + 3 + 1 = 5 slides; expand OFF => 2; story absent => 2.
+function storyDeckFile(story) {
+  const img = (r, g, b, extra) => ({ type: 'image', src: solidPng(r, g, b), alt: STORY_ALT, ...extra });
+  const s1 = { bg: '#0f172a', color: '#e2e8f0', accent: '#3b82f6',
+    blocks: [{ type: 'heading', text: 'Story slide' }, img(200, 40, 40), img(40, 200, 40), img(40, 40, 200), img(250, 250, 0, { hidden: true })] };
+  if (story) s1.story = true;
+  const deck = { deckTitle: 'PPTX Story', lanes: [{ title: 'Deck', items: [{ title: 'Module', slides: [
+    s1, { bg: '#0f172a', color: '#e2e8f0', accent: '#10b981', blocks: [{ type: 'text', text: 'A plain slide.' }] }] }] }] };
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'vela-pptx-story-'));
+  const p = path.join(dir, 'story.vela');
+  fs.writeFileSync(p, JSON.stringify(deck));
+  return p;
+}
+// Drive the real PPTX modal on a story fixture. mode: 'on' (default toggle), 'off'
+// (flip the toggle), 'absent' (assert the toggle is not offered).
+async function driveStoryExport(browser, deckPath, mode) {
+  const { build } = require(RENDER_OFFLINE);
+  const html = build(deckPath, fs.mkdtempSync(path.join(os.tmpdir(), 'vela-pptx-story-render-')), { repoRoot: ROOT }).html;
+  const page = await browser.newPage({ viewport: { width: 1400, height: 900 } });
+  try {
+    page.on('pageerror', (e) => console.log('[pageerror]', e.message));
+    await page.goto('file://' + html, { timeout: 60000, waitUntil: 'domcontentloaded' });
+    await page.waitForFunction(() => window.__velaBooted || window.__velaBootError, { timeout: 30000 });
+    await page.waitForSelector('header', { timeout: 10000 });
+    await page.evaluate(() => document.querySelector('[data-testid=export-menu-toggle]').click());
+    await page.waitForFunction(() => !!document.querySelector('[data-testid=export-pptx-menu-item]'), { timeout: 5000 });
+    await page.evaluate(() => document.querySelector('[data-testid=export-pptx-menu-item]').click());
+    await page.waitForFunction(() => !!document.querySelector('[data-testid=pptx-export-modal]'), { timeout: 5000 });
+    const toggle = await page.evaluate((m) => {
+      const t = document.querySelector('[data-testid=pptx-export-expand-story]');
+      if (m === 'off' && t) t.click();
+      return !!t;
+    }, mode);
+    const label = await page.evaluate(() => document.querySelector('[data-testid=pptx-export-start]').textContent.trim());
+    await page.evaluate(() => document.querySelector('[data-testid=pptx-export-start]').click());
+    await page.waitForFunction(() => !!document.querySelector('[data-testid=pptx-export-error]') || !!document.querySelector('[data-testid=pptx-export-download]'), { timeout: 120000 });
+    const info = await page.evaluate(() => {
+      const a = document.querySelector('[data-testid=pptx-export-download]');
+      if (!a) return null;
+      const uri = a.getAttribute('href') || '';
+      return { b64: uri.slice(uri.indexOf(',') + 1) };
+    });
+    if (!info) throw new Error('story export reported the error phase');
+    const zip = readStoreZip(Buffer.from(info.b64, 'base64'));
+    const slideNames = zip.names.filter(n => /^ppt\/slides\/slide\d+\.xml$/.test(n));
+    let wellFormed = true;
+    for (const n of zip.names.filter(n => n.endsWith('.xml') || n.endsWith('.rels'))) {
+      const ok = await page.evaluate((t) => !new DOMParser().parseFromString(t, 'application/xml').querySelector('parsererror'), zip.part(n));
+      if (!ok) { wellFormed = false; break; }
+    }
+    const esc = await page.evaluate(() => typeof pptxEsc === 'function' ? pptxEsc('a"<b>&') : null);
+    return { toggle, label, slideCount: slideNames.length, xml: slideNames.map(n => zip.part(n)).join('\n'), wellFormed, esc };
+  } finally {
+    await page.close().catch(() => {});
+  }
+}
+
 // ── Main ─────────────────────────────────────────────────────────────────────
 (async () => {
   const t0 = Date.now();
@@ -354,11 +443,30 @@ async function driveExport(page) {
         const oneBox = withText.length === 1;
         const hasBoldRun = !!(box && box.runs && box.runs.some((ln) => ln.some((r) => r.bold && /Drag-and-drop/.test(r.text))));
         const fullText = !!(box && /Slide sorter\.\s*Drag-and-drop\s*reorder\./.test(String(box.text).replace(/\n/g, ' ')));
+        // (d) ++underline++: the emitter writes u="sng" ONLY on the underlined run; the
+        //     extractor marks only a data-vela-u span's run (not a link's underline).
+        const uXml = pptxTextSp(4, { x: 0, y: 0, w: 300, h: 40, fontSize: 18, color: { r: 0, g: 0, b: 0, a: 1 },
+          runs: [[{ text: 'plain ' }, { text: 'under', underline: true }, { text: ' end' }]] });
+        const uEmit = (uXml.match(/ u="sng"/g) || []).length === 1
+          && /<a:rPr[^>]* u="sng"[^>]*>[\s\S]*?<a:t>under<\/a:t>/.test(uXml)
+          && (xml.match(/ u="/g) || []).length === 0;
+        const uHost = document.createElement('div');
+        uHost.style.cssText = 'position:absolute;left:0;top:0;width:400px';
+        uHost.innerHTML = '<div style="color:#fff;font-size:16px">Plain <span data-vela-u="1" style="text-decoration:underline">'
+          + 'under<span style="font-weight:700">bold</span></span> <a href="https://example.com" style="text-decoration:underline">link</a></div>';
+        document.body.appendChild(uHost);
+        let uBoxes = [];
+        try { uBoxes = pptxExtractTextBoxes(uHost, uHost.getBoundingClientRect()) || []; } catch (e) {}
+        document.body.removeChild(uHost);
+        const uRuns = [].concat(...((uBoxes[0] && uBoxes[0].runs) || []));
+        const uExtract = uBoxes.length === 1 && uRuns.some((r) => r.underline && r.text === 'under')
+          && uRuns.some((r) => r.underline && r.bold && r.text === 'bold')
+          && !uRuns.some((r) => r.underline && /Plain|link/.test(r.text));
         const circBox = circBoxes.find((b) => String(b.text).trim() === '1');
         const centered = !!(circBox && circBox.align === 'center');
         document.body.removeChild(host);
         document.body.removeChild(circ);
-        return { runCount, boldAttrCount, boldOnRightRun, oneBox, hasBoldRun, fullText, centered };
+        return { runCount, boldAttrCount, boldOnRightRun, oneBox, hasBoldRun, fullText, centered, uEmit, uExtract };
       });
       if (inlineFmt === null) {
         check('inline-fmt unit: emitter/extractor reachable in page scope', false, 'pptxTextSp/pptxExtractTextBoxes not global');
@@ -369,6 +477,8 @@ async function driveExport(page) {
           inlineFmt.oneBox && inlineFmt.hasBoldRun && inlineFmt.fullText, JSON.stringify(inlineFmt));
         check('flex-center: a justify-content:center glyph (step-number circle) exports align="center"',
           inlineFmt.centered, JSON.stringify(inlineFmt));
+        check('inline underline: u="sng" only on the underlined run; extractor marks only ++underline++ spans (not links)',
+          inlineFmt.uEmit && inlineFmt.uExtract, JSON.stringify(inlineFmt));
       }
 
       // Regression: a single-line text box (metric number, badge, short title) must
@@ -427,9 +537,58 @@ async function driveExport(page) {
         check('table cell font carries the fitScale factor (20px @ scale .5 → ~10, not 20)',
           tblScale.found && tblScale.fontSize > 8 && tblScale.fontSize < 12, JSON.stringify(tblScale));
       }
+
+      // Regression (meridian CR05): € and other symbols outside Latin-1 stay real
+      // text in PPTX (UTF-8 OOXML, no WinAnsi narrowing) — kept by the extractor
+      // and emitted literally inside <a:t> by the emitter.
+      const GLYPHS = 'Price: 1.234 € – “quotes” … ™ • £';
+      const glyph = await page.evaluate((g) => {
+        if (typeof pptxTextSp !== 'function' || typeof pptxExtractTextBoxes !== 'function') return null;
+        const host = document.createElement('div');
+        host.style.cssText = 'position:absolute;left:0;top:0;width:600px';
+        const p = document.createElement('div');
+        p.style.cssText = 'color:#fff;font-size:18px';
+        p.textContent = g;
+        host.appendChild(p);
+        document.body.appendChild(host);
+        let boxes = [];
+        try { boxes = pptxExtractTextBoxes(host, host.getBoundingClientRect()) || []; } catch (e) {}
+        document.body.removeChild(host);
+        const box = boxes.find((b) => b.text && b.text.indexOf('Price') >= 0);
+        const xml = pptxTextSp(7, { x: 0, y: 0, w: 600, h: 24, fontSize: 18, text: g });
+        return { boxText: box ? String(box.text) : null, xml };
+      }, GLYPHS);
+      if (glyph === null) {
+        check('glyph unit: pptxTextSp/pptxExtractTextBoxes reachable in page scope', false, 'fns not global');
+      } else {
+        check('PPTX extractor keeps € and WinAnsi symbols in the text box',
+          glyph.boxText !== null && glyph.boxText.replace(/\s+/g, ' ').trim() === GLYPHS, JSON.stringify(glyph.boxText));
+        check('PPTX emitter writes € and WinAnsi symbols literally inside <a:t>',
+          glyph.xml.includes('<a:t>' + GLYPHS + '</a:t>'), glyph.xml.slice(0, 300));
+      }
     }
 
     await page.close();
+
+    // ── Story slides: "Expand story slides" ──
+    for (const c of [
+      { label: 'story ON', deck: storyDeckFile(true), mode: 'on', slides: 5, toggle: true, labelText: 'EXPORT 5 SLIDES' },
+      { label: 'story expand OFF', deck: storyDeckFile(true), mode: 'off', slides: 2, toggle: true },
+      { label: 'story OFF deck', deck: storyDeckFile(false), mode: 'absent', slides: 2, toggle: false, labelText: 'EXPORT 2 SLIDES' },
+    ]) {
+      const r = await driveStoryExport(browser, c.deck, c.mode);
+      console.log(`\n── PPTX ${c.label} ──`);
+      check(`[${c.label}] slide count == ${c.slides} (hidden image gets no page)`, r.slideCount === c.slides, `slides=${r.slideCount}`);
+      check(`[${c.label}] expand toggle ${c.toggle ? 'offered' : 'not offered'}`, r.toggle === c.toggle);
+      if (c.labelText) check(`[${c.label}] start button announces the page count`, r.label === c.labelText, r.label);
+      check(`[${c.label}] all XML parts well-formed`, r.wellFormed);
+      check(`[${c.label}] alt text metacharacters never appear raw in slide XML`,
+        !r.xml.includes('alt "q"') && !r.xml.includes('<b>&amp; x') && !r.xml.includes(']]>'), 'raw alt found');
+      // Image slides export as one whole-slide raster picture (slideHasImages), so alt
+      // text is not written to the OOXML at all today; if a native-picture path ever
+      // emits it, the negative check above fails unless it goes through pptxEsc.
+      check(`[${c.label}] pptxEsc escapes & < > "`, r.esc === 'a&quot;&lt;b&gt;&amp;', String(r.esc));
+    }
   } catch (e) {
     fatal = e;
     console.log(`\n💥 ${e.message}`);

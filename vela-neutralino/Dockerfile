@@ -35,27 +35,49 @@ RUN set -eux; \
     mkdir -p /out/mac_universal && cp /out/mac_arm64/vela-agent /out/mac_universal/vela-agent
 
 # ── Build stage ────────────────────────────────────────────────────────────
-FROM node:26-bookworm AS build
+# Node 22 matches CI. Node 25+ images no longer ship corepack, which the pnpm
+# step below needs — so hold the major here (dependabot ignores node majors).
+FROM node:22-bookworm AS build
 
 # python3 (concat/sync/verify scripts) + zip (packaging) + ca-certs (neu update).
 RUN apt-get update \
     && apt-get install -y --no-install-recommends python3 zip ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# pnpm 9 via corepack (must run as root before dropping privileges).
-RUN corepack enable && corepack prepare pnpm@9 --activate
+# pnpm via corepack (must run as root before dropping privileges). A shared
+# COREPACK_HOME lets the `node` user reuse the pnpm prepared here; under the
+# default per-user home it re-downloaded pnpm on every build.
+ENV COREPACK_HOME=/usr/local/share/corepack COREPACK_ENABLE_DOWNLOAD_PROMPT=0
+RUN corepack enable && corepack prepare pnpm@9.15.9 --activate && chmod -R a+rX "$COREPACK_HOME"
 
 # Run the build as the unprivileged `node` user the base image ships (policy:
 # never build as root). Own the workdir so pnpm/neu/python can write into it.
 WORKDIR /repo
-COPY --chown=node:node . .
+RUN mkdir -p vela-neutralino/resources/js && chown -R node:node /repo
 USER node
+
+# Dependencies and runtime first, from only the files they read, so these layers
+# stay cached until package.json, the Neutralino config or the pins change.
+# The source COPY below must come after them, or any source edit re-runs them.
+COPY --chown=node:node vela-neutralino/package.json vela-neutralino/neutralino.config.json vela-neutralino/
+COPY --chown=node:node vela-neutralino/checksums/ vela-neutralino/checksums/
+COPY --chown=node:node vela-neutralino/scripts/verify-runtime.py vela-neutralino/scripts/
 
 # Install the exact-pinned neu CLI. Flags mirror CI:
 #   --ignore-workspace   repo root has pnpm-workspace.yaml we must not pull in
 #   --ignore-scripts     no lifecycle scripts (CLAUDE.md policy)
 #   --no-frozen-lockfile vela-neutralino has no checked-in lockfile
-RUN cd vela-neutralino && pnpm install --ignore-workspace --ignore-scripts --no-frozen-lockfile
+# Then fetch the pinned Neutralino runtime and verify it against the committed
+# SHA256 pins. bin/ and resources/js/neutralino.js are in .dockerignore, so the
+# source COPY below does not overwrite them. The pnpm store is a BuildKit cache
+# mount: when this layer must re-run, packages come from the local store, not
+# the network. The store stays outside the image.
+RUN --mount=type=cache,id=vela-neutralino-pnpm-store,target=/home/node/.pnpm-store,uid=1000,gid=1000 \
+    cd vela-neutralino && pnpm install --ignore-workspace --ignore-scripts --no-frozen-lockfile --store-dir /home/node/.pnpm-store \
+    && ./node_modules/.bin/neu update \
+    && python3 scripts/verify-runtime.py
+
+COPY --chown=node:node . .
 
 # Regenerate the monolith from parts, then preprocess it for the Neutralino shell.
 # Use --release so the shipped desktop bundle carries NO dev-only test-hook
@@ -67,12 +89,10 @@ RUN cd vela-neutralino && pnpm install --ignore-workspace --ignore-scripts --no-
 RUN python3 tools/vela-dev/scripts/concat.py --release --out skills/vela-slides/app/vela.jsx src/parts \
     && python3 vela-neutralino/scripts/sync-vela.py
 
-# Fetch the pinned Neutralino runtime, verify it against committed SHA256 pins,
-# then build single-file binaries (--embed-resources injects resources.neu via
-# postject so each platform binary is self-contained).
+# Build single-file binaries from the runtime fetched and verified above
+# (--embed-resources injects resources.neu via postject so each platform binary
+# is self-contained).
 RUN cd vela-neutralino \
-    && ./node_modules/.bin/neu update \
-    && python3 scripts/verify-runtime.py \
     && ./node_modules/.bin/neu build --release --embed-resources
 
 # Bring in the cross-compiled gatekeepers.

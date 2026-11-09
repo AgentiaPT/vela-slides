@@ -23,11 +23,14 @@ Complete reference for all Vela v12 slide block types (27 total).
   "contentFlex": 1,                             // flex ratio for left column (cols/split layouts)
   "imageFlex": 1,                               // flex ratio for right column (cols/split layouts)
   "splitGap": 32,                               // gap between columns in px (cols/split layouts)
-  "imageCols": 3                                // pin the column count for a run of adjacent image blocks (integer 1-6; omit = auto)
+  "imageCols": 3,                               // pin the column count for a run of adjacent image blocks (integer 1-6; omit = auto)
+  "story": true                                 // present the slide's images one by one (strict boolean; needs 2+ images)
 }
 ```
 
 **Image runs:** two or more adjacent `image` blocks are laid out as a balanced grid whose column count is chosen automatically. Set `imageCols` to pin it.
+
+**Story mode:** `story: true` makes Present show the slide's top-level images one at a time (each zooms to full size, then the slide returns to the grid). Only the value `true` is kept; anything else is dropped. The image `caption` is the tile title; story mode numbers it `N ·`. A slide with fewer than 2 images ignores `story`.
 
 **Numeric slide fields are type- and range-checked on load:** `imageCols` is coerced to an integer and clamped to 1–6; `gap` and `splitGap` to 0–200 px; `contentFlex`/`imageFlex` to 0.1–20. A non-numeric value is dropped, and the renderer default applies.
 
@@ -44,7 +47,7 @@ Pre-authored companion content that renders in the 🎓 student panel with **zer
 ```json
 {
   "studyNotes": {
-    "text": "Markdown body. Supports **bold**, *italic*, ~~strike~~, [label](https://example.com), and [X-Ray term](#agent).",
+    "text": "Markdown body. Supports **bold**, *italic*, ~~strike~~, ++underline++, [label](https://example.com), and [X-Ray term](#agent).",
     "diagram": "<svg viewBox='0 0 320 140'>...</svg>",
     "questions": ["Why does X happen?", "How does Y relate to Z?"],
     "glossary": {
@@ -58,7 +61,7 @@ Pre-authored companion content that renders in the 🎓 student panel with **zer
 ```
 
 **Field reference:**
-- `text` *(required, string, ≤ 4000 chars, warn at 2000)* — markdown body, rendered via the same `parseInline` + `ChatMarkdown` pipeline used by live Vera chat. Supports `**bold**`, `*italic*`, `***both***`, `~~strike~~`, `__underscores__`, `[label](https://…)` external links, and `[label](#term)` X-Ray glossary refs.
+- `text` *(required, string, ≤ 4000 chars, warn at 2000)* — markdown body, rendered via the same `parseInline` + `ChatMarkdown` pipeline used by live Vera chat. Supports `**bold**`, `*italic*`, `***both***`, `~~strike~~`, `++underline++`, `__underscores__`, `[label](https://…)` external links, and `[label](#term)` X-Ray glossary refs.
 - `diagram` *(optional, string, ≤ 8000 chars)* — one complete, well-formed inline SVG. Rendered under the text body via `sanitizeSvgMarkup` (DOMParser-based strip of `<script>`, event handlers, `javascript:/data:/vbscript:` URIs).
 - `questions` *(optional, array, max 6, each ≤ 160 chars)* — pre-authored follow-up questions. When the Claude API / MCP channel is reachable they render as clickable buttons that send the question into the live Vera Teacher flow; otherwise they render as static "Questions to ponder" bullets.
 - `glossary` *(optional, object, max 24 entries)* — `{ termKey: { definition: string ≤ 400 chars, url?: sanitized URL } }`. Keys are lowercased and `[^\w-]` stripped on load, so match is case-insensitive. The inline syntax `[label](#term)` looks up the entry and renders a Kindle-style popover with the definition + optional "Learn more" link. Unknown terms render as plain label text.
@@ -149,6 +152,7 @@ Inline image block.
   "type": "image",
   "src": "data:image/... or URL",
   "caption": "Optional caption",
+  "alt": "Optional alt text",
   "maxWidth": "80%",
   "shadow": true,
   "rounded": true
@@ -679,6 +683,7 @@ Status-aware item list with semantic icons and colors for each state: done, part
 | items | array | `[]` | Checklist items |
 | items[].text | string | | Item text |
 | items[].status | enum | `"pending"` | `"done"`, `"partial"`, `"pending"`, `"blocked"` |
+| items[].label | string | | Custom status label shown instead of the default for the status (max 200 chars) |
 | size | size | `"sm"` | Text font size |
 | showLabels | boolean | `true` | Show status label on right side |
 

@@ -549,12 +549,16 @@ def test_security():
         ("tests/test_block_toolbar_clip.cjs", "Block toolbar clip (CR4)"),
         ("tests/test_icon_picker_escape.cjs", "Icon picker Escape (CR5)"),
         ("tests/test_deck_key_allowlist.cjs", "Deck-ingress key allowlist (drop/survive/clamp/depth)"),
+        ("tests/test_story_logic.cjs",        "Story images (state machine, drop filter, grid plans)"),
         ("tests/test_reducer.cjs",            "Reducer state transitions (62 actions + UNDO/REDO)"),
         ("tests/test_engine_tools.cjs",       "Vera engine tools + ReAct caps (G1/G3/G4)"),
         ("tests/test_block_render.cjs",       "Block renderers (27 types via renderToStaticMarkup)"),
+        ("tests/test_underline.cjs",          "++underline++ inline format (strict delimiters, edit round trip)"),
         ("tests/test_markdown_export.cjs",    "Markdown export deckToMarkdown (G7)"),
         ("tests/test_fs_guard.cjs",           "Desktop fs-guard (frozen surface + root allowlist)"),
         ("tests/test_deck_io_save.cjs",       "Desktop save state machine (CR3 no-swallow/retry/verify/echo-guard)"),
+        ("tests/test_nl_window_agents.cjs",   "Desktop window title/refocus + agent probe retry (meridian CR16/CR18/CR19)"),
+        ("tests/test_deck_id_stable.cjs",     "Deck open keeps lane/module ids + timestamps (meridian CR01)"),
         ("tests/test_ai_cancel_owner.cjs",    "AI-op cancel owner-token aiWork clearing (timing + Alternatives)"),
         ("tests/test_ai_slide_selection.cjs", "AI slide adder selection race (atomic SELECT + stale-deck isolation)"),
     ]:
@@ -3882,6 +3886,216 @@ def test_slide_numeric_fields():
         fail("imageCols sink clamp missing in part-canvas.jsx")
 
 
+# ━━━ Gradient in a solid-color bg field (meridian CR02) ━━━━━━━━━━━
+# The app renders slide `bg` (and block bg / iconBg / headerBg) through
+# cssColor(), a fail-closed solid-color allowlist, so a gradient there is
+# dropped and the default color shows. validate.py must report it and point
+# the author to `bgGradient`.
+def test_bg_gradient_validation():
+    print("\n── Gradient in solid-color bg fields (validate.py) ──")
+    G = "linear-gradient(135deg, #0f172a 0%, #1e3a5f 100%)"
+
+    def deck_with(slide_extra, blocks=None):
+        s = {"title": "S", "bg": "#0f172a", "color": "#e2e8f0", "accent": "#3b82f6",
+             "duration": 60, "blocks": blocks or [{"type": "heading", "text": "Hi", "size": "2xl"}]}
+        s.update(slide_extra)
+        return {"deckTitle": "Gradient Test",
+                "lanes": [{"title": "Main", "items": [{"title": "T", "status": "done", "slides": [s]}]}]}
+
+    def run_validate(deck):
+        tmpdir = tempfile.mkdtemp()
+        try:
+            p = os.path.join(tmpdir, "g.vela")
+            with open(p, "w", encoding="utf-8") as f:
+                json.dump(deck, f)
+            r = subprocess.run([sys.executable, os.path.join(SCRIPTS, "validate.py"), p],
+                               capture_output=True, text=True)
+            return r.returncode, r.stdout + r.stderr
+        finally:
+            shutil.rmtree(tmpdir, ignore_errors=True)
+
+    # 1. Gradient in slide bg (no bgGradient) → error naming the slide + bgGradient
+    rc, out = run_validate(deck_with({"bg": G}))
+    if rc != 0 and "L1/I1/S1: 'bg' contains a CSS gradient" in out and "'bgGradient'" in out:
+        ok("validate.py rejects a gradient in slide bg and names the slide + bgGradient")
+    else:
+        fail("validate.py gradient in slide bg", f"rc={rc} out={out[:400]}")
+
+    # 2. Same, with a valid bgGradient beside it, other gradient functions, any case
+    for extra, label in [
+        ({"bg": G, "bgGradient": G}, "gradient in bg even when bgGradient is set"),
+        ({"bg": "radial-gradient(circle, #000, #fff)"}, "radial-gradient in bg"),
+        ({"bg": "repeating-linear-gradient(90deg, #000 0 10px, #fff 10px 20px)"}, "repeating gradient in bg"),
+        ({"bg": "LINEAR-GRADIENT (90deg, #000, #fff)"}, "upper-case gradient in bg"),
+    ]:
+        rc, out = run_validate(deck_with(extra))
+        if rc != 0 and "'bg' contains a CSS gradient" in out:
+            ok(f"validate.py rejects {label}")
+        else:
+            fail(f"validate.py rejects {label}", f"rc={rc} out={out[:300]}")
+
+    # 3. No false positives: solid bg, gradient correctly in bgGradient only
+    for extra, label in [
+        ({}, "solid hex bg"),
+        ({"bg": "rgb(15, 23, 42)"}, "solid rgb() bg"),
+        ({"bg": None, "bgGradient": G}, "gradient in bgGradient only"),
+        ({"bgGradient": G}, "solid bg + gradient in bgGradient"),
+    ]:
+        deck = deck_with(extra)
+        if extra.get("bg", 1) is None:
+            del deck["lanes"][0]["items"][0]["slides"][0]["bg"]
+        rc, out = run_validate(deck)
+        if rc == 0 and "gradient" not in out.lower():
+            ok(f"validate.py accepts {label}")
+        else:
+            fail(f"validate.py accepts {label}", f"rc={rc} out={out[:300]}")
+
+    # 4. Block-level solid-color bg fields (no gradient sibling exists there)
+    for blocks, where, label in [
+        ([{"type": "callout", "text": "x", "bg": G}], "L1/I1/S1/B1: 'bg'", "callout bg"),
+        ([{"type": "table", "headers": ["a"], "rows": [["b"]], "headerBg": G}], "'headerBg'", "table headerBg"),
+        ([{"type": "icon-row", "items": [{"icon": "Zap", "title": "t", "iconBg": G}]}], "'items[0].iconBg'", "icon-row item iconBg"),
+        ([{"type": "grid", "items": [{"bg": G, "blocks": [{"type": "text", "text": "x"}]}]}], "'items[0].bg'", "grid cell bg"),
+        ([{"type": "grid", "items": [{"blocks": [{"type": "callout", "text": "x", "bg": G}]}]}], "'items[0].blocks[0].bg'", "nested callout bg in a grid cell"),
+    ]:
+        rc, out = run_validate(deck_with({}, blocks))
+        if rc != 0 and where in out and "contains a CSS gradient" in out:
+            ok(f"validate.py rejects a gradient in {label}")
+        else:
+            fail(f"validate.py rejects a gradient in {label}", f"rc={rc} out={out[:400]}")
+
+    # cols layout (L/R) blocks are checked too
+    rc, out = run_validate(deck_with({"layout": "cols", "blocks": [],
+                                      "L": [{"type": "callout", "text": "x", "bg": G}],
+                                      "R": [{"type": "text", "text": "y"}]}))
+    if rc != 0 and "L1/I1/S1/L1: 'bg' contains a CSS gradient" in out:
+        ok("validate.py rejects a gradient in a cols-layout L block bg")
+    else:
+        fail("validate.py gradient in L block bg", f"rc={rc} out={out[:400]}")
+
+    # 5. Every shipped example deck still validates (no false positives in the wild)
+    tmpdir = tempfile.mkdtemp()
+    try:
+        bad = []
+        ex_dir = os.path.join(REPO_ROOT, "examples")
+        for src in sorted(os.path.join(ex_dir, n) for n in os.listdir(ex_dir) if n.endswith(".vela")):
+            dst = os.path.join(tmpdir, os.path.basename(src))  # validate.py may expand in place
+            shutil.copy(src, dst)
+            r = subprocess.run([sys.executable, os.path.join(SCRIPTS, "validate.py"), dst],
+                               capture_output=True, text=True)
+            if r.returncode != 0:
+                bad.append(os.path.basename(src))
+        if not bad:
+            ok("all examples/*.vela still pass validate.py")
+        else:
+            fail("examples failing validate.py", ", ".join(bad))
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+
+def test_story_slide_fields():
+    print("\n── Story Slide Field (validate + compact/turbo) ──")
+
+    sys.path.insert(0, SCRIPTS)
+    try:
+        from vela import expand_deck, compact_deck, turbo_deck, unturbo_deck
+    except Exception as e:
+        fail("Import vela.py helpers", str(e))
+        return
+
+    def deck_with(slide_extra, blocks=None):
+        s = {"title": "S", "bg": "#0f172a", "color": "#e2e8f0", "accent": "#3b82f6",
+             "duration": 60, "blocks": blocks or [{"type": "heading", "text": "Hi", "size": "2xl"}]}
+        s.update(slide_extra)
+        return {"deckTitle": "Story Test",
+                "lanes": [{"title": "Main", "items": [{"title": "T", "status": "done", "slides": [s]}]}]}
+
+    def run_validate(deck):
+        tmpdir = tempfile.mkdtemp()
+        try:
+            p = os.path.join(tmpdir, "n.vela")
+            with open(p, "w", encoding="utf-8") as f:
+                json.dump(deck, f)
+            return subprocess.run([sys.executable, os.path.join(SCRIPTS, "validate.py"), p],
+                                  capture_output=True, text=True)
+        finally:
+            shutil.rmtree(tmpdir, ignore_errors=True)
+
+    def slide0(d):
+        return d["lanes"][0]["items"][0]["slides"][0]
+
+    # 1. validate: story must be a boolean
+    for extra, label in [({"story": True}, "story: true"), ({"story": False}, "story: false"), ({}, "story absent")]:
+        r = run_validate(deck_with(extra))
+        if r.returncode == 0:
+            ok(f"validate.py accepts {label}")
+        else:
+            fail(f"validate.py accepts {label}", r.stdout + r.stderr)
+    for val in ("true", 1, {}, None):
+        r = run_validate(deck_with({"story": val}))
+        out = r.stdout + r.stderr
+        if r.returncode != 0 and "story must be a boolean" in out:
+            ok(f"validate.py rejects story: {val!r}")
+        else:
+            fail(f"validate.py rejects story: {val!r}", f"rc={r.returncode} out={out[:300]}")
+
+    # 2. compact round-trip keeps story (unknown slide keys pass through)
+    deck = deck_with({"story": True})
+    rt = expand_deck(compact_deck(copy.deepcopy(deck)))
+    if slide0(rt).get("story") is True:
+        ok("compact → expand round-trip preserves story")
+    else:
+        fail("compact → expand round-trip story", f"got {slide0(rt).get('story')!r}")
+
+    # 3. turbo round-trips: story alone, story + imageCols, story + studyNotes, plain
+    for extra, label in [
+        ({"story": True}, "story"),
+        ({"story": True, "imageCols": 3}, "story + imageCols"),
+        ({"story": True, "studyNotes": {"text": "n"}}, "story + studyNotes"),
+        ({"story": True, "imageCols": 2, "studyNotes": {"text": "n"}}, "story + imageCols + studyNotes"),
+    ]:
+        d = deck_with(extra)
+        back = unturbo_deck(copy.deepcopy(turbo_deck(copy.deepcopy(d))))
+        b0 = slide0(back)
+        if b0.get("story") is True and b0.get("imageCols") == extra.get("imageCols") \
+                and b0.get("studyNotes") == extra.get("studyNotes"):
+            ok(f"turbo → unturbo round-trip preserves {label}")
+        else:
+            fail(f"turbo → unturbo round-trip {label}", f"got {b0!r}")
+    arr = turbo_deck(deck_with({"story": True}))[1][0][1][0][3][0]
+    if len(arr) == 13 and arr[10] is None and arr[11] is None and arr[12] is True:
+        ok("turbo story-only slide uses null placeholders at 10 and 11")
+    else:
+        fail("turbo story positional encoding", f"arr tail={arr[10:]!r}")
+    plain = turbo_deck(deck_with({}))[1][0][1][0][3][0]
+    if len(plain) == 10:
+        ok("turbo keeps length 10 for slides without story")
+    else:
+        fail("turbo plain slide length", f"len={len(plain)}")
+    off = turbo_deck(deck_with({"story": False}))[1][0][1][0][3][0]
+    if len(off) == 10:
+        ok("turbo omits story: false")
+    else:
+        fail("turbo story: false length", f"len={len(off)}")
+
+    # 4. overflow hint: a run of adjacent images counts as one block
+    def imgs(n):
+        return [{"type": "image", "src": "data:image/png;base64,AAAA"} for _ in range(n)]
+    r = run_validate(deck_with({}, blocks=imgs(10)))
+    if r.returncode == 0 and "may overflow" not in r.stdout + r.stderr:
+        ok("validate.py: 10 adjacent images do not trigger the >7 blocks warning")
+    else:
+        fail("validate.py 10-image run warning", (r.stdout + r.stderr)[:300])
+    mixed = []
+    for _ in range(8):
+        mixed += [{"type": "text", "text": "t"}]
+    r = run_validate(deck_with({}, blocks=mixed))
+    if "may overflow" in r.stdout + r.stderr:
+        ok("validate.py: 8 non-image blocks still warn")
+    else:
+        fail("validate.py 8-block warning kept", (r.stdout + r.stderr)[:300])
+
+
 # ━━━ Deck-Ingress Key Allowlist (structural) ━━━━━━━━━━━━━━━━━━━━━━
 def test_deck_key_allowlist_structure():
     print("\n── Deck-Ingress Key Allowlist ──")
@@ -4032,6 +4246,24 @@ def test_deck_key_allowlist_structure():
 
 
 # ━━━ PDF Title-Card Export Tests (v12.57 / v12.58) ━━━━━━━━━━━━━━━
+def test_review_fix_title_and_shortcuts():
+    print("\n── Review-fix guards (receive-path title, Ctrl+E typing, accent 0) ──")
+    app = open(os.path.join(PARTS_DIR, "part-app.jsx"), encoding="utf-8").read()
+    eng = open(os.path.join(PARTS_DIR, "part-engine.jsx"), encoding="utf-8").read()
+    if re.search(r"deckTitle:\s*deck\.deckTitle\s*\?\s*sanitizeDeckTitle\(deck\.deckTitle\)", app):
+        ok("deck receive path sanitizes deckTitle")
+    else:
+        fail("deck receive path must pass deckTitle through sanitizeDeckTitle")
+    if re.search(r"const ctrlE = [^;\n]*&& !typing;", app):
+        ok("Ctrl/Cmd+E shortcut honours the typing guard")
+    else:
+        fail("Ctrl/Cmd+E shortcut must include && !typing")
+    if "branding.accentHeight ?? 4" in eng and "branding.accentHeight || 4" not in eng:
+        ok("Vera prompt respects accentHeight 0")
+    else:
+        fail("Vera prompt must use a nullish check for accentHeight")
+
+
 def test_pdf_title_cards():
     print("\n── PDF Title-Card Export Tests ──")
 
@@ -4117,6 +4349,65 @@ def test_pdf_title_cards():
 
 
 # ━━━ New Block Primitives Tests ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+def test_checklist_label_roundtrip():
+    print("\n── Checklist item.label round-trip (tideline C2) ──")
+    sys.path.insert(0, SCRIPTS)
+    try:
+        from vela import expand_deck, compact_deck, turbo_deck, unturbo_deck
+        import importlib
+        vmod = importlib.import_module("validate")
+    except Exception as e:
+        fail("C2: import helpers", str(e))
+        return
+    def chk(cond, name, detail):
+        ok(name) if cond else fail(name, detail)
+    items = [{"text": "A", "status": "done", "label": "Shipped"},
+             {"text": "B", "status": "blocked"}]
+    deck = {"v": 1, "title": "T", "lanes": [{"id": "l1", "title": "L", "items": [
+        {"id": "m1", "title": "M", "slides": [{"id": "s1", "title": "S", "blocks": [
+            {"type": "checklist", "items": copy.deepcopy(items)}]}]}]}]}
+    def cl(d):
+        return d["lanes"][0]["items"][0]["slides"][0]["blocks"][0]["items"]
+    got = cl(expand_deck(compact_deck(copy.deepcopy(deck))))
+    chk(got == items, "C2: compact round-trip keeps checklist label", str(got))
+    turbo = turbo_deck(copy.deepcopy(deck))
+    got = cl(unturbo_deck(json.loads(json.dumps(turbo))))
+    chk(got == items, "C2: turbo round-trip keeps checklist label", str(got))
+    # Old turbo item layout (no label slot) still loads
+    txt = json.dumps(turbo)
+    old_txt = txt.replace(', "Shipped"]', ']')
+    got = cl(unturbo_deck(json.loads(old_txt)))
+    chk(got[0] == {"text": "A", "status": "done"}, "C2: old turbo checklist items load", str(got))
+    # Plain-string items (valid in the app and validate.py) round-trip in every
+    # path, alone and mixed with dict items (hunt1 HC3: turbo crashed on them).
+    s_items = ["just text", {"text": "B", "status": "blocked", "label": "Waiting"}, "tail"]
+    s_deck = copy.deepcopy(deck)
+    cl(s_deck)[:] = copy.deepcopy(s_items)
+    for label, fn in (
+            ("compact", lambda d: expand_deck(compact_deck(d))),
+            ("turbo", lambda d: unturbo_deck(json.loads(json.dumps(turbo_deck(d))))),
+            ("compact->turbo", lambda d: unturbo_deck(json.loads(json.dumps(turbo_deck(compact_deck(d))))))):
+        try:
+            got = cl(fn(copy.deepcopy(s_deck)))
+        except Exception as e:
+            got = f"{type(e).__name__}: {e}"
+        chk(got == s_items, f"HC3: {label} round-trip keeps plain-string checklist items", str(got))
+    # validate.py
+    with tempfile.TemporaryDirectory() as td:
+        def run(label):
+            d = copy.deepcopy(deck)
+            cl(d)[0]["label"] = label
+            pth = os.path.join(td, "d.vela")
+            open(pth, "w").write(json.dumps(d))
+            return vmod.validate(pth)[0]
+        errs = run("Shipped")
+        chk(not any("checklist label" in e for e in errs), "C2: validate accepts string label", str(errs))
+        errs = run(5)
+        chk(any("checklist label must be a string" in e for e in errs), "C2: validate rejects non-string label", str(errs))
+        errs = run("x" * 201)
+        chk(any("exceeds 200" in e for e in errs), "C2: validate rejects over-long label", str(errs))
+
+
 def test_block_primitives():
     print("\n── Block Primitives Tests ──")
 
@@ -4824,10 +5115,14 @@ if __name__ == "__main__":
         test_channel_local()
         test_server_hardening()
         test_block_primitives()
+        test_checklist_label_roundtrip()
         test_study_notes()
         test_slide_numeric_fields()
+        test_story_slide_fields()
+        test_bg_gradient_validation()
         test_deck_key_allowlist_structure()
         test_pdf_title_cards()
+        test_review_fix_title_and_shortcuts()
         test_script_context_escape_parity()
         test_build_pipeline_trust_boundary()
         test_svg_style_recurrence_guards()

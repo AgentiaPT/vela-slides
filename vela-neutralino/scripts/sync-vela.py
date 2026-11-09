@@ -118,7 +118,10 @@ def main() -> int:
         return 0
 
     DST.parent.mkdir(parents=True, exist_ok=True)
-    DST.write_text(new_text, encoding="utf-8")
+    # Write LF-only (newline="\n"), never the platform default: on Windows
+    # Path.write_text() would translate "\n" to "\r\n", and the standalone-
+    # export shim stripper anchors on this file's exact line endings (D1).
+    DST.write_text(new_text, encoding="utf-8", newline="\n")
     print(f"wrote {DST} ({len(new_text):,} chars)")
     return 0
 

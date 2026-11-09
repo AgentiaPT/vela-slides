@@ -51,6 +51,20 @@ export default function App() {
   const postDemoFlushRequest = useRef(null);
   const postDemoFlushModes = useRef({ local: false, storage: false });
   const flushLocalStateRef = useRef(null);
+  // No-edit guard (CR01): JSON of the deck payload the file is known to hold —
+  // the state right after a load from disk, then each payload we send. A flush
+  // whose payload equals it is skipped, so opening a deck the user did not
+  // change never rewrites the file (sanitize can normalize values on load).
+  const _localDiskSig = useRef(null);
+  // Save ordering for the guard above: `sent` numbers each send, `done` is the
+  // newest send whose result is known. _localDiskSig moves only on a CONFIRMED
+  // write — a failed or unconfirmed send must not mark the payload as on disk,
+  // or a later identical flush would skip it and the edit is lost.
+  const _localSaveSeq = useRef({ sent: 0, done: 0 });
+  const _localSentSig = useRef(null); // payload JSON of the newest send
+  // lanes object of the last LOAD from disk (startup patch / incoming update);
+  // the lanes effect adopts that state as the baseline instead of saving it.
+  const _localBaselineLanes = useRef(null);
   const flushStorageStateRef = useRef(null);
   const requestPostDemoFlushRef = useRef(null);
   _localSyncState.current = state; // always up-to-date
@@ -71,11 +85,33 @@ export default function App() {
     if (!save.lanes?.length || !totalSlides) return false;
     delete save.chatMessages; delete save.chatLoading; delete save.fullscreen;
     delete save.lastDebug; delete save._bootstrap; delete save._version;
+    const payload = localDeckPayload(source);
+    const sig = JSON.stringify(payload);
+    // Unchanged vs file: nothing to write — but only when no send of a
+    // different payload is still in flight. That send can land after this
+    // flush and overwrite the file (edit, then undo during a slow save).
+    const inFlight = _localSaveSeq.current.sent > _localSaveSeq.current.done;
+    if (sig === _localDiskSig.current && (!inFlight || sig === _localSentSig.current)) return false;
+    const seq = ++_localSaveSeq.current.sent;
+    _localSentSig.current = sig;
+    // Backend contract: a Promise that resolves true only after the write is
+    // confirmed (false or a rejection = not written / superseded). A plain
+    // return is a synchronous backend: false = failed, anything else = written.
+    const settle = (okWrite) => {
+      const q = _localSaveSeq.current;
+      if (seq <= q.done) return; // a newer result or a disk load already decided
+      if (okWrite) { q.done = seq; _localDiskSig.current = sig; }
+      else if (seq === q.sent) { q.done = seq; _localDiskSig.current = null; } // file state unknown: next flush retries
+    };
     try {
-      window.__velaSendDeckUpdate({ deckTitle: source.deckTitle, lanes: save.lanes, branding: save.branding, guidelines: save.guidelines });
+      const res = window.__velaSendDeckUpdate(payload);
+      if (res && typeof res.then === "function") {
+        res.then((v) => settle(v === true), (error) => { dbg("Local save error:", error); settle(false); });
+      } else settle(res !== false);
       return true;
     } catch (error) {
       dbg("Local save error:", error);
+      settle(false);
       return false;
     }
   };
@@ -242,6 +278,20 @@ export default function App() {
         } : null;
       },
       getVeraMode: () => _localSyncState.current?.veraMode || null,
+      // A copy of the current slide, and a lane collapse for the selected module
+      // (TOGGLE_LANE has no UI path; a deck can arrive with a collapsed lane).
+      getCurrentSlideForTest: () => {
+        const s = _localSyncState.current;
+        for (const l of (s?.lanes || [])) { const it = (l.items || []).find((i) => i.id === s.selectedId); if (it) return JSON.parse(JSON.stringify(it.slides?.[s.slideIndex] || null)); }
+        return null;
+      },
+      toggleSelectedLaneForTest: () => {
+        const s = _localSyncState.current;
+        const lane = (s?.lanes || []).find((l) => (l.items || []).some((i) => i.id === s.selectedId));
+        if (!lane) return false;
+        dispatch({ type: "TOGGLE_LANE", id: lane.id });
+        return true;
+      },
       restoreStartupDeck: () => {
         if (!VELA_TEST_STARTUP_PATCH) return false;
         const raw = JSON.parse(JSON.stringify(VELA_TEST_STARTUP_PATCH));
@@ -376,6 +426,14 @@ export default function App() {
     // a deck switch (the _localSyncIncoming guard skips setting a new timer
     // but must still kill the old one).
     clearTimeout(localSyncTimer.current);
+    // First render of a deck just loaded from disk: record it as the file's
+    // content instead of scheduling a save (CR01 no-edit guard).
+    if (VELA_LOCAL_MODE && loaded.current && _localBaselineLanes.current && state.lanes === _localBaselineLanes.current) {
+      _localBaselineLanes.current = null;
+      _localDiskSig.current = JSON.stringify(localDeckPayload(_localSyncState.current));
+      _localSaveSeq.current.done = _localSaveSeq.current.sent; // older in-flight results must not replace this
+      return;
+    }
     if (!VELA_LOCAL_MODE || !loaded.current || _localSyncIncoming.current ||
         document.documentElement.dataset.velaDemoRunning === "true") return;
     localSyncTimer.current = setTimeout(() => flushLocalStateRef.current?.(null), 600);
@@ -390,18 +448,12 @@ export default function App() {
       _localSyncIncoming.current = true;
       try {
         const cur = _localSyncState.current;
-        const sanitized = validateAndSanitizeDeck(deck);
-        // Preserve lane/item IDs so selection stays valid
+        // Keep the file's own valid, unique ids (deck open/switch must not churn
+        // ids — CR01); only minted ids fall back to the current id at that
+        // position, so selection stays valid after an editor drops ids.
+        const sanitized = validateAndSanitizeDeck(deck, { keepIds: true });
         if (cur.lanes && sanitized.lanes && cur.lanes.length === sanitized.lanes.length) {
-          for (let li = 0; li < sanitized.lanes.length; li++) {
-            sanitized.lanes[li].id = cur.lanes[li].id;
-            if (sanitized.lanes[li].items && cur.lanes[li].items) {
-              const minItems = Math.min(sanitized.lanes[li].items.length, cur.lanes[li].items.length);
-              for (let ii = 0; ii < minItems; ii++) {
-                sanitized.lanes[li].items[ii].id = cur.lanes[li].items[ii].id;
-              }
-            }
-          }
+          adoptPriorDeckIds(sanitized, deck, cur);
         }
         // Check if this is a different deck (picker switch) vs same-deck external edit
         const isDifferentDeck = !cur.lanes?.length || cur.lanes.length !== sanitized.lanes.length ||
@@ -410,12 +462,16 @@ export default function App() {
         const payload = {
           ...cur,                                                    // keep everything
           lanes: sanitized.lanes,                                    // update content
-          deckTitle: deck.deckTitle || cur.deckTitle,                 // update title
+          deckTitle: deck.deckTitle ? sanitizeDeckTitle(deck.deckTitle) : cur.deckTitle,                 // update title
           branding: deck.branding ? { ...defaultBranding, ...sanitized.branding } : cur.branding, // sanitized (scrubbed) branding, not raw deck.branding (v12.67)
-          guidelines: deck.guidelines !== undefined ? deck.guidelines : cur.guidelines,
+          // Sanitized (string-typed, control/bidi-stripped, capped) as on import, not
+          // raw deck.guidelines: it goes into the Vera system prompt, and a
+          // non-string would make every AI call throw.
+          guidelines: deck.guidelines !== undefined ? sanitized.guidelines : cur.guidelines,
           // Reset selection when switching to a different deck so auto-select picks the first module
           ...(isDifferentDeck ? { selectedId: null, slideIndex: 0 } : {}),
         };
+        _localBaselineLanes.current = payload.lanes;
         dispatch({ type: "LOAD", payload });
       } catch (e) {
         // Fail closed: a malicious .vela edited on disk is pushed here over the serve.py
@@ -484,6 +540,72 @@ export default function App() {
 
   // ━━━ Mobile ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   const isMobile = useIsMobile();
+  // CR13: top-bar density level, measured from the real free space (no fixed
+  // breakpoints). 4 = all labels + labelled view switch; 3 = all labels,
+  // icon-only switch; 2 = six action buttons hide their label visually; 1 = the
+  // Present label hides too; 0 = as 1, but the action group may shrink (labels
+  // can wrap), the last resort for narrow windows. A hidden label stays in the
+  // DOM at zero width (so it can be measured; the title attr names the button).
+  // A level shows only while it fits on one line with the deck title >=
+  // HDR_TITLE_MIN; the switch labels also need the whole title to fit.
+  // The level is a function of the current space only (meridian-F7): each
+  // level's natural width is computed from measured widths, and the widest level
+  // that fits wins. No memory of past widths, so a window that grows gets its
+  // labels back at once, and the same width always gives the same level.
+  const HDR_TITLE_MIN = 120, HDR_TOP = 4, HDR_LABEL_GAP = 4;
+  const hdrGap = (lvl) => (lvl < 3 ? 8 : 10);
+  const [hdrSize, setHdrSize] = useState(1);
+  const hdrSizeRef = useRef(1);
+  hdrSizeRef.current = hdrSize;
+  const hdrRef = useRef(null), hdrBoxRef = useRef(null), hdrSpacerRef = useRef(null), hdrTitleRef = useRef(null);
+  const hdrSigRef = useRef(null);
+  const fitHeader = useCallback(() => {
+    const h = hdrRef.current, box = hdrBoxRef.current, sp = hdrSpacerRef.current;
+    if (!h || !box || !sp) return;
+    const ti = hdrTitleRef.current, lvl = hdrSizeRef.current;
+    // Skip the measurement when nothing that decides the level has changed.
+    const sig = [h.clientWidth, h.scrollWidth, box.scrollWidth, sp.offsetWidth, ti ? ti.scrollWidth : -1, ti ? ti.offsetWidth : -1, lvl].join("|");
+    if (hdrSigRef.current === sig) return;
+    hdrSigRef.current = sig;
+    const avail = h.getBoundingClientRect().width;
+    // Natural width at the current level: lay the bar out at max-content for one
+    // synchronous read (title and action group at full size), then restore.
+    const prevW = h.style.width;
+    h.style.width = "max-content";
+    const nat = h.getBoundingClientRect().width;
+    const tiNat = ti ? ti.getBoundingClientRect().width : 0;
+    h.style.width = prevW;
+    // A label's text width is the same shown or hidden (a hidden label stays in
+    // the DOM at zero width). A top-bar label cancels its button's 4px flex gap
+    // (margin -4, the space is in the text); a view-switch label adds the gap.
+    const range = document.createRange();
+    const textW = (sel, gap) => Array.from(h.querySelectorAll(sel)).reduce((sum, e) => { range.selectNodeContents(e); return sum + range.getBoundingClientRect().width + gap; }, 0);
+    const lab2 = textW("[data-hdr-label='2']", 0), lab3 = textW("[data-hdr-label='3']", 0);
+    // View-switch labels: the second span of each segment (shown or zero-width).
+    const lab4 = textW("[data-testid='view-switch'] button > span:nth-child(2)", HDR_LABEL_GAP) + VIEW_SWITCH_LABEL_EXTRA;
+    const inFlow = (e) => { const cs = getComputedStyle(e); return cs.display !== "none" && cs.position !== "absolute" && cs.position !== "fixed"; };
+    const gaps = Array.from(h.children).filter(inFlow).length - 1 + Array.from(box.children).filter(inFlow).length - 1;
+    const extra = (L) => (L >= 2 ? lab2 : 0) + (L >= 3 ? lab3 : 0) + (L >= 4 ? lab4 : 0) + hdrGap(L) * gaps;
+    const titleSlack = ti ? Math.max(0, tiNat - HDR_TITLE_MIN) : 0;
+    const base = nat - extra(lvl);
+    // Level 4 needs the whole title; levels 1-3 may shrink it to HDR_TITLE_MIN.
+    const need = (L) => base + extra(L) - (L < HDR_TOP ? titleSlack : 0);
+    let next = 0; // level 0: nothing fits unshrunk, so the action group may shrink
+    for (let L = HDR_TOP; L >= 1; L--) if (need(L) <= avail + 0.5) { next = L; break; }
+    if (next !== lvl) { hdrSizeRef.current = next; setHdrSize(next); }
+  }, []);
+  useLayoutEffect(() => { fitHeader(); });
+  useEffect(() => {
+    if (typeof ResizeObserver === "undefined") return;
+    // Web fonts change label widths without resizing the bar: measure again.
+    try { document.fonts?.ready.then(() => { hdrSigRef.current = null; fitHeader(); }); } catch (_) {}
+    const ro = new ResizeObserver(() => fitHeader());
+    [hdrRef.current, hdrBoxRef.current, hdrTitleRef.current].forEach((el) => el && ro.observe(el));
+    return () => ro.disconnect();
+  }, [fitHeader, isMobile, state.fullscreen, editingTitle]);
+  // Shown or hidden, a label is the same span text ("pre": the leading space is
+  // the icon gap, margin -4 cancels the flex gap), so fitHeader can measure it.
+  const hdrLabel = (txt, need = 3) => (hdrSize < need ? <span data-hdr-label={need} style={{ display: "inline-block", width: 0, overflow: "hidden", whiteSpace: "pre", marginLeft: -4, verticalAlign: "top" }}>{txt}</span> : <span data-hdr-label={need} style={{ whiteSpace: "pre", marginLeft: -4 }}>{txt}</span>);
   const [mobileTab, setMobileTab] = useState("list"); // "list" | "slides" | "chat"
   const [mobileMenu, setMobileMenu] = useState(false);
   const [viewMenu, setViewMenu] = useState(false);
@@ -501,13 +623,20 @@ export default function App() {
     prevSelectedRef.current = state.selectedId;
   }, [state.selectedId, isMobile]);
 
-  // TOC toggle shortcut: [
+  // TOC toggle shortcuts: [ (not while typing) and Ctrl/Cmd+E (editor only —
+  // in fullscreen, PresenterTOC owns Ctrl+E). AltGr arrives as Ctrl+Alt, and
+  // PT/ES/DE layouts need AltGr for "[", so Ctrl+Alt+[ still counts as "[".
   useEffect(() => {
     if (isMobile) return;
-    const h = (e) => { if (e.key === "[" && !e.ctrlKey && !e.metaKey && !["INPUT","TEXTAREA","SELECT"].includes(e.target.tagName) && !e.target.isContentEditable) { e.preventDefault(); setTocCollapsed((c) => !c); } };
+    const h = (e) => {
+      const typing = ["INPUT","TEXTAREA","SELECT"].includes(e.target.tagName) || e.target.isContentEditable;
+      const bracket = e.key === "[" && !e.metaKey && (!e.ctrlKey || e.altKey) && !typing;
+      const ctrlE = (e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && (e.key === "e" || e.key === "E") && !state.fullscreen && !typing;
+      if (bracket || ctrlE) { e.preventDefault(); setTocCollapsed((c) => !c); }
+    };
     window.addEventListener("keydown", h);
     return () => window.removeEventListener("keydown", h);
-  }, [isMobile]);
+  }, [isMobile, state.fullscreen]);
 
   // Theme toggle shortcut: D
   useEffect(() => {
@@ -649,7 +778,12 @@ export default function App() {
         if (VELA_LOCAL_MODE) {
           // Local/folder mode: file on disk is always authoritative — apply directly
           // (localStorage may contain a different deck from the same origin)
-          try { applyStartupPatch(loadedDeck || { lanes: [] }, dispatch); } catch (err) { dbg("[PATCH] Error:", err); }
+          try {
+            applyStartupPatch(loadedDeck || { lanes: [] }, (a) => {
+              if (a && a.type === "LOAD" && a.payload) _localBaselineLanes.current = a.payload.lanes;
+              dispatch(a);
+            });
+          } catch (err) { dbg("[PATCH] Error:", err); }
         } else if (!loadedDeck) {
           // First run — no saved data, apply patch directly
           try { applyStartupPatch({ lanes: [] }, dispatch); } catch (err) { dbg("[PATCH] Error:", err); }
@@ -764,6 +898,8 @@ export default function App() {
   React.useEffect(() => {
     const name = state.deckTitle || "Untitled";
     document.title = name === "Untitled" ? "Vela Slides" : `${name} — Vela Slides`;
+    // Desktop shell hook (nl-boot.js): mirror the sanitized title to the native window.
+    if (typeof window.__velaOnDeckTitle === "function") { try { window.__velaOnDeckTitle(state.deckTitle || ""); } catch (_) {} }
   }, [state.deckTitle]);
 
   // Export
@@ -812,11 +948,23 @@ export default function App() {
   const importDeck = (e) => { const file = e.target.files?.[0]; if (!file) return; e.target.value = ""; loadDeckFile(file); };
 
   const [fileDragOver, setFileDragOver] = useState(false);
+  const [fileDragImages, setFileDragImages] = useState(false); // the drag holds only image files
+  const [fileDragTaken, setFileDragTaken] = useState(false); // a child (editor slide panel) takes this drag
   const dragCountRef = useRef(0);
-  const handleGlobalDragEnter = useCallback((e) => { e.preventDefault(); if (e.dataTransfer?.types?.includes("Files")) { dragCountRef.current++; setFileDragOver(true); } }, []);
+  const fullscreenRef = useRef(false); fullscreenRef.current = !!state.fullscreen;
+  const handleGlobalDragEnter = useCallback((e) => { e.preventDefault(); if (e.dataTransfer?.types?.includes("Files")) { dragCountRef.current++; setFileDragOver(true); setFileDragImages(dragHasOnlyImageFiles(e.dataTransfer)); } }, []);
   const handleGlobalDragLeave = useCallback((e) => { e.preventDefault(); dragCountRef.current--; if (dragCountRef.current <= 0) { dragCountRef.current = 0; setFileDragOver(false); } }, []);
-  const handleGlobalDragOver = useCallback((e) => { e.preventDefault(); e.dataTransfer.dropEffect = "copy"; }, []);
-  const handleGlobalDrop = useCallback((e) => { e.preventDefault(); e.stopPropagation(); dragCountRef.current = 0; setFileDragOver(false); const file = e.dataTransfer?.files?.[0]; if (file) loadDeckFile(file); }, [loadDeckFile]);
+  // A child (the editor slide panel, for image files) that takes the drag calls
+  // preventDefault first; the shell then hides its own overlay over that child.
+  const handleGlobalDragOver = useCallback((e) => { const taken = e.isDefaultPrevented(); e.preventDefault(); e.dataTransfer.dropEffect = "copy"; setFileDragTaken(taken); }, []);
+  // A drop a child took (images added to a slide) must not also load as a deck.
+  const handleGlobalDrop = useCallback((e) => { const taken = e.isDefaultPrevented(); e.preventDefault(); e.stopPropagation(); dragCountRef.current = 0; setFileDragOver(false); setFileDragTaken(false); if (taken) return;
+    // An images-only drop that no slide took (Present, or the editor outside the
+    // slide panel) is told so, never loaded as a deck.
+    if (dragHasOnlyImageFiles(e.dataTransfer)) { slideActionsRef.current?.showToast?.(fullscreenRef.current ? "Exit Present to add images" : "Drop images on the slide to add them", !fullscreenRef.current); return; }
+    // A mixed drop loads its deck file, not whichever file happens to be first.
+    const files = Array.from(e.dataTransfer?.files || []);
+    const file = files.find((f) => !(typeof f.type === "string" && f.type.startsWith("image/"))) || files[0]; if (file) loadDeckFile(file); }, [loadDeckFile]);
 
   // Title editing
   const startEditTitle = () => { setTitleDraft(state.deckTitle || "Untitled"); setEditingTitle(true); };
@@ -888,11 +1036,11 @@ export default function App() {
       onDragEnter={handleGlobalDragEnter} onDragLeave={handleGlobalDragLeave} onDragOver={handleGlobalDragOver} onDrop={handleGlobalDrop}>
       <style>{getCss()}</style>
       <input ref={fileInputRef} type="file" accept=".json,.vela" onChange={importDeck} style={{ display: "none" }} />
-      {fileDragOver && <div style={{ position: "absolute", inset: 0, zIndex: 99999, background: "rgba(59,130,246,0.12)", backdropFilter: "blur(4px)", display: "flex", alignItems: "center", justifyContent: "center", pointerEvents: "none" }}>
+      {fileDragOver && !fileDragTaken && <div style={{ position: "absolute", inset: 0, zIndex: 99999, background: "rgba(59,130,246,0.12)", backdropFilter: "blur(4px)", display: "flex", alignItems: "center", justifyContent: "center", pointerEvents: "none" }}>
         <div style={{ background: T.bgPanel, border: `2px dashed ${T.accent}`, borderRadius: 16, padding: "40px 60px", display: "flex", flexDirection: "column", alignItems: "center", gap: 12, boxShadow: "0 20px 60px rgba(0,0,0,0.4)" }}>
-          <span style={{ fontSize: 40 }}>📂</span>
-          <span style={{ fontFamily: FONT.display, fontSize: 18, fontWeight: 700, color: T.text }}>Drop deck to load</span>
-          <span style={{ fontFamily: FONT.mono, fontSize: 11, color: T.textDim }}>.json or .vela</span>
+          <span style={{ fontSize: 40 }}>{fileDragImages ? "🖼️" : "📂"}</span>
+          <span style={{ fontFamily: FONT.display, fontSize: 18, fontWeight: 700, color: T.text }}>{fileDragImages ? (state.fullscreen ? "Exit Present to add images" : "Drop on a slide to add images") : "Drop deck to load"}</span>
+          {!fileDragImages && <span style={{ fontFamily: FONT.mono, fontSize: 11, color: T.textDim }}>.json or .vela</span>}
         </div>
       </div>}
 
@@ -911,7 +1059,7 @@ export default function App() {
       </div>}
 
       {/* ── TOP BAR — title left, actions right, dropdown buttons ── */}
-      {!state.fullscreen && <header style={{ padding: isMobile ? "6px 10px" : "0 14px", borderBottom: `1px solid ${T.border}`, display: "flex", alignItems: "center", gap: isMobile ? 8 : 10, background: T.bgPanel, flexShrink: 0, height: isMobile ? 40 : 44 }}>
+      {!state.fullscreen && <header ref={hdrRef} data-hdr-level={isMobile ? undefined : hdrSize} style={{ padding: isMobile ? "6px 10px" : "0 14px", borderBottom: `1px solid ${T.border}`, display: "flex", alignItems: "center", gap: isMobile ? 8 : hdrGap(hdrSize), background: T.bgPanel, flexShrink: 0, height: isMobile ? 40 : 44 }}>
         {/* Left: icon + title + time */}
         {isMobile && mobileTab !== "list" && <button onClick={() => { setMobileTab("list"); if (mobileTab === "slides") dispatch({ type: "DESELECT" }); }} style={S.btn({ padding: "2px 4px", color: T.accent, fontSize: 16 })}>{"←"}</button>}
         <span onClick={() => { if (typeof window !== "undefined" && typeof window.__velaOpenDeckPicker === "function") { window.__velaOpenDeckPicker(); } else { setShowChangelog(true); } }} style={{ cursor: "pointer", display: "flex", alignItems: "center" }} title={typeof window !== "undefined" && typeof window.__velaOpenDeckPicker === "function" ? "Open deck (Ctrl+O)" : "About"}><VelaIcon size={20} /></span>
@@ -940,13 +1088,14 @@ export default function App() {
             onBlur={commitTitle}
             style={S.input({ padding: "3px 8px", fontSize: 14, fontWeight: 700, width: 200, minWidth: 60, flexShrink: 1, border: `1px solid ${T.accent}`, fontFamily: FONT.display })} />
         ) : (
-          <span onClick={startEditTitle} style={{ fontSize: 14, fontWeight: 700, color: T.text, fontFamily: FONT.display, cursor: "pointer", padding: "2px 4px", borderRadius: 4, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flexShrink: 1, minWidth: 0, maxWidth: isMobile ? "40vw" : undefined }} title={state.deckTitle || "Untitled"}>{state.deckTitle || "Untitled"}</span>
+          <span ref={hdrTitleRef} onClick={startEditTitle} style={{ fontSize: 14, fontWeight: 700, color: T.text, fontFamily: FONT.display, cursor: "pointer", padding: "2px 4px", borderRadius: 4, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flexShrink: 1, minWidth: isMobile ? 0 : HDR_TITLE_MIN, maxWidth: isMobile ? "40vw" : undefined }} title={state.deckTitle || "Untitled"}>{state.deckTitle || "Untitled"}</span>
         )}
         {!isMobile && (deckTime > 0 || total > 0) && <span onClick={() => setShowStats(true)} title={`${deckTimeAll > 0 ? fmtTime(deckTimeAll) + " total · " : ""}${slideCountVisible} slides · ${total} sections${hiddenSlideCount > 0 ? ` · ${hiddenSlideCount} hidden` : ""} — click for stats`} style={{ fontFamily: FONT.mono, fontSize: 13, fontWeight: 700, color: T.text, whiteSpace: "nowrap", flexShrink: 0, background: T.accent + "12", padding: "2px 8px", borderRadius: 4, cursor: "pointer" }}>{deckTime > 0 ? `⏱${fmtTimeMin(deckTime)} · ` : ""}{slideCountVisible}sl · {total}§{hiddenSlideCount > 0 ? <span style={{ opacity: 0.6 }}> · {hiddenSlideCount}⊘</span> : ""}</span>}
         {/* Spacer — pushes actions right */}
-        <div style={{ flex: 1, minWidth: isMobile ? 4 : 0 }} />
-        {/* Right: deck-level actions with dropdowns */}
-        {!isMobile && <>
+        <div ref={hdrSpacerRef} style={{ flex: 1, minWidth: isMobile ? 4 : 0 }} />
+        {/* Right: deck-level actions with dropdowns. Level >= 1 never shrinks (so no
+            label wraps; fitHeader drops a level instead); level 0 may shrink. */}
+        {!isMobile && <div ref={hdrBoxRef} style={{ display: "flex", alignItems: "center", gap: hdrGap(hdrSize), flexShrink: hdrSize === 0 ? 1 : 0 }}>
           {/* View dropdown — shows current ratio */}
           {(() => {
             const sa = slideActionsRef.current;
@@ -968,19 +1117,24 @@ export default function App() {
             const sa = slideActionsRef.current;
             const has = !!selectedConcept;
             return <>
-              <button data-testid="batch-edit-toggle" onClick={() => sa?.toggleBatchEdit?.()} disabled={!aiOk || !has || !sa?.slidesCount} title={aiOk ? "Batch edit across slides" : VELA_AI_UNAVAILABLE_MSG} style={S.btn({ padding: "4px 10px", fontSize: 14, color: !aiOk ? T.textDim + "60" : sa?.showBatchEdit ? T.accent : (sa?.improving ? T.red : T.textDim), background: sa?.showBatchEdit || sa?.improving ? T.accent + "20" : "transparent", borderRadius: 4, opacity: aiOk && has && sa?.slidesCount ? 1 : 0.4, display: "flex", alignItems: "center", gap: 4, cursor: aiOk ? "pointer" : "not-allowed" })}>{sa?.improving ? "⏹" : "🔄"} Batch</button>
-              <button data-testid="brand-toggle" onClick={() => sa?.toggleBranding?.()} disabled={!has} title="Branding & guidelines" style={S.btn({ padding: "4px 10px", fontSize: 14, color: sa?.showBranding ? T.accent : (sa?.hasBranding ? T.accent : T.textDim), background: sa?.showBranding ? T.accent + "20" : "transparent", borderRadius: 4, opacity: has ? 1 : 0.4, display: "flex", alignItems: "center", gap: 4 })}>{"🎨"} Brand</button>
-              <button onClick={() => sa?.present?.()} disabled={!has} style={{ display: "flex", alignItems: "center", gap: 5, padding: "5px 14px", background: has ? T.green : T.border, color: has ? "#fff" : T.textDim, border: "none", borderRadius: 6, cursor: has ? "pointer" : "default", opacity: has ? 1 : 0.5, fontFamily: FONT.mono, fontSize: 14, fontWeight: 700 }}>{"▶"} Present</button>
+              <button data-testid="batch-edit-toggle" onClick={() => sa?.toggleBatchEdit?.()} disabled={!aiOk || !has || !sa?.slidesCount} title={aiOk ? "Batch edit across slides" : VELA_AI_UNAVAILABLE_MSG} style={S.btn({ padding: "4px 10px", fontSize: 14, color: !aiOk ? T.textDim + "60" : sa?.showBatchEdit ? T.accent : (sa?.improving ? T.red : T.textDim), background: sa?.showBatchEdit || sa?.improving ? T.accent + "20" : "transparent", borderRadius: 4, opacity: aiOk && has && sa?.slidesCount ? 1 : 0.4, display: "flex", alignItems: "center", gap: 4, cursor: aiOk ? "pointer" : "not-allowed" })}>{sa?.improving ? "⏹" : "🔄"}{hdrLabel(" Batch")}</button>
+              <button data-testid="brand-toggle" onClick={() => sa?.toggleBranding?.()} disabled={!has} title="Branding & guidelines" style={S.btn({ padding: "4px 10px", fontSize: 14, color: sa?.showBranding ? T.accent : (sa?.hasBranding ? T.accent : T.textDim), background: sa?.showBranding ? T.accent + "20" : "transparent", borderRadius: 4, opacity: has ? 1 : 0.4, display: "flex", alignItems: "center", gap: 4 })}>{"🎨"}{hdrLabel(" Brand")}</button>
+              {/* CR13: view switcher (editor | presenter | gallery), placed next to
+                  Present. Shows the live view and switches to it in one click — the
+                  gallery is no longer reachable only from the Overview button below
+                  the slide. */}
+              <ViewSwitch mode={sa?.viewMode || "editor"} onSet={(m) => sa?.setView?.(m)} disabled={!has} compact={hdrSize < HDR_TOP} />
+              <button data-testid="present-btn" onClick={() => sa?.present?.()} disabled={!has} style={{ display: "flex", alignItems: "center", gap: 5, padding: "5px 14px", background: has ? T.green : T.border, color: has ? "#fff" : T.textDim, border: "none", borderRadius: 6, cursor: has ? "pointer" : "default", opacity: has ? 1 : 0.5, fontFamily: FONT.mono, fontSize: 14, fontWeight: 700 }} title="Present">{"▶"}{hdrLabel(" Present", 2)}</button>
             </>;
           })()}
           <div style={{ width: 1, height: 22, background: T.border, flexShrink: 0 }} />
           {/* New Deck */}
-          <button onClick={() => setNewDeckDialog(true)} style={S.btn({ padding: "4px 10px", fontSize: 14, color: T.accent, display: "flex", alignItems: "center", gap: 4, borderRadius: 4 })}>{"+"} New</button>
+          <button onClick={() => setNewDeckDialog(true)} style={S.btn({ padding: "4px 10px", fontSize: 14, color: T.accent, display: "flex", alignItems: "center", gap: 4, borderRadius: 4 })} title="New deck">{"+"}{hdrLabel(" New")}</button>
           {/* Import */}
-          <button onClick={() => fileInputRef.current?.click()} style={S.btn({ padding: "4px 10px", fontSize: 14, color: T.textMuted, display: "flex", alignItems: "center", gap: 4, borderRadius: 4 })}>{"📥"} Import</button>
+          <button onClick={() => fileInputRef.current?.click()} style={S.btn({ padding: "4px 10px", fontSize: 14, color: T.textMuted, display: "flex", alignItems: "center", gap: 4, borderRadius: 4 })} title="Import deck">{"📥"}{hdrLabel(" Import")}</button>
           {/* Export dropdown */}
           <div style={{ position: "relative" }}>
-            <button data-testid="export-menu-toggle" onClick={() => { setExportMenu((v) => !v); setViewMenu(false); }} style={S.btn({ padding: "4px 10px", fontSize: 14, color: exportMenu ? T.accent : T.textMuted, display: "flex", alignItems: "center", gap: 4, background: exportMenu ? T.accent + "15" : "transparent", borderRadius: 4 })}>{"📤"} Export <span style={{ fontSize: 9, opacity: 0.5 }}>▾</span></button>
+            <button data-testid="export-menu-toggle" onClick={() => { setExportMenu((v) => !v); setViewMenu(false); }} style={S.btn({ padding: "4px 10px", fontSize: 14, color: exportMenu ? T.accent : T.textMuted, display: "flex", alignItems: "center", gap: 4, background: exportMenu ? T.accent + "15" : "transparent", borderRadius: 4 })} title="Export">{"📤"}{hdrLabel(" Export")}<span style={{ fontSize: 9, opacity: 0.5 }}>▾</span></button>
             {exportMenu && <>
               <div onClick={() => setExportMenu(false)} style={{ position: "fixed", inset: 0, zIndex: 9998 }} />
               <div style={{ position: "absolute", top: "100%", right: 0, zIndex: 9999, marginTop: 4, background: T.bgPanel, border: `1px solid ${T.border}`, borderRadius: 8, boxShadow: "0 8px 32px rgba(0,0,0,0.4)", padding: "4px 0", minWidth: 180 }}>
@@ -999,9 +1153,9 @@ export default function App() {
           <CostBadge /></>}
           <button data-testid="run-demo" onClick={() => window.dispatchEvent(new CustomEvent("vela-run-demo"))} disabled={!!demoUnavailableReason} style={S.btn({ padding: "4px 10px", fontSize: 14, color: T.textMuted, borderRadius: 4, display: "flex", alignItems: "center", gap: 4, opacity: demoUnavailableReason ? 0.4 : 1, cursor: demoUnavailableReason ? "not-allowed" : "pointer" })} title={demoUnavailableReason || "Run product tour"}>{"🎬"}</button>
           <div style={{ width: 1, height: 22, background: T.border, flexShrink: 0 }} />
-          <button data-testid="comments-toggle" onClick={() => { const entering = !state.reviewMode; dispatch({ type: "SET_REVIEW_MODE", value: entering }); if (entering) { dispatch({ type: "SET_COMMENTS_PANEL", open: true }); dispatch({ type: "SET_CHAT", open: false }); } else { dispatch({ type: "SET_COMMENTS_PANEL", open: false }); } }} style={S.btn({ padding: "4px 10px", fontSize: 14, background: state.reviewMode ? T.amber : "transparent", color: state.reviewMode ? "#fff" : T.amber, borderRadius: 4, display: "flex", alignItems: "center", gap: 4 })}>{"💬"} Comments</button>
+          <button data-testid="comments-toggle" onClick={() => { const entering = !state.reviewMode; dispatch({ type: "SET_REVIEW_MODE", value: entering }); if (entering) { dispatch({ type: "SET_COMMENTS_PANEL", open: true }); dispatch({ type: "SET_CHAT", open: false }); } else { dispatch({ type: "SET_COMMENTS_PANEL", open: false }); } }} style={S.btn({ padding: "4px 10px", fontSize: 14, background: state.reviewMode ? T.amber : "transparent", color: state.reviewMode ? "#fff" : T.amber, borderRadius: 4, display: "flex", alignItems: "center", gap: 4 })} title="Comments">{"💬"}{hdrLabel(" Comments")}</button>
           <button onClick={() => { dispatch({ type: "SET_CHAT", open: !state.chatOpen }); if (!state.chatOpen) { dispatch({ type: "SET_COMMENTS_PANEL", open: false }); dispatch({ type: "SET_REVIEW_MODE", value: false }); } }} style={S.btn({ padding: "4px 10px", fontSize: 14, background: state.chatOpen ? T.accent : "transparent", color: state.chatOpen ? "#fff" : T.accent, borderRadius: 4, display: "flex", alignItems: "center", gap: 4 })}>{"🤖"} Vera</button>
-        </>}
+        </div>}
         {isMobile && <>
           <button onClick={() => setNewDeckDialog(true)} style={{ padding: "4px 10px", fontSize: 14, color: T.accent, background: "transparent", border: `1px solid ${T.accent}40`, borderRadius: 4, cursor: "pointer", flexShrink: 0, fontWeight: 700 }} title="New Deck">{"+"}</button>
           {total > 0 && <button onClick={() => { const sa = slideActionsRef.current; if (sa?.present) sa.present(); }} style={{ padding: "4px 10px", background: T.green, color: "#fff", border: "none", borderRadius: 4, fontFamily: FONT.mono, fontSize: 11, fontWeight: 700, cursor: "pointer", flexShrink: 0 }} title="Present">{"▶"}</button>}

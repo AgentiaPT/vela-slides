@@ -234,7 +234,7 @@ run("PI node smuggling neutralized",
 // controls) and must be dropped outright; the shape element still survives so
 // geometry renders. Deck paint uses presentation attributes, not a stylesheet.
 const legitOut = sanitizeSvgMarkup('<style>.node{fill:#3b82f6;stroke:#888}.edge{stroke-width:2}</style><rect class="node"/>');
-if (!/<style[\s>]/i.test(legitOut) && !/#3b82f6/.test(legitOut) && /<rect[^>]*class="node"/i.test(legitOut)) {
+if (!/<style[\s>]/i.test(legitOut) && !/#3b82f6/.test(legitOut) && /<rect/i.test(legitOut)) {
   passed++; console.log("  ✅ <style> element stripped; shape element preserved");
 } else {
   failed++; console.log("  ❌ <style> element stripped — output:", legitOut);
@@ -649,6 +649,50 @@ const keepImg = sanitizeSvgMarkup('<image href="#sym"/>');
 if (/href="#sym"/.test(keepImg)) {
   passed++; console.log("  ✅ <image href=#fragment> preserved");
 } else { failed++; console.log("  ❌ <image href=#fragment> preserved — output:", keepImg); }
+
+// UI integrity: the app queries its own data-* markers (open modal, zoom
+// overlay, editor overlay, export plumbing). Deck SVG must not carry any data-*
+// attribute, in either spelling, on the root <svg> or on a child. The element
+// itself must survive (a dropped element would make this check vacuous).
+{
+  const cases = [
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10" data-vela-modal=""><rect data-vela-zoom="" data-editor-overlay="x" width="5" height="5"/></svg>',
+    '<g data-block-type="text" data-pdf-link="https://example.com/"><rect width="1" height="1"/></g>',
+    '<rect xmlns:q="urn:q" q:data-vela-modal="" width="1" height="1"/>',
+  ];
+  const leaked = cases.filter((p) => {
+    const out = sanitizeSvgMarkup(p);
+    if (!/<rect/i.test(out)) return true;
+    const d = new JSDOM(`<!doctype html><body><div>${out}</div></body>`).window.document;
+    return Array.from(d.querySelectorAll("*")).some((el) => Array.from(el.attributes).some((a) => /(^|:)data-/i.test(a.name)));
+  });
+  if (leaked.length === 0) { passed++; console.log("  ✅ data-* attributes dropped from deck SVG (app marker forgery)"); }
+  else { failed++; console.log("  ❌ data-* attribute survived: " + JSON.stringify(leaked.map((c) => sanitizeSvgMarkup(c)))); }
+}
+
+// UI integrity: class would let deck SVG opt into the app's global stylesheet
+// rules (a hover transform on the root <svg>, which SVG_ROOT_BLOCKED forbids as
+// an attribute); role / aria-* / tabindex / autofocus let it take focus and pose
+// as an app widget. Drop all of them, in both spellings, on the root and on
+// children. id stays: url(#id) paint refs need it. The element must survive.
+{
+  const cases = [
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10" class="status-btn" role="tree" tabindex="0" autofocus="" aria-modal="true"><rect class="x" role="button" aria-label="Delete" tabindex="-1" width="5" height="5"/></svg>',
+    '<g CLASS="slide-nav-btn" Role="dialog" TabIndex="0" AutoFocus="" Aria-Hidden="false"><rect width="1" height="1"/></g>',
+    '<rect xmlns:q="urn:q" q:class="a" q:role="tree" q:aria-label="x" q:tabindex="0" width="1" height="1"/>',
+  ];
+  const leaked = cases.filter((p) => {
+    const out = sanitizeSvgMarkup(p);
+    if (!/<rect/i.test(out)) return true;
+    const d = new JSDOM(`<!doctype html><body><div>${out}</div></body>`).window.document;
+    return Array.from(d.querySelectorAll("*")).some((el) => Array.from(el.attributes).some((a) => /(^|:)(class|role|tabindex|autofocus|aria-[^:]*)$/i.test(a.name)));
+  });
+  if (leaked.length === 0) { passed++; console.log("  ✅ class/role/aria-*/tabindex/autofocus dropped from deck SVG (app chrome tie-in)"); }
+  else { failed++; console.log("  ❌ chrome-tie attribute survived: " + JSON.stringify(leaked.map((c) => sanitizeSvgMarkup(c)))); }
+  const idOut = sanitizeSvgMarkup('<defs><linearGradient id="g1"><stop offset="0" stop-color="#f00"/></linearGradient></defs><rect class="n" fill="url(#g1)" width="1" height="1"/>');
+  if (/id="g1"/.test(idOut) && /fill="url\(#g1\)"/.test(idOut) && !/class=/.test(idOut)) { passed++; console.log("  ✅ id + url(#id) gradient ref kept while class is dropped"); }
+  else { failed++; console.log("  ❌ id/url(#id) kept — output:", idOut); }
+}
 
 console.log(`\n  ${passed} passed, ${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);

@@ -1,11 +1,106 @@
 // © 2025-present Rui Quintino. Vela Slides — licensed under ELv2. See LICENSE.
 // ━━━ Slide Panel — editor slide view, fullscreen/presenter nav, per-slide AI actions ━━━
+// CR13: the one editor | presenter | gallery switch. The top bar (App), the
+// gallery header and the fullscreen top-right controls all render this with
+// SlidePanel's viewMode/setView, so the view state has one source of truth.
+// Glyphs are emoji-presentation (U+FE0F where the code point needs it): a
+// text-presentation glyph draws monochrome in the inherited colour and can
+// vanish on a dark chip (CR10). Editor uses the memo glyph, not a pen: the
+// dark-blue pen emoji is unreadable on the accent-filled active segment.
+const VIEW_SWITCH_SEGMENTS = [["editor", "\u{1F4DD}", "Editor"], ["presenter", "\u{1F5A5}\uFE0F", "Presenter"], ["gallery", "\u{1F5C2}\uFE0F", "Gallery"]];
+// Compact segments keep their label in the DOM at zero width (the top bar
+// measures it to decide when full labels fit); a full segment is 2px wider on
+// each side. VIEW_SWITCH_LABEL_EXTRA is that padding growth for the whole switch.
+const VIEW_SWITCH_PAD = { compact: 7, full: 9 };
+const VIEW_SWITCH_LABEL_EXTRA = VIEW_SWITCH_SEGMENTS.length * 2 * (VIEW_SWITCH_PAD.full - VIEW_SWITCH_PAD.compact);
+function ViewSwitch({ mode, onSet, disabled, compact, onDark, testid = "view-switch", style }) {
+  const idle = onDark ? "#fff" : T.textDim;
+  return <div data-testid={testid} role="group" aria-label="View" onClick={(e) => e.stopPropagation()} style={{ display: "flex", alignItems: "center", border: `1px solid ${onDark ? "rgba(255,255,255,0.3)" : T.border}`, borderRadius: 6, overflow: "hidden", flexShrink: 0, background: onDark ? "rgba(0,0,0,0.55)" : undefined, ...style }}>
+    {VIEW_SWITCH_SEGMENTS.map(([m, icon, label]) => {
+      const on = mode === m;
+      return <button key={m} data-testid={`${testid}-${m}`} onClick={() => onSet?.(m)} disabled={disabled} title={label} aria-label={label} aria-pressed={on}
+        style={{ display: "flex", alignItems: "center", gap: 4, padding: `4px ${compact ? VIEW_SWITCH_PAD.compact : VIEW_SWITCH_PAD.full}px`, background: on ? T.accent : "transparent", color: on ? "#fff" : idle, border: "none", cursor: disabled ? "default" : "pointer", opacity: disabled ? 0.4 : 1, fontFamily: FONT.mono, fontSize: 12, fontWeight: 700, whiteSpace: "nowrap" }}>
+        <span aria-hidden="true" style={{ fontSize: onDark ? 15 : undefined }}>{icon}</span>{compact ? <span data-vs-label="" aria-hidden="true" style={{ display: "inline-block", width: 0, overflow: "hidden", marginLeft: -4, verticalAlign: "top" }}>{label}</span> : <span>{label}</span>}
+      </button>;
+    })}
+  </div>;
+}
+
+// True when a drag carries only image files (any image/* type, an SVG too).
+// Such a drag is an image drop, never a deck load. Only IMAGE_DROP_MIME types
+// are added: imageDropFiles() counts the others as not added.
+// Reads item kind/type only (a file name is not exposed during a drag).
+function dragHasOnlyImageFiles(dt) {
+  if (!dt || !dt.types || !Array.prototype.includes.call(dt.types, "Files")) return false;
+  const items = dt.items ? Array.prototype.slice.call(dt.items) : [];
+  return items.length > 0 && items.every((it) => !!it && it.kind === "file" && typeof it.type === "string" && it.type.startsWith("image/"));
+}
+
+// Slide toolbar auto-compact: the toolbar stays on one row. When the buttons do
+// not fit, the rightmost labels are hidden (icon only) one by one until the row
+// fits. Measures once with all labels shown (per `key`), then recomputes from the
+// cached widths on resize, so it cannot oscillate. Returns the hidden-label count;
+// labels + 1 means icon-only fits only with compact padding; labels + 2 means even
+// that does not fit (e.g. a phone): the row wraps as before.
+// Compact step (all labels hidden, the row still does not fit): icon buttons use
+// this horizontal padding and the row this gap, before the row wraps.
+const TB_COMPACT_PAD_X = 6, TB_COMPACT_GAP = 1;
+function useToolbarCompact(ref, key) {
+  const [hide, setHide] = useState(0);
+  const m = useRef(null);
+  const stale = useRef(null);
+  const fit = useCallback(() => {
+    const el = ref.current, c = m.current;
+    if (!el || !c) return;
+    const cs = getComputedStyle(el);
+    let over = c.full - (el.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight)), n = 0;
+    while (over > 0.5 && n < c.labels.length) { over -= c.labels[c.labels.length - 1 - n]; n++; }
+    if (over > 0.5) { n++; if (over - c.compact > 0.5) n++; } // labels + 1: compact icons; labels + 2: wrap
+    c.n = n;
+    setHide(n);
+  }, [ref]);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el || !el.children.length) { m.current = null; return; }
+    const c = m.current;
+    // Cached widths went stale (the committed row overflows): measure again, once per measurement.
+    if (c && c.key === key && c.n === hide && hide <= c.labels.length + 1 && !c.retried && el.scrollWidth > el.clientWidth + 0.5) { m.current = null; stale.current = key; }
+    if (!m.current || m.current.key !== key) {
+      if (hide !== 0) { m.current = null; setHide(0); return; } // show all labels first, then measure
+      const first = el.children[0].getBoundingClientRect(), last = el.children[el.children.length - 1].getBoundingClientRect();
+      const gap = parseFloat(getComputedStyle(el).columnGap) || 0;
+      const compact = Array.from(el.children).reduce((s, ch) => { if (ch.tagName !== "BUTTON") return s; const bs = getComputedStyle(ch); return s + parseFloat(bs.paddingLeft) + parseFloat(bs.paddingRight) - 2 * TB_COMPACT_PAD_X; }, 0) + (el.children.length - 1) * (gap - TB_COMPACT_GAP); // width the compact step saves
+      m.current = { key, full: last.right - first.left, compact, retried: stale.current === key, labels: Array.from(el.querySelectorAll("button > span"), (sp) => sp.getBoundingClientRect().width + (parseFloat(getComputedStyle(sp.parentElement).columnGap) || 0)) }; // label width + icon gap
+      stale.current = null;
+    }
+    fit();
+  }, [ref, key, hide, fit]);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(() => fit());
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [ref, key, fit]);
+  return hide;
+}
+
 function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, branding, guidelines, isMobile, fontScale, actionsRef, onRibbonUpdate }) {
   const deckEpochRef = useRef(state._deckEpoch);
   deckEpochRef.current = state._deckEpoch;
   const slides = concept.slides || [];
   const slidesRef = useRef(slides);
   slidesRef.current = slides;
+  // Image paste: the view the paste sees now, the queue that keeps pastes in
+  // order, and a stand-in target per empty module (see handlePaste).
+  const pasteLiveRef = useRef(null);
+  pasteLiveRef.current = { moduleId: concept.id, index: slideIndex };
+  const pasteQueueRef = useRef(Promise.resolve());
+  const emptyPasteKeyRef = useRef(new Map());
+  // A queued paste reads the live lanes through lanesRef, which stops updating
+  // when this panel unmounts: drop the paste then, never write from a stale list.
+  const pasteMountedRef = useRef(true);
+  useEffect(() => { pasteMountedRef.current = true; return () => { pasteMountedRef.current = false; }; }, []);
   const aiOk = useAIAvailable();
 
   // Virtual title card for presentation mode
@@ -16,6 +111,87 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
     return buildTitleCardSlide(concept, lane, branding);
   }, [concept.presentCard, concept.id, concept.title, concept.slides, lanes, branding]);
   const presSlides = useMemo(() => fullscreen && titleCard ? [titleCard, ...slides] : slides, [fullscreen, titleCard, slides]);
+
+  // ── Story mode: present a slide's images one by one ──
+  // Only in Present (never the editor, never student mode) and only on a slide
+  // with story:true and >= 2 images. Every other slide gets story undefined, so
+  // its render and navigation stay exactly as before. State is { k, zoomed }
+  // (see storyNext/storyPrev), stored with the key of the slide it belongs to.
+  const storySlide = presSlides[slideIndex];
+  const storyList = useMemo(() => storyImageList(storySlide, true), [storySlide]);
+  const storyN = storyList.length;
+  const storyOn = fullscreen && state?.veraMode !== "student" && storyIsActive(storySlide, storyList);
+  // Slide identity for the story key, so a different slide at the same
+  // position (reorder, insert, delete) starts fresh. An edit makes a new object
+  // for the same slide: a new object takes the id of the object it replaced at
+  // that index (that object left the list). Undo/redo bring back an object that
+  // already has the id. Objects that only moved keep their own id.
+  const storyIdsRef = useRef({ ids: new WeakMap(), next: 1, prev: [], concept: null });
+  const storySlideId = useMemo(() => {
+    const r = storyIdsRef.current, cur = presSlides || [];
+    // Inherit ids only within one module: a module switch is not an edit.
+    if (r.concept !== concept.id) { r.prev = []; r.concept = concept.id; }
+    const inList = new Set(cur);
+    cur.forEach((s, i) => {
+      if (!s || typeof s !== "object" || r.ids.has(s)) return;
+      const old = r.prev[i];
+      r.ids.set(s, old && !inList.has(old) && r.ids.has(old) ? r.ids.get(old) : r.next++);
+    });
+    r.prev = cur;
+    return (storySlide && typeof storySlide === "object" && r.ids.get(storySlide)) || 0;
+  }, [presSlides, storySlide, concept.id]);
+  const storyKey = `${state._deckEpoch}|${concept.id}|${slideIndex}|${storySlideId}|${fullscreen ? 1 : 0}`;
+  // -1 only while a back step (arrow, wheel, swipe) is about to land: a story
+  // slide reached that way opens on its last image. Every other entry is forward.
+  const storyEnterDirRef = useRef(1);
+  // A back step with the Overview open still enters the next slide forward.
+  const storyEnterBack = () => { storyEnterDirRef.current = showGalleryRef.current ? 1 : -1; };
+  const storyLiveRef = useRef(null); // latest state, also before React re-renders
+  const [storyRaw, setStoryRaw] = useState(null);
+  if (storyOn && !(storyRaw && storyRaw.key === storyKey)) {
+    // New slide: set the entry state during render, so the first painted frame
+    // of the slide already has it (no flash of the previous slide's state).
+    const entry = { key: storyKey, ...storyEntry(storyEnterDirRef.current < 0 ? -1 : 1, storyN) };
+    storyLiveRef.current = entry;
+    setStoryRaw(entry);
+  } else if (!storyOn && storyRaw) {
+    // Left the story slide (or Present): forget its state, so a later visit
+    // with the same key (Present entered again) starts from its entry state.
+    storyLiveRef.current = null;
+    setStoryRaw(null);
+  }
+  useEffect(() => { storyEnterDirRef.current = 1; }, [storyKey]);
+  const storyCur = storyOn && storyRaw && storyRaw.key === storyKey ? storyRaw : null;
+  const story = useMemo(() => storyCur ? { k: Math.min(storyCur.k, storyN), zoomed: storyCur.zoomed, key: storyCur.key } : undefined, [storyCur, storyN]);
+  const storyLive = () => {
+    const s = storyLiveRef.current;
+    return storyOn && s && s.key === storyKey ? { k: Math.min(s.k, storyN), zoomed: s.zoomed } : null;
+  };
+  const storySet = (k, zoomed) => { const s = { key: storyKey, k, zoomed }; storyLiveRef.current = s; setStoryRaw(s); };
+  // Refs so the long-lived key/wheel/swipe/fullscreen listeners see this render.
+  // Each returns true when it consumed the input.
+  const storyStepRef = useRef(null);
+  storyStepRef.current = (dir) => {
+    if (showGalleryRef.current) return false; // the Overview navigates like a plain slide
+    const s = storyLive();
+    if (!s) return false;
+    const nx = dir > 0 ? storyNext(s, storyN) : storyPrev(s, storyN);
+    if (!nx) return false;
+    storySet(nx.k, nx.zoomed);
+    return true;
+  };
+  const storyEscRef = useRef(null);
+  storyEscRef.current = () => {
+    const s = storyLive();
+    const nx = s ? storyEsc(s) : null;
+    if (!nx) return false;
+    storySet(nx.k, nx.zoomed);
+    return true;
+  };
+  const storyJumpRef = useRef(null);
+  storyJumpRef.current = (k) => { if (storyLive() && Number.isInteger(k) && k >= 1 && k <= storyN) storySet(k, true); };
+  const onStoryJump = useCallback((k) => storyJumpRef.current(k), []);
+  const onStoryZoomOut = useCallback(() => { storyEscRef.current(); }, []);
 
   // Global slide index/total across all modules (for the on-slide page-number
   // badge). Counts only VISIBLE slides so it agrees with the header pill and the
@@ -195,6 +371,9 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
   const [quickEditing, setQuickEditing] = useState(false);
   const [quickEditImage, setQuickEditImage] = useState(null); // { base64, preview }
   const [showGallery, setShowGallery] = useState(false);
+  // CR07: editor-only review cycle — arrow keys skip slides marked `reviewed`.
+  // Distinct from state.reviewMode (comments review), which owns that name.
+  const [reviewCycle, setReviewCycle] = useState(false);
   const showGalleryRef = useRef(false);
   const setGallery = (v) => { const val = typeof v === "function" ? v(showGalleryRef.current) : v; showGalleryRef.current = val; setShowGallery(val); };
   // ── Presenter view (CR-08) — single-screen speaker dashboard: current +
@@ -337,6 +516,15 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
   const [editingDuration, setEditingDuration] = useState(false);
   const navToastTimer = useRef(null);
 
+  // CR13: live view for every ViewSwitch. An open gallery wins over fullscreen,
+  // so the gallery opened from Present shows "Gallery" as the active segment.
+  const viewMode = showGallery ? "gallery" : (fullscreen ? "presenter" : "editor");
+  const setView = (mode) => {
+    if (mode === "editor") { setGallery(false); if (fullscreen) { stopAll(); dispatch({ type: "SET_FULLSCREEN", value: false }); } }
+    else if (mode === "gallery") { setGallery(true); }
+    else if (mode === "presenter") { setGallery(false); if (!fullscreen) { stopAll(); dispatch({ type: "SET_FULLSCREEN", value: true }); } }
+  };
+
   // Expose slide panel state + actions to app ribbon via ref
   useEffect(() => {
     if (!actionsRef) return;
@@ -349,11 +537,15 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       toggleBatchEdit: () => improving ? stopAll() : setShowImproveInput((v) => !v),
       toggleTiming: () => estimating ? stopEstimate() : setShowTimingScope((v) => !v),
       setPreviewRatio,
+      // editor: true shows the editor notice (the plain toast renders only in Present).
+      showToast: (msg, editor) => showNavToast(msg, null, editor),
       present: () => { stopAll(); dispatch({ type: "SET_FULLSCREEN", value: true }); },
       getLayoutStats: () => computeSlideLayoutStats(slideRef.current),
+      // CR13: view state read by the top-bar view switcher (editor|presenter|gallery).
+      viewMode, setView,
     };
     onRibbonUpdate?.();
-  }, [slides.length, moduleTime, previewRatio, showBranding, showTimingScope, estimating, showImproveInput, improving]);
+  }, [slides.length, moduleTime, previewRatio, showBranding, showTimingScope, estimating, showImproveInput, improving, fullscreen, showGallery]);
 
   // Build flat ordered list of modules across all lanes
   const flatModules = useCallback(() => {
@@ -370,9 +562,10 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
     return list;
   }, [lanes]);
 
-  const showNavToast = useCallback((module, section) => {
+  // editor: also show the toast in the editor view (the paste notice), not only in Present.
+  const showNavToast = useCallback((module, section, editor) => {
     clearTimeout(navToastTimer.current);
-    setNavToast({ module, section, phase: "in" });
+    setNavToast({ module, section, editor: !!editor, phase: "in" });
     navToastTimer.current = setTimeout(() => {
       setNavToast((t) => t ? { ...t, phase: "out" } : null);
       navToastTimer.current = setTimeout(() => setNavToast(null), 300);
@@ -384,6 +577,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
   // Touch swipe for mobile slide navigation (crosses module boundaries like keyboard)
   useSwipe(containerRef, {
     onLeft: useCallback(() => {
+      if (storyStepRef.current(1)) return;
       const navSlides = fullscreen ? presSlides : slides;
       if (navSlides.length > 0 && slideIndex < navSlides.length - 1) {
         dispatch({ type: "SET_SLIDE_INDEX", index: slideIndex + 1 });
@@ -400,13 +594,16 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       }
     }, [slideIndex, slides.length, presSlides.length, fullscreen, dispatch, concept.id, flatModules, showNavToast]),
     onRight: useCallback(() => {
+      if (storyStepRef.current(-1)) return;
       if (slideIndex > 0) {
+        storyEnterBack();
         dispatch({ type: "SET_SLIDE_INDEX", index: slideIndex - 1 });
       } else {
         const mods = flatModules();
         const curIdx = mods.findIndex((m) => m.id === concept.id);
         if (curIdx >= 0 && curIdx - 1 >= 0) {
           const prev = mods[curIdx - 1];
+          storyEnterBack();
           dispatch({ type: "SELECT", id: prev.id });
           const prevPresOffset = prev.presentCard && fullscreen ? 1 : 0;
           dispatch({ type: "SET_SLIDE_INDEX", index: Math.max(0, (prev.slideCount || 1) - 1 + prevPresOffset) });
@@ -427,8 +624,139 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       .filter((k) => SAFE_SLIDE_KEYS.has(k))
   );
   const looksLikeSlide = (obj) => obj && typeof obj === "object" && !Array.isArray(obj) && Object.keys(obj).some((k) => SLIDE_KEYS.has(k));
+  // ── Image intake: clipboard paste and OS file drop share one pipeline ──
+  // Strict re-encode: an image that cannot be decoded, or is over the pixel cap,
+  // resolves null and is skipped (never stored as the original bytes).
+  const compressImageStrict = (dataUrl) => compressImage(dataUrl, IMG_SETTINGS.maxWidth, IMG_SETTINGS.quality, { strict: true });
+  // One paste or one drop. Counts what happened to its images for one notice.
+  const newImageBatch = (kind) => ({ kind, epoch: deckEpochRef.current, here: 0, spill: 0, spillNum: 0, spilled: false, failed: 0, dropped: 0, rejected: 0 });
+  // Queue one image (getData() resolves the re-encoded data URL, or null).
+  const enqueueImage = useCallback((getData, batch) => {
+    // Capture the target now. The image work below is async: the user can
+    // undo, delete or edit slides, or paste again, before it ends. Pastes
+    // apply one at a time, in paste order (pasteQueueRef). Each one finds its
+    // target again just before its dispatch: the same slide object, or the
+    // slide an earlier queued paste made from it (pasteResolveTarget). It then
+    // builds the change from that CURRENT slide. If the target is gone, or the
+    // user changed it, the paste is dropped. Never write back a stale copy.
+    // HI8: the target is found in its own module's live slide list (lanesRef),
+    // so a paste still lands on its target when the user switches to another
+    // module before it applies, as it does for a slide switch.
+    const moduleId = concept.id, epoch = deckEpochRef.current, empty = !slides.length;
+    let target = empty ? null : slides[slideIndex];
+    if (empty) { const keys = emptyPasteKeyRef.current; target = keys.get(moduleId) || {}; keys.set(moduleId, target); }
+    else emptyPasteKeyRef.current.delete(moduleId);
+    const bodyProbe = empty ? null : pasteBodyProbe(containerRef.current, target);
+    const modSlides = () => { const it = findItem(lanesRef.current || [], moduleId); return it && Array.isArray(it.slides) ? it.slides : null; };
+    const live = () => deckEpochRef.current === epoch && pasteMountedRef.current && !!modSlides();
+    const onScreen = () => pasteLiveRef.current.moduleId === moduleId;
+    // Wait until a dispatch below has rendered, then link the new slide object.
+    const settle = async (from, before, src) => {
+      for (let k = 0; k < 60 && modSlides() === before; k++) await new Promise((r) => setTimeout(r, 16));
+      if (live()) pasteRecordSuccessor(from, before, modSlides(), src);
+    };
+    const apply = async () => {
+      const raw = await getData();
+      if (deckEpochRef.current !== epoch) return;
+      // The reducer keeps an image src only in this canonical form (the same
+      // chain sanitizeBlock runs). Use that same value here: an empty result
+      // (undecodable type, canvas too large, read error) must not add an empty
+      // image block, and a src the reducer changes would break the successor
+      // link for the rest of the burst.
+      let compressed = raw ? sanitizeImageDataUri(sanitizeUrl(raw, ["data:"])) : "";
+      // HI4: an allowed MIME type with bytes that do not decode passes the
+      // data-URI check (compressImage returns its input on a decode error
+      // without opts.strict). Decode the result here: an image with no size is
+      // not added.
+      if (compressed) { const z = await imageNaturalSize(compressed); if (!(z.w > 0 && z.h > 0)) compressed = ""; }
+      if (!compressed) { batch.failed++; return; }
+      if (!live()) { batch.dropped++; return; }
+      // Empty module → brand-new full-bleed solo-image slide (additive). Later
+      // pastes of the same burst go onto that slide.
+      if (empty && !pasteResolveTarget(target, modSlides())) {
+        const before = modSlides();
+        dispatch({ type: "ADD_SLIDE", id: moduleId, slide: { blocks: [{ type: "image", src: compressed }] } });
+        batch.here++;
+        await settle(target, before, compressed); return;
+      }
+      let cur = null, sizes = null;
+      for (let tries = 0; tries < 4 && !cur; tries++) {
+        const c = live() ? pasteResolveTarget(target, modSlides()) : null;
+        if (!c) { batch.dropped++; return; }
+        // Natural sizes give the aspects and the upscale caps for the layout choice.
+        sizes = await Promise.all([...(c.blocks || []).filter((b) => b.type === "image").map((b) => b.src), compressed].map((src) => imageNaturalSize(src)));
+        // Resolve again, in the same task as the dispatch below; start over if it moved on.
+        if (live() && pasteResolveTarget(target, modSlides()) === c) cur = c;
+      }
+      if (!cur) { batch.dropped++; return; }
+      const aspects = sizes.map((z) => (z.w > 0 && z.h > 0 ? z.w / z.h : 1)), aspect = aspects[aspects.length - 1];
+      rememberImageAspect(compressed, aspect);
+      const before = modSlides(), at = before.indexOf(cur);
+      const curImgBlocks = (cur.blocks || []).filter((b) => b.type === "image");
+      const curImgs = curImgBlocks.length;
+      // Overflow cap: at most PASTE_MAX_IMAGES images per slide. One more spills onto a
+      // new image-only slide inserted after this one (same story setting) rather
+      // than over-packing the grid.
+      if (curImgs >= PASTE_MAX_IMAGES) {
+        dispatch({ type: "INSERT_SLIDES", id: moduleId, index: at + 1, slides: [{ blocks: [{ type: "image", src: compressed }], ...(cur.story === true ? { story: true } : {}) }] });
+        if (onScreen()) dispatch({ type: "SET_SLIDE_INDEX", index: at + 1 });
+        batch.spill++; batch.spilled = true;
+        // The deck-wide number, as the slide badge shows it (not the index in this module).
+        if (!batch.spillNum) batch.spillNum = deckSlideNumber(lanesRef.current, moduleId, before, at + 1);
+        await settle(cur, before, compressed); return;
+      }
+      const patch = { blocks: [...(cur.blocks || []), { type: "image", src: compressed }] };
+      const n = curImgs + 1; // image count after this paste
+      // The body height is measured on screen. Measure again while the slide is
+      // on screen (an earlier paste of the burst can have changed its layout).
+      const probe = (onScreen() && pasteLiveRef.current.index === at && pasteBodyProbe(containerRef.current, cur)) || bodyProbe;
+      // Layout-aware paste: place the image beside existing body content rather
+      // than always stacking it below. pasteImageLayout() respects an explicit
+      // author layout and otherwise keeps the layout (stack or image-right) that
+      // shows the most image area, from the body height measured on screen.
+      // CR23: a split that an earlier paste set (the slide still carries the exact
+      // layout signature that paste left) is re-evaluated for the new image count
+      // and aspects. A split the author set is kept.
+      const pasteOwned = !!cur.layout && cur.layout !== "stack" && curImgBlocks.some((b) => PASTE_LAYOUT_OWNED.get(b.src) === pasteLayoutSig(cur));
+      const basis = pasteOwned ? { ...cur, layout: undefined, contentFlex: undefined, imageFlex: undefined } : cur;
+      const layout = pasteImageLayout(basis, aspect, n, aspects, probe, sizes.map((z) => z.w));
+      if (pasteOwned && layout === "stack") { patch.layout = undefined; patch.contentFlex = undefined; patch.imageFlex = undefined; }
+      else if (layout !== "stack" && (pasteOwned || layout !== cur.layout)) {
+        patch.layout = layout;
+        // Balance the split. A single square/portrait side image is tall; at the
+        // default 1:1 split it squeezes the body text into a half-width column
+        // where it wraps past the slide height and gets auto-scaled smaller — give
+        // the content column the larger share. Two or more images grid inside their
+        // half, so an even 1:1 split gives that grid the room it needs. Only when
+        // the author hasn't pinned a ratio.
+        if (basis.contentFlex == null && basis.imageFlex == null) {
+          [patch.contentFlex, patch.imageFlex] = pasteSplitFlex(n, aspect);
+        }
+        rememberPasteLayout(compressed, { ...cur, ...patch });
+      }
+      if (batch.spilled) batch.spill++; else batch.here++;
+      dispatch({ type: "UPDATE_SLIDE", id: moduleId, index: at, patch, merge: true });
+      await settle(cur, before, compressed);
+    };
+    // Log a fault (never swallow it silently); the catch keeps the queue alive.
+    pasteQueueRef.current = pasteQueueRef.current.then(apply).catch((err) => { console.warn("Vela: image paste failed", err); });
+  }, [concept.id, slideIndex, slides, dispatch]);
+  // Runs after the batch's images in the same queue. The notice has counts only
+  // (never a file name). A plain paste or drop that fits says nothing, as before.
+  const finishImageBatch = useCallback((batch) => {
+    pasteQueueRef.current = pasteQueueRef.current.then(() => {
+      if (deckEpochRef.current !== batch.epoch) return;
+      const lost = batch.failed + batch.rejected + (batch.kind === "drop" ? batch.dropped : 0);
+      let msg = null;
+      if (batch.spill > 0) msg = `Added ${batch.here} here · ${batch.spill} on new slide ${batch.spillNum}` + (lost > 0 ? ` · ${lost} not added` : "");
+      else if (lost > 0 && batch.kind === "paste") msg = "This image could not be pasted";
+      else if (lost > 0) msg = batch.here > 0 ? `Added ${batch.here} · ${lost} not added` : `${lost} image${lost === 1 ? "" : "s"} not added`;
+      if (msg) showNavToast(msg, null, true);
+    });
+  }, [showNavToast]);
+
   const handlePaste = useCallback((e) => {
-    const tag = e.target?.tagName?.toLowerCase(); if (tag === "textarea" || tag === "input") return;
+    const tag = e.target?.tagName?.toLowerCase(); if (tag === "textarea" || tag === "input" || e.target?.isContentEditable) return;
     const items = e.clipboardData?.items; if (!items) return;
     // Check for text/plain first — try to detect slide JSON
     const textItem = Array.from(items).find((i) => i.type === "text/plain");
@@ -441,69 +769,101 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
           const incoming = Array.isArray(parsed) ? parsed : [parsed];
           const validSlides = incoming.filter(looksLikeSlide).map((s) => sanitizeSlide(s)).filter(Boolean);
           if (validSlides.length === 0) return;
-          // Insert after current slide
-          const newSlides = [...slides];
+          // Insert after current slide. getAsString is async: insert into the live
+          // list (INSERT_SLIDES), never write back the captured slide list.
           const insertAt = slides.length === 0 ? 0 : slideIndex + 1;
-          newSlides.splice(insertAt, 0, ...validSlides);
-          dispatch({ type: "SET_SLIDES", id: concept.id, slides: newSlides });
+          dispatch({ type: "INSERT_SLIDES", id: concept.id, index: insertAt, slides: validSlides });
           dispatch({ type: "SET_SLIDE_INDEX", index: insertAt });
         } catch { /* not valid JSON, ignore */ }
       });
       // Don't return here — if it's not JSON, let image paste proceed
     }
+    // HI6: one paste event can carry several images. Queue every one, in order,
+    // as one batch (one notice for the event).
+    let batch = null;
     for (const item of items) {
       if (item.type.startsWith("image/")) {
         e.preventDefault(); const blob = item.getAsFile(); const reader = new FileReader();
-        reader.onload = async () => {
-          const compressed = await compressSlideImage(reader.result);
-          // Empty module → brand-new full-bleed solo-image slide.
-          if (slides.length === 0) { dispatch({ type: "ADD_SLIDE", id: concept.id, slide: { blocks: [{ type: "image", src: compressed }] } }); return; }
-          const cur = slides[slideIndex] || {};
-          const curImgs = (cur.blocks || []).filter((b) => b.type === "image").length;
-          // Overflow cap: at most 5 images per slide. A 6th image spills onto a new
-          // image-only slide inserted after this one rather than over-packing the grid.
-          if (curImgs >= 5) {
-            const newSlides = [...slides];
-            const insertAt = slideIndex + 1;
-            newSlides.splice(insertAt, 0, { blocks: [{ type: "image", src: compressed }] });
-            dispatch({ type: "SET_SLIDES", id: concept.id, slides: newSlides });
-            dispatch({ type: "SET_SLIDE_INDEX", index: insertAt });
-            return;
-          }
-          const patch = { blocks: [...(cur.blocks || []), { type: "image", src: compressed }] };
-          const n = curImgs + 1; // image count after this paste
-          // Layout-aware paste: place the image beside existing body content rather
-          // than always stacking it below. pasteImageLayout() respects an explicit
-          // author layout, keeps mostly-title/image-only slides and wide images stacked
-          // (the renderer auto-grids a run of >=2 images), promotes heavy text + >=3
-          // images to a full-width header + full-width image grid, and otherwise returns
-          // "image-right" so the image column grids beside the content.
-          const aspect = await imageAspect(compressed);
-          const layout = pasteImageLayout(cur, aspect, n);
-          if (layout !== "stack" && layout !== cur.layout) {
-            patch.layout = layout;
-            // Balance the split. A single square/portrait side image is tall; at the
-            // default 1:1 split it squeezes the body text into a half-width column
-            // where it wraps past the slide height and gets auto-scaled smaller — give
-            // the content column the larger share. Two or more images grid inside their
-            // half, so an even 1:1 split gives that grid the room it needs. Only when
-            // the author hasn't pinned a ratio.
-            if (cur.contentFlex == null && cur.imageFlex == null) {
-              if (n === 1 && aspect <= 1.2) { patch.contentFlex = 1.4; patch.imageFlex = 1; }
-              else if (n >= 2) { patch.contentFlex = 1; patch.imageFlex = 1; }
-            }
-          }
-          dispatch({ type: "UPDATE_SLIDE", id: concept.id, index: slideIndex, patch, merge: true });
-        };
-        reader.readAsDataURL(blob); break;
+        const data = new Promise((res) => { reader.onload = () => res(compressImageStrict(reader.result)); reader.onerror = () => res(null); });
+        reader.readAsDataURL(blob);
+        if (!batch) batch = newImageBatch("paste");
+        enqueueImage(() => data, batch);
       }
     }
-  }, [concept.id, slideIndex, slides, dispatch]);
+    if (batch) finishImageBatch(batch);
+  }, [concept.id, slideIndex, slides, dispatch, enqueueImage, finishImageBatch]);
 
   useEffect(() => { const el = containerRef.current; if (el) { el.addEventListener("paste", handlePaste); return () => el.removeEventListener("paste", handlePaste); } }, [handlePaste]);
+
+  // ── OS file drop: image files dropped on the editor slide panel ──
+  // Only a drag of image files is taken here; anything else (a deck
+  // file) bubbles to the app shell, which loads decks. Never stopPropagation:
+  // the shell's drop handler must run to clear its overlay; it sees
+  // isDefaultPrevented() and does not load the files as a deck.
+  const [imageDragRect, setImageDragRect] = useState(null);
+  const imageDragTimer = useRef(null);
+  useEffect(() => () => clearTimeout(imageDragTimer.current), []);
+  const handleImageDragOver = useCallback((e) => {
+    if (!dragHasOnlyImageFiles(e.dataTransfer)) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "copy";
+    const el = containerRef.current;
+    setImageDragRect((r) => r || (el ? el.getBoundingClientRect() : null));
+    // dragover repeats while the pointer stays; a stop (cancelled drag) clears it.
+    clearTimeout(imageDragTimer.current);
+    imageDragTimer.current = setTimeout(() => setImageDragRect(null), 400);
+  }, []);
+  const handleImageDragLeave = useCallback((e) => {
+    if (e.currentTarget.contains(e.relatedTarget)) return;
+    clearTimeout(imageDragTimer.current);
+    setImageDragRect(null);
+  }, []);
+  const handleImageDrop = useCallback((e) => {
+    clearTimeout(imageDragTimer.current);
+    setImageDragRect(null);
+    const list = e.dataTransfer?.files;
+    if (!list || !list.length) return;
+    // Only a drop of image files is ours. A drop with any other file (a deck
+    // file, also mixed with images) falls through to the shell, which loads the
+    // deck, as its "Drop deck to load" overlay said (dragover was not taken).
+    const all = Array.prototype.slice.call(list);
+    if (!all.every((f) => f && typeof f.type === "string" && f.type.startsWith("image/"))) return;
+    // Type, size and count caps run before any file is read (imageDropFiles).
+    const { files, rejected } = imageDropFiles(list);
+    if (!files.length) {
+      // Nothing usable (an SVG, an oversize file): still ours and reported.
+      e.preventDefault();
+      showNavToast(`${all.length} image${all.length === 1 ? "" : "s"} not added`, null, true);
+      return;
+    }
+    e.preventDefault();
+    const batch = newImageBatch("drop");
+    batch.rejected = rejected;
+    // Read one file at a time, in drop order, as a data URL (no object URLs).
+    const read = (file) => () => new Promise((res) => {
+      const r = new FileReader();
+      r.onload = () => res(typeof r.result === "string" ? compressImageStrict(r.result) : null);
+      r.onerror = () => res(null);
+      try { r.readAsDataURL(file); } catch { res(null); }
+    });
+    for (const f of files) enqueueImage(read(f), batch);
+    finishImageBatch(batch);
+  }, [enqueueImage, finishImageBatch, showNavToast]);
   useEffect(() => {
     const handler = (e) => {
       if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA" || e.target.isContentEditable) return;
+      // An open zoom owns Esc and the step keys, also when focus is not on its
+      // overlay (for example after Tab). Esc closes only the zoom. A step key goes
+      // to the overlay's own handler, so the slide behind the zoom never moves.
+      if (VELA_OPEN_CHROME.zooms.size > 0) {
+        if (e.key === "Escape") { e.preventDefault(); window.dispatchEvent(new Event("vela-close-zoom")); return; }
+        if (["ArrowRight", "ArrowDown", "ArrowLeft", "ArrowUp", "PageDown", "PageUp", " "].includes(e.key)) {
+          e.preventDefault();
+          const overlay = [...VELA_OPEN_CHROME.zooms].pop();
+          if (e.key !== " " && overlay && e.target !== overlay) { overlay.focus(); overlay.dispatchEvent(new KeyboardEvent("keydown", { key: e.key, bubbles: true, cancelable: true })); }
+          return;
+        }
+      }
       // CR2: the TOC left rail is a roving-tabindex ARIA tree. While one of its
       // treeitems holds DOM focus, arrow/space keys are its own disclosure/navigation
       // keys (expand/collapse/move-focus/select) — never global slide-advance. The
@@ -534,7 +894,28 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       // (editor nav keeps reaching them so they can be edited/unhidden).
       const nextVisible = (from) => { for (let i = from + 1; i < navSlides.length; i++) if (!fullscreen || !navSlides[i].hidden) return i; return -1; };
       const prevVisible = (from) => { for (let i = from - 1; i >= 0; i--) if (!fullscreen || !navSlides[i].hidden) return i; return -1; };
-      if (e.key === "ArrowRight" || e.key === "ArrowDown" || e.key === " ") {
+      // CR07: editor review cycle — step through unreviewed slides across modules.
+      // The current slide stays in the order (even if reviewed) only to anchor the step.
+      const reviewNav = !fullscreen && reviewCycle;
+      if (reviewNav && ["ArrowRight", "ArrowDown", " ", "ArrowLeft", "ArrowUp"].includes(e.key)) {
+        e.preventDefault();
+        stopAlternatives();
+        const dir = (e.key === "ArrowLeft" || e.key === "ArrowUp") ? -1 : 1;
+        const order = [];
+        // A collapsed lane is skipped, except the current module: without the
+        // anchor, findIndex is -1 and the step jumps to the start of the deck.
+        for (const lane of (lanes || [])) {
+          for (const item of lane.items) if (!lane.collapsed || item.id === concept.id) (item.slides || []).forEach((sl, i) => { if (!sl.reviewed || (item.id === concept.id && i === slideIndex)) order.push({ id: item.id, i, title: item.title }); });
+        }
+        const t = order[order.findIndex((o) => o.id === concept.id && o.i === slideIndex) + dir];
+        if (t) {
+          if (t.id !== concept.id) { dispatch({ type: "SELECT", id: t.id }); showNavToast(t.title, null); }
+          dispatch({ type: "SET_SLIDE_INDEX", index: t.i });
+        }
+      }
+      // Story slide in Present: arrow/space keys step through its images first.
+      if (!reviewNav && ["ArrowRight", "ArrowDown", " ", "ArrowLeft", "ArrowUp"].includes(e.key) && storyStepRef.current((e.key === "ArrowLeft" || e.key === "ArrowUp") ? -1 : 1)) { e.preventDefault(); stopAlternatives(); return; }
+      if (!reviewNav && (e.key === "ArrowRight" || e.key === "ArrowDown" || e.key === " ")) {
         e.preventDefault();
         stopAlternatives(); // keep a running Improve alive across navigation
         const ni = navSlides.length > 0 ? nextVisible(slideIndex) : -1;
@@ -556,17 +937,19 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
           }
         }
       }
-      if (e.key === "ArrowLeft" || e.key === "ArrowUp") {
+      if (!reviewNav && (e.key === "ArrowLeft" || e.key === "ArrowUp")) {
         e.preventDefault();
         stopAlternatives(); // keep a running Improve alive across navigation
         const pi = navSlides.length > 0 ? prevVisible(slideIndex) : -1;
         if (pi >= 0) {
+          storyEnterBack();
           dispatch({ type: "SET_SLIDE_INDEX", index: pi });
         } else {
           let ti = curIdx - 1;
           if (fullscreen) while (ti >= 0 && !mods[ti].presentCard && mods[ti].lastVisible < 0) ti--;
           if (ti >= 0) {
             const prev = mods[ti];
+            storyEnterBack();
             dispatch({ type: "SELECT", id: prev.id });
             const prevPresOffset = prev.presentCard ? 1 : 0;
             // Fullscreen: last VISIBLE content slide (+ title-card offset), or the
@@ -581,7 +964,6 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
         }
       }
 
-      // Esc closes popovers in fullscreen, but doesn't exit fullscreen (use F)
       // Font scale: +/- in fullscreen (0 resets)
       if (fullscreen && !showGalleryRef.current && (e.key === "+" || e.key === "=")) { e.preventDefault(); { const v = Math.min(fontScale + 0.1, 2.0); dispatch({ type: "SET_FONT_SCALE", value: Math.round(v*10)/10 }); showNavToast("FONT " + Math.round(v * 100) + "%"); }; }
       if (fullscreen && !showGalleryRef.current && e.key === "-") { e.preventDefault(); { const v = Math.max(fontScale - 0.1, 0.5); dispatch({ type: "SET_FONT_SCALE", value: Math.round(v*10)/10 }); showNavToast("FONT " + Math.round(v * 100) + "%"); }; }
@@ -611,8 +993,16 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       if (fullscreen && e.key === "E" && e.shiftKey && !e.metaKey && !e.ctrlKey && !["INPUT", "TEXTAREA"].includes(document.activeElement?.tagName)) {
         e.preventDefault(); setPresentEdit((v) => { showNavToast(v ? "Edit mode OFF" : "Edit mode ON"); return !v; });
       }
+      // An open Present TOC panel closes first; Present stays.
+      if (e.key === "Escape" && fullscreen && VELA_OPEN_CHROME.panels.size > 0) { e.preventDefault(); window.dispatchEvent(new Event("vela-close-panel")); return; }
       if (e.key === "Escape" && showGalleryRef.current) { e.preventDefault(); setGallery(false); return; }
       if (e.key === "Escape" && showPresenterViewRef.current) { e.preventDefault(); setPresenterView(false); return; }
+      // Esc leaves Present mode. Browser fullscreen normally does this itself, but in a
+      // sandboxed iframe (Claude.ai artifact) requestFullscreen fails, so the key lands here.
+      // An open modal takes Esc first (it closes on the same keydown).
+      // A story slide zoomed on an image: Esc zooms out to the grid first and Present stays.
+      if (e.key === "Escape" && fullscreen && VELA_OPEN_CHROME.modals.size === 0 && storyEscRef.current()) { e.preventDefault(); return; }
+      if (e.key === "Escape" && fullscreen && VELA_OPEN_CHROME.modals.size === 0) { e.preventDefault(); stopAlternatives(); dispatch({ type: "SET_FULLSCREEN", value: false }); return; }
       // Ctrl+C → copy ALL selected slides (multi-select) to system clipboard,
       // in slide order. Falls back to the active slide when nothing is multi-selected.
       if ((e.ctrlKey || e.metaKey) && e.key === "c" && slidesRef.current.length > 0 && !["INPUT", "TEXTAREA"].includes(document.activeElement?.tagName) && !window.getSelection()?.toString()) {
@@ -647,7 +1037,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       if (e.key === "I" && e.shiftKey && !e.metaKey && !e.ctrlKey && slides.length > 0 && !improving && !altLoading && aiOk) { e.preventDefault(); runImproveRef.current?.(null, "slide"); }
     };
     window.addEventListener("keydown", handler); return () => window.removeEventListener("keydown", handler);
-  }, [slideIndex, slides, presSlides, fullscreen, dispatch, concept.id, flatModules, showNavToast, stopAll, altLoading, alternatives, altOriginal, fontScale, state.selectedSlideIndices]);
+  }, [slideIndex, slides, presSlides, fullscreen, dispatch, concept.id, flatModules, showNavToast, stopAll, altLoading, alternatives, altOriginal, fontScale, state.selectedSlideIndices, reviewCycle, lanes]);
 
   // ── Browser back button → exit fullscreen instead of leaving the page ──
   useEffect(() => {
@@ -676,10 +1066,16 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       el.requestFullscreen?.().catch(() => {});
     }
     // Listen for browser-level fullscreen exit (e.g. user presses Esc at browser level)
+    // The browser eats that Esc, so the keydown handler never sees it. Apply the same
+    // layering here: a zoom, gallery or presenter view closes first and Present stays.
     const onFsChange = () => {
-      if (!document.fullscreenElement && fullscreen) {
-        dispatch({ type: "SET_FULLSCREEN", value: false });
-      }
+      if (document.fullscreenElement || !fullscreen) return;
+      if (VELA_OPEN_CHROME.zooms.size > 0) { window.dispatchEvent(new Event("vela-close-zoom")); return; }
+      if (VELA_OPEN_CHROME.panels.size > 0) { window.dispatchEvent(new Event("vela-close-panel")); return; }
+      if (showGalleryRef.current) { setGallery(false); return; }
+      if (showPresenterViewRef.current) { setPresenterView(false); return; }
+      if (storyEscRef.current()) return;
+      dispatch({ type: "SET_FULLSCREEN", value: false });
     };
     document.addEventListener("fullscreenchange", onFsChange);
     return () => document.removeEventListener("fullscreenchange", onFsChange);
@@ -703,6 +1099,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       if (Math.abs(scrollAccum.current) >= SCROLL_THRESHOLD) {
         const dir = scrollAccum.current > 0 ? 1 : -1;
         scrollAccum.current = 0;
+        if (storyStepRef.current(dir)) return; // one story step per notch
         const navSlides = fullscreen ? presSlides : slides;
         if (dir > 0) {
           // Scroll down → next slide or cross to next module
@@ -722,12 +1119,14 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
         } else {
           // Scroll up → prev slide or cross to prev module
           if (navSlides.length > 0 && slideIndex > 0) {
+            storyEnterBack();
             dispatch({ type: "SET_SLIDE_INDEX", index: slideIndex - 1 });
           } else {
             const mods = flatModules();
             const curIdx = mods.findIndex((m) => m.id === concept.id);
             if (curIdx >= 0 && curIdx - 1 >= 0) {
               const prev = mods[curIdx - 1];
+              storyEnterBack();
               dispatch({ type: "SELECT", id: prev.id });
               const prevPresOffset = prev.presentCard && fullscreen ? 1 : 0;
               dispatch({ type: "SET_SLIDE_INDEX", index: Math.max(0, (prev.slideCount || 1) - 1 + prevPresOffset) });
@@ -780,8 +1179,12 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
   };
 
   // ── Block-Targeted Edit (single block, prompt-based) ──
-  const runBlockEdit = async (blockIndex, prompt) => {
-    if (!prompt || blockEditing || !slides[slideIndex]?.blocks?.[blockIndex]) return;
+  // slot = [key, array, index] from SlideContent's blockSlot: a cols slide
+  // numbers its L/R column blocks after `blocks`, so the edit goes to that array.
+  const runBlockEdit = async (blockIndex, prompt, slot) => {
+    const key = slot && (slot[0] === "L" || slot[0] === "R") ? slot[0] : "blocks";
+    const j = key === "blocks" ? blockIndex : slot[2];
+    if (!prompt || blockEditing || !slides[slideIndex]?.[key]?.[j]) return;
     const operationEpoch = state._deckEpoch;
     const operationOwner = claimOperation("blockEdit");
     const operationIsCurrent = () => ownsOperation("blockEdit", operationOwner, operationEpoch);
@@ -789,18 +1192,18 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
     dispatch({ type: "SET_AI_WORK", value: { itemId: concept.id, slideIdx: slideIndex } }); // CR5
     try {
       const newBlocks = await blockEditSlide(
-        slides[slideIndex], blockIndex, prompt,
-        concept.title, slideIndex + 1, slides.length, branding, guidelines
+        slides[slideIndex], j, prompt,
+        concept.title, slideIndex + 1, slides.length, branding, guidelines, key
       );
       if (!operationIsCurrent()) return;
       if (newBlocks && newBlocks.length > 0) {
-        const curBlocks = [...(slides[slideIndex].blocks || [])];
-        curBlocks.splice(blockIndex, 1, ...newBlocks);
+        const curBlocks = [...(slides[slideIndex][key] || [])];
+        curBlocks.splice(j, 1, ...newBlocks);
         const ts = new Date().toLocaleString("en-GB", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
-        const logEntry = `[🎯 ${ts}] block[${blockIndex}] "${prompt}"`;
+        const logEntry = `[🎯 ${ts}] ${key === "blocks" ? "block" : key}[${j}] "${prompt}"`;
         const existing = slides[slideIndex]?.notes?.trim() || "";
         setRevealKey(`be-${Date.now()}`);
-        dispatch({ type: "UPDATE_SLIDE", id: concept.id, index: slideIndex, patch: { blocks: curBlocks, notes: existing ? `${existing}\n${logEntry}` : logEntry }, merge: true });
+        dispatch({ type: "UPDATE_SLIDE", id: concept.id, index: slideIndex, patch: { [key]: curBlocks, notes: existing ? `${existing}\n${logEntry}` : logEntry }, merge: true });
       }
     } catch (e) {
       console.error("Block edit failed:", e);
@@ -1041,6 +1444,21 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
   }, [concept.id, slideIndex]);
 
   const isStudent = state?.veraMode === "student";
+  // Editor toolbar: the story toggle shows only on a slide with >= 2 images.
+  // The Present list (hidden images left out): the toggle shows only when Present can step a story.
+  const editStoryImages = fullscreen ? 0 : storyImageList(slides[slideIndex], true).length;
+  const editStoryOn = slides[slideIndex]?.story === true;
+  // Slide toolbar labels, left to right; auto-compact hides them from the right.
+  const tbRef = useRef(null);
+  const [tbFontGen, setTbFontGen] = useState(0);
+  useEffect(() => { let live = true; document.fonts?.ready?.then(() => { if (live) setTbFontGen((g) => g + 1); }); return () => { live = false; }; }, []);
+  const tbKeys = ["ai", "improve", "variants", "new", "dup", "move", "delete", "review", ...(editStoryImages >= 2 ? ["story"] : []), ...(editStoryImages >= 2 && editStoryOn ? ["preview"] : []), "overview"];
+  const tbHide = useToolbarCompact(tbRef, `${fullscreen}|${slides.length > 0}|${isMobile}|${tbKeys.join()}|${!!improving}|${!!altLoading}|${tbFontGen}`);
+  const tbShow = (k) => !isMobile && tbKeys.indexOf(k) < tbKeys.length - tbHide;
+  const tbAria = (k, label) => (isMobile || tbShow(k)) ? undefined : label;
+  const tbCompact = !isMobile && tbHide === tbKeys.length + 1;
+  const tbWrap = tbHide > (isMobile ? 0 : tbKeys.length + 1);
+  const tbPad = tbCompact ? `5px ${TB_COMPACT_PAD_X}px` : "5px 12px";
 
   // Hidden offscreen host used to measure a slide's layout without disturbing the
   // visible view, so Improve can run in the background across navigation.
@@ -1060,7 +1478,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
             .slide-transition-fade (part-imports.jsx). Independent of the per-block
             .stg-N stagger reveal inside SlideContent, which keeps working as-is. */}
         <div key={slideIndex} className="slide-transition-fade" style={{ position: "relative", width: "100%", height: "100%" }}>
-          <FullscreenSlide key={`deck-${state._deckEpoch}`} slide={presSlides[slideIndex]} index={slideIndex} total={presSlides.length} innerRef={slideRef} branding={presSlides[slideIndex]?._virtual ? null : branding} editable={!isStudent && !presSlides[slideIndex]?._virtual} onEdit={isStudent || presSlides[slideIndex]?._virtual ? undefined : handleSlideEdit} onBlockEdit={isStudent || presSlides[slideIndex]?._virtual ? undefined : runBlockEdit} blockEditing={isStudent ? null : blockEditing} fontScale={fontScale} mode="fill" forceEdit={presentEdit && !isStudent} displayIndex={globalSlideIndex - presOffset} displayTotal={globalSlideTotal} />
+          <FullscreenSlide key={`deck-${state._deckEpoch}`} slide={presSlides[slideIndex]} index={slideIndex} total={presSlides.length} innerRef={slideRef} branding={presSlides[slideIndex]?._virtual ? null : branding} editable={!isStudent && !presSlides[slideIndex]?._virtual} onEdit={isStudent || presSlides[slideIndex]?._virtual ? undefined : handleSlideEdit} onBlockEdit={isStudent || presSlides[slideIndex]?._virtual ? undefined : runBlockEdit} blockEditing={isStudent ? null : blockEditing} fontScale={fontScale} mode="fill" forceEdit={presentEdit && !isStudent} displayIndex={globalSlideIndex - presOffset} displayTotal={globalSlideTotal} story={story} onStoryJump={story ? onStoryJump : undefined} onStoryZoomOut={story ? onStoryZoomOut : undefined} />
         </div>
         {!isMobile && <PresenterTOC slides={presSlides} slideIndex={slideIndex} onJump={(i) => dispatch({ type: "SET_SLIDE_INDEX", index: i })} lanes={lanes} currentConceptId={concept.id} dispatch={dispatch} />}
                 {fontScale !== 1 && <div style={{ position: "absolute", top: 12, right: 16, fontFamily: FONT.mono, fontSize: 13, fontWeight: 700, color: T.accent, background: T.bgPanel + "e0", padding: "3px 10px", borderRadius: 4, border: `1px solid ${T.accent}40`, zIndex: 20, letterSpacing: "0.05em", pointerEvents: "none" }}>FONT {Math.round(fontScale * 100)}%</div>}
@@ -1074,20 +1492,27 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
           </div>
           <div style={{ fontFamily: FONT.mono, fontSize: 10, color: "rgba(255,255,255,0.5)" }}>{improving.current}/{improving.total}</div>
         </div>}
+        {/* Present toolbar: one group, kept faint so it does not distract the
+            audience. Pointing at any button shows the whole group. The group
+            itself takes no clicks, so the slide under it stays clickable. */}
+        <div className={isMobile ? undefined : "vela-fs-toolbar"} style={{ position: "absolute", top: 0, right: 0, width: "100%", height: 0 }}>
         <div className="slide-nav-btn" onClick={() => dispatch({ type: "SET_FULLSCREEN", value: false })} style={{ position: "absolute", top: isMobile ? 8 : 16, right: isMobile ? 8 : 16, padding: isMobile ? 12 : 8 }}><Minimize2 size={isMobile ? 22 : 18} color="#fff" /></div>
-        {!isMobile && <div data-testid="student-toggle" className="slide-nav-btn" onClick={() => dispatch({ type: "SET_VERA_MODE", mode: isStudent ? "editor" : "student" })} title={isStudent ? "Exit student mode" : "Student mode — Vera teaches"} style={{ position: "absolute", top: 16, right: 52, padding: 8, background: isStudent ? T.accent + "30" : "transparent", borderRadius: 6 }}><span style={{ fontSize: 16 }}>🎓</span></div>}
-        {!isMobile && <div data-testid="gallery-toggle" className="slide-nav-btn" onClick={() => setGallery((v) => !v)} title="Gallery view (G)" style={{ position: "absolute", top: 16, right: 88, padding: 8, background: showGallery ? T.accent + "30" : "transparent", borderRadius: 6 }}><span style={{ fontSize: 16 }}>🗂</span></div>}
-        {!isMobile && <div data-testid="presenter-toggle" className="slide-nav-btn" onClick={() => setPresenterView((v) => !v)} title={showPresenterView ? "Exit presenter view (S)" : "Presenter view — notes, next slide, timer (S)"} style={{ position: "absolute", top: 16, right: 124, padding: 8, background: showPresenterView ? T.accent + "30" : "transparent", borderRadius: 6 }}><span style={{ fontSize: 16 }}>🖥️</span></div>}
+        {!isMobile && <div data-testid="student-toggle" className="slide-nav-btn" onClick={() => dispatch({ type: "SET_VERA_MODE", mode: isStudent ? "editor" : "student" })} title={isStudent ? "Exit student mode" : "Student mode — Vera teaches"} style={{ position: "absolute", top: 16, right: 52, padding: 8, background: isStudent ? T.accent + "30" : undefined, borderRadius: 6 }}><span style={{ fontSize: 16, color: "#fff" }}>🎓</span></div>}
+        {/* Gallery is reached through the view switch (fs-view-switch), so it has no separate icon here. */}
+        {!isMobile && <div data-testid="presenter-toggle" className="slide-nav-btn" onClick={() => setPresenterView((v) => !v)} title={showPresenterView ? "Exit presenter view (S)" : "Presenter view — notes, next slide, timer (S)"} style={{ position: "absolute", top: 16, right: 88, padding: 8, background: showPresenterView ? T.accent + "30" : undefined, borderRadius: 6 }}><span style={{ fontSize: 16, color: "#fff" }}>{"\u{1F5D2}\uFE0F"}</span></div>}
         {/* Present Edit toggle (Shift+E): restore inline click-to-edit while
             presenting. Uses the Lucide pencil (SVG), NOT the ✏ emoji, so the
             CR-03 "no edit chrome" test still passes when edit mode is off.
             Hidden in student mode, where editing is disabled by design. */}
-        {!isMobile && !isStudent && <div data-testid="present-edit-toggle" className="slide-nav-btn" onClick={() => setPresentEdit((v) => !v)} title={presentEdit ? "Editing on — click text/icons to edit (Shift+E)" : "Edit mode — click text/icons to edit while presenting (Shift+E)"} style={{ position: "absolute", top: 16, right: 160, padding: 8, background: presentEdit ? T.accent + "30" : "transparent", borderRadius: 6 }}>{getIcon("edit", { size: 18, color: "#fff" })}</div>}
+        {!isMobile && !isStudent && <div data-testid="present-edit-toggle" className="slide-nav-btn" onClick={() => setPresentEdit((v) => !v)} title={presentEdit ? "Editing on — click text/icons to edit (Shift+E)" : "Edit mode — click text/icons to edit while presenting (Shift+E)"} style={{ position: "absolute", top: 16, right: 124, padding: 8, background: presentEdit ? T.accent + "30" : undefined, borderRadius: 6 }}>{getIcon("edit", { size: 18, color: "#fff" })}</div>}
+        {/* CR13: the same view switch as the top bar, left of the icon row. */}
+        {!isMobile && <ViewSwitch testid="fs-view-switch" mode={viewMode} onSet={setView} compact onDark style={{ position: "absolute", top: 16, right: VELA_LOCAL_MODE ? 164 : 200 }} />}
         {/* Browser fullscreen toggle removed — Vela fullscreen (F key / minimize button) is sufficient */}
         {!isMobile && !VELA_LOCAL_MODE && <>
-          <div className="slide-nav-btn" onClick={() => setShowCinemaTip((v) => !v)} title="Cinema mode — fullscreen in browser" style={{ position: "absolute", top: 16, right: 196, padding: 8 }}><VelaIcon size={18} /></div>
-          {showCinemaTip && <CinemaTip onClose={() => setShowCinemaTip(false)} />}
+          <div className="slide-nav-btn" onClick={() => setShowCinemaTip((v) => !v)} title="Cinema mode — fullscreen in browser" style={{ position: "absolute", top: 16, right: 160, padding: 8 }}><VelaIcon size={18} /></div>
         </>}
+        </div>
+        {!isMobile && !VELA_LOCAL_MODE && showCinemaTip && <CinemaTip onClose={() => setShowCinemaTip(false)} />}
         {navToast && <div className={navToast.phase === "in" ? "nav-toast-in" : "nav-toast-out"} style={{ position: "absolute", bottom: 20, left: 0, right: 0, display: "flex", justifyContent: "center", zIndex: 20, pointerEvents: "none" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 20px", borderRadius: 8, background: "rgba(0,0,0,0.78)", backdropFilter: "blur(8px)", border: `1px solid ${T.accent}30` }}>
             {navToast.section && <span style={{ fontFamily: FONT.mono, fontSize: 10, color: T.accent, fontWeight: 600, letterSpacing: "0.05em", textTransform: "uppercase" }}>{navToast.section}</span>}
@@ -1104,22 +1529,31 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       </div>
       </div>
       {isStudent && <StudentPanel state={state} dispatch={dispatch} lanes={lanes} selectedId={concept.id} slideIndex={slideIndex} />}
-      {showGallery && <GalleryView lanes={lanes} currentConceptId={concept.id} slideIndex={slideIndex} dispatch={dispatch} onClose={() => setGallery(false)} branding={branding} />}
+      {showGallery && <GalleryView lanes={lanes} currentConceptId={concept.id} slideIndex={slideIndex} dispatch={dispatch} onClose={() => setGallery(false)} branding={branding} headerExtra={<ViewSwitch testid="gallery-view-switch" mode={viewMode} onSet={setView} />} />}
       {showPresenterView && (() => {
         let nextIdx = -1;
         for (let i = slideIndex + 1; i < presSlides.length; i++) if (!presSlides[i].hidden) { nextIdx = i; break; }
-        return <PresenterView current={presSlides[slideIndex]} next={nextIdx >= 0 ? presSlides[nextIdx] : null} index={globalSlideIndex - presOffset} total={globalSlideTotal} duration={presSlides[slideIndex]?.duration || 0} elapsed={presentElapsed} branding={branding} onClose={() => setPresenterView(false)} />;
+        // NEXT on a story slide is its next step; after the last step, the next slide.
+        const nextStory = story ? storyNext(story, storyN) : null;
+        return <PresenterView current={presSlides[slideIndex]} next={nextStory ? presSlides[slideIndex] : nextIdx >= 0 ? presSlides[nextIdx] : null} currentStory={story} nextStory={nextStory || undefined} index={globalSlideIndex - presOffset} total={globalSlideTotal} duration={presSlides[slideIndex]?.duration || 0} elapsed={presentElapsed} branding={branding} onClose={() => setPresenterView(false)} />;
       })()}
     </div>
   );
 
   return (
-    <div ref={containerRef} tabIndex={0} className="fade-in" style={{ flex: 1, display: "flex", flexDirection: "column", background: T.bg, borderLeft: isMobile ? "none" : `1px solid ${T.border}`, outline: "none", minWidth: 0 }}>
+    <div ref={containerRef} tabIndex={0} className="fade-in" onDragOver={handleImageDragOver} onDragLeave={handleImageDragLeave} onDrop={handleImageDrop} style={{ flex: 1, display: "flex", flexDirection: "column", background: T.bg, borderLeft: isMobile ? "none" : `1px solid ${T.border}`, outline: "none", minWidth: 0 }}>
       {measureHarness}
+      {imageDragRect && <div data-testid="image-drop-overlay" style={{ position: "fixed", left: imageDragRect.left, top: imageDragRect.top, width: imageDragRect.width, height: imageDragRect.height, zIndex: 99999, background: "rgba(59,130,246,0.12)", border: `2px dashed ${T.accent}`, boxSizing: "border-box", display: "flex", alignItems: "center", justifyContent: "center", pointerEvents: "none" }}>
+        <span style={{ background: T.bgPanel, borderRadius: 12, padding: "16px 28px", fontFamily: FONT.display, fontSize: 18, fontWeight: 700, color: T.text, boxShadow: "0 20px 60px rgba(0,0,0,0.4)" }}>Drop images to add to this slide</span>
+      </div>}
+      {/* The toast in the editor view: only notices raised for it (image paste). */}
+      {navToast?.editor && <div data-testid="paste-notice" role="status" className={navToast.phase === "in" ? "nav-toast-in" : "nav-toast-out"} style={{ position: "fixed", bottom: 24, left: 0, right: 0, display: "flex", justifyContent: "center", zIndex: 1000, pointerEvents: "none" }}>
+        <div style={{ padding: "8px 20px", borderRadius: 8, background: "rgba(0,0,0,0.78)", backdropFilter: "blur(8px)", border: `1px solid ${T.accent}30`, fontFamily: FONT.display, fontSize: 14, color: "#fff", fontWeight: 600 }}>{navToast.module}</div>
+      </div>}
 
 
       {/* ── TOP PANELS — deck-level dialogs from top bar ──── */}
-      {showBranding && <div style={{ flexShrink: 0 }}><BrandingPanel branding={branding} guidelines={guidelines} dispatch={dispatch} isMobile={isMobile} /></div>}
+      {showBranding && isMobile && <div style={{ flexShrink: 0 }}><BrandingPanel branding={branding} guidelines={guidelines} dispatch={dispatch} isMobile={isMobile} onClose={() => setShowBranding(false)} /></div>}
       {showImproveInput && <div data-testid="batch-edit-panel" style={{ flexShrink: 0, borderBottom: `1px solid ${T.border}`, background: T.accent + "08", padding: "8px 12px" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
           <span style={{ fontFamily: FONT.mono, fontSize: 10, fontWeight: 700, color: T.accent, letterSpacing: "0.05em" }}>🔄 BATCH EDIT</span>
@@ -1138,8 +1572,10 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
         </div>}
       </div>}
 
+      {/* ── MAIN ROW — preview column + right-docked branding pane (CR09) ── */}
+      <div data-testid="editor-main-row" style={{ flex: 1, display: "flex", flexDirection: "row", minHeight: 0, overflow: "hidden" }}>
       {/* ── MAIN PREVIEW ───────────────────────────────────── */}
-      <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+      <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minWidth: 0 }}>
         {slides.length === 0 ? (
           <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 12 }}>
             <div style={{ fontSize: 32, opacity: 0.15 }}>🎬</div>
@@ -1172,7 +1608,12 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
                   {!fullscreen && !state.commentsPanelOpen && !showCommentPopover && (() => {
                     const sc = (slides[slideIndex]?.comments || []).filter((c) => c.status === "open");
                     if (sc.length === 0) return null;
-                    return <div onClick={(e) => { e.stopPropagation(); dispatch({ type: "SET_COMMENTS_PANEL", open: true }); dispatch({ type: "SET_REVIEW_MODE", value: true }); }} style={{ position: "absolute", top: 8, right: 8, zIndex: 10, minWidth: 22, height: 22, borderRadius: 11, background: T.amber, color: "#fff", fontFamily: FONT.mono, fontSize: 10, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", padding: "0 6px", cursor: "pointer", boxShadow: "0 2px 8px rgba(0,0,0,0.3)" }} title={`${sc.length} open comment${sc.length > 1 ? "s" : ""}`}>{sc.length}</div>;
+                    return <div data-editor-overlay="comments" onClick={(e) => { e.stopPropagation(); dispatch({ type: "SET_COMMENTS_PANEL", open: true }); dispatch({ type: "SET_REVIEW_MODE", value: true }); }} style={{ position: "absolute", top: 8, right: 8, zIndex: 10, minWidth: 22, height: 22, borderRadius: 11, background: T.amber, color: "#fff", fontFamily: FONT.mono, fontSize: 10, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", padding: "0 6px", cursor: "pointer", boxShadow: "0 2px 8px rgba(0,0,0,0.3)" }} title={`${sc.length} open comment${sc.length > 1 ? "s" : ""}`}>{sc.length}</div>;
+                  })()}
+                  {/* CR07: reviewed checkmark (editor only; an overlay, so exports never render it) */}
+                  {!fullscreen && slides[slideIndex] && (() => {
+                    const rv = !!slides[slideIndex].reviewed;
+                    return <button data-testid="reviewed-toggle" data-editor-overlay="reviewed" data-reviewed={rv ? "1" : "0"} aria-pressed={rv} onClick={(e) => { e.stopPropagation(); dispatch({ type: "TOGGLE_SLIDE_REVIEWED", id: concept.id, index: slideIndex }); }} title={rv ? "Reviewed — click to mark not reviewed" : "Mark slide reviewed"} style={{ position: "absolute", top: 8, right: 44, zIndex: 10, width: 24, height: 24, borderRadius: 12, border: `1.5px solid ${rv ? T.green : "rgba(255,255,255,0.7)"}`, background: rv ? T.green : "rgba(0,0,0,0.35)", color: "#fff", fontSize: 13, fontWeight: 700, lineHeight: 1, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", padding: 0, opacity: rv ? 1 : 0.75, boxShadow: "0 2px 8px rgba(0,0,0,0.3)" }}>✓</button>;
                   })()}
                   {/* Study notes badge (top-left) — pure indicator in editor mode */}
                   {!fullscreen && slides[slideIndex]?.studyNotes?.text && (
@@ -1195,7 +1636,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
                 </div>
                 <div style={{ fontFamily: FONT.mono, fontSize: 9, color: "rgba(255,255,255,0.5)" }}>{improving.current}/{improving.total}</div>
               </div>}
-              {!improving && beforeSlides && <div style={{ position: "absolute", top: 8, right: 8, display: "flex", gap: 4, zIndex: 10 }}>
+              {!improving && beforeSlides && <div data-editor-overlay="before-after" style={{ position: "absolute", top: 8, right: 8, display: "flex", gap: 4, zIndex: 10 }}>
                 <button onClick={() => setShowBefore((v) => !v)} style={S.btn({ background: showBefore ? T.amber + "30" : "rgba(0,0,0,0.5)", color: showBefore ? T.amber : "#fff", border: `1px solid ${showBefore ? T.amber : "rgba(255,255,255,0.2)"}`, fontSize: 9, padding: "2px 8px" })}>{showBefore ? "◀ Before" : "After ▶"}</button>
                 <button onClick={() => setBeforeSlides(null)} style={S.btn({ background: "rgba(0,0,0,0.5)", color: "rgba(255,255,255,0.6)", border: "1px solid rgba(255,255,255,0.15)", fontSize: 9, padding: "2px 6px" })}>✕</button>
               </div>}
@@ -1313,17 +1754,20 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
         </div>}
 
         {/* ── SLIDE TOOLBAR — centered strip between preview & notes ── */}
-        {slides.length > 0 && <div data-testid="slide-toolbar" style={{ flexShrink: 0, borderTop: `1px solid ${T.border}`, background: T.bgPanel, padding: "4px 12px", display: "flex", justifyContent: "center", alignItems: "center", gap: 3 }}>
-          <button data-testid="quick-edit-open" onClick={() => { if (aiOk) setShowQuickEdit((v) => !v); }} disabled={!aiOk} title={aiOk ? "AI Edit slide (E)" : VELA_AI_UNAVAILABLE_MSG} style={S.btn({ padding: "5px 12px", fontSize: 14, color: !aiOk ? T.textDim + "60" : showQuickEdit ? T.accent : T.textDim, background: showQuickEdit ? T.accent + "20" : "transparent", borderRadius: 4, display: "flex", alignItems: "center", gap: 5, cursor: aiOk ? "pointer" : "not-allowed" })}>⚡{!isMobile && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>AI Edit</span>}</button>
-          <button onClick={() => improving ? stopAll() : runImproveRef.current?.(null, "slide")} disabled={!aiOk || slides.length === 0 || altLoading} title={aiOk ? "Auto-improve this slide (⇧I)" : VELA_AI_UNAVAILABLE_MSG} style={S.btn({ padding: "5px 12px", fontSize: 14, color: !aiOk ? T.textDim + "60" : improving ? T.red : T.textDim, background: improving ? T.accent + "20" : "transparent", borderRadius: 4, display: "flex", alignItems: "center", gap: 5, opacity: !aiOk || slides.length === 0 ? 0.35 : 1, cursor: aiOk ? "pointer" : "not-allowed" })}>{improving ? "⏹" : "✨"}{!isMobile && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>{improving ? "Stop" : "Improve"}</span>}</button>
-          <button onClick={() => altLoading ? stopAlternatives() : runAlternatives()} disabled={!aiOk || slides.length === 0 || improving} title={aiOk ? "Generate design variants — click a tile to apply, ↩ Original to revert, Esc to close" : VELA_AI_UNAVAILABLE_MSG} style={S.btn({ padding: "5px 12px", fontSize: 14, color: !aiOk ? T.textDim + "60" : altLoading ? T.red : (alternatives ? T.accent : T.textDim), background: altLoading || alternatives ? T.accent + "20" : "transparent", borderRadius: 4, display: "flex", alignItems: "center", gap: 5, opacity: !aiOk || slides.length === 0 ? 0.35 : 1, cursor: aiOk ? "pointer" : "not-allowed" })}>{altLoading ? "⏹" : "🎲"}{!isMobile && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>{altLoading ? "Stop" : "Variants"}</span>}</button>
+        {slides.length > 0 && <div ref={tbRef} data-testid="slide-toolbar" style={{ flexShrink: 0, borderTop: `1px solid ${T.border}`, background: T.bgPanel, padding: "4px 12px", display: "flex", flexWrap: tbWrap ? "wrap" : "nowrap", whiteSpace: tbWrap ? undefined : "nowrap", justifyContent: "center", alignItems: "center", gap: tbCompact ? TB_COMPACT_GAP : 3 }}>
+          <button data-testid="quick-edit-open" onClick={() => { if (aiOk) setShowQuickEdit((v) => !v); }} disabled={!aiOk} aria-label={tbAria("ai", "AI Edit")} title={aiOk ? "AI Edit slide (E)" : VELA_AI_UNAVAILABLE_MSG} style={S.btn({ padding: tbPad, fontSize: 14, color: !aiOk ? T.textDim + "60" : showQuickEdit ? T.accent : T.textDim, background: showQuickEdit ? T.accent + "20" : "transparent", borderRadius: 4, display: "flex", alignItems: "center", gap: 5, cursor: aiOk ? "pointer" : "not-allowed" })}>⚡{tbShow("ai") && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>AI Edit</span>}</button>
+          <button onClick={() => improving ? stopAll() : runImproveRef.current?.(null, "slide")} disabled={!aiOk || slides.length === 0 || altLoading} aria-label={tbAria("improve", improving ? "Stop" : "Improve")} title={aiOk ? "Auto-improve this slide (⇧I)" : VELA_AI_UNAVAILABLE_MSG} style={S.btn({ padding: tbPad, fontSize: 14, color: !aiOk ? T.textDim + "60" : improving ? T.red : T.textDim, background: improving ? T.accent + "20" : "transparent", borderRadius: 4, display: "flex", alignItems: "center", gap: 5, opacity: !aiOk || slides.length === 0 ? 0.35 : 1, cursor: aiOk ? "pointer" : "not-allowed" })}>{improving ? "⏹" : "✨"}{tbShow("improve") && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>{improving ? "Stop" : "Improve"}</span>}</button>
+          <button onClick={() => altLoading ? stopAlternatives() : runAlternatives()} disabled={!aiOk || slides.length === 0 || improving} aria-label={tbAria("variants", altLoading ? "Stop" : "Variants")} title={aiOk ? "Generate design variants — click a tile to apply, ↩ Original to revert, Esc to close" : VELA_AI_UNAVAILABLE_MSG} style={S.btn({ padding: tbPad, fontSize: 14, color: !aiOk ? T.textDim + "60" : altLoading ? T.red : (alternatives ? T.accent : T.textDim), background: altLoading || alternatives ? T.accent + "20" : "transparent", borderRadius: 4, display: "flex", alignItems: "center", gap: 5, opacity: !aiOk || slides.length === 0 ? 0.35 : 1, cursor: aiOk ? "pointer" : "not-allowed" })}>{altLoading ? "⏹" : "🎲"}{tbShow("variants") && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>{altLoading ? "Stop" : "Variants"}</span>}</button>
           <div style={{ width: 1, height: 22, background: T.border + "60" }} />
-          <button onClick={() => { setShowNewSlide((v) => !v); setShowQuickEdit(false); }} title="New slide (N)" style={S.btn({ padding: "5px 12px", fontSize: 14, color: showNewSlide ? T.green : T.textDim, background: showNewSlide ? T.green + "20" : "transparent", borderRadius: 4, display: "flex", alignItems: "center", gap: 5 })}>+{!isMobile && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>New</span>}</button>
-          <button onClick={() => { dispatch({ type: "DUPLICATE_SLIDE", id: concept.id, index: slideIndex }); dispatch({ type: "SET_SLIDE_INDEX", index: slideIndex + 1 }); }} title="Duplicate slide" style={S.btn({ padding: "5px 12px", fontSize: 14, color: T.textDim, borderRadius: 4, display: "flex", alignItems: "center", gap: 5 })}>📋{!isMobile && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>Duplicate</span>}</button>
-          <button ref={moveRef} onClick={() => setShowMoveToModule((v) => !v)} title="Move to module" style={S.btn({ padding: "5px 12px", fontSize: 14, color: showMoveToModule ? T.accent : T.textDim, background: showMoveToModule ? T.accent + "20" : "transparent", borderRadius: 4, display: "flex", alignItems: "center", gap: 5 })}>📦{!isMobile && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>Move</span>}</button>
-          <button onClick={() => { dispatch({ type: "REMOVE_SLIDE", id: concept.id, index: slideIndex }); dispatch({ type: "SET_SLIDE_INDEX", index: Math.max(0, slideIndex - 1) }); }} title="Delete slide (Del)" style={S.btn({ padding: "5px 12px", fontSize: 14, color: T.red + "90", borderRadius: 4, display: "flex", alignItems: "center", gap: 5 })}>🗑{!isMobile && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>Delete</span>}</button>
+          <button onClick={() => { setShowNewSlide((v) => !v); setShowQuickEdit(false); }} aria-label={tbAria("new", "New")} title="New slide (N)" style={S.btn({ padding: tbPad, fontSize: 14, color: showNewSlide ? T.green : T.textDim, background: showNewSlide ? T.green + "20" : "transparent", borderRadius: 4, display: "flex", alignItems: "center", gap: 5 })}>+{tbShow("new") && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>New</span>}</button>
+          <button onClick={() => { dispatch({ type: "DUPLICATE_SLIDE", id: concept.id, index: slideIndex }); dispatch({ type: "SET_SLIDE_INDEX", index: slideIndex + 1 }); }} aria-label={tbAria("dup", "Duplicate")} title="Duplicate slide" style={S.btn({ padding: tbPad, fontSize: 14, color: T.textDim, borderRadius: 4, display: "flex", alignItems: "center", gap: 5 })}>📋{tbShow("dup") && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>Duplicate</span>}</button>
+          <button ref={moveRef} onClick={() => setShowMoveToModule((v) => !v)} aria-label={tbAria("move", "Move")} title="Move to module" style={S.btn({ padding: tbPad, fontSize: 14, color: showMoveToModule ? T.accent : T.textDim, background: showMoveToModule ? T.accent + "20" : "transparent", borderRadius: 4, display: "flex", alignItems: "center", gap: 5 })}>📦{tbShow("move") && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>Move</span>}</button>
+          <button onClick={() => { dispatch({ type: "REMOVE_SLIDE", id: concept.id, index: slideIndex }); dispatch({ type: "SET_SLIDE_INDEX", index: Math.max(0, slideIndex - 1) }); }} aria-label={tbAria("delete", "Delete")} title="Delete slide (Del)" style={S.btn({ padding: tbPad, fontSize: 14, color: T.red + "90", borderRadius: 4, display: "flex", alignItems: "center", gap: 5 })}>🗑{tbShow("delete") && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>Delete</span>}</button>
+          <button data-testid="review-cycle-toggle" aria-pressed={reviewCycle} onClick={() => setReviewCycle((v) => !v)} aria-label={tbAria("review", "Review cycle")} title={reviewCycle ? "Review cycle on — arrow keys skip reviewed slides" : "Review cycle — arrow keys skip reviewed slides"} style={S.btn({ padding: tbPad, fontSize: 14, color: reviewCycle ? T.green : T.textDim, background: reviewCycle ? T.green + "20" : "transparent", borderRadius: 4, display: "flex", alignItems: "center", gap: 5 })}>✓{tbShow("review") && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>Review cycle</span>}</button>
+          {editStoryImages >= 2 && <button data-testid="story-toggle" aria-pressed={editStoryOn} onClick={() => handleSlideEdit({ story: editStoryOn ? undefined : true })} aria-label={tbAria("story", "Story")} title={editStoryOn ? "Story on — Present shows the images one by one" : "Story — present the images one by one"} style={S.btn({ padding: tbPad, fontSize: 14, color: editStoryOn ? T.accent : T.textDim, background: editStoryOn ? T.accent + "20" : "transparent", borderRadius: 4, display: "flex", alignItems: "center", gap: 5 })}>🎞{tbShow("story") && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>Story</span>}</button>}
+          {editStoryImages >= 2 && editStoryOn && <button data-testid="story-preview" onClick={() => { stopAll(); dispatch({ type: "SET_FULLSCREEN", value: true }); }} title="Preview story — present from this slide" aria-label="Preview story" style={S.btn({ padding: tbPad, fontSize: 14, color: T.textDim, background: "transparent", borderRadius: 4, display: "flex", alignItems: "center", gap: 5 })}>▶{tbShow("preview") && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>Preview</span>}</button>}
           <div style={{ width: 1, height: 22, background: T.border + "60" }} />
-          <button data-testid="editor-gallery-toggle" onClick={() => setGallery((v) => !v)} title="Overview — all slides (G)" style={S.btn({ padding: "5px 12px", fontSize: 14, color: showGallery ? T.accent : T.textDim, background: showGallery ? T.accent + "20" : "transparent", borderRadius: 4, display: "flex", alignItems: "center", gap: 5 })}>🗂{!isMobile && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>Overview</span>}</button>
+          <button data-testid="editor-gallery-toggle" onClick={() => setGallery((v) => !v)} aria-label={tbAria("overview", "Overview")} title="Overview — all slides (G)" style={S.btn({ padding: tbPad, fontSize: 14, color: showGallery ? T.accent : T.textDim, background: showGallery ? T.accent + "20" : "transparent", borderRadius: 4, display: "flex", alignItems: "center", gap: 5 })}>🗂{tbShow("overview") && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>Overview</span>}</button>
         </div>}
 
         {/* ── NOTES BAR ──────────────────────────────────────── */}
@@ -1351,7 +1795,9 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
         {/* Move-to-module popover */}
         {showMoveToModule && (() => { const allMods = []; for (const l of lanes) for (const it of l.items) if (it.id !== concept.id) allMods.push({ id: it.id, title: it.title, lane: l.title }); const rect = moveRef.current?.getBoundingClientRect(); const popH = Math.min(300, allMods.length * 32 + 72); const flipUp = rect && (rect.bottom + popH + 8 > window.innerHeight); const top = rect ? (flipUp ? Math.max(8, rect.top - popH - 4) : rect.bottom + 4) : 40; const left = rect ? Math.max(8, Math.min(rect.left, window.innerWidth - 220)) : 8; return <><div onClick={() => setShowMoveToModule(false)} style={{ position: "fixed", inset: 0, zIndex: 9998 }} /><div data-testid="move-picker" style={{ position: "fixed", top, left, background: T.bgPanel, border: `1px solid ${T.border}`, borderRadius: 8, padding: 4, zIndex: 9999, boxShadow: "0 4px 20px rgba(0,0,0,0.5)" }}><SectionPicker mods={allMods} emptyLabel="No other modules" onPick={(toId, e) => { dispatch({ type: "MOVE_SLIDE_TO_MODULE", fromId: concept.id, toId, index: slideIndex }); if (e && (e.ctrlKey || e.metaKey)) { const remaining = slides.length - 1; if (slideIndex < remaining) { dispatch({ type: "SELECT", id: concept.id, slideIndex }); } else { const flat = []; for (const l of lanes) for (const it of l.items) flat.push(it); const pos = flat.findIndex((it) => it.id === concept.id); const nextMod = pos >= 0 ? flat[pos + 1] : null; if (nextMod) dispatch({ type: "SELECT", id: nextMod.id, slideIndex: 0 }); else if (remaining > 0) dispatch({ type: "SELECT", id: concept.id, slideIndex: remaining - 1 }); } } setShowMoveToModule(false); }} /></div></>; })()}
       </div>
-      {showGallery && <GalleryView lanes={lanes} currentConceptId={concept.id} slideIndex={slideIndex} dispatch={dispatch} onClose={() => setGallery(false)} branding={branding} />}
+      {showBranding && !isMobile && <BrandingPanel docked branding={branding} guidelines={guidelines} dispatch={dispatch} isMobile={isMobile} onClose={() => setShowBranding(false)} />}
+      </div>
+      {showGallery && <GalleryView lanes={lanes} currentConceptId={concept.id} slideIndex={slideIndex} dispatch={dispatch} onClose={() => setGallery(false)} branding={branding} headerExtra={<ViewSwitch testid="gallery-view-switch" mode={viewMode} onSet={setView} />} />}
     </div>
   );
 }

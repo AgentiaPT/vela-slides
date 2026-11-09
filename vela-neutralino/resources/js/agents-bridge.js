@@ -43,7 +43,9 @@ async function velaDir() {
 // Read the gatekeeper's loopback port + auth token. The extension is launched
 // by Neutralino in parallel with the webview, so the files may not exist for a
 // beat — poll briefly before giving up (AI then renders as unavailable).
-async function readHandshake() {
+// `bound` ({ deadline, now }, optional): stop polling when the next poll would
+// pass the deadline. Only the manual rescan sets it (see detect).
+async function readHandshake(bound) {
   let dir;
   try { dir = await velaDir(); } catch { return null; }
   // Each Vela window's gatekeeper keys its handshake by Neutralino's NL_PORT, so
@@ -60,14 +62,15 @@ async function readHandshake() {
         if (port && token) return { port, token };
       } catch { /* not written yet */ }
     }
+    if (bound && !(bound.now() + 150 < bound.deadline)) break;
     await sleep(150);
   }
   return null;
 }
 
-async function ensureHandshake() {
+async function ensureHandshake(bound) {
   if (handshake) return handshake;
-  handshake = await readHandshake();
+  handshake = await readHandshake(bound);
   return handshake;
 }
 
@@ -79,12 +82,23 @@ async function extFetch(pathname, body, timeoutMs) {
   try {
     // host literal "localhost" — the desktop CSP allows http://localhost:* and
     // it resolves to the loopback the gatekeeper binds.
-    const r = await fetch(`http://localhost:${hs.port}${pathname}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "x-vela-token": hs.token },
-      body: JSON.stringify(body || {}),
-      signal: controller.signal,
-    });
+    let r;
+    try {
+      r = await fetch(`http://localhost:${hs.port}${pathname}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-vela-token": hs.token },
+        body: JSON.stringify(body || {}),
+        signal: controller.signal,
+      });
+    } catch (e) {
+      // Network-level failure (connection refused / timeout): the cached
+      // port+token can be STALE — left by a previous gatekeeper that did not
+      // clean up, or read before a slow new gatekeeper rewrote the files. Keeping
+      // it made every retry and every manual rescan hit the same dead port until
+      // a restart (CR19). Drop it so the next call re-reads the handshake files.
+      handshake = null;
+      throw e;
+    }
     if (r.status === 401) { handshake = null; throw new Error("AI agent auth failed"); }
     const data = await r.json().catch(() => ({}));
     if (!r.ok || !data.ok) throw new Error(data.error || `agent error ${r.status}`);
@@ -109,10 +123,18 @@ function availableList() {
 // a new-hash exe), so an early attempt sees no handshake files yet — that is a
 // transient "not up yet", retryable. A gatekeeper that answers with no agent
 // installed is a real negative that should stop the retry.
-async function detect() {
+async function detect(bound) {
   let gatekeeperUp = false;
   try {
-    const data = await extFetch("/detect", {}, 15000);
+    let timeoutMs = 15000;
+    if (bound) {
+      // Manual rescan: the handshake poll AND the /detect request together fit
+      // the remaining budget. A slow gatekeeper (first agent --version run) is
+      // aborted at the deadline instead of holding the click for up to 15 s.
+      if (!(await ensureHandshake(bound))) throw new Error("AI agent is not available");
+      timeoutMs = Math.max(1, Math.min(15000, bound.deadline - bound.now()));
+    }
+    const data = await extFetch("/detect", {}, timeoutMs);
     gatekeeperUp = true;
     detected = data.providers || {};
   } catch {
@@ -127,9 +149,51 @@ async function detect() {
   return gatekeeperUp;
 }
 
+// Probe until an agent is available or the deadline passes. There is no early
+// exit on "gatekeeper answered, no agent": on a fresh build the agent's own
+// first `--version` run can be slow or blocked for a while and reads as a
+// negative, and the old 3-empty-answers cutoff (~2.4s) gave up long before the
+// startup budget. A real negative costs only a few cheap background probes.
+// Every attempt is reported to onAttempt(gatekeeperUp, or null on error).
+// `maxNegatives` (optional) stops after that many "gatekeeper answered, no
+// agent" answers; only the manual rescan sets it (see rescan below).
+// `boundAttempts` (optional) bounds each attempt itself by the deadline; only
+// the manual rescan sets it. The launch-time probe keeps its per-call timeouts.
+// `now` / `wait` are injectable for tests (fake clock).
+async function probeUntilReady({ deadline, onAttempt, maxNegatives, boundAttempts, now = () => Date.now(), wait = sleep } = {}) {
+  let delay = 500, negatives = 0;
+  for (;;) {
+    let up = null;
+    try { up = await detect(boundAttempts ? { deadline, now } : undefined); } catch { up = null; }
+    if (onAttempt) { try { onAttempt(up); } catch {} }
+    if (activeId && detected?.[activeId]?.available) return true;
+    if (up === true && maxNegatives > 0 && ++negatives >= maxNegatives) return false;
+    if (!(now() < deadline)) return false;
+    await wait(Math.min(delay, Math.max(0, deadline - now())));
+    delay = Math.min(Math.round(delay * 1.5), 4000);
+  }
+}
+
+// Manual rescan (Agent settings "Rescan"): a short, bounded probe. The user
+// waits on it, so a machine with no agent installed must get its answer in
+// about a second, not after the 45 s launch budget. The launch-time probe
+// (nl-boot) keeps the long budget and runs in the background on its own.
+// Gatekeeper not answering: give up after this. One attempt without handshake
+// files already polls ~3 s (readHandshake), so this allows that one attempt;
+// a stale cached port fails fast and is re-read on the next attempt (CR19).
+const RESCAN_BUDGET_MS = 3000;
+const RESCAN_MAX_NEGATIVES = 2; // gatekeeper answers "no agent": stop after this many
+function rescan({ onAttempt, now = () => Date.now(), wait = sleep } = {}) {
+  return probeUntilReady({ deadline: now() + RESCAN_BUDGET_MS, maxNegatives: RESCAN_MAX_NEGATIVES, boundAttempts: true, onAttempt, now, wait });
+}
+
 export const agents = {
   // Re-probe availability (after install, or on manual refresh).
   async detect() { return detect(); },
+
+  probeUntilReady(opts) { return probeUntilReady(opts); },
+
+  rescan(opts) { return rescan(opts); },
 
   // Available providers only (for the picker UI).
   list() { return availableList(); },

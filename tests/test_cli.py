@@ -557,6 +557,7 @@ def main():
         # ══ Encoder unit behaviour (_safe_term) ═════════════════════════
         print("\n── Terminal encoder (_safe_term) ──")
         import _safe_term  # noqa: E402  (SCRIPTS is already on sys.path)
+        import unicodedata  # noqa: E402
 
         check(_safe_term.term_text(ESC + "[31m") == "^[[31m",
               "term_text escapes ESC to caret notation")
@@ -584,6 +585,18 @@ def main():
                       "\U0001f468‍\U0001f4bb Engineering"):
             check(_safe_term.term_text(legit) == legit,
                   f"term_text preserves legitimate text: {legit[:18]}")
+        # The combining-mark cap holds across DROPPED characters: marks on
+        # each side of a dropped zero-width char join into one output run.
+        zalgo = "a\u0301\u0302\u200b\u0303\u0304\u200b\u0305\u0306"
+        for enc in (_safe_term.term_label, _safe_term.term_text):
+            got = enc(zalgo)
+            run = best = 0
+            for ch in got:
+                run = run + 1 if unicodedata.category(ch) in ("Mn", "Me") else 0
+                best = max(best, run)
+            check(best <= 2 and "\u200b" not in got,
+                  f"{enc.__name__} caps combining marks across dropped chars",
+                  f"got {got!r}")
         # Untrusted renders encoded by default; .raw is the explicit opt-out.
         u = _safe_term.Untrusted(ESC + "[31mX")
         check(f"{u}" == "^[[31mX", "Untrusted renders encoded in an f-string")

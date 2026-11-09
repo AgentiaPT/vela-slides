@@ -12,14 +12,14 @@ proof. This skill gives you the two layers needed to do that here.
 
 ## Environment facts (this remote-execution container)
 
-- **Prebuilt Chromium exists** under `/opt/pw-browsers/chromium-*/chrome-linux/chrome`
+- **Prebuilt Chromium exists** under `/opt/pw-browsers/chromium-*/chrome-linux*/chrome`
   (and a `headless_shell`). It is part of the image, so it survives across sessions.
 - **Playwright's browser-download CDN is blocked** — `npx playwright install` fails.
   Do NOT try to download a browser. Launch the existing one via `executablePath`
   and ignore Playwright's version pin:
   ```js
   const { chromium } = require("./node_modules/playwright");          // or playwright-core
-  const b = await chromium.launch({ executablePath: "/opt/pw-browsers/chromium-XXXX/chrome-linux/chrome", args: ["--no-sandbox"] });
+  const b = await chromium.launch({ executablePath: "/opt/pw-browsers/chromium-XXXX/chrome-linux*/chrome", args: ["--no-sandbox"] });
   ```
   (`scripts/browser-probe.cjs` auto-discovers the path — don't hardcode the build number.)
 - **`registry.npmjs.org` is reachable (200); general web is blocked (403).** So

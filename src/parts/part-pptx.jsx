@@ -199,7 +199,7 @@ function pptxEllipse(id, e) {
 }
 
 // t: { x,y,w,h, text, fontSize?|size?, color, bold?|fontWeight?, italic?|fontStyle?, font?|fontFamily?, align?,
-//      runs?: [ [ {text, bold?, italic?}, … ], … ] }
+//      runs?: [ [ {text, bold?, italic?, underline?}, … ], … ] }
 // One text box per source text element; PowerPoint reflows/wraps within the box.
 // `runs` (from pptxExtractTextBoxes) is an array of LINES, each an array of styled
 // runs — so inline **bold** / *italic* segments emit as separate <a:r> runs within
@@ -214,7 +214,7 @@ function pptxTextSp(id, t) {
   const algn = ({ left: "l", center: "ctr", right: "r", justify: "just", start: "l", end: "r" })[alignRaw] || "l";
   const hex = pptxColorHex(t.color) || "000000";
   const font = pptxFontName(t.font || t.fontFamily);
-  const mkRPr = (b, i) => `<a:rPr lang="en-US" sz="${pptxCpt(size)}"${b ? ' b="1"' : ""}${i ? ' i="1"' : ""} dirty="0">`
+  const mkRPr = (b, i, u) => `<a:rPr lang="en-US" sz="${pptxCpt(size)}"${b ? ' b="1"' : ""}${i ? ' i="1"' : ""}${u ? ' u="sng"' : ""} dirty="0">`
     + `<a:solidFill><a:srgbClr val="${hex}"/></a:solidFill>`
     + `<a:latin typeface="${pptxEsc(font)}"/><a:cs typeface="${pptxEsc(font)}"/></a:rPr>`;
   const emptyPara = `<a:endParaRPr lang="en-US" sz="${pptxCpt(size)}"/>`; // blank line — keep the paragraph, no run
@@ -230,7 +230,7 @@ function pptxTextSp(id, t) {
   if (Array.isArray(t.runs)) {
     paras = t.runs.map((lineRuns) => {
       const body = (lineRuns && lineRuns.length)
-        ? lineRuns.map((r) => `<a:r>${mkRPr(!!r.bold, !!r.italic)}<a:t>${pptxEsc(r.text)}</a:t></a:r>`).join("")
+        ? lineRuns.map((r) => `<a:r>${mkRPr(!!r.bold, !!r.italic, !!r.underline)}<a:t>${pptxEsc(r.text)}</a:t></a:r>`).join("")
         : emptyPara;
       return `<a:p><a:pPr algn="${algn}"/>${body}</a:p>`;
     }).join("");
@@ -817,10 +817,12 @@ function pptxExtractTextBoxes(container, containerRect) {
     // <br> starts a new line/paragraph (explicit "\n" in source); a block-level
     // child is left for the walker to emit as its own box (NOT marked seen here).
     const lines = [[]];
-    const pushRun = (txt, bold, italic) => { if (txt) lines[lines.length - 1].push({ text: txt, bold, italic }); };
-    const walkInline = (node, bold, italic) => {
+    // underline: only parseInline's ++underline++ spans (data-vela-u, a code-set
+    // marker) — not computed text-decoration, so link runs keep their old output.
+    const pushRun = (txt, bold, italic, underline) => { if (txt) lines[lines.length - 1].push(underline ? { text: txt, bold, italic, underline } : { text: txt, bold, italic }); };
+    const walkInline = (node, bold, italic, underline) => {
       for (const n of node.childNodes) {
-        if (n.nodeType === 3) { pushRun(n.textContent, bold, italic); continue; }
+        if (n.nodeType === 3) { pushRun(n.textContent, bold, italic, underline); continue; }
         if (n.nodeType !== 1) continue;
         if (n.tagName === "BR") { lines.push([]); continue; }
         if (String(n.tagName).toLowerCase() === "svg") continue; // icons handled separately
@@ -828,18 +830,19 @@ function pptxExtractTextBoxes(container, containerRect) {
         const cs = window.getComputedStyle(n);
         const b = bold || (parseInt(cs.fontWeight) || 400) >= 600;
         const it = italic || (String(cs.fontStyle).indexOf("italic") >= 0);
+        const u = underline || n.hasAttribute("data-vela-u");
         seen.add(n); // absorb this inline element so its text nodes don't spawn a box
-        walkInline(n, b, it);
+        walkInline(n, b, it, u);
       }
     };
     const baseBold = (parseInt(style.fontWeight) || 400) >= 600;
     const baseItalic = String(style.fontStyle).indexOf("italic") >= 0;
-    walkInline(blockEl, baseBold, baseItalic);
+    walkInline(blockEl, baseBold, baseItalic, blockEl.hasAttribute("data-vela-u"));
 
     // Normalize whitespace per line: collapse runs of whitespace to single spaces,
     // trim the outer edges, drop emptied runs, then apply text-transform per run.
     const runs = lines.map((lineRuns) => {
-      let rs = lineRuns.map((r) => ({ text: r.text.replace(/\s+/g, " "), bold: r.bold, italic: r.italic }));
+      let rs = lineRuns.map((r) => (r.underline ? { text: r.text.replace(/\s+/g, " "), bold: r.bold, italic: r.italic, underline: true } : { text: r.text.replace(/\s+/g, " "), bold: r.bold, italic: r.italic }));
       if (rs.length) {
         rs[0].text = rs[0].text.replace(/^\s+/, "");
         rs[rs.length - 1].text = rs[rs.length - 1].text.replace(/\s+$/, "");

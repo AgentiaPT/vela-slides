@@ -121,7 +121,7 @@ function computeSlideLayoutStats(slideEl) {
 }
 
 // ━━━ Virtual Slide ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-function VirtualSlide({ slide, index, total, innerRef, branding, editable, onEdit, mode = "fit-width", onBlockEdit, blockEditing, fontScale, virtualW, virtualH, bordered, reviewMode, itemId, dispatch: externalDispatch, displayIndex, displayTotal, forceEdit }) {
+function VirtualSlide({ slide, index, total, innerRef, branding, editable, onEdit, mode = "fit-width", onBlockEdit, blockEditing, fontScale, virtualW, virtualH, bordered, reviewMode, itemId, dispatch: externalDispatch, displayIndex, displayTotal, forceEdit, story, storyAnimate, onStoryJump, onStoryZoomOut }) {
   const outerRef = useRef(null);
   const isFill = mode === "fill";
 
@@ -182,6 +182,10 @@ function VirtualSlide({ slide, index, total, innerRef, branding, editable, onEdi
   const bg = cssColor(slide?.bg) || cssGradient(slide?.bgGradient) || T.slideBg;
   const isFullscreen = mode === "fit-viewport" || isFill;
   const aspectRatio = `${vw}/${vh}`;
+  // The Present surface (fullscreen, not the editor's bordered viewport). It
+  // stays a present surface with presentEdit on, so editor-only chrome such as
+  // the caption chip and tile drag never shows there.
+  const presentSurface = isFullscreen && !bordered;
 
   return (
     <div ref={outerRef} style={isFullscreen
@@ -194,7 +198,8 @@ function VirtualSlide({ slide, index, total, innerRef, branding, editable, onEdi
         transform: isFullscreen ? `translate(${offset.x}px, ${offset.y}px) scale(${scale})` : `scale(${scale})`,
         transformOrigin: "top left", background: bg, position: "absolute", top: 0, left: 0,
       }}>
-        {slide && <SlideContent key={`${index}-${vw}-${vh}`} slide={slide} index={index} total={total} branding={branding} editable={editable} onEdit={onEdit} presenting={((mode === "fit-viewport" || isFill) && !bordered) && !forceEdit} onBlockEdit={onBlockEdit} blockEditing={blockEditing} fontScale={fontScale} reviewMode={reviewMode} itemId={itemId} dispatch={externalDispatch} displayIndex={displayIndex} displayTotal={displayTotal} />}
+        {slide && <SlideContent key={`${index}-${vw}-${vh}`} slide={slide} index={index} total={total} branding={branding} editable={editable} onEdit={onEdit} presenting={((mode === "fit-viewport" || isFill) && !bordered) && !forceEdit} onBlockEdit={onBlockEdit} blockEditing={blockEditing} fontScale={fontScale} reviewMode={reviewMode} itemId={itemId} dispatch={externalDispatch} displayIndex={displayIndex} displayTotal={displayTotal}
+          story={story} storyAnimate={storyAnimate === undefined ? presentSurface : !!storyAnimate} onStoryJump={onStoryJump} onStoryZoomOut={onStoryZoomOut} presentSurface={presentSurface} />}
       </div>
     </div>
   );
@@ -219,7 +224,7 @@ function ScopeSelector({ icon, scope, setScope, concept, slideIndex, slides, cur
     </div>
   );
 }
-function BrandingPanel({ branding, guidelines, dispatch, isMobile }) {
+function BrandingPanel({ branding, guidelines, dispatch, isMobile, docked, onClose }) {
   const b = branding || defaultBranding;
   const [guidelinesOpen, setGuidelinesOpen] = useState(!!guidelines?.trim());
   const set = (patch) => {
@@ -245,19 +250,25 @@ function BrandingPanel({ branding, guidelines, dispatch, isMobile }) {
   const inp = (extra = {}) => ({ flex: 1, padding: "3px 6px", fontSize: 10, fontFamily: FONT.body, background: T.bgInput, border: `1px solid ${T.border}`, borderRadius: 3, color: T.text, outline: "none", minWidth: 0, ...extra });
 
   return (
-    <div data-testid="branding-panel" style={{ padding: "8px 12px", borderBottom: `1px solid ${T.border}`, background: T.accent + "08" }}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+    // docked: right-side properties pane (CR09) — fixed width, full editor
+    // height, own scroll, sticky header with a close control. Undocked (mobile)
+    // keeps the original full-width strip above the canvas.
+    <div data-testid="branding-panel" data-docked={docked ? "right" : undefined} style={docked
+      ? { width: 300, flexShrink: 0, height: "100%", overflowY: "auto", boxSizing: "border-box", padding: "0 14px 12px", borderLeft: `1px solid ${T.border}`, background: T.bgPanel }
+      : { padding: "8px 12px", borderBottom: `1px solid ${T.border}`, background: T.accent + "08" }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 8, ...(docked ? { position: "sticky", top: 0, zIndex: 1, background: T.bgPanel, padding: "10px 0 8px", borderBottom: `1px solid ${T.border}` } : {}) }}>
         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
           <span style={{ fontSize: 13 }}>🎨</span>
           <span style={{ fontFamily: FONT.mono, fontSize: 10, fontWeight: 700, color: T.accent }}>BRANDING</span>
         </div>
-        <span style={{ fontFamily: FONT.mono, fontSize: 9, color: b.enabled ? T.accent : T.textDim }}>{b.enabled ? "● Active" : "○ Set values to activate"}</span>
+        <span style={{ fontFamily: FONT.mono, fontSize: 9, color: b.enabled ? T.accent : T.textDim, marginLeft: docked ? "auto" : undefined }}>{b.enabled ? "● Active" : "○ Set values to activate"}</span>
+        {onClose && <button data-testid="branding-panel-close" onClick={onClose} title="Close branding" aria-label="Close branding" style={{ background: "none", border: "none", color: T.textDim, cursor: "pointer", fontSize: 13, padding: "0 2px", lineHeight: 1 }}>✕</button>}
       </div>
         <div style={row}>
           <span style={lbl}>Header</span>
           <input type="color" value={b.accentColor || "#3B82F6"} onChange={(e) => set({ accentColor: e.target.value })} style={{ width: 22, height: 18, border: "none", padding: 0, cursor: "pointer", background: "transparent" }} />
-          <input type="range" min="0" max="8" value={b.accentHeight || 4} onChange={(e) => set({ accentHeight: parseInt(e.target.value) })} style={{ width: 50 }} />
-          <span style={{ fontFamily: FONT.mono, fontSize: 9, color: T.textDim }}>{b.accentHeight}px</span>
+          <input data-testid="branding-accent-height" type="range" min="0" max="8" value={b.accentHeight ?? 4} onChange={(e) => set({ accentHeight: parseInt(e.target.value) })} style={{ width: 50 }} />
+          <span style={{ fontFamily: FONT.mono, fontSize: 9, color: T.textDim }}>{b.accentHeight ?? 4}px</span>
         </div>
         <div style={row}>
           <span style={lbl}>Logo</span>
@@ -391,6 +402,16 @@ function PresenterTOC({ slides, slideIndex, onJump, lanes, currentConceptId, dis
   const scheduleClose = () => { clearClose(); if (!pinned) closeTimer.current = setTimeout(() => setOpen(false), 400); };
 
   useEffect(() => { if (open && searchRef.current) setTimeout(() => searchRef.current?.focus(), 100); }, [open]);
+  // While open, register for SlidePanel's Esc order (VELA_OPEN_CHROME in
+  // part-blocks.jsx): Esc closes this panel first and Present stays.
+  useEffect(() => {
+    if (!open) return;
+    const t = {};
+    const close = () => { setOpen(false); setPinned(false); };
+    VELA_OPEN_CHROME.panels.add(t);
+    window.addEventListener("vela-close-panel", close);
+    return () => { VELA_OPEN_CHROME.panels.delete(t); window.removeEventListener("vela-close-panel", close); };
+  }, [open]);
   useEffect(() => {
     if (!open) {
       setSearch("");
@@ -604,7 +625,7 @@ function _ensureGalleryShimmer() {
   style.textContent = `@keyframes velaGalleryShimmer{0%{background-position:-200% 0}100%{background-position:200% 0}}`;
   document.head.appendChild(style);
 }
-function GalleryThumb({ slide, slideIdx, total, branding }) {
+function GalleryThumb({ slide, slideIdx, total, branding, story }) {
   const [loaded, setLoaded] = useState(false);
   useEffect(() => {
     _ensureGalleryShimmer();
@@ -616,7 +637,7 @@ function GalleryThumb({ slide, slideIdx, total, branding }) {
     : "linear-gradient(90deg, rgba(0,0,0,0.03) 25%, rgba(0,0,0,0.07) 50%, rgba(0,0,0,0.03) 75%)";
   return (
     <div style={{ width: "100%", aspectRatio: "16/9", position: "relative", overflow: "hidden" }}>
-      <VirtualSlide slide={slide} index={slideIdx} total={total} branding={branding} editable={false} mode="fit-width" bordered />
+      <VirtualSlide slide={slide} index={slideIdx} total={total} branding={branding} editable={false} mode="fit-width" bordered story={story} storyAnimate={false} />
       {!loaded && (
         <div style={{ position: "absolute", inset: 0, zIndex: 2, background: cssColor(slide?.bg) || T.slideBg, display: "flex", alignItems: "center", justifyContent: "center", borderRadius: 6, transition: "opacity 0.3s ease" }}>
           <div style={{ width: "60%", height: 6, borderRadius: 3, backgroundImage: shimmerBg, backgroundSize: "200% 100%", animation: "velaGalleryShimmer 1.4s ease-in-out infinite" }} />
@@ -677,13 +698,19 @@ function fmtElapsed(totalSeconds) {
   const r = s % 60;
   return `${m}:${String(r).padStart(2, "0")}`;
 }
-function PresenterView({ current, next, index, total, duration, elapsed, branding, onClose }) {
+function PresenterView({ current, next, index, total, duration, elapsed, branding, onClose, currentStory, nextStory }) {
   const notes = (current?.notes || "").trim();
+  // Story slide: the NEXT step can still be on this slide (nextStory set), so
+  // NEXT then shows the current slide at that step, labelled "image k/N" or
+  // "overview". Without nextStory, NEXT is the next slide as before.
+  const nextInSlide = !!(nextStory && current);
+  const nextStoryN = nextInSlide ? storyImageList(current, true).length : 0;
+  const nextStoryLabel = nextInSlide ? (nextStory.zoomed ? `image ${nextStory.k}/${nextStoryN}` : "overview") : "";
   const studyNotes = (current?.studyNotes?.text || "").trim();
   return (
     <div data-testid="presenter-view" onClick={(e) => e.stopPropagation()} style={{ position: "fixed", inset: 0, zIndex: 10000, background: "#0a0d14", color: "#e2e8f0", display: "flex", flexDirection: "column", overflow: "hidden" }}>
       <div style={{ padding: "10px 20px", display: "flex", alignItems: "center", gap: 14, borderBottom: "1px solid rgba(255,255,255,0.1)", flexShrink: 0 }}>
-        <span style={{ fontSize: 16 }}>🖥️</span>
+        <span style={{ fontSize: 16 }}>🗒️</span>
         <span style={{ fontFamily: FONT.mono, fontSize: 13, fontWeight: 700, color: "#60a5fa", letterSpacing: "0.05em" }}>PRESENTER VIEW</span>
         <span data-testid="presenter-timer" style={{ fontFamily: FONT.mono, fontSize: 15, fontWeight: 700, color: "#fff", background: "rgba(255,255,255,0.08)", padding: "3px 12px", borderRadius: 6 }}>⏱ {fmtElapsed(elapsed)}</span>
         <span style={{ fontFamily: FONT.mono, fontSize: 12, color: "#94a3b8" }}>Slide {index + 1} / {total}</span>
@@ -695,7 +722,7 @@ function PresenterView({ current, next, index, total, duration, elapsed, brandin
         <div style={{ flex: 2, display: "flex", flexDirection: "column", gap: 10, minWidth: 0 }}>
           <div style={{ fontFamily: FONT.mono, fontSize: 10, color: "#64748b", letterSpacing: "0.05em" }}>NOW</div>
           <div style={{ flex: 1, minHeight: 0, borderRadius: 10, overflow: "hidden", border: "2px solid #3b82f6", boxShadow: "0 0 24px rgba(59,130,246,0.25)", display: "flex", alignItems: "center" }}>
-            {current ? <GalleryThumb slide={current} slideIdx={index} total={total} branding={branding} /> : <div style={{ width: "100%", padding: 40, textAlign: "center", color: "#64748b" }}>No slide</div>}
+            {current ? <GalleryThumb slide={current} slideIdx={index} total={total} branding={branding} story={currentStory} /> : <div style={{ width: "100%", padding: 40, textAlign: "center", color: "#64748b" }}>No slide</div>}
           </div>
           <div data-testid="presenter-notes" style={{ flexShrink: 0, maxHeight: "38%", overflowY: "auto", background: "rgba(255,255,255,0.05)", borderRadius: 8, padding: 14 }}>
             <div style={{ fontFamily: FONT.mono, fontSize: 10, color: "#64748b", letterSpacing: "0.05em", marginBottom: 6 }}>📝 SPEAKER NOTES</div>
@@ -707,9 +734,11 @@ function PresenterView({ current, next, index, total, duration, elapsed, brandin
           </div>
         </div>
         <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 8, minWidth: 180, maxWidth: 320 }}>
-          <div style={{ fontFamily: FONT.mono, fontSize: 10, color: "#64748b", letterSpacing: "0.05em" }}>NEXT ▸</div>
+          <div style={{ fontFamily: FONT.mono, fontSize: 10, color: "#64748b", letterSpacing: "0.05em" }}>NEXT ▸{nextInSlide && <span data-testid="presenter-next-story"> {nextStoryLabel}</span>}</div>
           <div data-testid="presenter-next" style={{ borderRadius: 8, overflow: "hidden", border: "1px solid rgba(255,255,255,0.15)", opacity: 0.85 }}>
-            {next ? <GalleryThumb slide={next} slideIdx={index + 1} total={total} branding={branding} /> : <div style={{ aspectRatio: "16/9", display: "flex", alignItems: "center", justifyContent: "center", color: "#64748b", fontFamily: FONT.mono, fontSize: 13, background: "rgba(255,255,255,0.03)", borderRadius: 8 }}>End</div>}
+            {/* One key for both NEXT thumbs: no remount (shimmer) when the story ends. */}
+            {nextInSlide ? <GalleryThumb key="next" slide={current} slideIdx={index} total={total} branding={branding} story={nextStory} />
+              : next ? <GalleryThumb key="next" slide={next} slideIdx={index + 1} total={total} branding={branding} /> : <div style={{ aspectRatio: "16/9", display: "flex", alignItems: "center", justifyContent: "center", color: "#64748b", fontFamily: FONT.mono, fontSize: 13, background: "rgba(255,255,255,0.03)", borderRadius: 8 }}>End</div>}
           </div>
         </div>
       </div>
@@ -718,7 +747,7 @@ function PresenterView({ current, next, index, total, duration, elapsed, brandin
 }
 
 const GALLERY_MODULE_COLORS = ["#60a5fa","#a78bfa","#f472b6","#34d399","#f59e0b","#38bdf8","#fb7185","#818cf8","#2dd4bf","#e879f9","#fbbf24","#67e8f9"];
-function GalleryView({ lanes, currentConceptId, slideIndex, dispatch, onClose, branding }) {
+function GalleryView({ lanes, currentConceptId, slideIndex, dispatch, onClose, branding, headerExtra }) {
   const gridRef = useRef(null);
   const activeRef = useRef(null);
   const ZOOM_SIZES = [140, 180, 224, 300, 400, 560, 800];
@@ -867,6 +896,7 @@ function GalleryView({ lanes, currentConceptId, slideIndex, dispatch, onClose, b
         <span style={{ fontFamily: FONT.mono, fontSize: 14, fontWeight: 700, color: T.accent, letterSpacing: "0.05em" }}>GALLERY</span>
         <span style={{ fontFamily: FONT.mono, fontSize: 13, color: T.textMuted }}>{allSlides.filter((s) => !s.isTitleCard).length} slides</span>
         <span style={{ marginLeft: "auto", fontFamily: FONT.mono, fontSize: 13, color: T.textDim }}>+/− zoom · drag to reorder · G or ESC to close</span>
+        {headerExtra}
         <button data-testid="gallery-close" onClick={onClose} style={{ background: "none", border: "none", color: T.textMuted, cursor: "pointer", fontSize: 18, padding: 4 }}>✕</button>
       </div>
       <div ref={gridRef} onClick={(e) => e.stopPropagation()} onWheel={(e) => e.stopPropagation()} style={{ flex: 1, overflowY: "auto", padding: "20px 32px", userSelect: dragActive ? "none" : "auto" }}>
@@ -905,12 +935,15 @@ function GalleryView({ lanes, currentConceptId, slideIndex, dispatch, onClose, b
                 <div style={{ borderRadius: "0 0 8px 8px", border: cardBorder, borderTop: "none", boxShadow: cardShadow, background: T.bgCard, overflow: "hidden" }}
                   onMouseEnter={(e) => { if (!isCurrent && !dragSrc) { e.currentTarget.style.borderColor = T.borderLight; } }}
                   onMouseLeave={(e) => { if (!isCurrent) { e.currentTarget.style.borderColor = T.border; } }}>
-                  <GalleryThumb slide={s.slide} slideIdx={s.slideIdx} total={realSlideTotal} branding={branding} />
+                  {/* CR04: a hidden slide's thumbnail is dimmed, as the TOC strikes it through. */}
+                  <div data-hidden-overlay={s.slide?.hidden ? "1" : undefined} style={{ opacity: s.slide?.hidden ? 0.45 : 1 }}><GalleryThumb slide={s.slide} slideIdx={s.slideIdx} total={realSlideTotal} branding={branding} /></div>
                   <div style={{ padding: "6px 10px", background: isCurrent ? T.accent + "15" : T.isDark ? "rgba(255,255,255,0.04)" : "rgba(0,0,0,0.03)", display: "flex", alignItems: "center", gap: 6 }}>
                     <span title={s.isTitleCard ? "Section title card" : undefined} style={{ fontFamily: FONT.mono, fontSize: 10, color: isCurrent ? T.accent : T.textDim, fontWeight: 700 }}>{s.isTitleCard ? "🎬" : s.slideIdx + 1}</span>
                     {(() => { const oc = (s.slide.comments || []).filter((c) => c.status === "open").length; return oc > 0 ? <span style={{ width: 8, height: 8, borderRadius: 4, background: T.amber, flexShrink: 0 }} title={`${oc} comment${oc > 1 ? "s" : ""}`} /> : null; })()}
                     {s.slide?.studyNotes?.text ? <span title="Has offline study notes" data-study-marker style={{ fontSize: 11, lineHeight: 1, flexShrink: 0, filter: `drop-shadow(0 0 2px ${T.accent}80)` }}>🎓</span> : null}
                     <span style={{ fontSize: 13, color: isCurrent ? T.text : T.textMuted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1, fontFamily: FONT.body }}>{getSlideTitle(s.slide, s.slideIdx)}</span>
+                    {/* CR04: hide/unhide beside delete — same TOGGLE_SLIDE_HIDDEN as the TOC eye. */}
+                    {!s.isTitleCard && <button data-testid="gallery-hide-toggle" data-hidden={s.slide?.hidden ? "1" : "0"} onClick={(e) => { e.stopPropagation(); dispatch({ type: "TOGGLE_SLIDE_HIDDEN", id: s.itemId, index: s.slideIdx }); }} title={s.slide?.hidden ? "Hidden — click to show (excluded from presentation & counts)" : "Hide slide (excludes it from presentation & counts)"} style={{ background: "none", border: "none", cursor: "pointer", padding: "2px 4px", fontSize: 12, lineHeight: 1, borderRadius: 3, opacity: s.slide?.hidden ? 0.9 : 0.4, transition: "opacity 0.15s" }} onMouseEnter={(e) => { e.currentTarget.style.opacity = "1"; }} onMouseLeave={(e) => { e.currentTarget.style.opacity = s.slide?.hidden ? "0.9" : "0.4"; }}>{s.slide?.hidden ? "🙈" : "👁"}</button>}
                     {!s.isTitleCard && <button onClick={(e) => { e.stopPropagation(); dispatch({ type: "REMOVE_SLIDE", id: s.itemId, index: s.slideIdx }); }} title="Delete slide" style={{ background: "none", border: "none", cursor: "pointer", padding: "2px 4px", fontSize: 13, color: T.textDim, borderRadius: 3, opacity: 0.4, transition: "opacity 0.15s, color 0.15s" }} onMouseEnter={(e) => { e.currentTarget.style.opacity = "1"; e.currentTarget.style.color = "#ef4444"; }} onMouseLeave={(e) => { e.currentTarget.style.opacity = "0.4"; e.currentTarget.style.color = T.textDim; }}>✕</button>}
                   </div>
                 </div>

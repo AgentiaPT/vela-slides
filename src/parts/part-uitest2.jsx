@@ -82,7 +82,7 @@ uiSuite("SVG Sanitizer (XSS)", [
     // A <style> is document-global (not SVG-scoped) — dropped outright, not filtered.
     // The shape element survives so geometry still renders; only the class CSS is gone.
     const out = sanitizeSvgMarkup('<style>.node{fill:#3b82f6;stroke:#888}.edge{stroke-width:2}</style><rect class="node"/>');
-    return !/<style[\s>]/i.test(out) && !/#3b82f6/.test(out) && /<rect[^>]*class="node"/i.test(out);
+    return !/<style[\s>]/i.test(out) && !/#3b82f6/.test(out) && /<rect/i.test(out);
   }},
   { name: "SVG url(#fragment) paint refs preserved via presentation attrs (<style> dropped)", fn: async () => {
     // Paint-server refs belong on presentation attributes, which remain allowed+validated.
@@ -475,8 +475,8 @@ uiSuite("Gallery View", [
     _key("f");
     await _waitFor(() => !_$("header"));
   }},
-  { name: "🗂 gallery button visible", fn: async () => {
-    await _waitFor(() => _$("[data-testid='gallery-toggle']"), 2000);
+  { name: "Gallery reachable from the fullscreen view switch", fn: async () => {
+    await _waitFor(() => _$("[data-testid='fs-view-switch-gallery']"), 2000);
   }},
   { name: "G key opens gallery", fn: async () => {
     document.activeElement?.blur(); await _wait(100);
@@ -622,8 +622,13 @@ uiSuite("Presenter View", [
     _key("f");
     await _waitFor(() => !_$("header"), 2000);
   }},
-  { name: "🖥️ presenter-view button visible in Present mode", fn: async () => {
+  { name: "🗒️ presenter-view button visible in Present mode", fn: async () => {
     await _waitFor(() => _$("[data-testid='presenter-toggle']"), 2000);
+  }},
+  { name: "Present toolbar has no duplicate gallery icon or 🖥️ glyph", fn: async () => {
+    if (_$("[data-testid='gallery-toggle']")) throw new Error("separate gallery icon still shown next to the view switch");
+    const pt = _$("[data-testid='presenter-toggle']");
+    if (/🖥/.test(pt.textContent || "")) throw new Error("presenter-view toggle reuses the 🖥️ Present glyph");
   }},
   { name: "S key opens presenter view: current + Next + notes + timer", fn: async () => {
     document.activeElement?.blur(); await _wait(100);
@@ -655,9 +660,66 @@ uiSuite("Presenter View", [
     _click(btn);
     await _waitFor(() => !_$("[data-testid='presenter-view']"), 2000);
   }},
-  { name: "Exit fullscreen after presenter-view tests", fn: async () => {
+  { name: "Esc closes presenter view first, then exits Present mode", fn: async () => {
+    document.activeElement?.blur(); await _wait(100);
+    _key("s");
+    await _waitFor(() => _$("[data-testid='presenter-view']"), 2000);
+    _key("Escape");
+    await _waitFor(() => !_$("[data-testid='presenter-view']"), 2000);
+    await _wait(150);
+    if (_$("header")) throw new Error("first Esc exited Present mode; it must only close presenter view");
+    _key("Escape");
+    await _waitFor(() => _$("header"), 2000);
+  }},
+]);
+
+uiSuite("Present Esc closes image zoom only", [
+  { name: "Esc on a zoomed block closes the zoom and stays in Present mode", fn: async () => {
+    document.activeElement?.blur(); await _wait(100);
     _key("f");
-    await _waitFor(() => _$("header"));
+    await _waitFor(() => !_$("header"), 2000);
+    const zoomable = () => _$$("div").find((d) => d.style.cursor === "zoom-in" && d.getBoundingClientRect().width > 0);
+    for (let i = 0; i < 30 && !zoomable(); i++) { _key("ArrowRight"); await _wait(250); }
+    const src = zoomable();
+    if (!src) throw new Error("no zoomable block found in the demo deck");
+    _click(src);
+    const zoomed = () => document.body.textContent.includes("ESC or click to close");
+    await _waitFor(zoomed, 2000);
+    // The overlay must fill the window, not the scaled slide canvas.
+    const r = _$("[data-vela-zoom]").getBoundingClientRect();
+    if (Math.abs(r.width - window.innerWidth) > 2 || Math.abs(r.height - window.innerHeight) > 2)
+      throw new Error(`zoom overlay is ${Math.round(r.width)}x${Math.round(r.height)}, window is ${window.innerWidth}x${window.innerHeight}`);
+    // Arrow keys stay on this slide: they step to another zoomable block, or
+    // close the zoom past the last one (no wrap to the first).
+    const before = _slidePos();
+    const list = Array.from(src.closest("[data-vela-slide-content]").querySelectorAll("[data-vela-zoomable]"));
+    const isLast = list.indexOf(src) === list.length - 1;
+    _key("ArrowRight");
+    await _wait(300);
+    if (_slidePos() !== before) throw new Error("ArrowRight in zoom changed the slide");
+    if (isLast && zoomed()) throw new Error("ArrowRight in zoom on the last zoomable block did not close the zoom");
+    if (!isLast && !zoomed()) throw new Error("ArrowRight in zoom did not step to the next zoomable block");
+    if (!zoomed()) { _click(src); await _waitFor(zoomed, 2000); }
+    _key("Escape");
+    await _waitFor(() => !zoomed(), 2000);
+    await _wait(200);
+    if (_$("header")) throw new Error("Esc on the zoom overlay also exited Present mode");
+    // Browser-fullscreen path: the browser eats Esc and only fires fullscreenchange.
+    const fsExit = () => document.dispatchEvent(new Event("fullscreenchange"));
+    _click(zoomable());
+    await _waitFor(zoomed, 2000);
+    fsExit();
+    await _waitFor(() => !zoomed(), 2000).catch(() => { throw new Error("browser fullscreen exit did not close the zoom"); });
+    await _wait(200);
+    if (_$("header")) throw new Error("browser fullscreen exit with a zoom open also exited Present mode");
+    document.activeElement?.blur(); _key("s");
+    await _waitFor(() => _$("[data-testid='presenter-view']"), 2000);
+    fsExit();
+    await _waitFor(() => !_$("[data-testid='presenter-view']"), 2000);
+    await _wait(200);
+    if (_$("header")) throw new Error("browser fullscreen exit with presenter view open also exited Present mode");
+    fsExit();
+    await _waitFor(() => _$("header"), 2000);
   }},
 ]);
 
@@ -1984,6 +2046,2807 @@ uiSuite("Product Tour", [
     }
   }},
 ], { setup: _productTourSetup });
+
+// ── meridian CR04 / CR14 / CR07 (sprint "meridian") ──────────────────
+const _m1RowTitles = () => _tocRows().map((r) => (Array.from(r.querySelectorAll("span")).find((x) => x.style.textOverflow === "ellipsis")?.textContent || "").trim());
+const _m1Undo = async () => { document.activeElement?.blur?.(); await _wait(80); _key("z", { ctrlKey: true }); await _wait(250); };
+const _m1ClickRow = async (i) => { const r = _tocRows()[i]; if (!r) throw new Error("no TOC row " + i); _click(r); await _waitFor(() => _tocRows()[i]?.getAttribute("aria-selected") === "true", 800).catch(() => {}); await _wait(150); document.activeElement?.blur?.(); };
+
+uiSuite("meridian-CR04 Gallery hide toggle", [
+  { name: "gallery card shows a hide toggle beside delete; click hides, click again unhides", fn: async () => {
+    const btn = _$("[data-testid='editor-gallery-toggle']");
+    if (!btn) throw new Error("editor-gallery-toggle missing");
+    _click(btn);
+    await _waitFor(() => _$("[data-testid='gallery-slide']"), 5000);
+    const card = () => _$$("[data-testid='gallery-slide']")[0];
+    const tog = () => card()?.querySelector("[data-testid='gallery-hide-toggle']");
+    if (!tog()) throw new Error("gallery-hide-toggle missing on the card");
+    const del = Array.from(card().querySelectorAll("button")).find((b) => b.title === "Delete slide");
+    if (!del || tog().nextElementSibling !== del) throw new Error("hide toggle is not next to the delete button");
+    if (tog().getAttribute("data-hidden") !== "0") throw new Error("first slide already hidden");
+    const rowHidden = () => (_tocRows()[0]?.textContent || "").includes("🙈");
+    _click(tog());
+    await _waitFor(() => tog()?.getAttribute("data-hidden") === "1", 1500);
+    if (!card().querySelector("[data-hidden-overlay]")) throw new Error("hidden card thumbnail not dimmed");
+    if (!rowHidden()) throw new Error("TOC row does not show the slide as hidden (not the same effect)");
+    _click(tog());
+    await _waitFor(() => tog()?.getAttribute("data-hidden") === "0", 1500);
+    if (card().querySelector("[data-hidden-overlay]") || rowHidden()) throw new Error("unhide did not restore the slide");
+    _click(_$("[data-testid='editor-gallery-toggle']"));
+    await _waitFor(() => !_$("[data-testid='gallery-slide']"), 3000).catch(() => {});
+  }},
+], { setup: _editorSetup });
+
+uiSuite("meridian-CR14 TOC slide delete", [
+  { name: "each slide row has a delete icon", fn: async () => {
+    const rows = _tocRows();
+    if (rows.length < 2) throw new Error("need >=2 slide rows, got " + rows.length);
+    if (!rows.every((r) => r.querySelector("[data-testid='toc-slide-delete']"))) throw new Error("a slide row has no toc-slide-delete icon");
+  }},
+  { name: "click deletes that slide only; undo restores it", fn: async () => {
+    const before = _m1RowTitles();
+    _click(_tocRows()[1].querySelector("[data-testid='toc-slide-delete']"));
+    await _waitFor(() => _tocRows().length === before.length - 1, 1500);
+    const want = before.filter((_, i) => i !== 1).join("|");
+    if (_m1RowTitles().join("|") !== want) throw new Error("wrong slide removed: " + _m1RowTitles().join("|"));
+    await _m1Undo();
+    await _waitFor(() => _tocRows().length === before.length, 1500);
+    if (_m1RowTitles().join("|") !== before.join("|")) throw new Error("undo did not restore the slide list");
+  }},
+], { setup: _editorSetup });
+
+uiSuite("meridian-CR07 Review cycle", [
+  { name: "reviewed checkmark and review-cycle toggle render in the editor", fn: async () => {
+    await _waitFor(() => _$("[data-testid='reviewed-toggle']") && _$("[data-testid='review-cycle-toggle']"), 2000);
+  }},
+  { name: "cycle on: arrows skip a reviewed slide; cycle off: arrows visit it again", fn: async () => {
+    if (_tocRows().length < 3) throw new Error("need >=3 slide rows");
+    const rt = () => _$("[data-testid='reviewed-toggle']");
+    const cyc = () => _$("[data-testid='review-cycle-toggle']");
+    const selIdx = () => _tocRows().findIndex((r) => r.getAttribute("aria-selected") === "true");
+    try {
+      await _m1ClickRow(1);
+      if (rt().getAttribute("data-reviewed") !== "0") throw new Error("slide 2 already reviewed");
+      _click(rt());
+      await _waitFor(() => rt()?.getAttribute("data-reviewed") === "1", 1500);
+      await _m1ClickRow(0);
+      _click(cyc());
+      await _waitFor(() => cyc()?.getAttribute("aria-pressed") === "true", 1500);
+      document.activeElement?.blur?.();
+      _key("ArrowRight");
+      await _waitFor(() => selIdx() === 2, 1500).catch(() => { throw new Error("ArrowRight did not skip the reviewed slide (at row " + selIdx() + ")"); });
+      _key("ArrowLeft");
+      await _waitFor(() => selIdx() === 0, 1500).catch(() => { throw new Error("ArrowLeft did not skip the reviewed slide (at row " + selIdx() + ")"); });
+      _click(cyc());
+      await _waitFor(() => cyc()?.getAttribute("aria-pressed") === "false", 1500);
+      document.activeElement?.blur?.();
+      _key("ArrowRight");
+      await _waitFor(() => selIdx() === 1, 1500).catch(() => { throw new Error("cycle off: ArrowRight did not visit slide 2 (at row " + selIdx() + ")"); });
+    } finally {
+      if (cyc()?.getAttribute("aria-pressed") === "true") _click(cyc());
+      await _m1ClickRow(1);
+      if (rt()?.getAttribute("data-reviewed") === "1") { _click(rt()); await _waitFor(() => rt()?.getAttribute("data-reviewed") === "0", 1500).catch(() => {}); }
+    }
+  }},
+], { setup: _editorSetup });
+
+// ── meridian-CR10 / meridian-CR11: fullscreen nav icons keep a visible chip
+// on any slide background (light or dark), so they do not fade into the slide. ──
+// Emoji glyphs must carry emoji presentation and a light colour: a text-style
+// glyph draws in the inherited (dark, light-theme) text colour on the dark chip.
+const _mrdIsLightTheme = () => { const h = _$("header"); const m = (h ? getComputedStyle(h).backgroundColor : "").match(/\d+/g); return !!m && (+m[0] + +m[1] + +m[2]) / 3 >= 128; };
+const _mrdCheckNavGlyphs = async () => {
+  for (const id of ["presenter-toggle", "student-toggle"]) {
+    const el = await _waitFor(() => _$(`[data-testid='${id}']`), 2000);
+    const sp = el.querySelector("span");
+    if (!sp) throw new Error(`${id}: no glyph`);
+    if (id !== "student-toggle" && !/️/.test(sp.textContent)) throw new Error(`${id}: glyph lacks emoji presentation (U+FE0F)`);
+    const c = getComputedStyle(sp).color;
+    if (c !== "rgb(255, 255, 255)") throw new Error(`${id}: glyph colour ${c} is not light`);
+    const r = el.getBoundingClientRect();
+    const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+    if (!hit || !el.contains(hit)) throw new Error(`${id}: covered by another element`);
+  }
+};
+uiSuite("meridian-CR10-CR11 Nav Icon Contrast", [
+  { name: "Enter fullscreen (Present)", fn: async () => {
+    document.activeElement?.blur(); await _wait(100);
+    _key("f");
+    await _waitFor(() => !_$("header"));
+  }},
+  { name: "gallery/presenter/edit nav buttons render with a non-transparent chip", fn: async () => {
+    const ids = ["presenter-toggle", "present-edit-toggle"];
+    for (const id of ids) {
+      const el = await _waitFor(() => _$(`[data-testid='${id}']`), 2000);
+      const bg = getComputedStyle(el).backgroundColor;
+      // A transparent/near-transparent chip means the icon has no backing plate
+      // and can vanish against a light slide (CR10/CR11's reported bug).
+      if (!bg || bg === "rgba(0, 0, 0, 0)" || bg === "transparent") {
+        throw new Error(`${id}: no backing chip (background=${bg})`);
+      }
+    }
+  }},
+  { name: "emoji nav glyphs are emoji-presentation and light in this app theme", fn: _mrdCheckNavGlyphs },
+  { name: "edit icon stays visible on toggle (on/off, CR11's 'sometimes shows')", fn: async () => {
+    const btn = await _waitFor(() => _$("[data-testid='present-edit-toggle']"), 2000);
+    const bgOff = getComputedStyle(btn).backgroundColor;
+    if (bgOff === "rgba(0, 0, 0, 0)" || bgOff === "transparent") throw new Error("edit icon has no chip while off");
+    _click(btn);
+    await _wait(120);
+    const bgOn = getComputedStyle(btn).backgroundColor;
+    if (bgOn === "rgba(0, 0, 0, 0)" || bgOn === "transparent") throw new Error("edit icon has no chip while on");
+    _click(btn); // restore
+    await _wait(120);
+  }},
+  { name: "Exit fullscreen", fn: async () => {
+    _key("f");
+    await _waitFor(() => _$("header"));
+  }},
+  { name: "emoji nav glyphs stay light in the other app theme too", fn: async () => {
+    const before = _mrdIsLightTheme();
+    document.activeElement?.blur(); await _wait(50);
+    _key("d");
+    await _waitFor(() => _mrdIsLightTheme() !== before, 2000);
+    try {
+      _key("f");
+      await _waitFor(() => !_$("header"), 2000);
+      await _mrdCheckNavGlyphs();
+    } finally {
+      if (!_$("header")) { _key("f"); await _waitFor(() => _$("header"), 2000); }
+      document.activeElement?.blur(); await _wait(50);
+      _key("d");
+      await _waitFor(() => _mrdIsLightTheme() === before, 2000);
+    }
+  }},
+]);
+
+// ── meridian-CR13: editor|presenter|gallery view switcher next to Present ──
+// One switch in three places — top bar (view-switch), gallery header
+// (gallery-view-switch) and fullscreen controls (fs-view-switch) — all driven by
+// SlidePanel's single view state. Each must be on top (elementFromPoint) where shown.
+const _mrdSeg = (where, mode) => _$(`[data-testid='${where}-${mode}']`);
+const _mrdActive = (where) => _$(`[data-testid='${where}'] button[aria-pressed='true']`)?.getAttribute("aria-label") || null;
+const _mrdOnTop = (el, label) => {
+  const r = el.getBoundingClientRect();
+  const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+  if (!hit || !el.contains(hit)) throw new Error(`${label} is covered (elementFromPoint hit ${hit?.tagName || "nothing"})`);
+};
+const _mrdSwitchTo = async (where, mode) => {
+  const btn = await _waitFor(() => _mrdSeg(where, mode), 2000);
+  _mrdOnTop(btn, `${where}-${mode}`);
+  _click(btn);
+};
+const _mrdGalleryOpen = () => !!_$("[data-testid='gallery-close']");
+uiSuite("meridian-CR13 View Switcher", [
+  { name: "View switcher renders next to Present in the editor", fn: async () => {
+    await _waitFor(() => _$("[data-testid='view-switch']") && _$("[data-testid='present-btn']"), 2000);
+  }},
+  { name: "Editor segment is the active view on load", fn: async () => {
+    const btn = await _waitFor(() => _$("[data-testid='view-switch-editor']"), 2000);
+    if (btn.getAttribute("aria-pressed") !== "true") throw new Error("editor segment not marked active");
+  }},
+  { name: "Switch glyphs use emoji presentation (no text-style glyph)", fn: async () => {
+    const g = await _waitFor(() => _mrdSeg("view-switch", "gallery"), 2000);
+    if (!/️/.test(g.textContent)) throw new Error("gallery glyph lacks U+FE0F");
+  }},
+  { name: "Deck title keeps readable width in the top bar", fn: async () => {
+    const h = await _waitFor(() => _$("header"), 2000);
+    const t = _$$("span", h).find((s) => s.title && s.title === s.textContent);
+    if (!t) throw new Error("deck title not found in header");
+    const w = t.getBoundingClientRect().width;
+    const need = Math.min(100, t.scrollWidth);
+    if (w < need) throw new Error(`deck title squeezed to ${Math.round(w)}px at ${window.innerWidth}px wide`);
+    if (h.scrollWidth > h.clientWidth + 1) throw new Error(`header overflows (${h.scrollWidth} > ${h.clientWidth})`);
+  }},
+  { name: "Top bar fits on one line at every width 1024-1920 (8px sweep)", fn: async () => {
+    // The top bar fits itself to its own measured width, so forcing the header
+    // width stands in for a window resize. Sweeps up, then down (hysteresis).
+    const h = await _waitFor(() => _$("header"), 2000);
+    const frames = () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+    const prev = h.style.width;
+    const bad = [];
+    try {
+      for (const dir of [1, -1]) {
+        for (let i = 0; i <= 112; i++) {
+          const w = dir > 0 ? 1024 + i * 8 : 1920 - i * 8;
+          h.style.width = `${w}px`;
+          for (let f = 0; f < 3; f++) await frames();
+          const btns = _$$("button", h).filter((b) => b.offsetParent && !b.closest("[role='group']"));
+          const minH = Math.min(...btns.map((b) => b.offsetHeight));
+          const wrapped = btns.filter((b) => b.offsetHeight > minH + 8).map((b) => b.title || b.textContent.trim());
+          const t = _$$("span", h).find((s) => s.title && s.title === s.textContent);
+          const vs = _$("[data-testid='view-switch']", h);
+          const hr = h.getBoundingClientRect(), vr = vs ? vs.getBoundingClientRect() : null;
+          const errs = [];
+          if (h.scrollWidth > h.clientWidth + 1) errs.push(`overflow ${h.scrollWidth}>${h.clientWidth}`);
+          if (wrapped.length) errs.push(`wrapped: ${wrapped.join(", ")}`);
+          if (!t || t.getBoundingClientRect().width < Math.min(120, t.scrollWidth) - 1) errs.push(`title ${t ? Math.round(t.getBoundingClientRect().width) : "missing"}px`);
+          if (!vr || vr.width < 60 || vr.left < hr.left || vr.right > hr.right + 1) errs.push("view switch not fully shown");
+          if (errs.length) bad.push(`${w}px: ${errs.join("; ")}`);
+        }
+      }
+    } finally {
+      h.style.width = prev;
+      await frames();
+    }
+    if (bad.length) throw new Error(`${bad.length} widths fail — ${bad.slice(0, 4).join(" | ")}`);
+  }},
+  { name: "Gallery is reachable in one click from the editor", fn: async () => {
+    await _mrdSwitchTo("view-switch", "gallery");
+    await _waitFor(_mrdGalleryOpen, 2000);
+    // The top bar re-reads the view state one render later (ribbon update).
+    await _waitFor(() => _mrdActive("view-switch") === "Gallery", 2000).catch(() => { throw new Error("gallery segment not marked active after switch"); });
+  }},
+  { name: "Gallery header shows the switch on top, Gallery active", fn: async () => {
+    await _waitFor(() => _$("[data-testid='gallery-view-switch']"), 2000);
+    if (_mrdActive("gallery-view-switch") !== "Gallery") throw new Error(`gallery switch active=${_mrdActive("gallery-view-switch")}`);
+    for (const m of ["editor", "presenter", "gallery"]) _mrdOnTop(_mrdSeg("gallery-view-switch", m), `gallery-view-switch-${m}`);
+  }},
+  { name: "Editor segment in the gallery returns to the editor", fn: async () => {
+    await _mrdSwitchTo("gallery-view-switch", "editor");
+    await _waitFor(() => !_mrdGalleryOpen() && _$("header"), 2000);
+    await _waitFor(() => _mrdActive("view-switch") === "Editor", 2000).catch(() => { throw new Error("top switch not back on Editor"); });
+  }},
+  { name: "Presenter segment in the gallery enters fullscreen Present", fn: async () => {
+    await _mrdSwitchTo("view-switch", "gallery");
+    await _waitFor(_mrdGalleryOpen, 2000);
+    await _mrdSwitchTo("gallery-view-switch", "presenter");
+    await _waitFor(() => !_mrdGalleryOpen() && !_$("header"), 2000);
+  }},
+  { name: "Fullscreen shows the switch on top, Presenter active", fn: async () => {
+    await _waitFor(() => _$("[data-testid='fs-view-switch']"), 2000);
+    if (_mrdActive("fs-view-switch") !== "Presenter") throw new Error(`fs switch active=${_mrdActive("fs-view-switch")}`);
+    for (const m of ["editor", "presenter", "gallery"]) _mrdOnTop(_mrdSeg("fs-view-switch", m), `fs-view-switch-${m}`);
+  }},
+  { name: "Gallery segment in fullscreen opens the gallery (Gallery active)", fn: async () => {
+    await _mrdSwitchTo("fs-view-switch", "gallery");
+    await _waitFor(_mrdGalleryOpen, 2000);
+    if (_mrdActive("gallery-view-switch") !== "Gallery") throw new Error("gallery switch not on Gallery");
+    await _mrdSwitchTo("gallery-view-switch", "presenter");
+    await _waitFor(() => !_mrdGalleryOpen() && _mrdActive("fs-view-switch") === "Presenter", 2000);
+  }},
+  { name: "Editor segment in fullscreen exits to the editor", fn: async () => {
+    await _mrdSwitchTo("fs-view-switch", "editor");
+    await _waitFor(() => _$("header") && _mrdActive("view-switch") === "Editor", 2000);
+  }},
+  { name: "Presenter segment enters fullscreen Present", fn: async () => {
+    const btn = await _waitFor(() => _$("[data-testid='view-switch-presenter']"), 2000);
+    _click(btn);
+    await _waitFor(() => !_$("header"), 2000);
+  }},
+  { name: "Exit fullscreen back to the editor (F key)", fn: async () => {
+    document.activeElement?.blur(); await _wait(100);
+    _key("f");
+    await _waitFor(() => _$("header"), 2000);
+  }},
+]);
+// ── Sprint meridian (C3): split image alignment, accent 0, docked branding
+// pane, toolbar room above, link badge placement ──────────────────────
+const _mrdSvg = (w, h, color) =>
+  `data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='${w}'%20height='${h}'%3E%3Crect%20width='${w}'%20height='${h}'%20fill='%23${color}'/%3E%3C/svg%3E`;
+const _mrdViewport = () => _$("[data-testid='slide-viewport']");
+const _mrdFrame = () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+const _mrdInject = async (blocks, extra, ready) => {
+  const hooks = _hooks();
+  if (typeof hooks.injectBlocks !== "function") throw new Error("injectBlocks test hook not exposed");
+  hooks.injectBlocks(blocks, { layout: undefined, verticalAlign: undefined, padding: null, ...(extra || {}) });
+  const el = await _waitFor(() => ready(_mrdViewport()), 3000);
+  await _mrdFrame();
+  return el;
+};
+const _mrdSetRange = (el, value) => {
+  Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set.call(el, String(value));
+  el.dispatchEvent(new Event("input", { bubbles: true }));
+};
+const _mrdOpenBranding = async () => {
+  if (!_$("[data-testid='branding-panel']")) _click("[data-testid='brand-toggle']");
+  return _waitFor(() => _$("[data-testid='branding-panel']"), 2000);
+};
+const _mrdCloseBranding = async () => {
+  const close = _$("[data-testid='branding-panel-close']");
+  if (close) _click(close);
+  await _waitFor(() => !_$("[data-testid='branding-panel']"), 2000).catch(() => {});
+};
+// Undo every history step a test added, so branding edits do not leak.
+const _mrdUndoTo = async (past) => {
+  const hooks = _hooks();
+  document.activeElement?.blur?.();
+  for (let i = 0; i < 20 && hooks.getHistoryCounts && hooks.getHistoryCounts().past > past; i++) {
+    _key("z", { ctrlKey: true });
+    await _wait(60);
+  }
+};
+const _mrdHover = async (el) => {
+  el.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
+  await _mrdFrame();
+};
+const _mrdUnhover = async (el) => {
+  el.dispatchEvent(new MouseEvent("mouseout", { bubbles: true, relatedTarget: document.body }));
+  await _mrdFrame();
+};
+
+uiSuite("meridian-CR03 split image alignment", [
+  { name: "CR03: image-left/right keep the image centred with the content column", fn: async () => {
+    for (const layout of ["image-left", "image-right"]) {
+      const marker = `CR03 ${layout}`;
+      const img = await _mrdInject([
+        { type: "heading", text: marker },
+        { type: "bullets", items: ["One point", "Two point", "Three point"] },
+        { type: "image", src: _mrdSvg(400, 300, "3b82f6") },
+      ], { layout }, (vp) => vp?.textContent.includes(marker) && vp.querySelector("[data-split-image] img")?.naturalWidth > 0 ? vp.querySelector("[data-split-image]") : null);
+      const con = _mrdViewport().querySelector("[data-split-content]");
+      if (getComputedStyle(img).justifyContent !== "center") throw new Error(`${layout}: image column justify is ${getComputedStyle(img).justifyContent}`);
+      if (!/center/.test(getComputedStyle(con).justifyContent)) throw new Error(`${layout}: content column justify is ${getComputedStyle(con).justifyContent}`);
+      // The side image gets a measured height cap after first paint; poll until
+      // the layout settles, then compare the two column centres.
+      let m = null;
+      const measure = () => {
+        const ir = img.querySelector("img").getBoundingClientRect();
+        const kids = Array.from(con.children).map((c) => c.getBoundingClientRect()).filter((r) => r.height > 0);
+        m = { imageMid: (ir.top + ir.bottom) / 2, contentMid: (Math.min(...kids.map((r) => r.top)) + Math.max(...kids.map((r) => r.bottom))) / 2, gapTop: ir.top - img.getBoundingClientRect().top };
+        return Math.abs(m.imageMid - m.contentMid) <= 3 && m.gapTop >= 4;
+      };
+      await _waitFor(measure, 2500).catch(() => {
+        throw new Error(`${layout}: image centre ${m.imageMid.toFixed(1)} vs content centre ${m.contentMid.toFixed(1)}, top gap ${m.gapTop.toFixed(1)}`);
+      });
+    }
+  }},
+], { setup: _selectFirstModule });
+
+uiSuite("meridian-CR08 branding accent zero", [
+  { name: "CR08: accent height 0 removes the top line; the slider keeps 0", fn: async () => {
+    const hooks = _hooks();
+    const past = hooks.getHistoryCounts?.().past ?? 0;
+    await _mrdInject([{ type: "heading", text: "CR08 accent" }], null, (vp) => vp?.textContent.includes("CR08 accent") ? vp : null);
+    try {
+      const panel = await _mrdOpenBranding();
+      const range = panel.querySelector("[data-testid='branding-accent-height']");
+      if (!range) throw new Error("accent height slider missing");
+      _mrdSetRange(range, 6);
+      const bar = await _waitFor(() => _mrdViewport().querySelector("[data-branding-accent]"), 2000).catch(() => null);
+      if (!bar) throw new Error("accent bar not drawn at 6px");
+      _mrdSetRange(range, 0);
+      await _waitFor(() => !_mrdViewport().querySelector("[data-branding-accent]"), 2000)
+        .catch(() => { throw new Error("accent bar still drawn at 0px"); });
+      const live = _$("[data-testid='branding-accent-height']");
+      if (live.value !== "0") throw new Error(`slider jumped to ${live.value} after 0`);
+      if ((live.nextElementSibling?.textContent || "").trim() !== "0px") throw new Error(`label shows ${live.nextElementSibling?.textContent}`);
+    } finally {
+      await _mrdCloseBranding();
+      await _mrdUndoTo(past);
+    }
+  }},
+], { setup: _selectFirstModule });
+
+uiSuite("meridian-CR09 branding side pane", [
+  { name: "CR09: branding opens as a right pane beside the canvas and closes", fn: async () => {
+    await _mrdCloseBranding();
+    const before = _mrdViewport().getBoundingClientRect();
+    const panel = await _mrdOpenBranding();
+    await _mrdFrame();
+    await _wait(150);
+    try {
+      if (window.innerWidth >= 768) {
+        const p = panel.getBoundingClientRect();
+        const c = _mrdViewport().getBoundingClientRect();
+        if (panel.dataset.docked !== "right") throw new Error("panel is not docked right");
+        if (p.left < c.right - 1) throw new Error(`pane left ${p.left.toFixed(0)} overlaps canvas right ${c.right.toFixed(0)}`);
+        if (Math.abs(p.top - c.top) > 60 && p.top > c.top) throw new Error("pane is not beside the canvas");
+        if (c.width >= before.width - 1) throw new Error("canvas did not resize for the pane");
+        if (getComputedStyle(panel).overflowY !== "auto") throw new Error("pane does not scroll");
+        if (document.documentElement.scrollWidth > window.innerWidth + 1) throw new Error("pane caused horizontal page scroll");
+      }
+      for (const sel of ["[data-testid='branding-accent-height']", "input[placeholder='Name / Company']", "input[placeholder='Tagline']"]) {
+        if (!panel.querySelector(sel)) throw new Error(`control missing in pane: ${sel}`);
+      }
+    } finally {
+      await _mrdCloseBranding();
+    }
+    if (_$("[data-testid='branding-panel']")) throw new Error("close control did not close the pane");
+    await _waitFor(() => Math.abs(_mrdViewport().getBoundingClientRect().width - before.width) < 1.5, 2000)
+      .catch(() => { throw new Error("canvas did not return to full width"); });
+  }},
+], { setup: _selectFirstModule });
+
+// F3: every toolbar button and every editor overlay (✓ reviewed toggle,
+// comment count) must be the top element at its own centre.
+const _mrdCr15Clear = (bar, kind) => {
+  const top = (el) => { const r = el.getBoundingClientRect(); const h = document.elementFromPoint((r.left + r.right) / 2, (r.top + r.bottom) / 2); return !!h && el.contains(h); };
+  const where = kind ? kind + ": " : "";
+  for (const b of bar.querySelectorAll("button")) if (!top(b)) throw new Error(`${where}toolbar button "${b.title || b.textContent}" is covered`);
+  for (const o of document.querySelectorAll("[data-editor-overlay]")) if (!top(o)) throw new Error(`${where}editor overlay "${o.dataset.editorOverlay}" is covered`);
+};
+uiSuite("meridian-CR15 toolbar room above", [
+  { name: "CR15: full-bleed image keeps its toolbar and popups inside the slide", fn: async () => {
+    const block = await _mrdInject([{ type: "image", src: _mrdSvg(960, 540, "f59e0b") }], null,
+      (vp) => { const b = vp?.querySelector("[data-block-type='image'] img"); return b?.naturalWidth > 0 ? vp.querySelector("[data-block-type='image']") : null; });
+    await _mrdHover(block);
+    try {
+      const bar = await _waitFor(() => _mrdViewport().querySelector("[data-testid='block-hover-toolbar']"), 1500);
+      const vp = _mrdViewport().getBoundingClientRect();
+      const inView = (el) => { const r = el.getBoundingClientRect(); return r.top >= vp.top - 0.5 && r.bottom <= vp.bottom + 0.5 && r.left >= vp.left - 0.5 && r.right <= vp.right + 0.5; };
+      if (bar.dataset.chromeInside !== "true" || !inView(bar)) throw new Error("toolbar is drawn above the slide edge");
+      const hit = (el) => { const r = el.getBoundingClientRect(); const h = document.elementFromPoint((r.left + r.right) / 2, (r.top + r.bottom) / 2); return !!h && el.contains(h); };
+      if (!hit(bar)) throw new Error("toolbar is not clickable");
+      _mrdCr15Clear(bar);
+      _click(bar.querySelector("button[title='Add link']"));
+      const pop = await _waitFor(() => _$("[data-testid='block-link-popup']"), 1500);
+      if (!inView(pop) || !hit(pop)) throw new Error("link popup is cut off or covered");
+      _key("Escape");
+      pop.querySelector("input")?.blur();
+    } finally {
+      await _mrdUnhover(block);
+    }
+  }},
+  { name: "CR15: a normal slide keeps the toolbar outside the block top edge", fn: async () => {
+    const block = await _mrdInject([{ type: "heading", text: "CR15 normal" }, { type: "text", text: "Body" }], null,
+      (vp) => vp?.textContent.includes("CR15 normal") ? vp.querySelector("[data-block-type='heading']") : null);
+    await _mrdHover(block);
+    try {
+      const bar = await _waitFor(() => _mrdViewport().querySelector("[data-testid='block-hover-toolbar']"), 1500);
+      if (bar.dataset.chromeInside) throw new Error("toolbar moved inside on a block with room above");
+      if (bar.getBoundingClientRect().top >= block.getBoundingClientRect().top) throw new Error("toolbar is not above the block");
+      _mrdCr15Clear(bar);
+    } finally {
+      await _mrdUnhover(block);
+    }
+  }},
+  { name: "F3: toolbar stays clear of the comment badge and reviewed toggle", fn: async () => {
+    const extra = { comments: [{ id: "cr15-f3", text: "F3 badge", status: "open", createdAt: Date.now() }] };
+    for (const [kind, blocks, sel] of [
+      ["full-bleed", [{ type: "image", src: _mrdSvg(960, 540, "10b981") }], "[data-block-type='image']"],
+      ["normal", [{ type: "heading", text: "CR15 F3 normal" }, { type: "text", text: "Body" }], "[data-block-type='heading']"],
+    ]) {
+      const block = await _mrdInject(blocks, extra, (vp) => (vp && _$("[data-editor-overlay='comments']") && vp.querySelector(sel)) || null);
+      await _mrdHover(block);
+      try {
+        const bar = await _waitFor(() => _mrdViewport().querySelector("[data-testid='block-hover-toolbar']"), 1500);
+        await _mrdFrame();
+        _mrdCr15Clear(bar, kind);
+      } finally {
+        await _mrdUnhover(block);
+      }
+    }
+    _hooks().injectBlocks([{ type: "text", text: "F3 done" }], { comments: [] });
+  }},
+], { setup: _selectFirstModule });
+
+uiSuite("Link box input normalization", [
+  { name: "bare domain, email and host:port get a scheme; unsafe schemes stay rejected", fn: async () => {
+    const cases = [
+      ["example.com", "https://example.com/"], ["  www.example.com/a ", "https://www.example.com/a"],
+      ["me@example.com", "mailto:me@example.com"], ["example.com:8080/x", "https://example.com:8080/x"],
+      ["https://example.org/p", "https://example.org/p"], ["", undefined], ["   ", undefined],
+      ["javascript:alert(1)", undefined], ["data:text/html,x", undefined], ["\\\\host\\share", undefined],
+    ];
+    for (const [input, want] of cases) {
+      const got = linkFromInput(input);
+      if (got !== want) throw new Error(`linkFromInput(${JSON.stringify(input)}) = ${JSON.stringify(got)}, want ${JSON.stringify(want)}`);
+    }
+  }},
+]);
+
+uiSuite("Editor TOC toggle keys", [
+  { name: "Ctrl+E and AltGr+[ toggle the TOC in the editor", fn: async () => {
+    try { document.activeElement?.blur?.(); } catch {}
+    const tocShown = () => _$$(".concept-row").length > 0;
+    if (!tocShown()) throw new Error("TOC not shown at start");
+    for (const [key, opts, label] of [["e", { ctrlKey: true }, "Ctrl+E"], ["[", { ctrlKey: true, altKey: true }, "AltGr+["]]) {
+      _key(key, opts);
+      await _waitFor(() => !tocShown(), 2000).catch(() => { throw new Error(label + " did not hide the TOC"); });
+      _key(key, opts);
+      await _waitFor(tocShown, 2000).catch(() => { throw new Error(label + " did not show the TOC again"); });
+    }
+  }},
+], { setup: _selectFirstModule });
+
+uiSuite("Cols layout block edits", [
+  { name: "a link added to a right-column block is saved on that block", fn: async () => {
+    const sel = "[data-cols-side='right'] [data-block-type='text']";
+    const el = await _mrdInject([], { layout: "cols", L: [{ type: "heading", text: "Left col" }], R: [{ type: "text", text: "Right col text" }] }, (vp) => vp && vp.querySelector(sel));
+    el.dispatchEvent(new MouseEvent("mouseover", { bubbles: true, relatedTarget: document.body }));
+    const btn = await _waitFor(() => el.querySelector("[data-testid='block-hover-toolbar'] button[title='Add link']"), 2000);
+    btn.click();
+    const inp = await _waitFor(() => el.querySelector("[data-testid='block-link-popup'] input"), 2000);
+    inp.value = "example.com/col";
+    inp.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    await _waitFor(() => { const n = _mrdViewport()?.querySelector(sel); return n && n.getAttribute("data-pdf-link") === "https://example.com/col"; }, 2000)
+      .catch(() => { throw new Error("right-column block did not keep its link"); });
+  }},
+], { setup: _selectFirstModule });
+
+uiSuite("meridian-CR17 link badge placement", [
+  { name: "CR17: link badges sit just after the label text on every item kind", fn: async () => {
+    const L = "https://example.com/x";
+    const cases = {
+      "icon-row": [{ type: "icon-row", cols: 2, items: [
+        { icon: "MessageSquare", title: "ChatGPT", text: "chatgpt.com", link: L },
+        { icon: "Box", title: "Docker Sandboxes", text: "docker.com/products/docker-sandboxes", link: L },
+        { icon: "Cpu", title: "A long wrapped title that keeps going across the column width for sure", text: "sub", link: L },
+      ] }],
+      bullets: [{ type: "bullets", items: [{ text: "Short", link: L }, { text: "A much longer bullet line that wraps onto a second visual line so the badge must follow the last word of the text", link: L }, { text: "Iconed", icon: "Star", link: L }] }],
+      grid: [{ type: "grid", cols: 2, items: [{ blocks: [{ type: "text", text: "Wide cell word", link: L }] }, { blocks: [{ type: "heading", text: "Heading in a wide cell", link: L }] }] }],
+      text: [{ type: "text", text: "Block-level link on a plain text block", link: L }],
+    };
+    for (const [name, blocks] of Object.entries(cases)) {
+      const want = blocks[0].items ? blocks[0].items.length : blocks.length;
+      const placed = (vp) => {
+        const all = vp ? Array.from(vp.querySelectorAll("[data-link-badge]")) : [];
+        return all.length === want && all.every((b) => b.dataset.linkBadgePlaced === "text-end") ? all : null;
+      };
+      await _mrdInject(blocks, null, placed).catch(() => { throw new Error(`${name}: badges not placed at the text end`); });
+      await _wait(150);
+      // Re-query: a late re-render can replace the nodes found first.
+      const badges = placed(_mrdViewport());
+      if (!badges) throw new Error(`${name}: badges lost their text-end placement`);
+      for (const b of badges) {
+        const br = b.getBoundingClientRect();
+        const rects = [];
+        const walker = document.createTreeWalker(b.parentElement, NodeFilter.SHOW_TEXT);
+        const range = document.createRange();
+        for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+          if (b.contains(n) || !n.nodeValue.trim()) continue;
+          range.selectNodeContents(n);
+          rects.push(...Array.from(range.getClientRects()));
+        }
+        if (rects.some((r) => r.left < br.right - 0.5 && r.right > br.left + 0.5 && r.top < br.bottom - 0.5 && r.bottom > br.top + 0.5)) throw new Error(`${name}: badge overlaps text`);
+        const sameLine = rects.filter((r) => r.top < br.bottom && r.bottom > br.top && r.right <= br.left + 1);
+        const gap = sameLine.length ? Math.min(...sameLine.map((r) => br.left - r.right)) : Infinity;
+        if (!(gap >= 0 && gap <= 12)) {
+          const fmt = (r) => [r.left, r.top, r.right, r.bottom].map((v) => Math.round(v)).join(",");
+          throw new Error(`${name}: badge ${fmt(br)} is ${gap}px from the text end; text ${rects.map(fmt).join(" | ")}`);
+        }
+      }
+    }
+  }},
+], { setup: _selectFirstModule });
+
+// meridian-F7 (CR13): the top-bar density level is a function of the current
+// width only. The level at a width must not depend on the widths before it.
+uiSuite("meridian-CR13 top bar level has no history", [
+  { name: "Level at each width equals the level after a fresh jump (sweep down, then up)", fn: async () => {
+    const h = await _waitFor(() => _$("header[data-hdr-level]"), 2000);
+    const frames = () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+    // Read the level from what is drawn (hidden labels sit at zero width), and
+    // check that it agrees with the header's own data-hdr-level.
+    const hiddenLabel = (sel) => _$$(sel, h).some((e) => e.style.width === "0px");
+    const drawnLevel = () => {
+      if (!hiddenLabel("[data-testid='view-switch'] [data-vs-label]")) return "4";
+      if (!hiddenLabel("[data-hdr-label='3']")) return "3";
+      if (!hiddenLabel("[data-hdr-label='2']")) return "2";
+      return _$("[data-testid='present-btn']", h)?.parentElement?.style.flexShrink === "1" ? "0" : "1";
+    };
+    const settle = async (w) => {
+      h.style.width = `${w}px`;
+      for (let f = 0; f < 3; f++) await frames();
+      const lvl = drawnLevel();
+      if (h.dataset.hdrLevel !== lvl) throw new Error(`${w}px: data-hdr-level ${h.dataset.hdrLevel} but drawn level ${lvl}`);
+      return lvl;
+    };
+    const widths = [1000];
+    for (let w = 1024; w <= 1920; w += 32) widths.push(w);
+    widths.push(1440);
+    const prev = h.style.width;
+    const bad = [];
+    try {
+      // "Fresh" reference: jump to the width from a narrow bar (the boot level is low).
+      const fresh = {};
+      for (const w of widths) { await settle(700); fresh[w] = await settle(w); }
+      for (const w of widths) { await settle(2400); const got = await settle(w); if (got !== fresh[w]) bad.push(`${w}px from wide: ${got} vs fresh ${fresh[w]}`); }
+      const down = [...widths].sort((a, b) => b - a);
+      for (const w of down) { const got = await settle(w); if (got !== fresh[w]) bad.push(`${w}px sweep down: ${got} vs fresh ${fresh[w]}`); }
+      for (const w of [...down].reverse()) { const got = await settle(w); if (got !== fresh[w]) bad.push(`${w}px sweep up: ${got} vs fresh ${fresh[w]}`); }
+      // The reported case: a narrow bar that grows must get its labels back.
+      await settle(1000);
+      const grown = await settle(1440);
+      if (grown !== fresh[1440]) bad.push(`1000->1440: ${grown} vs fresh ${fresh[1440]}`);
+      // No flapping: the level stays put over many frames at a fixed width.
+      for (const w of [1024, 1440, 1920]) {
+        const first = await settle(w);
+        for (let f = 0; f < 6; f++) { await frames(); if (h.dataset.hdrLevel !== first) { bad.push(`${w}px flaps ${first}->${h.dataset.hdrLevel}`); break; } }
+      }
+      if (fresh[1920] !== "4") bad.push(`1920px level ${fresh[1920]}, want 4`);
+    } finally {
+      h.style.width = prev;
+      await frames();
+    }
+    if (bad.length) throw new Error(`${bad.length} mismatches — ${bad.slice(0, 4).join(" | ")}`);
+  }},
+], { setup: _selectFirstModule });
+
+// meridian-F7 (CR01): the "file already holds this" signature moves only after
+// a confirmed write. A failed or rejected save must be retried by the next
+// identical flush, or the edit is lost.
+uiSuite("meridian-CR01 local save retries after a failed write", [
+  { name: "Failed save is retried; a confirmed save is not repeated", fn: async () => {
+    const hooks = _hooks();
+    if (!hooks.capturePostDemoFlushForTest || !hooks.flushDemoSaveForTest || !hooks.setGuidelinesForTest) throw new Error("save test hooks missing");
+    const originalStorage = window.storage;
+    const originalLocalSend = window.__velaSendDeckUpdate;
+    const writes = [];
+    let outcome = "fail";
+    window.storage = { ...(originalStorage || {}), set: async () => {}, delete: async () => {} };
+    window.__velaSendDeckUpdate = (payload) => {
+      writes.push(payload);
+      if (outcome === "reject") return Promise.reject(new Error("save failed (test)"));
+      return Promise.resolve(outcome === "ok");
+    };
+    const flush = () => hooks.flushDemoSaveForTest(hooks.capturePostDemoFlushForTest(), { local: true, storage: false });
+    try {
+      hooks.setGuidelinesForTest("meridian-F7 unsaved edit");
+      await _wait(50);
+      flush();
+      await _waitFor(() => writes.length === 1, 2000);
+      await _wait(30);
+      flush(); // same payload, previous write failed: must write again
+      await _waitFor(() => writes.length === 2, 2000).catch(() => { throw new Error("identical flush after a failed save was skipped"); });
+      outcome = "reject";
+      await _wait(30);
+      flush();
+      await _waitFor(() => writes.length === 3, 2000).catch(() => { throw new Error("identical flush after a failed save was skipped (2)"); });
+      await _wait(30);
+      flush(); // previous write rejected: must write again
+      await _waitFor(() => writes.length === 4, 2000).catch(() => { throw new Error("identical flush after a rejected save was skipped"); });
+      outcome = "ok";
+      await _wait(30);
+      flush();
+      await _waitFor(() => writes.length === 5, 2000).catch(() => { throw new Error("retry after failures was skipped"); });
+      await _wait(30);
+      flush(); // confirmed on disk now: nothing to write
+      await _wait(200);
+      if (writes.length !== 5) throw new Error(`confirmed payload written again (${writes.length} writes)`);
+      if (writes.some((p) => p.guidelines !== "meridian-F7 unsaved edit")) throw new Error("wrong payload sent");
+    } finally {
+      window.storage = originalStorage;
+      window.__velaSendDeckUpdate = originalLocalSend;
+      hooks.restoreStartupDeck?.();
+      await _wait(100);
+    }
+  }},
+]);
+
+// meridian-F8 (CR01): with a slow backend, the file must end equal to the
+// latest deck state after all writes settle — also when the latest state is
+// the one the file held before the in-flight write (edit, then undo).
+const _meridianF8SlowSave = async (steps, want) => {
+  const hooks = _hooks();
+  if (!hooks.capturePostDemoFlushForTest || !hooks.flushDemoSaveForTest || !hooks.setGuidelinesForTest) throw new Error("save test hooks missing");
+  const originalStorage = window.storage;
+  const originalLocalSend = window.__velaSendDeckUpdate;
+  const calls = [];
+  let pending = 0;
+  let disk = null;
+  let latency = 0;
+  window.storage = { ...(originalStorage || {}), set: async () => {}, delete: async () => {} };
+  // Stub backend: each write lands on "disk" in call order after `latency` ms.
+  window.__velaSendDeckUpdate = (payload) => {
+    calls.push(payload.guidelines);
+    pending++;
+    return new Promise((r) => setTimeout(() => { disk = payload.guidelines; pending--; r(true); }, latency));
+  };
+  const flush = () => hooks.flushDemoSaveForTest(hooks.capturePostDemoFlushForTest(), { local: true, storage: false });
+  const edit = async (g) => {
+    hooks.setGuidelinesForTest(g);
+    await _wait(50);
+    flush();
+    await _wait(30);
+  };
+  try {
+    // Baseline: a confirmed write puts "base" on disk.
+    await edit("meridian-F8 base");
+    await _waitFor(() => pending === 0 && disk === "meridian-F8 base", 2000);
+    latency = 400;
+    for (const g of steps) await edit(g); // later steps run while the first write is in flight
+    await _waitFor(() => pending === 0, 3000);
+    await _wait(100);
+    if (disk !== want) throw new Error(`disk "${disk}", want "${want}"; calls ${JSON.stringify(calls)}`);
+    // Settled and equal: one more flush of the same state writes nothing.
+    const n = calls.length;
+    flush();
+    await _wait(200);
+    if (calls.length !== n) throw new Error(`settled state written again; calls ${JSON.stringify(calls)}`);
+  } finally {
+    window.storage = originalStorage;
+    window.__velaSendDeckUpdate = originalLocalSend;
+    hooks.restoreStartupDeck?.();
+    await _wait(100);
+  }
+};
+uiSuite("meridian-CR01 local save ends at the latest state with a slow backend", [
+  { name: "Edit, then undo during the in-flight write: file ends at the original", fn: () => _meridianF8SlowSave(["meridian-F8 edit", "meridian-F8 base"], "meridian-F8 base") },
+  { name: "Edit, then edit again during the in-flight write: file ends at the last edit", fn: () => _meridianF8SlowSave(["meridian-F8 edit", "meridian-F8 edit 2"], "meridian-F8 edit 2") },
+]);
+
+// tideline-CR26: every rendered block text is inline-editable in the editor.
+// Find the click-to-edit display node for an exact text inside the slide.
+const _tlEditNode = (text) => _$$("div", _mrdViewport() || document).find((el) =>
+  el.style.cursor === "pointer" && el.textContent.trim() === text && !_$$("div", el).some((c) => c.style.cursor === "pointer"));
+// Click the text, type the new value, commit with Enter, wait for the new text.
+const _tlEdit = async (from, to, shown = to) => {
+  const node = await _waitFor(() => _tlEditNode(from), 2000).catch(() => { throw new Error(`"${from}" is not inline-editable`); });
+  _click(node);
+  const ed = await _waitFor(() => _$("[contenteditable='true']", _mrdViewport()), 1500);
+  ed.textContent = to;
+  ed.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+  await _waitFor(() => !_$("[contenteditable='true']") && _tlEditNode(shown), 2000).catch(() => { throw new Error(`"${from}" -> "${to}" did not commit`); });
+};
+uiSuite("tideline-CR26 edit every block text", [
+  { name: "CR26: checklist item text and status label edit inline, with undo and redo", fn: async () => {
+    const hooks = _hooks();
+    await _mrdInject([{ type: "checklist", items: [{ text: "Task one", status: "pending" }, { text: "Task two", status: "done" }] }], null,
+      (vp) => vp?.textContent.includes("Task one") ? vp : null);
+    const past0 = hooks.getHistoryCounts ? hooks.getHistoryCounts().past : 0;
+    try {
+      await _tlEdit("Task one", "Task edited");
+      await _tlEdit("PENDING", "blocked", "BLOCKED");
+      const blockedCol = _tlEditNode("BLOCKED")?.style.color;
+      if (!/239, 68, 68|#ef4444/i.test(blockedCol || "")) throw new Error(`typed status did not switch the status (color ${blockedCol})`);
+      await _tlEdit("DONE", "Shipped");
+      _key("z", { ctrlKey: true });
+      await _waitFor(() => _tlEditNode("DONE"), 2000).catch(() => { throw new Error("undo did not restore the label"); });
+      _key("y", { ctrlKey: true });
+      await _waitFor(() => _tlEditNode("Shipped"), 2000).catch(() => { throw new Error("redo did not restore the custom label"); });
+      await _tlEdit("Shipped", "", "DONE");
+    } finally {
+      await _mrdUndoTo(past0);
+    }
+  }},
+  { name: "CR26: comparison, matrix, number-row, progress and flow texts edit inline", fn: async () => {
+    const cases = [
+      [[{ type: "comparison", dividerLabel: "OR", items: [{ title: "Left col", items: ["Left point"] }, { title: "Right col", items: [{ text: "Right point" }] }] }],
+        [["Left col", "Left new"], ["Right col", "Right new"], ["Left point", "LP new"], ["Right point", "RP new"], ["OR", "VERSUS"]]],
+      [[{ type: "matrix", xLeft: "Low X", xRight: "High X", yTop: "High Y", yBottom: "Low Y", quadrants: [{ title: "Q one", items: ["Q point"] }, { title: "Q two" }, { title: "Q three" }, { title: "Q four" }] }],
+        [["Q one", "Q1 new"], ["Q point", "QP new"], ["Low X", "LX new"], ["High Y", "HY new"]]],
+      [[{ type: "number-row", items: [{ value: "42", label: "Answers" }, { value: "7", label: "Days" }] }],
+        [["42", "43"], ["Answers", "Replies"]]],
+      [[{ type: "progress", leftLabel: "Start", rightLabel: "End", annotation: "Note here", items: [{ label: "Bar", value: 40 }] }],
+        [["Start", "Begin"], ["End", "Finish"], ["Note here", "Note new"]]],
+      [[{ type: "flow", gateLabel: "Gate", items: [{ label: "A", gate: true }, { label: "B" }] }],
+        [["Gate", "Check"]]],
+    ];
+    for (const [blocks, edits] of cases) {
+      await _mrdInject(blocks, null, (vp) => vp?.textContent.includes(edits[0][0]) ? vp : null);
+      // Undo one step per edit (history counts stop growing at MAX_HISTORY).
+      let done = 0;
+      try {
+        for (const [from, to] of edits) { await _tlEdit(from, to); done++; }
+      } catch (e) { throw new Error(`${blocks[0].type}: ${e.message}`); }
+      finally { document.activeElement?.blur?.(); for (let k = 0; k < done; k++) { _key("z", { ctrlKey: true }); await _wait(60); } }
+      await _waitFor(() => _tlEditNode(edits[0][0]), 2000).catch(() => { throw new Error(`${blocks[0].type}: undo did not restore the text`); });
+    }
+  }},
+  { name: "CR26: a cleared text keeps a clickable target and can be typed again", fn: async () => {
+    const cases = [
+      [{ type: "checklist", items: [{ text: "Task one", status: "pending" }] }, "Task one"],
+      [{ type: "comparison", items: [{ title: "L", items: ["Left point"] }, { title: "R", items: ["Right point"] }] }, "Left point"],
+      [{ type: "matrix", quadrants: [{ title: "Q1", items: ["Q point"] }, { title: "Q2" }, { title: "Q3" }, { title: "Q4" }] }, "Q point"],
+      [{ type: "number-row", items: [{ value: "42", label: "Answers" }] }, "42"],
+      [{ type: "bullets", items: ["Bullet one", "Bullet two"] }, "Bullet one"],
+    ];
+    for (const [block, from] of cases) {
+      await _mrdInject([block], null, (vp) => vp?.textContent.includes(from) ? vp : null);
+      let done = 0;
+      try {
+        await _tlEdit(from, "", EDIT_PLACEHOLDER); done++;
+        const node = _tlEditNode(EDIT_PLACEHOLDER);
+        const r = node.getBoundingClientRect();
+        if (!(r.width > 4 && r.height > 4)) throw new Error(`empty target is ${r.width}x${r.height}`);
+        // With the pointer on it, the item's hover toolbar must not cover the placeholder.
+        const ph = _$("[data-vela-placeholder]", node);
+        ph.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
+        await _wait(80);
+        const pr = ph.getBoundingClientRect();
+        const hit = document.elementFromPoint(pr.left + pr.width / 2, pr.top + pr.height / 2);
+        if (!node.contains(hit)) throw new Error(`placeholder is covered by ${hit?.tagName} "${(hit?.textContent || "").slice(0, 20)}"`);
+        await _tlEdit(EDIT_PLACEHOLDER, "Typed again"); done++;
+      } catch (e) { throw new Error(`${block.type}: ${e.message}`); }
+      finally { document.activeElement?.blur?.(); for (let k = 0; k < done; k++) { _key("z", { ctrlKey: true }); await _wait(60); } }
+      await _waitFor(() => _tlEditNode(from), 2000).catch(() => { throw new Error(`${block.type}: undo did not restore the text`); });
+    }
+  }},
+  { name: "CR26: SVG labels (cycle, funnel, flow loop) edit inline, with undo and redo, and do not zoom", fn: async () => {
+    const svgText = (t) => _$$("text[data-svg-edit]", _mrdViewport() || document).find((el) => el.textContent.trim() === t);
+    const zoomed = () => document.body.textContent.includes("ESC or click to close");
+    const svgEdit = async (from, to, key = "Enter") => {
+      const node = await _waitFor(() => svgText(from), 2000).catch(() => { throw new Error(`"${from}" is not an editable SVG label`); });
+      _clickMod(node);
+      const inp = await _waitFor(() => _$("[data-testid='svg-text-edit']", _mrdViewport()), 1500).catch(() => { throw new Error(`"${from}": no edit input`); });
+      if (zoomed()) throw new Error(`"${from}": click opened the zoom overlay`);
+      if (document.activeElement !== inp) throw new Error(`"${from}": input has no focus`);
+      inp.value = to;
+      inp.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }));
+      const shown = key === "Escape" ? from : to;
+      await _waitFor(() => !_$("[data-testid='svg-text-edit']") && svgText(shown), 2000).catch(() => { throw new Error(`"${from}" -> "${to}" (${key}) did not show "${shown}"`); });
+    };
+    const cases = [
+      [{ type: "cycle", centerLabel: "Center L", centerSub: "Center S", items: [{ label: "CyA" }, { label: "CyB" }, { label: "CyC" }] }, [["CyA", "CyA2"], ["Center L", "CL2"], ["Center S", "CS2"]]],
+      [{ type: "funnel", items: [{ label: "FunA", value: "100", drop: "-40%" }, { label: "FunB", value: "60" }] }, [["FunA", "FunA2"], ["100", "101"], ["-40%", "-41%"]]],
+      [{ type: "flow", loop: true, loopLabel: "LoopH", items: [{ label: "A" }, { label: "B" }] }, [["LoopH", "LoopH2"]]],
+      [{ type: "flow", loop: true, direction: "vertical", loopLabel: "LoopV", items: [{ label: "A" }, { label: "B" }] }, [["LoopV", "LoopV2"]]],
+    ];
+    for (const [block, edits] of cases) {
+      await _mrdInject([block], null, (vp) => vp && svgText(edits[0][0]) ? vp : null);
+      let done = 0;
+      try {
+        await svgEdit(edits[0][0], "Cancelled", "Escape");
+        for (const [from, to] of edits) {
+          await svgEdit(from, to); done++;
+          _key("z", { ctrlKey: true });
+          await _waitFor(() => svgText(from), 2000).catch(() => { throw new Error(`undo did not restore "${from}"`); });
+          _key("y", { ctrlKey: true });
+          await _waitFor(() => svgText(to), 2000).catch(() => { throw new Error(`redo did not restore "${to}"`); });
+        }
+      } catch (e) { throw new Error(`${block.type}: ${e.message}`); }
+      finally { document.activeElement?.blur?.(); for (let k = 0; k < done; k++) { _key("z", { ctrlKey: true }); await _wait(60); } }
+      await _waitFor(() => svgText(edits[0][0]), 2000).catch(() => { throw new Error(`${block.type}: undo did not restore the text`); });
+    }
+  }},
+  { name: "CR26: a cleared optional SVG label shows a placeholder and can be typed again", fn: async () => {
+    const texts = () => _$$("text[data-svg-edit]", _mrdViewport() || document);
+    const svgText = (t) => texts().find((el) => el.textContent.trim() === t);
+    const open = async (node, what) => {
+      _clickMod(node);
+      return _waitFor(() => _$("[data-testid='svg-text-edit']", _mrdViewport()), 1500).catch(() => { throw new Error(`${what}: no edit input`); });
+    };
+    const commit = (inp, v) => { inp.value = v; inp.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true })); };
+    const cases = [
+      [{ type: "cycle", centerLabel: "CtrL", centerSub: "CtrS", items: [{ label: "CyA" }, { label: "CyB" }] }, ["CtrL", "CtrS"]],
+      [{ type: "funnel", items: [{ label: "FunA", value: "100", drop: "-40%" }] }, ["100", "-40%"]],
+      [{ type: "flow", loop: true, loopLabel: "LoopH", items: [{ label: "A" }, { label: "B" }] }, ["LoopH"]],
+      [{ type: "flow", loop: true, direction: "vertical", loopLabel: "LoopV", items: [{ label: "A" }, { label: "B" }] }, ["LoopV"]],
+    ];
+    for (const [block, labels] of cases) {
+      await _mrdInject([block], null, (vp) => vp && svgText(labels[0]) ? vp : null);
+      for (const from of labels) {
+        let done = 0;
+        try {
+          const before = new Set(texts().filter((el) => el.textContent.trim() === EDIT_PLACEHOLDER));
+          commit(await open(svgText(from), from), ""); done++;
+          const ph = await _waitFor(() => !_$("[data-testid='svg-text-edit']") && texts().find((el) => el.textContent.trim() === EDIT_PLACEHOLDER && !before.has(el)), 2000)
+            .catch(() => { throw new Error(`"${from}": cleared label shows no placeholder`); });
+          if (!_$("[data-vela-placeholder]", ph)) throw new Error(`"${from}": placeholder is not marked`);
+          const r = ph.getBoundingClientRect();
+          if (!(r.width > 4 && r.height > 4)) throw new Error(`"${from}": placeholder target is ${r.width}x${r.height}`);
+          commit(await open(ph, `"${from}" placeholder`), "Back " + from); done++;
+          await _waitFor(() => !_$("[data-testid='svg-text-edit']") && svgText("Back " + from), 2000).catch(() => { throw new Error(`"${from}": re-typed text not shown`); });
+        } catch (e) { throw new Error(`${block.type}: ${e.message}`); }
+        finally { document.activeElement?.blur?.(); for (let k = 0; k < done; k++) { _key("z", { ctrlKey: true }); await _wait(60); } }
+        await _waitFor(() => svgText(from), 2000).catch(() => { throw new Error(`${block.type}: undo did not restore "${from}"`); });
+      }
+    }
+  }},
+  { name: "CR26: empty optional SVG labels show no placeholder in Present mode", fn: async () => {
+    await _mrdInject([{ type: "cycle", items: [{ label: "PcA" }, { label: "PcB" }] }, { type: "funnel", items: [{ label: "PfA" }] }], null,
+      (vp) => vp && _$$("text[data-svg-edit]", vp).some((el) => el.textContent.trim() === "PcA") ? vp : null);
+    const n = _$$("[data-vela-placeholder]", _mrdViewport()).length;
+    if (n < 4) throw new Error(`editor shows ${n} placeholders, want >= 4 (center label, sub, value, drop)`);
+    document.activeElement?.blur(); await _wait(100);
+    _key("f");
+    try {
+      await _waitFor(() => !_$("header") && document.body.textContent.includes("PcA"), 2000);
+      await _wait(150);
+      const ph = _$$("[data-vela-placeholder]").length, ed = _$$("[data-svg-edit]").length;
+      if (ph || ed) throw new Error(`Present mode shows ${ph} placeholders and ${ed} editable SVG labels`);
+    } finally {
+      _key("f");
+      await _waitFor(() => _$("header"), 2000);
+    }
+  }},
+  { name: "CR26: opening an SVG label input does not move or cover the other labels", fn: async () => {
+    await _mrdInject([{ type: "funnel", items: [{ label: "LsA", value: "10K", drop: "-40%" }, { label: "LsB", value: "4K" }, { label: "LsC", value: "1K" }] }], null,
+      (vp) => vp && _$$("text[data-svg-edit]", vp).some((el) => el.textContent.trim() === "LsA") ? vp : null);
+    await _wait(1000); // let the entrance (stagger) animation settle before measuring
+    const texts = () => _$$("text[data-svg-edit]", _mrdViewport());
+    const others = () => texts().filter((el) => el.textContent.trim() !== "LsA");
+    const r0 = others().map((el) => el.getBoundingClientRect());
+    _clickMod(texts().find((el) => el.textContent.trim() === "LsA"));
+    const inp = await _waitFor(() => _$("[data-testid='svg-text-edit']", _mrdViewport()), 1500);
+    try {
+      await _mrdFrame();
+      const r1 = others().map((el) => el.getBoundingClientRect());
+      r0.forEach((a, i) => {
+        const b = r1[i];
+        if (Math.abs(a.left - b.left) > 1 || Math.abs(a.top - b.top) > 1) throw new Error(`label ${i} moved ${b.left - a.left},${b.top - a.top}px`);
+      });
+      const ir = inp.getBoundingClientRect();
+      const cover = r1.find((b) => ir.left < b.right - 1 && ir.right > b.left + 1 && ir.top < b.bottom - 1 && ir.bottom > b.top + 1);
+      if (cover) throw new Error("input covers an adjacent label");
+    } finally {
+      inp.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+      await _waitFor(() => !_$("[data-testid='svg-text-edit']"), 1500);
+    }
+  }},
+  { name: "CR26: typed status names ignore case, underscore and hyphen", fn: async () => {
+    const hooks = _hooks();
+    await _mrdInject([{ type: "checklist", items: [{ text: "St one", status: "pending" }, { text: "St two", status: "done" }] }], null,
+      (vp) => vp?.textContent.includes("St one") ? vp : null);
+    const past0 = hooks.getHistoryCounts ? hooks.getHistoryCounts().past : 0;
+    try {
+      await _tlEdit("PENDING", "in_progress", "IN PROGRESS");
+      await _tlEdit("DONE", "In-Progress", "IN PROGRESS");
+      // A save that normalizes to the current state shows the default label at once.
+      await _tlEdit("IN PROGRESS", "in_progress", "IN PROGRESS");
+      await _tlEdit("IN PROGRESS", "", "IN PROGRESS");
+      const cols = _$$("div", _mrdViewport()).filter((el) => el.style.cursor === "pointer" && el.textContent.trim() === "IN PROGRESS").map((el) => el.style.color);
+      if (cols.length !== 2 || !cols.every((c) => /245, 158, 11|#f59e0b/i.test(c))) throw new Error(`status not switched to in-progress (${cols})`);
+    } finally {
+      await _mrdUndoTo(past0);
+    }
+  }},
+  { name: "CR26: empty-text placeholder is invisible until its block is hovered, and keeps its size", fn: async () => {
+    await _mrdInject([{ type: "funnel", items: [{ label: "PhA", value: "10K" }, { label: "PhB", value: "4K" }] }], null,
+      (vp) => vp && _$$("text[data-svg-edit]", vp).some((el) => el.textContent.trim() === "PhA") ? vp : null);
+    await _wait(1000);
+    document.activeElement?.blur(); await _wait(100);
+    const vp = _mrdViewport();
+    const ph = _$("[data-vela-placeholder]", vp);
+    if (!ph) throw new Error("no placeholder found");
+    const host = ph.closest("[data-block-type]");
+    const op = () => parseFloat(getComputedStyle(ph).opacity);
+    await _mrdUnhover(host);
+    const r0 = ph.getBoundingClientRect();
+    if (op() !== 0) throw new Error(`placeholder opacity ${op()} without hover, want 0`);
+    await _mrdHover(host);
+    if (!(op() > 0.2)) throw new Error(`placeholder opacity ${op()} on hover, want visible`);
+    const r1 = ph.getBoundingClientRect();
+    if (Math.abs(r0.width - r1.width) > 0.5 || Math.abs(r0.height - r1.height) > 0.5 || Math.abs(r0.left - r1.left) > 0.5) throw new Error("placeholder box changed on hover");
+    if (!(r0.width > 4 && r0.height > 4)) throw new Error(`hidden placeholder target is ${r0.width}x${r0.height}`);
+    await _mrdUnhover(host);
+    if (op() !== 0) throw new Error("placeholder stays visible after hover ends");
+  }},
+  { name: "CR26: markup typed into an SVG label is stored like the same input in an HTML text", fn: async () => {
+    const typed = "<b>hi</b> sub";
+    // HTML path: the value EditableText stores for this input, as shown.
+    await _mrdInject([{ type: "checklist", items: [{ text: "Task one", status: "pending" }] }], null,
+      (vp) => vp?.textContent.includes("Task one") ? vp : null);
+    let done = 0, want;
+    try {
+      _click(await _waitFor(() => _tlEditNode("Task one"), 2000));
+      const ed = await _waitFor(() => _$("[contenteditable='true']", _mrdViewport()), 1500);
+      ed.textContent = typed;
+      ed.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+      await _waitFor(() => !_$("[contenteditable='true']"), 2000); done++;
+      want = _$$("div", _mrdViewport()).filter((el) => el.style.cursor === "pointer" && el.textContent.trim() !== "PENDING" && !_$$("div", el).some((c) => c.style.cursor === "pointer"))[0]?.textContent.trim();
+    } finally { document.activeElement?.blur?.(); for (let k = 0; k < done; k++) { _key("z", { ctrlKey: true }); await _wait(60); } }
+    if (!want || /[<>]/.test(want)) throw new Error(`HTML text kept markup: "${want}"`);
+    // SVG path: funnel value, cycle centre label, flow loop label.
+    const svgText = (t) => _$$("text[data-svg-edit]", _mrdViewport() || document).find((el) => el.textContent.trim() === t);
+    const cases = [
+      [{ type: "funnel", items: [{ label: "FunA", value: "100" }] }, "100"],
+      [{ type: "cycle", centerLabel: "CtrL", items: [{ label: "CyA" }, { label: "CyB" }] }, "CtrL"],
+      [{ type: "flow", loop: true, loopLabel: "LoopH", items: [{ label: "A" }, { label: "B" }] }, "LoopH"],
+    ];
+    for (const [block, from] of cases) {
+      await _mrdInject([block], null, (vp) => vp && svgText(from) ? vp : null);
+      let n = 0;
+      try {
+        _clickMod(svgText(from));
+        const inp = await _waitFor(() => _$("[data-testid='svg-text-edit']", _mrdViewport()), 1500);
+        inp.value = typed;
+        inp.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+        await _waitFor(() => !_$("[data-testid='svg-text-edit']") && svgText(want), 2000).catch(() => {
+          throw new Error(`typed markup shows "${_$$("text[data-svg-edit]", _mrdViewport()).map((el) => el.textContent).join("|")}", want "${want}"`);
+        }); n++;
+      } catch (e) { throw new Error(`${block.type}: ${e.message}`); }
+      finally { document.activeElement?.blur?.(); for (let k = 0; k < n; k++) { _key("z", { ctrlKey: true }); await _wait(60); } }
+    }
+  }},
+  { name: "CR26: an empty flow loop label placeholder sits where the filled label sits", fn: async () => {
+    const texts = () => _$$("text[data-svg-edit]", _mrdViewport() || document);
+    const svgText = (t) => texts().find((el) => el.textContent.trim() === t);
+    const cx = (el) => { const r = el.getBoundingClientRect(); return (r.left + r.right) / 2; };
+    const cy = (el) => { const r = el.getBoundingClientRect(); return (r.top + r.bottom) / 2; };
+    for (const [dir, lab] of [["horizontal", "LoopP"], ["vertical", "LoopQ"]]) {
+      await _mrdInject([{ type: "flow", loop: true, direction: dir, loopLabel: lab, items: [{ label: "A" }, { label: "B" }, { label: "C" }] }], null,
+        (vp) => vp && svgText(lab) ? vp : null);
+      await _wait(900); // let the entrance animation settle before measuring
+      let done = 0;
+      try {
+        const f = svgText(lab), fx = cx(f), fy = cy(f);
+        _clickMod(f);
+        const inp = await _waitFor(() => _$("[data-testid='svg-text-edit']", _mrdViewport()), 1500);
+        inp.value = "";
+        inp.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true })); done++;
+        const ph = await _waitFor(() => !_$("[data-testid='svg-text-edit']") && texts().find((el) => el.textContent.trim() === EDIT_PLACEHOLDER), 2000);
+        await _wait(200);
+        const px = cx(ph), py = cy(ph);
+        if (Math.abs(px - fx) > 4 || Math.abs(py - fy) > 4) throw new Error(`placeholder at ${px.toFixed(1)},${py.toFixed(1)}, label at ${fx.toFixed(1)},${fy.toFixed(1)}`);
+      } catch (e) { throw new Error(`${dir}: ${e.message}`); }
+      finally { document.activeElement?.blur?.(); for (let k = 0; k < done; k++) { _key("z", { ctrlKey: true }); await _wait(60); } }
+    }
+  }},
+], { setup: _selectFirstModule });
+
+// CR21: while a slide or section is dragged in the TOC, the pointer near the top /
+// bottom edge of the scroll pane scrolls it, so a drop can reach the first / last
+// section. The pane is made short here so it overflows with any deck.
+async function _tidelineTocDrag(fn) {
+  const tree = await _waitFor(() => document.querySelector('[data-testid="toc-tree"]'), 3000);
+  const pane = tree.parentElement; const old = pane.style.maxHeight;
+  pane.style.maxHeight = Math.max(90, Math.min(220, Math.floor(tree.offsetHeight / 2))) + "px";
+  try {
+    await _wait(60);
+    const sc = tocScrollParent(tree);
+    if (sc !== pane) throw new Error("TOC pane does not overflow");
+    return await fn(sc, tree);
+  } finally { pane.style.maxHeight = old; }
+}
+function _tidelineFire(dt) { return (el, type, extra) => el.dispatchEvent(new DragEvent(type, Object.assign({ bubbles: true, cancelable: true, dataTransfer: dt }, extra))); }
+// Fire dragover at (x, y) every 40ms until cond() or timeout; return cond().
+async function _tidelineHold(el, fire, x, y, cond, ms) {
+  const t0 = performance.now();
+  while (performance.now() - t0 < ms) { fire(el, "dragover", { clientX: x, clientY: y }); await _wait(40); if (cond()) return true; }
+  return cond();
+}
+const _tidelineRows = () => _$$('[data-testid="toc-slide-row"]');
+// The title span has flex:1 (the number / time spans before it change on a move).
+const _tidelineTitle = (r) => { const t = _$$("span", r).find((x) => x.style.flex && x.style.flex.startsWith("1")); return ((t || r).textContent || "").trim(); };
+
+uiSuite("tideline-CR21 TOC drag auto-scroll", [
+  { name: "Speed is 0 in the middle, grows toward each edge, and is 0 far outside", fn: async () => {
+    const v = (y) => tocAutoScrollSpeed(y, 100, 500);
+    if (v(300) !== 0) throw new Error("middle scrolls: " + v(300));
+    if (!(v(150) < 0 && v(110) < v(150) && v(101) <= v(110))) throw new Error("top zone speed: " + [v(150), v(110), v(101)]);
+    if (!(v(450) > 0 && v(490) > v(450) && v(499) >= v(490))) throw new Error("bottom zone speed: " + [v(450), v(490), v(499)]);
+    if (v(90) !== -TOC_AUTOSCROLL_MAX || v(510) !== TOC_AUTOSCROLL_MAX) throw new Error("just outside is not full speed");
+    if (v(0) !== 0 || v(700) !== 0 || tocAutoScrollSpeed(NaN, 0, 10) !== 0 || tocAutoScrollSpeed(5, 10, 10) !== 0) throw new Error("far outside / bad input scrolls");
+  }},
+  { name: "Drag near the top scrolls up to the start; drop lands in the first section", fn: () => _tidelineTocDrag(async (sc) => {
+    sc.scrollTop = sc.scrollHeight; await _wait(60);
+    const before = _tidelineRows().map(_tidelineTitle);
+    if (before.length < 3) throw new Error("need >=3 slide rows");
+    const src = _tidelineRows()[before.length - 1];
+    const r = sc.getBoundingClientRect(); const x = r.left + r.width / 2;
+    const fire = _tidelineFire(new DataTransfer());
+    fire(src, "dragstart");
+    try {
+      if (!(await _tidelineHold(sc, fire, x, r.top + 3, () => sc.scrollTop === 0, 6000))) throw new Error("did not reach the top: " + sc.scrollTop);
+      const dst = _tidelineRows()[0]; const b = dst.getBoundingClientRect();
+      if (b.bottom < r.top || b.top > r.bottom) throw new Error("first row not visible after scroll");
+      fire(dst, "dragover", { clientX: b.left + 5, clientY: b.top + 2 });
+      fire(dst, "drop", { clientX: b.left + 5, clientY: b.top + 2 });
+    } finally { fire(src, "dragend"); }
+    await _waitFor(() => _tidelineTitle(_tidelineRows()[0]) === before[before.length - 1], 2000).catch(() => { throw new Error("drop did not land first: " + _tidelineRows().slice(0, 2).map(_tidelineTitle) + " | want " + before[before.length - 1]); });
+    // Restore: drag it back below the row that is now last.
+    const f2 = _tidelineFire(new DataTransfer()); const s2 = _tidelineRows()[0]; const rows = _tidelineRows(); const d2 = rows[rows.length - 1];
+    d2.scrollIntoView({ block: "nearest" }); await _wait(40);
+    const b2 = d2.getBoundingClientRect();
+    f2(s2, "dragstart"); f2(d2, "dragover", { clientX: b2.left + 5, clientY: b2.bottom - 2 }); f2(d2, "drop", { clientX: b2.left + 5, clientY: b2.bottom - 2 }); f2(s2, "dragend");
+    await _waitFor(() => JSON.stringify(_tidelineRows().map(_tidelineTitle)) === JSON.stringify(before), 2000).catch(() => { throw new Error("restore failed: " + _tidelineRows().map(_tidelineTitle).slice(-3)); });
+  })},
+  { name: "Drag near the bottom scrolls down to the end and stops there", fn: () => _tidelineTocDrag(async (sc) => {
+    sc.scrollTop = 0; await _wait(60);
+    const src = _tidelineRows()[0]; const r = sc.getBoundingClientRect(); const x = r.left + r.width / 2;
+    const end = () => sc.scrollTop >= sc.scrollHeight - sc.clientHeight - 1;
+    const fire = _tidelineFire(new DataTransfer());
+    fire(src, "dragstart");
+    try {
+      if (!(await _tidelineHold(sc, fire, x, r.bottom - 3, end, 6000))) throw new Error("did not reach the end: " + sc.scrollTop);
+      const at = sc.scrollTop; await _wait(120);
+      if (sc.scrollTop !== at) throw new Error("scrolled past the end");
+    } finally { fire(src, "dragend"); }
+  })},
+  { name: "Scroll stops on dragend (Escape), on drop, in the middle and without a drag", fn: () => _tidelineTocDrag(async (sc) => {
+    const r = sc.getBoundingClientRect(); const x = r.left + r.width / 2;
+    const mid = Math.floor((sc.scrollHeight - sc.clientHeight) / 2);
+    const still = async () => { const a = sc.scrollTop; await _wait(150); return sc.scrollTop === a; };
+    // No drag active: an edge dragover does nothing.
+    sc.scrollTop = mid; await _wait(40);
+    const fire0 = _tidelineFire(new DataTransfer());
+    fire0(sc, "dragover", { clientX: x, clientY: r.bottom - 3 });
+    if (!(await still()) || sc.scrollTop !== mid) throw new Error("scrolled without a drag");
+    const src = _tidelineRows()[0];
+    for (const endType of ["dragend", "drop"]) {
+      sc.scrollTop = mid; await _wait(40);
+      const fire = _tidelineFire(new DataTransfer());
+      fire(src, "dragstart");
+      try {
+        fire(sc, "dragover", { clientX: x, clientY: r.bottom - 3 });
+        await _wait(80);
+        if (sc.scrollTop === mid) throw new Error("edge did not scroll");
+        fire(endType === "drop" ? document.body : src, endType);
+        if (!(await still())) throw new Error("still scrolls after " + endType);
+        // Pointer back in the middle: no scroll.
+        if (endType === "dragend") {
+          fire(src, "dragstart"); sc.scrollTop = mid; await _wait(40);
+          fire(sc, "dragover", { clientX: x, clientY: r.top + r.height / 2 });
+          if (!(await still()) || sc.scrollTop !== mid) throw new Error("middle scrolls");
+        }
+      } finally { fire(src, "dragend"); }
+    }
+  })},
+]);
+
+// ── Sprint tideline (CR22-CR25): image paste placement stress test ──────
+// Pastes 1-4 images of mixed aspect (wide 3:1, 16:9, square, tall 9:16) through
+// the real paste handler onto (a) an empty slide, (b) a heading slide and (c) a
+// heading + text + credit slide, then measures the rendered boxes.
+const _tlAspects = { wide: [900, 300, "#3b82f6"], hd: [1280, 720, "#10b981"], sq: [600, 600, "#f59e0b"], tall: [450, 800, "#ef4444"] };
+const _tlBases = {
+  a: [],
+  b: [{ type: "heading", text: "TL heading only" }],
+  c: [{ type: "heading", text: "TL heading text credit" }, { type: "text", text: "Short body text that explains the pictures." }, { type: "text", text: "Credit: Example Author, 16 Jun 2025", size: "sm" }],
+};
+const _tlPaste = async (kind) => {
+  const [w, h, color] = _tlAspects[kind];
+  const cv = document.createElement("canvas"); cv.width = w; cv.height = h;
+  const g = cv.getContext("2d"); g.fillStyle = color; g.fillRect(0, 0, w, h);
+  const blob = await new Promise((r) => cv.toBlob(r, "image/png"));
+  const dt = new DataTransfer(); dt.items.add(new File([blob], `${kind}.png`, { type: "image/png" }));
+  _mrdViewport().dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true }));
+};
+const _tlMeasure = () => {
+  const vp = _mrdViewport(); const v = vp.getBoundingClientRect(); const s = v.width / 960;
+  const outside = Array.from(vp.querySelectorAll("[data-block-type]")).filter((el) => el.dataset.blockType !== "image").map((el) => el.getBoundingClientRect())
+    .filter((r) => r.left < v.left - 1 || r.top < v.top - 1 || r.right > v.right + 1 || r.bottom > v.bottom + 1);
+  const imgs = Array.from(vp.querySelectorAll("img")).map((im) => {
+    const r = im.getBoundingClientRect(); const k = Math.min(r.width / im.naturalWidth, r.height / im.naturalHeight);
+    return { w: im.naturalWidth * k / s, h: im.naturalHeight * k / s, cx: (r.left + r.width / 2 - v.left) / s };
+  });
+  const grid = vp.querySelector("[data-testid='image-grid']");
+  return { outside: outside.length, imgs, area: imgs.reduce((a, i) => a + i.w * i.h, 0) / (960 * 540), cols: grid ? Number(grid.getAttribute("data-image-cols")) : null };
+};
+const _tlCase = async (base, kinds, extra, probe) => {
+  const past = _hooks().getHistoryCounts ? _hooks().getHistoryCounts().past : 0;
+  await _mrdInject(_tlBases[base], { layout: undefined, contentFlex: undefined, imageFlex: undefined, imageCols: undefined, ...(extra || {}) }, (vp) => vp);
+  for (let k = 0; k < kinds.length; k++) {
+    await _tlPaste(kinds[k]);
+    await _waitFor(() => Array.from(_mrdViewport().querySelectorAll("img")).filter((im) => im.complete && im.naturalWidth > 0).length >= k + 1, 4000);
+  }
+  // Let the fit pass, the aspect cache and the grid box settle.
+  await _wait(500); await _mrdFrame();
+  const m = _tlMeasure();
+  const label = `${base}:${kinds.join("+")}`;
+  if (m.outside) throw new Error(`${label}: ${m.outside} non-image block(s) outside the 960x540 canvas`);
+  if (m.imgs.length !== kinds.length) throw new Error(`${label}: ${m.imgs.length}/${kinds.length} images rendered`);
+  if (m.imgs.some((i) => !(i.h > 20 && i.w > 20))) throw new Error(`${label}: an image is collapsed (${m.imgs.map((i) => `${i.w.toFixed(0)}x${i.h.toFixed(0)}`).join(" ")})`);
+  if (probe) m.probe = await probe(m, label);
+  await _mrdUndoTo(past);
+  return m;
+};
+
+uiSuite("tideline-CR22-CR25 image placement", [
+  { name: "CR22: one image on an empty slide that kept a split layout fills the slide, not one half", fn: async () => {
+    for (const layout of ["image-right", "image-left"]) {
+      const m = await _tlCase("a", ["tall"], { layout });
+      const cx = m.imgs[0].cx;
+      if (Math.abs(cx - 480) > 24) throw new Error(`${layout}: image centre x=${cx.toFixed(0)} (expected near 480)`);
+      if (m.imgs[0].h < 500) throw new Error(`${layout}: tall image height ${m.imgs[0].h.toFixed(0)} does not fill the slide`);
+    }
+  }},
+  { name: "CR24: a wide image fills the free width (solo and under a heading)", fn: async () => {
+    for (const base of ["a", "b", "c"]) {
+      const m = await _tlCase(base, ["wide"]);
+      if (m.imgs[0].w < 800) throw new Error(`${base}: wide image is only ${m.imgs[0].w.toFixed(0)}px wide`);
+    }
+  }},
+  { name: "CR22/CR24: single images of every aspect use the free area well", fn: async () => {
+    const minArea = { a: 0.3, b: 0.18, c: 0.15 };
+    for (const base of ["a", "b", "c"]) for (const kind of ["wide", "hd", "sq", "tall"]) {
+      const m = await _tlCase(base, [kind]);
+      if (m.area < minArea[base]) throw new Error(`${base}:${kind}: image covers ${(m.area * 100).toFixed(0)}% of the slide`);
+    }
+  }},
+  { name: "CR23: three images pick their grid by aspect ratio", fn: async () => {
+    for (const base of ["a", "b"]) {
+      const tall = await _tlCase(base, ["tall", "tall", "tall"]);
+      if (tall.cols !== 3) throw new Error(`${base}: 3 tall images use ${tall.cols} columns (expected one row of 3)`);
+      const wide = await _tlCase(base, ["wide", "wide", "wide"]);
+      if (!(wide.cols < 3)) throw new Error(`${base}: 3 wide images still use ${wide.cols} columns`);
+    }
+    const c = await _tlCase("c", ["wide", "wide", "wide"]);
+    if (!(c.cols < 3)) throw new Error(`c: 3 wide images still use ${c.cols} columns`);
+  }},
+  { name: "CR25: 2-4 mixed images never push text off the slide", fn: async () => {
+    for (const base of ["a", "b", "c"]) for (const kinds of [["wide", "tall"], ["hd", "hd"], ["wide", "sq", "tall"], ["wide", "hd", "sq", "tall"]]) {
+      await _tlCase(base, kinds);
+    }
+  }},
+  { name: "CR25: a tall image between a heading and a credit line yields its height", fn: async () => {
+    const marker = "TL CR25 credit";
+    const src = _mrdSvg(338, 600, "ef4444");
+    for (const body of [[], [{ type: "text", text: "A long paragraph of body text. ".repeat(14) }]]) {
+      await _mrdInject([{ type: "heading", text: "TL CR25" }, ...body, { type: "image", src }, { type: "text", text: marker }], { layout: undefined }, (vp) => vp?.textContent.includes(marker) && vp.querySelector("img")?.naturalWidth > 0 ? vp : null);
+      await _wait(400);
+      const m = _tlMeasure();
+      if (m.outside) throw new Error(`${body.length ? "heavy" : "plain"}: ${m.outside} text block(s) outside the canvas`);
+      const credit = Array.from(_mrdViewport().querySelectorAll("[data-block-type='text']")).find((el) => el.textContent.includes(marker));
+      const vr = _mrdViewport().getBoundingClientRect(), cr = credit.getBoundingClientRect();
+      if (cr.bottom > vr.bottom - 4) throw new Error(`credit line is clipped (bottom ${(cr.bottom - vr.bottom).toFixed(1)}px past the slide)`);
+      if (m.imgs[0].h < 100) throw new Error(`image collapsed to ${m.imgs[0].h.toFixed(0)}px`);
+    }
+  }},
+  { name: "CR24/CR25: small icons and logos are never upscaled past 2x natural size", fn: async () => {
+    const png = (w, h, color) => { const cv = document.createElement("canvas"); cv.width = w; cv.height = h; const g = cv.getContext("2d"); g.fillStyle = color; g.fillRect(0, 0, w, h); return cv.toDataURL("image/png"); };
+    const icon = png(32, 32, "#3b82f6"), logo = png(64, 64, "#f59e0b"), hd = png(1280, 720, "#10b981"), wide = png(900, 300, "#ef4444");
+    const cases = [
+      ["icon alone", [{ type: "image", src: icon }], [32]],
+      ["icon under a heading", [{ type: "heading", text: "TL icon" }, { type: "image", src: icon }], [32]],
+      ["logo in a 3-image grid", [{ type: "heading", text: "TL logo" }, { type: "image", src: logo }, { type: "image", src: hd }, { type: "image", src: wide }], [64, 1280, 900]],
+    ];
+    for (const [label, blocks, naturals] of cases) {
+      const past = _hooks().getHistoryCounts ? _hooks().getHistoryCounts().past : 0;
+      await _mrdInject(blocks, { layout: undefined, imageCols: undefined }, (vp) => { const ims = Array.from(vp?.querySelectorAll("img") || []); return ims.length === naturals.length && ims.every((im) => im.complete && im.naturalWidth > 0) ? vp : null; });
+      await _wait(300); await _mrdFrame();
+      const m = _tlMeasure();
+      if (m.outside) throw new Error(`${label}: ${m.outside} block(s) outside the canvas`);
+      m.imgs.forEach((im, k) => { if (im.w > naturals[k] * 2 + 1) throw new Error(`${label}: image ${k} shown ${im.w.toFixed(0)}px wide (natural ${naturals[k]})`); });
+      if (label === "icon alone" && Math.abs(m.imgs[0].cx - 480) > 4) throw new Error(`icon alone is not centered (cx ${m.imgs[0].cx.toFixed(0)})`);
+      await _mrdUndoTo(past);
+    }
+  }},
+  { name: "CR23: sequential pastes pick the layout with the larger image area", fn: async () => {
+    // After each paste, render the same images in the other layout (split <->
+    // stacked) and measure it. The chosen layout must show at least as much
+    // image area (3% measurement tolerance) and keep all text on the slide.
+    const alt = async (m, label) => {
+      const vp = _mrdViewport();
+      const split = !!vp.querySelector("[data-split-image]");
+      const srcs = Array.from(vp.querySelectorAll("img")).map((im) => im.getAttribute("src"));
+      const n = srcs.length, last = m.imgs[n - 1];
+      const [cf, imf] = pasteSplitFlex(n, last.w / last.h);
+      await _mrdInject([..._tlBases.c, ...srcs.map((src) => ({ type: "image", src }))], split ? { layout: undefined, contentFlex: undefined, imageFlex: undefined, imageCols: undefined } : { layout: "image-right", contentFlex: cf, imageFlex: imf, imageCols: undefined },
+        (v) => (!!v?.querySelector("[data-split-image]")) !== split && Array.from(v.querySelectorAll("img")).filter((im) => im.complete && im.naturalWidth > 0).length === n ? v : null);
+      await _wait(400); await _mrdFrame();
+      const a = _tlMeasure();
+      if (m.area < a.area * 0.97) throw new Error(`${label}: ${split ? "split" : "stack"} shows ${(m.area * 100).toFixed(1)}% but ${split ? "stack" : "split"} would show ${(a.area * 100).toFixed(1)}%`);
+      return split;
+    };
+    for (const [kind, max] of [["sq", 4], ["wide", 3], ["tall", 3]]) for (let n = 1; n <= max; n++) await _tlCase("c", Array(n).fill(kind), undefined, alt);
+    // The reported case: 3 squares on heading+text+credit must not stay in a split.
+    const three = await _tlCase("c", ["sq", "sq", "sq"], undefined, async () => !!_mrdViewport().querySelector("[data-split-image]"));
+    if (three.probe) throw new Error("3 squares stayed in a side split");
+  }},
+  { name: "CR23: a split the author set stays a split on later pastes", fn: async () => {
+    const m = await _tlCase("c", ["sq", "sq", "sq"], { layout: "image-left" }, async () => !!_mrdViewport().querySelector("[data-split-image]"));
+    if (!m.probe) throw new Error("author image-left split was replaced");
+  }},
+  { name: "CR24: a large 1600x900 image alone still fills the slide width", fn: async () => {
+    const cv = document.createElement("canvas"); cv.width = 1600; cv.height = 900; cv.getContext("2d").fillRect(0, 0, 1600, 900);
+    const past = _hooks().getHistoryCounts ? _hooks().getHistoryCounts().past : 0;
+    await _mrdInject([{ type: "image", src: cv.toDataURL("image/png") }], { layout: undefined }, (vp) => vp?.querySelector("img")?.naturalWidth > 0 ? vp : null);
+    await _wait(300); await _mrdFrame();
+    const m = _tlMeasure();
+    await _mrdUndoTo(past);
+    if (m.imgs[0].w < 960 * 0.9) throw new Error(`1600x900 image is only ${m.imgs[0].w.toFixed(0)}px wide`);
+  }},
+  { name: "paste burst: 3 and 5 rapid image pastes (0/50/150 ms apart) all land in order, one undo step each", fn: async () => {
+    const counts = () => _hooks().getHistoryCounts().past;
+    for (const n of [3, 5]) for (const gap of [0, 50, 150]) {
+      const label = `${n} pastes ${gap}ms apart`, mark = `TL-BURST-${n}-${gap}`;
+      const past = counts();
+      await _mrdInject([{ type: "heading", text: mark }], { layout: undefined, contentFlex: undefined, imageFlex: undefined, imageCols: undefined }, (vp) => vp?.textContent.includes(mark) && !vp.querySelector("img") ? vp : null);
+      const rows = _m1RowTitles().length;
+      // Distinct widths (natural size is kept) mark the paste order.
+      const widths = Array.from({ length: n }, (_, k) => 120 + 60 * k);
+      const blobs = await Promise.all(widths.map((w, k) => { const cv = document.createElement("canvas"); cv.width = w; cv.height = 90; const g = cv.getContext("2d"); g.fillStyle = _tlColors[k % 5]; g.fillRect(0, 0, w, 90); return new Promise((r) => cv.toBlob(r, "image/png")); }));
+      for (let k = 0; k < n; k++) {
+        const dt = new DataTransfer(); dt.items.add(new File([blobs[k]], `b${k}.png`, { type: "image/png" }));
+        _mrdViewport().dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true }));
+        if (gap) await _wait(gap);
+      }
+      let got = [];
+      try { await _waitFor(() => { const vp = _mrdViewport(); got = Array.from(vp?.querySelectorAll("img") || []).filter((im) => im.complete && im.naturalWidth > 0).map((im) => im.naturalWidth); return got.length >= n && vp.textContent.includes(mark) ? vp : null; }, 8000); } catch { /* reported below */ }
+      await _wait(200);
+      const rowsAfter = _m1RowTitles().length;
+      // One undo step per paste: each Ctrl+Z removes exactly the last image.
+      // (Counted from the rendered slide: the history counter stops at its cap
+      // in a long battery run.)
+      let undoErr = null;
+      if (got.length === n) {
+        document.activeElement?.blur?.();
+        for (let k = n - 1; k >= 0 && !undoErr; k--) {
+          _key("z", { ctrlKey: true });
+          const left = await _waitFor(() => { const w = Array.from(_mrdViewport()?.querySelectorAll("img") || []).map((im) => im.naturalWidth); return w.length === k ? w : null; }, 1500).catch(() => null);
+          if (!left) undoErr = `undo ${n - k} did not remove exactly one image`;
+          else if (left.join(",") !== widths.slice(0, k).join(",")) undoErr = `undo ${n - k} left ${left.join(",")}`;
+        }
+      }
+      await _mrdUndoTo(past);
+      if (got.length !== n) throw new Error(`${label}: ${got.length}/${n} images on the target slide`);
+      if (got.join(",") !== widths.join(",")) throw new Error(`${label}: images out of paste order (${got.join(",")})`);
+      if (undoErr) throw new Error(`${label}: ${undoErr}`);
+      if (rowsAfter !== rows) throw new Error(`${label}: slide count changed ${rows} -> ${rowsAfter}`);
+    }
+  }},
+  { name: "CR23 stress matrix: the pasted layout and grid show >= 85% of the best alternative (5 gate repros + 12 seeded cases; the unit matrix has all 66)", fn: async () => {
+    // The last image goes through the real paste handler; the chosen result is
+    // then compared, by real rendering, with the other layout (split <-> stack)
+    // and with the uniform count-driven grid in the same layout.
+    const fixed = [{ body: "table", aspects: [16 / 9] }, { body: "table", aspects: [16 / 9, 16 / 9] }, { body: "bullets8", aspects: [16 / 9, 16 / 9, 16 / 9, 16 / 9] }, { body: "none", aspects: [1 / 3, 16 / 9] }, { body: "none", aspects: [1 / 3, 16 / 9, 1 / 3] }];
+    const cases = [...fixed, ...tidelineStressCases().filter((_, k) => k % 5 === 2).slice(0, 12)];
+    let min = Infinity, worst = "";
+    for (const c of cases) {
+      const r = await _tlStressCase(c);
+      if (r.ratio < min) { min = r.ratio; worst = r.label; }
+      if (r.ratio < 0.85) throw new Error(`${r.label}: chosen ${r.detail}`);
+    }
+    return { cases: cases.length, min: Number(min.toFixed(3)), worst };
+  }},
+  { name: "paste race: deleting the slide while an image paste is pending drops the paste", fn: async () => {
+    const past = _hooks().getHistoryCounts().past;
+    await _mrdInject([{ type: "heading", text: "TL-RACE-A" }], { layout: undefined }, (vp) => vp?.textContent.includes("TL-RACE-A") ? vp : null);
+    await _waitFor(() => _m1RowTitles().includes("TL-RACE-A"), 2000);
+    const before = _m1RowTitles(), i = before.indexOf("TL-RACE-A");
+    await _tlPasteBig();
+    _click(_tocRows()[i].querySelector("[data-testid='toc-slide-delete']"));
+    await _wait(2500);
+    const after = _m1RowTitles();
+    const want = before.filter((_, k) => k !== i).join("|");
+    await _mrdUndoTo(past);
+    if (after.join("|") !== want) throw new Error(`slide list after delete: ${after.join("|")} (expected ${want})`);
+  }},
+  { name: "paste race: Ctrl+Z right after a paste stays undone", fn: async () => {
+    const past = _hooks().getHistoryCounts().past;
+    await _mrdInject([{ type: "heading", text: "TL-RACE-B" }], { layout: undefined }, (vp) => vp?.textContent.includes("TL-RACE-B") ? vp : null);
+    await _mrdInject([{ type: "heading", text: "TL-RACE-B-E1" }], { layout: undefined }, (vp) => vp?.textContent.includes("TL-RACE-B-E1") ? vp : null);
+    await _tlPasteBig();
+    document.activeElement?.blur?.();
+    _key("z", { ctrlKey: true });
+    await _wait(2500);
+    const vp = _mrdViewport(), text = vp.textContent, imgs = vp.querySelectorAll("img").length;
+    await _mrdUndoTo(past);
+    if (text.includes("TL-RACE-B-E1") || !text.includes("TL-RACE-B")) throw new Error("the undone edit came back");
+    if (imgs) throw new Error(`${imgs} image(s) added after the undo`);
+  }},
+  { name: "paste race: an image paste into an open inline edit keeps the typed text", fn: async () => {
+    const past = _hooks().getHistoryCounts().past;
+    const vp = await _mrdInject([{ type: "heading", text: "TL-RACE-C" }], { layout: undefined }, (v) => v?.textContent.includes("TL-RACE-C") ? v : null);
+    const disp = Array.from(vp.querySelectorAll("[data-block-type='heading'] div")).find((d) => d.textContent === "TL-RACE-C" && d.style.cursor === "pointer");
+    if (!disp) throw new Error("heading text is not editable");
+    _click(disp);
+    const ed = await _waitFor(() => vp.querySelector("[data-block-type='heading'] [contenteditable]"), 1500);
+    ed.focus();
+    const sel = window.getSelection(); sel.selectAllChildren(ed); sel.collapseToEnd();
+    document.execCommand("insertText", false, "-TYPED");
+    const cv = document.createElement("canvas"); cv.width = 64; cv.height = 64;
+    const blob = await new Promise((r) => cv.toBlob(r, "image/png"));
+    const dt = new DataTransfer(); dt.items.add(new File([blob], "c.png", { type: "image/png" }));
+    ed.dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true }));
+    await _wait(1200);
+    const stillEditing = document.activeElement === ed;
+    ed.blur();
+    await _wait(300);
+    const text = _mrdViewport().textContent, imgs = _mrdViewport().querySelectorAll("img").length;
+    await _mrdUndoTo(past);
+    if (!stillEditing) throw new Error("the paste closed the inline edit");
+    if (!text.includes("TL-RACE-C-TYPED")) throw new Error("typed text was dropped");
+    if (imgs) throw new Error("the paste into the inline edit added an image");
+  }},
+], { setup: _selectFirstModule });
+
+// ── Review fixes: app markers, inline paste, cols AI edit, review cycle,
+// string checklist items ──
+const _rfxPast = () => (_hooks().getHistoryCounts ? _hooks().getHistoryCounts().past : 0);
+// A node inside the slide content with an app marker stands in for deck markup
+// that carries one (the sanitizer drops them; this checks the app does not trust them).
+const _rfxPlant = (attrs, style) => {
+  const host = _$("[data-vela-slide-content]");
+  if (!host) throw new Error("no slide content to plant a marker in");
+  const n = document.createElement("div");
+  for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v);
+  if (style) n.style.cssText = style;
+  host.appendChild(n);
+  return n;
+};
+uiSuite("review-fix-editor", [
+  { name: "S1: app markers inside slide content do not change Esc or fullscreen exit in Present", fn: async () => {
+    const planted = [];
+    try {
+      document.activeElement?.blur?.(); _key("f");
+      await _waitFor(() => !_$("header"), 2000);
+      planted.push(_rfxPlant({ "data-vela-modal": "" }), _rfxPlant({ "data-vela-zoom": "" }));
+      _key("Escape");
+      await _waitFor(() => _$("header"), 2000).catch(() => { throw new Error("Esc did not leave Present (a deck marker read as an open modal)"); });
+      planted.forEach((n) => n.remove()); planted.length = 0;
+      document.activeElement?.blur?.(); _key("f");
+      await _waitFor(() => !_$("header"), 2000);
+      planted.push(_rfxPlant({ "data-vela-zoom": "" }));
+      document.dispatchEvent(new Event("fullscreenchange"));
+      await _waitFor(() => _$("header"), 2000).catch(() => { throw new Error("browser fullscreen exit kept Present (a deck marker read as an open zoom)"); });
+    } finally {
+      planted.forEach((n) => n.remove());
+      await _exitFullscreen();
+    }
+  }},
+  { name: "S1: an editor-overlay marker inside slide content does not move the block toolbar", fn: async () => {
+    const past = _rfxPast();
+    let plant = null;
+    try {
+      await _mrdInject([{ type: "heading", text: "RFX toolbar", size: "2xl" }], null, (vp) => vp && vp.querySelector("[data-block-type='heading']"));
+      const barRect = async () => {
+        // Query the block each time: the slide can re-mount it after the inject.
+        await _wait(150);
+        const el = _mrdViewport().querySelector("[data-block-type='heading']");
+        await _mrdHover(el);
+        const bar = await _waitFor(() => el.querySelector("[data-testid='block-hover-toolbar']"), 1500);
+        await _mrdFrame();
+        const r = bar.getBoundingClientRect();
+        await _mrdUnhover(el);
+        return r;
+      };
+      const before = await barRect();
+      plant = _rfxPlant({ "data-editor-overlay": "deck" }, "position:absolute;inset:0;pointer-events:none");
+      const after = await barRect();
+      if (Math.abs(after.left - before.left) > 1) throw new Error(`toolbar moved ${Math.round(before.left - after.left)}px for a marker in slide content`);
+    } finally {
+      plant?.remove();
+      await _mrdUndoTo(past);
+    }
+  }},
+  { name: "S3: paste into an inline text editor inserts plain text only", fn: async () => {
+    const past = _rfxPast();
+    try {
+      await _mrdInject([{ type: "heading", text: "RFX paste", size: "2xl" }], null, (vp) => vp?.textContent.includes("RFX paste") ? vp : null);
+      _click(await _waitFor(() => _tlEditNode("RFX paste"), 2000));
+      const ed = await _waitFor(() => _$("[contenteditable='true']", _mrdViewport()), 1500);
+      const dt = new DataTransfer();
+      dt.setData("text/html", "<b>RFX-RICH</b><img src='data:image/gif;base64,R0lGODlhAQABAAAAACw='>");
+      dt.setData("text/plain", "RFX-PLAIN");
+      const ev = new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true });
+      ed.dispatchEvent(ev);
+      await _mrdFrame();
+      if (!ev.defaultPrevented) throw new Error("the inline editor left the paste to the browser (rich paste)");
+      if (ed.querySelector("img, b")) throw new Error("rich markup reached the inline editor");
+      if (!ed.textContent.includes("RFX-PLAIN")) throw new Error(`plain text was not inserted (got "${ed.textContent}")`);
+      _key("Escape");
+    } finally {
+      document.activeElement?.blur?.();
+      await _mrdUndoTo(past);
+    }
+  }},
+  { name: "E1: AI block edit on a two-column block writes back to that column", fn: async () => {
+    const past = _rfxPast();
+    const orig = { ready: window.__velaAgentReady, send: window.__velaAgentSend, gate: window.__velaTrustGate };
+    try {
+      window.__velaAgentReady = true;
+      window.__velaTrustGate = null;
+      window.__velaAgentSend = async () => JSON.stringify({ type: "text", text: "RFX-AI-LEFT" });
+      const sel = "[data-cols-side='left'] [data-block-type='text']";
+      const el = await _mrdInject([], { layout: "cols", L: [{ type: "text", text: "RFX left" }], R: [{ type: "text", text: "RFX right" }] }, (vp) => vp && vp.querySelector(sel));
+      await _mrdHover(el);
+      _click(await _waitFor(() => el.querySelector("[data-testid='block-hover-toolbar'] button[title='Edit this block with AI']"), 2000));
+      const inp = await _waitFor(() => _$("[data-testid='block-ai-popup'] input", _mrdViewport()), 2000);
+      _mrdSetRange(inp, "make it say RFX-AI-LEFT");
+      await _mrdFrame();
+      inp.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+      await _waitFor(() => _hooks().getCurrentSlideForTest?.()?.L?.[0]?.text === "RFX-AI-LEFT", 4000)
+        .catch(() => { throw new Error("the AI edit did not reach the left column block"); });
+      const s = _hooks().getCurrentSlideForTest();
+      if ((s.blocks || []).length) throw new Error("the AI edit added a block to the main blocks list");
+      if (s.R?.[0]?.text !== "RFX right") throw new Error("the AI edit changed the right column");
+    } finally {
+      window.__velaAgentReady = orig.ready; window.__velaAgentSend = orig.send; window.__velaTrustGate = orig.gate;
+      await _wait(300);
+      await _mrdUndoTo(past);
+    }
+  }},
+  { name: "E6: review cycle steps within the current module when its lane is collapsed", fn: async () => {
+    if (_tocRows().length < 2) throw new Error("need >=2 slide rows");
+    const hooks = _hooks();
+    if (typeof hooks.toggleSelectedLaneForTest !== "function") throw new Error("toggleSelectedLaneForTest hook missing");
+    const cyc = () => _$("[data-testid='review-cycle-toggle']");
+    let collapsed = false;
+    try {
+      await _m1ClickRow(0);
+      const start = hooks.getSelection();
+      const reviewed = hooks.getCurrentSlideForTest?.();
+      if (!start || start.slideIdx !== 0 || !reviewed) throw new Error("could not select slide 1");
+      collapsed = hooks.toggleSelectedLaneForTest(); await _mrdFrame();
+      _click(cyc());
+      await _waitFor(() => cyc()?.getAttribute("aria-pressed") === "true", 1500);
+      document.activeElement?.blur?.();
+      _key("ArrowRight");
+      await _waitFor(() => { const s = hooks.getSelection(); return s && s.itemId === start.itemId && s.slideIdx === 1; }, 1500)
+        .catch(() => { const s = hooks.getSelection(); throw new Error(`ArrowRight left the module or jumped (now ${s?.itemId === start.itemId ? "same" : "other"} module, slide ${s?.slideIdx})`); });
+    } finally {
+      if (cyc()?.getAttribute("aria-pressed") === "true") _click(cyc());
+      if (collapsed) hooks.toggleSelectedLaneForTest();
+      await _mrdFrame();
+      await _m1ClickRow(0).catch(() => {});
+    }
+  }},
+  { name: "E10: string checklist items edit inline; untouched items stay strings", fn: async () => {
+    const past = _rfxPast();
+    try {
+      await _mrdInject([{ type: "checklist", items: ["RFX alpha", "RFX beta", "RFX gamma"] }], null, (vp) => vp?.textContent.includes("RFX gamma") ? vp : null);
+      await _wait(150); // the slide can re-mount its blocks just after the inject
+      await _tlEdit("PENDING", "done", "DONE");
+      await _tlEdit("RFX beta", "RFX beta edited");
+      const items = _hooks().getCurrentSlideForTest()?.blocks?.[0]?.items || [];
+      if (items[0]?.text !== "RFX alpha" || items[0]?.status !== "done") throw new Error(`label edit on a string item gave ${JSON.stringify(items[0])}`);
+      if (items[1]?.text !== "RFX beta edited") throw new Error(`text edit on a string item gave ${JSON.stringify(items[1])}`);
+      if (items[2] !== "RFX gamma") throw new Error(`an untouched item changed form: ${JSON.stringify(items[2])}`);
+    } finally {
+      await _mrdUndoTo(past);
+    }
+  }},
+], { setup: _editorSetup });
+
+// Helpers for the CR23 stress matrix and the paste-race tests above.
+const _tlColors = ["#3b82f6", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6"];
+const _tlCanvas = (a, k) => { const cv = document.createElement("canvas"); cv.height = 300; cv.width = Math.max(1, Math.round(300 * a)); const g = cv.getContext("2d"); g.fillStyle = _tlColors[k % 5]; g.fillRect(0, 0, cv.width, cv.height); return cv; };
+const _tlPasteCanvas = async (cv) => {
+  const blob = await new Promise((r) => cv.toBlob(r, "image/png"));
+  const dt = new DataTransfer(); dt.items.add(new File([blob], "p.png", { type: "image/png" }));
+  _mrdViewport().dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true }));
+};
+const _tlPasteBig = async () => { const cv = document.createElement("canvas"); cv.width = 3000; cv.height = 2000; cv.getContext("2d").fillRect(0, 0, 3000, 2000); await _tlPasteCanvas(cv); };
+const _tlLoaded = (vp) => Array.from(vp?.querySelectorAll("img") || []).filter((im) => im.complete && im.naturalWidth > 0).length;
+const _tlStressMeasure = () => {
+  const vp = _mrdViewport(), v = vp.getBoundingClientRect(), s = v.width / 960, off = [];
+  vp.querySelectorAll("[data-block-type]").forEach((el) => {
+    if (el.dataset.blockType === "image") return;
+    const r = el.getBoundingClientRect();
+    if (r.width && (r.left < v.left - 1 || r.top < v.top - 1 || r.right > v.right + 1 || r.bottom > v.bottom + 1)) off.push(el.dataset.blockType);
+  });
+  const imgs = Array.from(vp.querySelectorAll("img")).map((im) => {
+    const r = im.getBoundingClientRect(), k = Math.min(r.width / im.naturalWidth, r.height / im.naturalHeight);
+    const w = im.naturalWidth * k, h = im.naturalHeight * k, cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+    if (cx - w / 2 < v.left - 1 || cx + w / 2 > v.right + 1 || cy - h / 2 < v.top - 1 || cy + h / 2 > v.bottom + 1) off.push("image");
+    return { w: w / s, h: h / s, scale: k / s, src: im.getAttribute("src") };
+  });
+  const grid = vp.querySelector("[data-testid='image-grid']");
+  return { off, imgs, area: imgs.reduce((t, i) => t + i.w * i.h, 0), split: !!vp.querySelector("[data-split-image]"), cols: grid ? Number(grid.getAttribute("data-image-cols")) : 1 };
+};
+const _tlStressCase = async (c) => {
+  const n = c.aspects.length, body = TL_STRESS_BODIES[c.body];
+  const label = `${c.body}:[${c.aspects.map((a) => a.toFixed(2)).join(",")}]`;
+  const past = _hooks().getHistoryCounts().past;
+  const base = { layout: undefined, contentFlex: undefined, imageFlex: undefined, imageCols: undefined };
+  const settle = async () => { await _wait(350); await _mrdFrame(); };
+  try {
+    await _mrdInject([...body, ...c.aspects.slice(0, -1).map((a, k) => ({ type: "image", src: _tlCanvas(a, k).toDataURL("image/png") }))], base, (vp) => _tlLoaded(vp) >= n - 1 && vp.querySelectorAll("img").length === n - 1 ? vp : null);
+    await _tlPasteCanvas(_tlCanvas(c.aspects[n - 1], n - 1));
+    await _waitFor(() => _tlLoaded(_mrdViewport()) >= n, 4000);
+    await _wait(150); await settle();
+    const chosen = _tlStressMeasure();
+    if (chosen.off.length) throw new Error(`${label}: off the slide: ${chosen.off.join(",")}`);
+    const big = chosen.imgs.find((i) => i.scale > 2.02);
+    if (big) throw new Error(`${label}: image shown at ${big.scale.toFixed(2)}x natural size`);
+    const blocks = [...body, ...chosen.imgs.map((i) => ({ type: "image", src: i.src }))];
+    const [cf, imf] = pasteSplitFlex(n, c.aspects[n - 1]);
+    const splitProps = { layout: "image-right", contentFlex: cf, imageFlex: imf, imageCols: undefined };
+    const render = async (props, ready) => { await _mrdInject(blocks, props, (vp) => _tlLoaded(vp) === n && ready(vp) ? vp : null); await settle(); return _tlStressMeasure(); };
+    const alts = [];
+    if (body.length) {
+      const other = await render(chosen.split ? base : splitProps, (vp) => !!vp.querySelector("[data-split-image]") !== chosen.split);
+      alts.push([chosen.split ? "stack" : "split", other.area]);
+    }
+    if (n >= 2) {
+      const cols = gridColsFor(n, chosen.split ? "half" : "full");
+      const eq = await render({ ...(chosen.split ? splitProps : base), imageCols: cols }, (vp) => vp.querySelector("[data-testid='image-grid']")?.getAttribute("data-image-cols") === String(cols) && !!vp.querySelector("[data-split-image]") === chosen.split);
+      alts.push([`uniform ${cols}-col grid`, eq.area]);
+    }
+    const best = alts.reduce((b, a) => (a[1] > b[1] ? a : b), ["chosen", chosen.area]);
+    return { label, ratio: chosen.area / best[1], detail: `${chosen.split ? "split" : "stack"} ${Math.round(chosen.area)} px2 vs ${best[0]} ${Math.round(best[1])} px2` };
+  } finally { await _mrdUndoTo(past); }
+};
+
+uiSuite("review-fix-shortcuts", [
+  { name: "Ctrl+E inside a text input does not toggle the TOC", fn: async () => {
+    const tocShown = () => _$$(".concept-row").length > 0;
+    if (!tocShown()) throw new Error("TOC not shown at start");
+    const inp = document.createElement("input");
+    document.body.appendChild(inp);
+    try {
+      inp.focus();
+      _key("e", { ctrlKey: true });
+      await new Promise((r) => setTimeout(r, 150));
+      if (!tocShown()) throw new Error("Ctrl+E in an input toggled the TOC");
+    } finally { if (inp.parentNode) inp.parentNode.removeChild(inp); }
+  }},
+], { setup: _selectFirstModule });
+
+// ── Review fixes: image grid and image paste ────────────────────────────
+const _rfiCanvas = (w, h, k) => { const cv = document.createElement("canvas"); cv.width = w; cv.height = h; const g = cv.getContext("2d"); g.fillStyle = _tlColors[k % 5]; g.fillRect(0, 0, w, h); return cv; };
+const _rfiSrc = (w, h, k) => _rfiCanvas(w, h, k).toDataURL("image/png");
+const _rfiPasteFile = (file) => {
+  const dt = new DataTransfer(); dt.items.add(file);
+  _mrdViewport().dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true }));
+};
+const _rfiPng = async (w, h, k) => { const blob = await new Promise((r) => _rfiCanvas(w, h, k).toBlob(r, "image/png")); return new File([blob], `r${k}.png`, { type: "image/png" }); };
+uiSuite("review-fix-image", [
+  { name: "E2: a solo full-bleed image is not click-to-zoom", fn: async () => {
+    const past = _hooks().getHistoryCounts().past;
+    try {
+      const vp = await _mrdInject([{ type: "image", src: _rfiSrc(400, 300, 0) }], { imageCols: undefined }, (v) => _tlLoaded(v) === 1 ? v : null);
+      if (!vp.querySelector("[data-testid='image-grid']")) throw new Error("the solo image left the grid path");
+      if (vp.querySelector("[data-vela-zoomable]")) throw new Error("the solo image has a zoom wrapper");
+      _click(vp.querySelector("img"));
+      await _wait(200);
+      const zoom = document.querySelector("[data-vela-zoom]");
+      if (zoom) { zoom.click(); throw new Error("a click on the solo image opened the zoom overlay"); }
+    } finally { await _mrdUndoTo(past); }
+  }},
+  { name: "E3: a short last grid row is centered exactly (auto and pinned imageCols)", fn: async () => {
+    const cases = [[5, undefined], [7, undefined], [2, 6], [3, 2], [5, 4]];
+    for (const [n, cols] of cases) {
+      const past = _hooks().getHistoryCounts().past;
+      try {
+        const blocks = Array.from({ length: n }, (_, k) => ({ type: "image", src: _rfiSrc(300, 300, k) }));
+        const vp = await _mrdInject(blocks, { imageCols: cols }, (v) => _tlLoaded(v) === n ? v : null);
+        await _wait(300); await _mrdFrame();
+        const grid = vp.querySelector("[data-testid='image-grid']"), g = grid.getBoundingClientRect(), s = vp.getBoundingClientRect().width / 960;
+        const rows = new Map();
+        grid.querySelectorAll("[data-testid='image-grid-cell']").forEach((c) => { const r = c.getBoundingClientRect(), key = Math.round(r.top); rows.set(key, [...(rows.get(key) || []), r]); });
+        if (rows.size < 2 && !(cols > n)) throw new Error(`${n} images, imageCols ${cols}: expected a short row, got ${rows.size} row(s)`);
+        for (const rs of rows.values()) {
+          const L = (Math.min(...rs.map((r) => r.left)) - g.left) / s, R = (g.right - Math.max(...rs.map((r) => r.right))) / s;
+          if (Math.abs(L - R) > 1) throw new Error(`${n} images, imageCols ${cols}: row of ${rs.length} has margins ${L.toFixed(1)} / ${R.toFixed(1)} px`);
+        }
+      } finally { await _mrdUndoTo(past); }
+    }
+  }},
+  { name: "E4: an undecodable image in a paste burst adds no block, shows a notice and keeps the rest", fn: async () => {
+    const past = _hooks().getHistoryCounts().past, mark = "RFI-E4";
+    try {
+      await _mrdInject([{ type: "heading", text: mark }], { imageCols: undefined }, (vp) => vp?.textContent.includes(mark) && !vp.querySelector("img") ? vp : null);
+      const good = [await _rfiPng(140, 90, 0), await _rfiPng(220, 90, 1)];
+      const bad = new File([new Uint8Array([73, 73, 42, 0, 1, 2, 3, 4, 5, 6, 7, 8])], "bad.tif", { type: "image/tiff" });
+      _rfiPasteFile(good[0]); _rfiPasteFile(bad); _rfiPasteFile(good[1]);
+      const notice = await _waitFor(() => document.querySelector("[data-testid='paste-notice']"), 4000).catch(() => null);
+      let got = [];
+      await _waitFor(() => { got = Array.from(_mrdViewport().querySelectorAll("img")).filter((im) => im.complete && im.naturalWidth > 0).map((im) => im.naturalWidth); return got.length >= 2; }, 6000).catch(() => {});
+      await _wait(400);
+      const imageBlocks = _mrdViewport().querySelectorAll("[data-block-type='image']").length;
+      if (imageBlocks !== 2) throw new Error(`${imageBlocks} image block(s) on the slide (expected 2)`);
+      if (got.join(",") !== "140,220") throw new Error(`images on the slide: ${got.join(",") || "none"} (expected 140,220 in paste order)`);
+      if (!notice) throw new Error("no notice for the image that could not be pasted");
+    } finally { await _mrdUndoTo(past); }
+  }},
+  { name: "E8: a fault in one paste is logged and the paste queue stays alive", fn: async () => {
+    const past = _hooks().getHistoryCounts().past, mark = "RFI-E8";
+    const warn = console.warn, warned = [], layoutFn = pasteImageLayout;
+    try {
+      await _mrdInject([{ type: "heading", text: mark }], { imageCols: undefined }, (vp) => vp?.textContent.includes(mark) && !vp.querySelector("img") ? vp : null);
+      console.warn = (...a) => { warned.push(a); };
+      pasteImageLayout = () => { throw new Error("rfi-e8-fault"); };
+      _rfiPasteFile(await _rfiPng(100, 80, 2));
+      await _waitFor(() => warned.length > 0, 3000).catch(() => {});
+      pasteImageLayout = layoutFn;
+      console.warn = warn;
+      _rfiPasteFile(await _rfiPng(160, 80, 3));
+      const ok = await _waitFor(() => _tlLoaded(_mrdViewport()) === 1, 4000).catch(() => null);
+      if (!warned.some((a) => a.some((x) => x && x.message === "rfi-e8-fault"))) throw new Error("the paste fault was not logged");
+      if (!ok) throw new Error("the paste after the fault did not land");
+    } finally { pasteImageLayout = layoutFn; console.warn = warn; await _mrdUndoTo(past); }
+  }},
+  { name: "E7: a grid image whose natural-size cache entry was evicted stays visible", fn: async () => {
+    const past = _hooks().getHistoryCounts().past;
+    try {
+      const blocks = [{ type: "image", src: _rfiSrc(320, 200, 0) }, { type: "image", src: _rfiSrc(200, 320, 1) }];
+      await _mrdInject(blocks, { imageCols: undefined }, (v) => _tlLoaded(v) === 2 ? v : null);
+      await _mrdFrame();
+      blocks.forEach((b) => IMAGE_NATURAL_SIZE.delete(b.src));
+      const vp = await _mrdInject(blocks, { imageCols: undefined, gap: 14 }, (v) => v);
+      await _wait(150); await _mrdFrame();
+      const hidden = Array.from(vp.querySelectorAll("img")).filter((im) => getComputedStyle(im).visibility === "hidden").length;
+      if (hidden) throw new Error(`${hidden} on-screen image(s) hidden after a cache eviction`);
+      if (!blocks.every((b) => IMAGE_NATURAL_SIZE.has(b.src))) throw new Error("the evicted natural sizes were not measured again");
+    } finally { await _mrdUndoTo(past); }
+  }},
+], { setup: _selectFirstModule });
+
+uiSuite("hunt1-fix-sanitize", [
+  { name: "HE4: the link box saves no link for free text, no-dot hosts, userinfo and other schemes", fn: async () => {
+    // Runs in the real browser URL parser (Chromium percent-encodes a space in a
+    // host where Node throws, so "garbage text" is only provable here).
+    const cases = [
+      ["garbage text", undefined], ["example", undefined], ["a@b", undefined], ["x@y.z/path", undefined],
+      ["sms:123", undefined], ["tel:5551234", undefined], ["..", undefined], ["user:pw@example.com", undefined],
+      ["example.com", "https://example.com/"], ["example.com:8080/x", "https://example.com:8080/x"],
+      ["me@example.com", "mailto:me@example.com"], ["https://example.org/p", "https://example.org/p"],
+    ];
+    for (const [input, want] of cases) {
+      const got = linkFromInput(input);
+      if (got !== want) throw new Error(`linkFromInput(${JSON.stringify(input)}) = ${JSON.stringify(got)}, want ${JSON.stringify(want)}`);
+    }
+  }},
+  { name: "HS3: a rendered deck SVG carries no class/role/aria-*/tabindex/autofocus; id refs stay", fn: async () => {
+    const past = _hooks().getHistoryCounts().past;
+    try {
+      const markup = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10" class="status-btn" role="tree" tabindex="0" autofocus="" aria-modal="true">'
+        + '<defs><linearGradient id="h1g"><stop offset="0" stop-color="#f00"/></linearGradient></defs>'
+        + '<rect class="slide-nav-btn" role="button" aria-label="x" tabindex="-1" fill="url(#h1g)" width="5" height="5"/></svg>';
+      const vp = await _mrdInject([{ type: "svg", markup }], null, (v) => (v && v.querySelector("linearGradient#h1g")) ? v : null);
+      // The deck's own <svg> (app chrome such as lucide icons carries its own class).
+      const root = vp.querySelector("linearGradient#h1g").closest("svg");
+      const els = [root, ...root.querySelectorAll("*")];
+      const leaked = [];
+      for (const el of els) {
+        for (const a of el.attributes) if (/^(class|role|tabindex|autofocus|aria-.*)$/i.test(a.name)) leaked.push(`${el.localName}@${a.name}=${a.value}`);
+      }
+      if (!els.some((el) => el.localName === "rect")) throw new Error("the deck SVG did not render in an svg block");
+      if (leaked.length) throw new Error("attributes kept on deck SVG: " + leaked.join(", "));
+      const rect = vp.querySelector("rect[fill='url(#h1g)']");
+      if (!rect) throw new Error("the url(#id) gradient ref was lost");
+    } finally { await _mrdUndoTo(past); }
+  }},
+], { setup: _selectFirstModule });
+
+// hunt1-fix-editor: Esc/arrow order with an open zoom or Present TOC, hover
+// cluster that covers no item text, IME Enter in the inline editors.
+const _hfeZoomed = () => !!document.querySelector("[data-vela-zoom]");
+const _hfeZoomables = () => Array.from(document.querySelectorAll("[data-vela-zoomable]")).filter((z) => z.getBoundingClientRect().width > 0 && !z.closest("[data-vela-zoom]"));
+const _hfeTocPanel = () => { let p = _$("input[placeholder^='Search slides']"); while (p && !(p.style && /^translateX/.test(p.style.transform || ""))) p = p.parentElement; return p; };
+const _hfeTocOpen = () => /^translateX\(0(px)?\)$/.test(_hfeTocPanel()?.style.transform || "");
+const _hfeHits = (a, b) => a.left < b.right - 0.5 && a.right > b.left + 0.5 && a.top < b.bottom - 0.5 && a.bottom > b.top + 0.5;
+const _hfeTextNode = (root, t) => { const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT); for (let n = w.nextNode(); n; n = w.nextNode()) if (n.nodeValue.trim() === t) return n; return null; };
+uiSuite("hunt1-fix-editor", [
+  { name: "HE1: with focus off the zoom overlay, Esc closes only the zoom and arrows step the zoom, not the slide", fn: async () => {
+    const past = _hooks().getHistoryCounts().past;
+    try {
+      await _mrdInject([{ type: "image", src: _rfiSrc(320, 200, 0) }, { type: "image", src: _rfiSrc(200, 320, 1) }], { imageCols: undefined }, (v) => _tlLoaded(v) === 2 ? v : null);
+      await _mrdFrame();
+      for (const mode of ["editor", "present"]) {
+        if (mode === "present") { document.activeElement?.blur?.(); _key("f"); await _waitFor(() => !_$("header"), 2000); }
+        const open = async () => { _click(await _waitFor(() => _hfeZoomables()[0], 2000)); await _waitFor(_hfeZoomed, 2000); document.activeElement?.blur?.(); await _mrdFrame(); };
+        await open();
+        const pos = _slidePos();
+        _key("ArrowRight"); await _wait(250);
+        if (_slidePos() !== pos) throw new Error(`${mode}: ArrowRight moved the slide behind the zoom`);
+        if (!_hfeZoomed()) throw new Error(`${mode}: ArrowRight did not step to the next zoomable image`);
+        document.activeElement?.blur?.();
+        _key("Escape");
+        await _waitFor(() => !_hfeZoomed(), 1500).catch(() => { throw new Error(`${mode}: Esc did not close the zoom`); });
+        await _wait(200);
+        if (mode === "present" && _$("header")) throw new Error("present: Esc with a zoom open also left Present");
+        if (mode === "editor" && !_$("header")) throw new Error("editor: Esc changed the view");
+      }
+    } finally {
+      if (_hfeZoomed()) window.dispatchEvent(new Event("vela-close-zoom"));
+      await _exitFullscreen();
+      await _mrdUndoTo(past);
+    }
+  }},
+  { name: "HE6: Esc with the Present TOC open closes the TOC first and keeps Present", fn: async () => {
+    try {
+      document.activeElement?.blur?.(); _key("f");
+      await _waitFor(() => !_$("header"), 2000);
+      _key("e", { ctrlKey: true });
+      await _waitFor(_hfeTocOpen, 2000);
+      await _wait(150);
+      document.activeElement?.blur?.();
+      _key("Escape");
+      await _waitFor(() => !_hfeTocOpen(), 1500).catch(() => { throw new Error("Esc did not close the Present TOC"); });
+      await _wait(200);
+      if (_$("header")) throw new Error("Esc with the Present TOC open left Present");
+      // Browser-fullscreen path: the browser eats Esc and only fires fullscreenchange.
+      _key("e", { ctrlKey: true });
+      await _waitFor(_hfeTocOpen, 2000);
+      document.dispatchEvent(new Event("fullscreenchange"));
+      await _waitFor(() => !_hfeTocOpen(), 1500).catch(() => { throw new Error("browser fullscreen exit did not close the Present TOC"); });
+      await _wait(200);
+      if (_$("header")) throw new Error("browser fullscreen exit with the Present TOC open left Present");
+      document.activeElement?.blur?.();
+      _key("Escape");
+      await _waitFor(() => _$("header"), 2000).catch(() => { throw new Error("the next Esc did not leave Present"); });
+    } finally { await _exitFullscreen(); }
+  }},
+  { name: "HE2/HE3: the item hover cluster covers no item text; a click on short text edits it", fn: async () => {
+    const past = _hooks().getHistoryCounts().past;
+    try {
+      const sets = [
+        [[{ type: "tag-group", items: [{ text: "ht1" }, { text: "ht2" }, { text: "ht3" }] }, { type: "comparison", items: [{ title: "Before", items: ["ha1", "ha2"] }, { title: "After", items: ["hb1"] }] }], ["ht1", "ht2", "ht3", "ha1", "ha2", "hb1"]],
+        [[{ type: "steps", items: [{ title: "hs1" }, { title: "hs2" }] }, { type: "progress", items: [{ label: "hg1", value: 5 }, { label: "hg2", value: 9 }] }], ["hs1", "hs2", "hg1", "hg2"]],
+      ];
+      let seen = 0;
+      for (const [blocks, labels] of sets) {
+        const vp = await _mrdInject(blocks, { align: "center" }, (v) => labels.every((t) => _hfeTextNode(v, t)) ? v : null);
+        await _wait(400); // entrance animation
+        for (const t of labels) {
+          const n = _hfeTextNode(vp, t);
+          const host = n.parentElement;
+          await _mrdHover(host); await _mrdFrame();
+          const cl = _$("[data-item-cluster]", vp);
+          if (cl) {
+            seen++;
+            const rg = document.createRange(); rg.selectNodeContents(n);
+            const tr = rg.getBoundingClientRect();
+            const over = Array.from(cl.querySelectorAll("button")).find((b) => _hfeHits(b.getBoundingClientRect(), tr));
+            if (over) throw new Error(`"${over.title}" covers the text "${t}"`);
+            const hit = document.elementFromPoint(tr.left + tr.width / 2, tr.top + tr.height / 2);
+            if (hit?.closest("button")) throw new Error(`a click on "${t}" lands on "${hit.closest("button").title}"`);
+          }
+          await _mrdUnhover(host);
+        }
+      }
+      if (seen < 8) throw new Error(`only ${seen} item hover clusters were shown`);
+      // Click the middle tag: it edits, it is not deleted.
+      const vp = await _mrdInject(sets[0][0], { align: "center" }, (v) => _hfeTextNode(v, "ht2") ? v : null);
+      await _wait(400);
+      const host = _hfeTextNode(vp, "ht2").parentElement;
+      await _mrdHover(host); await _mrdFrame();
+      const rg = document.createRange(); rg.selectNodeContents(_hfeTextNode(vp, "ht2"));
+      const tr = rg.getBoundingClientRect();
+      _click(document.elementFromPoint(tr.left + tr.width / 2, tr.top + tr.height / 2));
+      await _waitFor(() => _$("[contenteditable='true']", _mrdViewport()), 1500).catch(() => { throw new Error("a click on a short tag did not start the inline edit"); });
+      _key("Escape"); await _mrdFrame();
+      const tags = (_hooks().getCurrentSlideForTest()?.blocks?.[0]?.items || []).map((i) => i.text).join();
+      if (tags !== "ht1,ht2,ht3") throw new Error(`the click changed the tags: ${tags}`);
+    } finally {
+      document.activeElement?.blur?.();
+      await _mrdUndoTo(past);
+    }
+  }},
+  { name: "HE5: Enter during IME composition does not commit the inline text or SVG label editor", fn: async () => {
+    const past = _hooks().getHistoryCounts().past;
+    const ime = (el) => el.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", keyCode: 229, isComposing: true, bubbles: true, cancelable: true }));
+    const enter = (el) => el.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", keyCode: 13, bubbles: true, cancelable: true }));
+    try {
+      await _mrdInject([{ type: "heading", text: "HFE ime" }, { type: "cycle", items: [{ label: "HFEa" }, { label: "HFEb" }, { label: "HFEc" }] }], null, (vp) => vp?.textContent.includes("HFEc") ? vp : null);
+      await _wait(400);
+      _click(await _waitFor(() => _tlEditNode("HFE ime"), 2000));
+      const ed = await _waitFor(() => _$("[contenteditable='true']", _mrdViewport()), 1500);
+      ime(ed); await _mrdFrame();
+      if (!ed.isConnected || !ed.isContentEditable) throw new Error("a composing Enter closed the inline text editor");
+      enter(ed);
+      await _waitFor(() => !_$("[contenteditable='true']", _mrdViewport()), 1500).catch(() => { throw new Error("a plain Enter did not commit the inline text editor"); });
+      const lbl = await _waitFor(() => Array.from(_mrdViewport().querySelectorAll("text[data-svg-edit]")).find((t) => t.textContent.trim() === "HFEa"), 2000);
+      lbl.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+      const inp = await _waitFor(() => _$("[data-testid='svg-text-edit']", _mrdViewport()), 1500);
+      ime(inp); await _mrdFrame();
+      if (!_$("[data-testid='svg-text-edit']", _mrdViewport())) throw new Error("a composing Enter closed the SVG label editor");
+      enter(_$("[data-testid='svg-text-edit']", _mrdViewport()));
+      await _waitFor(() => !_$("[data-testid='svg-text-edit']", _mrdViewport()), 1500).catch(() => { throw new Error("a plain Enter did not commit the SVG label editor"); });
+    } finally {
+      document.activeElement?.blur?.();
+      await _mrdUndoTo(past);
+    }
+  }},
+], { setup: _selectFirstModule });
+
+// ── Bug-hunt round 1 fixes: image paste and placement ───────────────────
+const _h1Heavy = [{ type: "heading", text: "H1 heavy" }, { type: "bullets", items: ["one long bullet point with lots of words in it to wrap", "two long bullet point with lots of words in it to wrap", "three long bullet point with lots of words in it", "four long bullet point with lots of words in it", "five long bullet point with lots of words", "six long bullet point with lots of words", "seven long bullet point"] }, { type: "text", text: "Footer text that must stay on the slide." }];
+const _h1CellWidths = (vp) => Array.from(vp.querySelectorAll("[data-testid='image-grid-cell']")).map((c) => c.getBoundingClientRect().width);
+const _h1Imgs = (vp) => Array.from(vp.querySelectorAll("img")).filter((im) => im.complete && im.naturalWidth > 0);
+const _h1Paste = (files) => {
+  const dt = new DataTransfer(); files.forEach((f) => dt.items.add(f));
+  _mrdViewport().dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true }));
+};
+const _h1Heading = async (mark) => _mrdInject([{ type: "heading", text: mark }], { imageCols: undefined }, (vp) => vp?.textContent.includes(mark) && !vp.querySelector("img") ? vp : null);
+uiSuite("hunt1-fix-image", [
+  { name: "HI1: same-aspect photos next to a wide banner are drawn at the same size", fn: async () => {
+    const past = _hooks().getHistoryCounts().past;
+    try {
+      const blocks = [{ type: "image", src: _rfiSrc(1200, 200, 0) }, ...[1, 2, 3, 4].map((k) => ({ type: "image", src: _rfiSrc(400, 300, k) }))];
+      await _mrdInject(blocks, { imageCols: undefined }, (v) => _tlLoaded(v) === 5 ? v : null);
+      await _wait(500); await _mrdFrame();
+      const photos = _tlMeasure().imgs.slice(1).map((i) => i.w);
+      if (photos.length !== 4) throw new Error(`${photos.length} photos rendered`);
+      if (Math.min(...photos) < 0.98 * Math.max(...photos)) throw new Error(`photo widths differ: ${photos.map((w) => w.toFixed(0)).join(", ")}`);
+    } finally { await _mrdUndoTo(past); }
+  }},
+  { name: "HI2: wide banners under heavy text shrink; the text keeps its size", fn: async () => {
+    const past = _hooks().getHistoryCounts().past;
+    try {
+      let vp = await _mrdInject(_h1Heavy, { imageCols: undefined }, (v) => v?.textContent.includes("H1 heavy") && !v.querySelector("img") ? v : null);
+      await _wait(300); await _mrdFrame();
+      const h0 = vp.querySelector("[data-block-type='heading']").getBoundingClientRect().height;
+      const banners = [0, 1, 2, 3].map((k) => ({ type: "image", src: _rfiSrc(2000, 100, k) }));
+      vp = await _mrdInject([..._h1Heavy, ...banners], { imageCols: undefined }, (v) => _tlLoaded(v) === 4 ? v : null);
+      await _wait(600); await _mrdFrame();
+      const h1 = vp.querySelector("[data-block-type='heading']").getBoundingClientRect().height, m = _tlMeasure();
+      if (m.outside) throw new Error(`${m.outside} text block(s) off the slide`);
+      if (h1 < 0.97 * h0) throw new Error(`the text was scaled down: heading ${h0.toFixed(1)} -> ${h1.toFixed(1)} px`);
+    } finally { await _mrdUndoTo(past); }
+  }},
+  { name: "HI3: an evicted image aspect is measured again; the on-screen grid does not change", fn: async () => {
+    const past = _hooks().getHistoryCounts().past;
+    try {
+      const blocks = [{ type: "image", src: _rfiSrc(150, 450, 0) }, { type: "image", src: _rfiSrc(640, 360, 1) }];
+      let vp = await _mrdInject(blocks, { imageCols: undefined }, (v) => _tlLoaded(v) === 2 ? v : null);
+      await _wait(500); await _mrdFrame();
+      const before = _h1CellWidths(vp);
+      if (!(before.length === 2 && before[1] > 2 * before[0])) throw new Error(`precondition: expected aspect-sized cells, got ${before.map((w) => w.toFixed(0)).join(", ")}`);
+      blocks.forEach((b) => IMAGE_ASPECT_CACHE.delete(b.src));
+      // Re-render without a layout change (speakerNotes is not a layout input).
+      vp = await _mrdInject(blocks, { imageCols: undefined, speakerNotes: "h1-hi3" }, (v) => v);
+      await _wait(500); await _mrdFrame();
+      const after = _h1CellWidths(vp);
+      if (!blocks.every((b) => IMAGE_ASPECT_CACHE.has(b.src))) throw new Error("the evicted aspects were not measured again");
+      if (after.some((w, k) => Math.abs(w - before[k]) > 1)) throw new Error(`grid changed after eviction: ${before.map((w) => w.toFixed(0))} -> ${after.map((w) => w.toFixed(0))}`);
+    } finally { await _mrdUndoTo(past); }
+  }},
+  { name: "HI4: a corrupt image with an allowed type shows a notice and adds no block", fn: async () => {
+    const past = _hooks().getHistoryCounts().past;
+    try {
+      await _h1Heading("H1-HI4");
+      _h1Paste([new File(["this is not a png at all, garbage bytes"], "bad.png", { type: "image/png" })]);
+      _h1Paste([await _rfiPng(140, 90, 1)]);
+      const notice = await _waitFor(() => document.querySelector("[data-testid='paste-notice']"), 4000).catch(() => null);
+      await _waitFor(() => _h1Imgs(_mrdViewport()).length >= 1, 5000).catch(() => {});
+      await _wait(400);
+      const n = _mrdViewport().querySelectorAll("[data-block-type='image']").length;
+      if (n !== 1) throw new Error(`${n} image block(s) on the slide (expected 1)`);
+      if (!notice) throw new Error("no notice for the image that could not be pasted");
+    } finally { await _mrdUndoTo(past); }
+  }},
+  { name: "HI6: one paste event with two images pastes both, in order", fn: async () => {
+    const past = _hooks().getHistoryCounts().past;
+    try {
+      await _h1Heading("H1-HI6");
+      _h1Paste([await _rfiPng(140, 90, 0), await _rfiPng(220, 90, 1)]);
+      let got = [];
+      await _waitFor(() => { got = _h1Imgs(_mrdViewport()).map((im) => im.naturalWidth); return got.length >= 2; }, 5000).catch(() => {});
+      if (got.join(",") !== "140,220") throw new Error(`images on the slide: ${got.join(",") || "none"} (expected 140,220)`);
+    } finally { await _mrdUndoTo(past); }
+  }},
+  { name: "HI7: a transparent PNG keeps its transparency", fn: async () => {
+    const past = _hooks().getHistoryCounts().past;
+    try {
+      await _h1Heading("H1-HI7");
+      const cv = document.createElement("canvas"); cv.width = 200; cv.height = 100;
+      const g = cv.getContext("2d"); g.fillStyle = "#3b82f6"; g.fillRect(40, 20, 120, 60);
+      const blob = await new Promise((r) => cv.toBlob(r, "image/png"));
+      _h1Paste([new File([blob], "alpha.png", { type: "image/png" })]);
+      const img = await _waitFor(() => _h1Imgs(_mrdViewport())[0], 5000);
+      if (!/^data:image\/png;base64,/.test(img.getAttribute("src"))) throw new Error(`stored as ${img.getAttribute("src").slice(0, 22)}`);
+      const t = document.createElement("canvas"); t.width = img.naturalWidth; t.height = img.naturalHeight;
+      const tg = t.getContext("2d"); tg.drawImage(img, 0, 0);
+      const corner = tg.getImageData(0, 0, 1, 1).data[3], mid = tg.getImageData(100, 50, 1, 1).data[3];
+      if (corner !== 0 || mid !== 255) throw new Error(`alpha corner ${corner} / center ${mid} (expected 0 / 255)`);
+    } finally { await _mrdUndoTo(past); }
+  }},
+  { name: "HI8: pastes queued before a module switch land on their original slide, in order", fn: async () => {
+    const past = _hooks().getHistoryCounts().past;
+    try {
+      await _h1Heading("H1-HI8");
+      const rows = _$$(".concept-row");
+      if (rows.length < 2) throw new Error("the test deck needs two modules");
+      const from = _hooks().getSelection();
+      const files = [await _rfiPng(120, 90, 0), await _rfiPng(160, 90, 1), await _rfiPng(200, 90, 2)];
+      files.forEach((f) => _h1Paste([f]));
+      _click(rows[1]);
+      await _waitFor(() => { const s = _hooks().getSelection(); return s && s.itemId !== from.itemId; }, 2000);
+      await _wait(2500);
+      _click(rows[0]);
+      await _waitFor(() => { const s = _hooks().getSelection(); return s && s.itemId === from.itemId; }, 2000);
+      const vp = await _waitFor(() => { const v = _mrdViewport(); return v?.textContent.includes("H1-HI8") && _h1Imgs(v).length >= 3 ? v : null; }, 4000).catch(() => null);
+      const got = vp ? _h1Imgs(vp).map((im) => im.naturalWidth).join(",") : "none";
+      if (got !== "120,160,200") throw new Error(`images on the original slide: ${got} (expected 120,160,200)`);
+    } finally { await _mrdUndoTo(past); }
+  }},
+], { setup: _selectFirstModule });
+
+// ── WP7: Ctrl+U underline is saved as ++text++ and shows underlined ──
+// (This whole part is release-excluded by concat.py --release.)
+const _ulSaved = (marker) => {
+  const snap = _hooks().capturePostDemoFlushForTest?.();
+  let hit = null;
+  const walk = (v) => {
+    if (hit) return;
+    if (typeof v === "string") { if (v.includes(marker)) hit = v; }
+    else if (v && typeof v === "object") for (const k of Object.keys(v)) walk(v[k]);
+  };
+  walk(snap && snap.state);
+  return hit;
+};
+const _ulOpenEditor = async (vp, shown, partial) => {
+  const disp = Array.from(vp.querySelectorAll("[data-block-type='text'] div")).find((d) => (partial ? d.textContent.includes(shown) : d.textContent === shown) && d.style.cursor === "pointer");
+  if (!disp) throw new Error("text block is not editable");
+  _click(disp);
+  const ed = await _waitFor(() => vp.querySelector("[data-block-type='text'] [contenteditable]"), 1500);
+  ed.focus();
+  return ed;
+};
+uiSuite("wp7-underline", [
+  { name: "Ctrl+U saves ++text++, renders an underlined span, undo restores", fn: async () => {
+    const past = _hooks().getHistoryCounts().past;
+    try {
+      const vp = await _mrdInject([{ type: "text", text: "WP7U base" }], { layout: undefined }, (v) => v?.textContent.includes("WP7U base") ? v : null);
+      const afterInject = _hooks().getHistoryCounts().past;
+      const ed = await _ulOpenEditor(vp, "WP7U base");
+      const sel = window.getSelection(); sel.selectAllChildren(ed); sel.collapseToEnd();
+      document.execCommand("insertText", false, " under");
+      const tw = document.createTreeWalker(ed, NodeFilter.SHOW_TEXT);
+      let tn = null;
+      while (tw.nextNode()) if (tw.currentNode.textContent.includes("under")) tn = tw.currentNode;
+      if (!tn) throw new Error("typed text not found");
+      const at = tn.textContent.lastIndexOf("under");
+      const r = document.createRange(); r.setStart(tn, at); r.setEnd(tn, at + 5);
+      sel.removeAllRanges(); sel.addRange(r);
+      const ev = new KeyboardEvent("keydown", { key: "u", ctrlKey: true, bubbles: true, cancelable: true });
+      ed.dispatchEvent(ev);
+      if (!ev.defaultPrevented) throw new Error("Ctrl+U was not handled by the editor");
+      if (!ed.querySelector("u")) throw new Error("Ctrl+U did not underline the selection");
+      ed.blur();
+      const saved = await _waitFor(() => _ulSaved("WP7U base") === "WP7U base ++under++" ? true : null, 2000)
+        .catch(() => { throw new Error(`saved text is ${JSON.stringify(_ulSaved("WP7U base"))}`); });
+      if (!saved) throw new Error("not saved");
+      const span = await _waitFor(() => _mrdViewport().querySelector("[data-block-type='text'] span[data-vela-u]"), 1500);
+      if (span.textContent !== "under" || !getComputedStyle(span).textDecorationLine.includes("underline"))
+        throw new Error("rendered text has no underlined span");
+      if (_mrdViewport().textContent.includes("++")) throw new Error("the ++ markers are visible");
+      if (_hooks().getHistoryCounts().past !== afterInject + 1) throw new Error("the edit did not make one undo step");
+      _key("z", { ctrlKey: true });
+      await _waitFor(() => !_mrdViewport().querySelector("span[data-vela-u]") && _ulSaved("WP7U base") === "WP7U base", 2000)
+        .catch(() => { throw new Error("undo did not restore the text without underline"); });
+    } finally { await _mrdUndoTo(past); }
+  }},
+  { name: "literal C++ / i++ stay text; deck markup stays literal in the editor", fn: async () => {
+    const past = _hooks().getHistoryCounts().past;
+    try {
+      const txt = 'C++ and i++ <u onclick="window.__wp7ul=1">z</u> ++y++';
+      const vp = await _mrdInject([{ type: "text", text: txt }], { layout: undefined }, (v) => v?.textContent.includes("C++ and i++") ? v : null);
+      const spans = vp.querySelectorAll("[data-block-type='text'] span[data-vela-u]");
+      if (spans.length !== 1 || spans[0].textContent !== "y") throw new Error(`expected one underline span "y", got ${spans.length}`);
+      if (vp.querySelector("[data-block-type='text'] u")) throw new Error("deck <u> became markup");
+      // Ingress sanitizing may strip the tag text; either way it must never be markup.
+      const ed = await _ulOpenEditor(vp, "C++ and i++", true);
+      const us = ed.querySelectorAll("u");
+      if (us.length !== 1 || us[0].textContent !== "y" || us[0].attributes.length) throw new Error("editor HTML has deck markup");
+      if (ed.querySelector("[onclick]")) throw new Error("deck markup became live in the editor");
+      ed.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+      await _waitFor(() => !_$("[contenteditable='true']"), 1500);
+      if (window.__wp7ul) throw new Error("deck handler ran");
+    } finally { await _mrdUndoTo(past); }
+  }},
+], { setup: _selectFirstModule });
+
+// ── WP5: story images, image file drop, tile reorder ────────────────────
+// A story slide is set up on the second slide, so a previous slide exists for
+// the back path. Each test exits Present and undoes its own history steps.
+const _wp5Sel = () => _hooks().getSelection?.() || null;
+const _wp5Key = () => { const s = _wp5Sel(); return s ? `${s.itemId}|${s.slideIdx}` : null; };
+const _wp5Deck = () => _hooks().getDeckStateForTest?.() || {};
+const _wp5Fs = () => !!_wp5Deck().fullscreen;
+const _wp5Cur = () => _hooks().getCurrentSlideForTest?.() || null;
+const _wp5ImgSrcs = () => ((_wp5Cur() || {}).blocks || []).filter((b) => b.type === "image").map((b) => b.src);
+const _wp5Imgs = (n, cap) => Array.from({ length: n }, (_, k) => ({ type: "image", src: _rfiSrc(160 + 40 * k, 90, k), ...(cap && cap(k) ? { caption: cap(k) } : {}) }));
+const _wp5Inject = (mark, n, extra, cap) => _mrdInject([{ type: "heading", text: mark }, ..._wp5Imgs(n, cap)], { imageCols: undefined, story: undefined, ...(extra || {}) },
+  (vp) => vp?.textContent.includes(mark) && vp.querySelectorAll("img").length >= n ? vp : null);
+const _wp5UndoTo = async (past) => {
+  const h = _hooks();
+  document.activeElement?.blur?.();
+  for (let i = 0; i < 40 && h.getHistoryCounts && h.getHistoryCounts().past > past; i++) { _key("z", { ctrlKey: true }); await _wait(50); }
+};
+const _wp5Enter = async () => {
+  document.activeElement?.blur?.(); await _wait(60);
+  _key("f");
+  await _waitFor(() => _wp5Fs() && !_$("header"), 2500).catch(() => { throw new Error("did not enter Present"); });
+  await _mrdFrame();
+};
+const _wp5Exit = async () => {
+  for (let i = 0; i < 8 && _wp5Fs(); i++) { document.activeElement?.blur?.(); _key("Escape"); await _wait(150); }
+  if (_wp5Fs()) throw new Error("could not exit Present");
+  await _waitFor(() => _$("header"), 2000).catch(() => {});
+};
+const _wp5Layer = (root = document) => _$("[data-story-layer]", root);
+const _wp5CurThumb = (root = document) => _$("[data-story-rail] [aria-current='true']", root);
+const _wp5ZoomedAt = (k, root = document) => { const l = _wp5Layer(root); return !!l && l.style.pointerEvents === "auto" && _wp5CurThumb(root)?.getAttribute("aria-label") === `Image ${k}`; };
+const _wp5Grid = () => !_wp5Layer();
+const _wp5Step = async (key, want, label) => {
+  document.activeElement?.blur?.();
+  _key(key);
+  await _waitFor(want, 2500).catch(() => { throw new Error(`${key} → ${label}: not reached (layer=${!!_wp5Layer()}, current=${_wp5CurThumb()?.getAttribute("aria-label") || "-"}, slide=${_wp5Key()})`); });
+};
+// Run body on a fresh story slide (the second slide of the deck), then clean up.
+const _wp5OnSlide = async (mark, n, extra, body, cap) => {
+  await _wp5Exit(); await _selectFirstModule();
+  const k0 = _wp5Key();
+  document.activeElement?.blur?.(); _key("ArrowRight");
+  await _waitFor(() => _wp5Key() && _wp5Key() !== k0, 2500).catch(() => { throw new Error("could not move to the second slide"); });
+  const past = _hooks().getHistoryCounts().past;
+  const mm = window.matchMedia;
+  try {
+    const vp = await _wp5Inject(mark, n, extra, cap);
+    await body(vp, past);
+  } finally {
+    window.matchMedia = mm;
+    await _wp5Exit().catch(() => {});
+    await _wp5UndoTo(past);
+  }
+};
+const _wp5Toast = (re) => _$$(".nav-toast-in, .nav-toast-out, [data-testid='paste-notice']").map((t) => (t.textContent || "").trim()).find((t) => re.test(t)) || null;
+const _wp5Drop = (target, files, types = ["dragenter", "dragover", "drop"]) => {
+  const dt = new DataTransfer(); files.forEach((f) => dt.items.add(f));
+  const evs = types.map((type) => { const ev = new DragEvent(type, { dataTransfer: dt, bubbles: true, cancelable: true }); target.dispatchEvent(ev); return ev; });
+  return evs[evs.length - 1];
+};
+const _wp5Aspect = (src) => new Promise((res) => { const im = new Image(); im.onload = () => res(im.naturalHeight > 0 ? im.naturalWidth / im.naturalHeight : 0); im.onerror = () => res(0); im.src = src; });
+const _wp5NoBlob = () => { const b = _$$("img").find((im) => /^blob:/i.test(im.getAttribute("src") || "")); if (b) throw new Error("an img uses a blob: URL"); };
+
+uiSuite("wp5-story-present-nav", [
+  { name: "→ steps grid → image 1..4 → grid → next slide; rail has 4 thumbs, one current", fn: async () => {
+    await _wp5OnSlide("WP5 nav fwd", 4, { story: true }, async () => {
+      const here = _wp5Key();
+      await _wp5Enter();
+      if (_wp5Key() !== here) throw new Error("Present did not open on the story slide");
+      if (_wp5Layer()) throw new Error("the story slide opened zoomed, expected the grid");
+      if (_$("[data-story-rail]")) throw new Error("the index rail shows on the grid");
+      for (let k = 1; k <= 4; k++) {
+        await _wp5Step("ArrowRight", () => _wp5ZoomedAt(k), `image ${k}`);
+        const thumbs = _$$("[data-story-rail] button");
+        if (thumbs.length !== 4) throw new Error(`rail has ${thumbs.length} thumbs, expected 4`);
+        if (thumbs.filter((b) => b.getAttribute("aria-current") === "true").length !== 1) throw new Error("rail does not mark exactly one current thumb");
+        const zsrc = _$("[data-story-image] img")?.getAttribute("src"), tsrc = _$(`[data-story-idx='${k}'] img`)?.getAttribute("src");
+        if (!zsrc || zsrc !== tsrc) throw new Error(`zoomed image ${k} is not the tile ${k} image`);
+        if (_wp5Key() !== here) throw new Error(`left the slide at image ${k}`);
+      }
+      await _wp5Step("ArrowRight", _wp5Grid, "grid after image 4");
+      if (_wp5Key() !== here) throw new Error("left the slide before the final grid");
+      await _wp5Step("ArrowRight", () => _wp5Key() !== here, "next slide");
+    });
+  }},
+  { name: "← enters on the grid (k=N), zooms 4..1, grid, then previous slide", fn: async () => {
+    await _wp5OnSlide("WP5 nav back", 4, { story: true }, async () => {
+      const here = _wp5Key();
+      document.activeElement?.blur?.(); _key("ArrowRight"); // editor: plain slide nav
+      await _waitFor(() => _wp5Key() !== here, 2000);
+      await _wp5Enter();
+      await _wp5Step("ArrowLeft", () => _wp5Key() === here && _wp5Grid(), "story slide grid");
+      for (let k = 4; k >= 1; k--) await _wp5Step("ArrowLeft", () => _wp5ZoomedAt(k), `image ${k}`);
+      await _wp5Step("ArrowLeft", _wp5Grid, "grid before image 1");
+      if (_wp5Key() !== here) throw new Error("left the slide before the first grid");
+      await _wp5Step("ArrowLeft", () => _wp5Key() !== here, "previous slide");
+    });
+  }},
+  { name: "Esc zooms out first and → resumes at k+1; a thumb and a tile click jump", fn: async () => {
+    await _wp5OnSlide("WP5 nav esc", 4, { story: true }, async () => {
+      const here = _wp5Key();
+      await _wp5Enter();
+      await _wp5Step("ArrowRight", () => _wp5ZoomedAt(1), "image 1");
+      await _wp5Step("ArrowRight", () => _wp5ZoomedAt(2), "image 2");
+      await _wp5Step("Escape", _wp5Grid, "grid after Esc");
+      if (!_wp5Fs()) throw new Error("Esc while zoomed left Present");
+      await _wp5Step("ArrowRight", () => _wp5ZoomedAt(3), "image 3 (resume)");
+      _click(_$$("[data-story-rail] button")[3]);
+      await _waitFor(() => _wp5ZoomedAt(4), 2000).catch(() => { throw new Error("rail thumb 4 did not jump to image 4"); });
+      _click(_wp5Layer());
+      await _waitFor(_wp5Grid, 2000).catch(() => { throw new Error("a click on the zoomed image did not zoom out"); });
+      _click(_$("[data-story-idx='2'] img"));
+      await _waitFor(() => _wp5ZoomedAt(2), 2000).catch(() => { throw new Error("a tile click did not jump to image 2"); });
+      if (_$("[data-vela-zoom]")) throw new Error("a story tile click also opened the gallery zoom");
+      if (_wp5Key() !== here) throw new Error("left the slide");
+    });
+  }},
+]);
+
+uiSuite("wp5-story-off-unchanged", [
+  { name: "story OFF: arrows go slide to slide, a tile click opens the old zoom, no rail", fn: async () => {
+    await _wp5OnSlide("WP5 off", 4, {}, async () => {
+      const here = _wp5Key();
+      if (_$("[data-story-idx]")) throw new Error("story numbering on a story-off slide");
+      await _wp5Enter();
+      await _wp5Step("ArrowRight", () => _wp5Key() !== here, "next slide");
+      if (_wp5Layer()) throw new Error("story layer on a story-off slide");
+      await _wp5Step("ArrowLeft", () => _wp5Key() === here, "back to the slide");
+      _click(_$$("[data-testid='image-grid-cell'] img")[0]);
+      await _waitFor(() => _$("[data-vela-zoom]"), 2000).catch(() => { throw new Error("tile click did not open the gallery zoom"); });
+      if (_$("[data-story-rail]") || _wp5Layer()) throw new Error("story rail shows on a story-off slide");
+      _click(_$("[data-vela-zoom]"));
+      await _waitFor(() => !_$("[data-vela-zoom]"), 2000).catch(() => { throw new Error("gallery zoom did not close"); });
+    });
+  }},
+]);
+
+uiSuite("wp5-story-editor", [
+  { name: "editor: arrows change slides and never step the story", fn: async () => {
+    await _wp5OnSlide("WP5 editor nav", 4, { story: true }, async () => {
+      const here = _wp5Key();
+      if (_$("[data-testid='story-toggle']")?.getAttribute("aria-pressed") !== "true") throw new Error("story toggle is not pressed on a story slide");
+      await _wp5Step("ArrowRight", () => _wp5Key() !== here, "next slide");
+      if (_wp5Layer()) throw new Error("editor stepped the story");
+      await _wp5Step("ArrowLeft", () => _wp5Key() === here, "back");
+      await _wait(200);
+      if (_wp5Layer()) throw new Error("editor shows a story zoom layer");
+    });
+  }},
+  { name: "story toggle sets story:true, one undo restores; hidden with < 2 images", fn: async () => {
+    await _wp5OnSlide("WP5 toggle", 3, {}, async () => {
+      const btn = await _waitFor(() => _$("[data-testid='story-toggle']"), 2000).catch(() => { throw new Error("story toggle not shown for 3 images"); });
+      if (btn.getAttribute("aria-pressed") !== "false") throw new Error("toggle pressed on a story-off slide");
+      if (_$("[data-testid='story-preview']")) throw new Error("Preview story shown while story is off");
+      const p1 = _hooks().getHistoryCounts().past;
+      _click(btn);
+      await _waitFor(() => _wp5Cur()?.story === true && _$("[data-testid='story-toggle']")?.getAttribute("aria-pressed") === "true" && _$("[data-testid='story-preview']"), 2000)
+        .catch(() => { throw new Error("toggle did not set story:true"); });
+      if (_hooks().getHistoryCounts().past !== p1 + 1) throw new Error("toggle did not make exactly one undo step");
+      document.activeElement?.blur?.(); _key("z", { ctrlKey: true });
+      await _waitFor(() => _wp5Cur()?.story !== true && _$("[data-testid='story-toggle']")?.getAttribute("aria-pressed") === "false", 2000)
+        .catch(() => { throw new Error("one undo did not restore story off"); });
+      await _wp5Inject("WP5 toggle one", 1);
+      await _wait(150);
+      if (_$("[data-testid='story-toggle']")) throw new Error("story toggle shown with 1 image");
+    });
+  }},
+]);
+
+uiSuite("wp5-story-presenter", [
+  { name: "presenter NOW shows the story step, NEXT says image k/N then overview", fn: async () => {
+    await _wp5OnSlide("WP5 presenter", 4, { story: true }, async () => {
+      const here = _wp5Key();
+      await _wp5Enter();
+      document.activeElement?.blur?.(); _key("s");
+      const pv = await _waitFor(() => _$("[data-testid='presenter-view']"), 2000);
+      const label = () => (_$("[data-testid='presenter-next-story']")?.textContent || "").trim() || null;
+      const nowLayer = () => _$$("[data-story-layer]", pv).find((l) => !l.closest("[data-testid='presenter-next']")) || null;
+      await _waitFor(() => label() === "image 1/4", 2000).catch(() => { throw new Error(`NEXT label on the grid is ${JSON.stringify(label())}`); });
+      if (nowLayer()) throw new Error("NOW is zoomed on the grid step");
+      // Presenter thumbs have no jump, so their rail items are not buttons.
+      for (let k = 1; k <= 4; k++) {
+        const want = k < 4 ? `image ${k + 1}/4` : "overview";
+        document.activeElement?.blur?.(); _key("ArrowRight");
+        await _waitFor(() => label() === want && nowLayer(), 2000).catch(() => { throw new Error(`at image ${k}: NEXT=${JSON.stringify(label())}, NOW zoomed=${!!nowLayer()}`); });
+        const items = _$$("[data-story-rail] > *", nowLayer());
+        const cur = items.findIndex((x) => x.getAttribute("aria-current") === "true");
+        if (items.length !== 4 || cur !== k - 1) throw new Error(`NOW rail current is ${cur + 1} of ${items.length}, expected ${k} of 4`);
+      }
+      document.activeElement?.blur?.(); _key("ArrowRight");
+      await _waitFor(() => !label() && !nowLayer(), 2000).catch(() => { throw new Error("final grid: NEXT should be the next slide"); });
+      if (_wp5Key() !== here) throw new Error("left the slide too early");
+      await _wp5Step("ArrowRight", () => _wp5Key() !== here, "next slide");
+    });
+  }},
+]);
+
+uiSuite("wp5-caption-chip", [
+  { name: "editor hover shows \"+ Add title\" with no layout shift; typing sets the caption", fn: async () => {
+    await _wp5OnSlide("WP5 chip", 2, {}, async (vp) => {
+      const cell = _$$("[data-testid='image-grid-cell']", vp)[0];
+      if (!cell) throw new Error("no grid cell");
+      if (_$("[data-testid='caption-chip']")) throw new Error("chip shown before hover");
+      const r0 = cell.getBoundingClientRect();
+      cell.querySelector("img").dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
+      const chip = await _waitFor(() => _$("[data-testid='caption-chip']", cell), 2000).catch(() => { throw new Error("hover did not show the chip"); });
+      if ((chip.textContent || "").trim() !== "+ Add title") throw new Error(`chip text is ${JSON.stringify(chip.textContent)}`);
+      if (getComputedStyle(chip).position !== "absolute") throw new Error("chip is not absolutely positioned");
+      const r1 = cell.getBoundingClientRect();
+      if (Math.abs(r0.height - r1.height) > 0.5 || Math.abs(r0.width - r1.width) > 0.5) throw new Error("chip changed the tile size");
+      _click(chip);
+      const ed = await _waitFor(() => _$("[contenteditable='true']", cell), 2000).catch(() => { throw new Error("chip click did not open an inline editor"); });
+      ed.focus();
+      document.execCommand("insertText", false, "WP5 title");
+      ed.blur();
+      await _waitFor(() => (_wp5Cur()?.blocks || [])[1]?.caption === "WP5 title", 2000).catch(() => { throw new Error(`caption is ${JSON.stringify((_wp5Cur()?.blocks || [])[1]?.caption)}`); });
+      await _waitFor(() => vp.textContent.includes("WP5 title"), 1500);
+    });
+  }},
+  { name: "no chip in Present, also with present edit ON", fn: async () => {
+    await _wp5OnSlide("WP5 chip present", 2, {}, async () => {
+      await _wp5Enter();
+      document.activeElement?.blur?.(); _key("E", { shiftKey: true });
+      await _waitFor(() => _wp5Toast(/Edit mode ON/), 2000).catch(() => { throw new Error("present edit did not turn ON"); });
+      try {
+        for (const im of _$$("[data-testid='image-grid-cell'] img")) im.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
+        await _wait(250);
+        if (_$("[data-testid='caption-chip']")) throw new Error("caption chip rendered in Present with present edit ON");
+      } finally { document.activeElement?.blur?.(); _key("E", { shiftKey: true }); await _wait(150); }
+    });
+  }},
+  { name: "markup-like caption renders as literal text; no element, no handler", fn: async () => {
+    window.__wp5xss = 0;
+    const xss = '<img src=x onerror="window.__wp5xss=1">';
+    await _wp5OnSlide("WP5 xss", 2, { story: true }, async (vp) => {
+      const stored = (_wp5Cur()?.blocks || [])[1]?.caption || "";
+      const check = (root) => {
+        if (_$$("img", root).some((im) => !/^data:image\//.test(im.getAttribute("src") || ""))) throw new Error("caption created an img element");
+        if (_$("[onerror]", root)) throw new Error("caption created a handler attribute");
+      };
+      await _wait(300);
+      check(vp);
+      if (_$$("img", vp).length !== 2) throw new Error(`expected 2 tile imgs, got ${_$$("img", vp).length}`);
+      if (stored && !vp.textContent.includes(stored)) throw new Error("caption is not rendered as literal text");
+      // The story number is its own text node, never part of the caption string.
+      const tw = document.createTreeWalker(vp, NodeFilter.SHOW_TEXT);
+      let prefix = false;
+      while (tw.nextNode()) if (tw.currentNode.textContent === "1 · ") prefix = true;
+      if (stored && !prefix) throw new Error("story prefix is not a separate text node");
+      await _wp5Enter();
+      await _wp5Step("ArrowRight", () => _wp5ZoomedAt(1), "image 1");
+      await _wait(200);
+      check(document.body);
+      if ((_wp5Layer()?.textContent || "").includes("onerror")) throw new Error("caption shows inside the zoom layer");
+      if (window.__wp5xss) throw new Error("caption handler ran");
+    }, (k) => (k === 0 ? xss : null));
+    if (window.__wp5xss) throw new Error("caption handler ran");
+  }},
+]);
+
+uiSuite("wp5-image-paste-spill", [
+  { name: "paste 12 images: 10 here, 2 on a new story slide after it, toast", fn: async () => {
+    await _wp5Exit(); await _selectFirstModule();
+    const past = _hooks().getHistoryCounts().past;
+    const home = _wp5Key();
+    try {
+      const mark = "WP5 paste spill";
+      await _mrdInject([{ type: "heading", text: mark }], { imageCols: undefined, story: true }, (vp) => vp?.textContent.includes(mark) && !vp.querySelector("img") ? vp : null);
+      const files = [];
+      for (let k = 0; k < 12; k++) files.push(await _rfiPng(120 + 10 * k, 80, k));
+      _h1Paste(files);
+      const msg = await _waitFor(() => _wp5Toast(/Added \d+ here · \d+ on new slide \d+/), 20000).catch(() => { throw new Error("no spill toast"); });
+      const m = msg.match(/Added (\d+) here · (\d+) on new slide (\d+)/);
+      if (m[1] !== "10" || m[2] !== "2") throw new Error(`toast says ${JSON.stringify(msg)}`);
+      await _waitFor(() => _wp5ImgSrcs().length === 2, 3000).catch(() => { throw new Error(`spill slide has ${_wp5ImgSrcs().length} images`); });
+      const spill = _wp5Cur(), sel = _wp5Sel();
+      if (spill.story !== true) throw new Error("spill slide did not inherit story:true");
+      if (sel.slideIdx + 1 !== Number(m[3])) throw new Error(`toast names slide ${m[3]}, spill is slide ${sel.slideIdx + 1}`);
+      document.activeElement?.blur?.(); _key("ArrowLeft");
+      await _waitFor(() => _wp5Key() === home, 2000).catch(() => { throw new Error("spill slide is not right after the pasted slide"); });
+      const src = _wp5ImgSrcs();
+      if (src.length !== 10) throw new Error(`pasted slide has ${src.length} images, expected 10`);
+      if (!src.every((s) => SAFE_RASTER_DATA_IMAGE.test(s))) throw new Error("a pasted src is not a safe raster data URI");
+    } finally {
+      await _wp5UndoTo(past);
+      await _selectFirstModule();
+    }
+  }},
+]);
+
+uiSuite("wp5-tile-reorder", [
+  { name: "drag a tile handle: live reflow, one edit, one undo restores", fn: async () => {
+    await _wp5OnSlide("WP5 reorder", 3, {}, async (vp) => {
+      const before = _wp5ImgSrcs();
+      const cells = _$$("[data-testid='image-grid-cell']", vp);
+      if (cells.length !== 3) throw new Error(`expected 3 cells, got ${cells.length}`);
+      cells[0].querySelector("img").dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
+      const h = await _waitFor(() => _$("[data-testid='tile-drag-handle']", cells[0]), 2000).catch(() => { throw new Error("hover did not show the drag handle"); });
+      const hr = h.getBoundingClientRect(), c0 = cells[0].getBoundingClientRect(), t = cells[2].getBoundingClientRect();
+      const p1 = _hooks().getHistoryCounts().past;
+      h.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, cancelable: true, button: 0, pointerId: 1, isPrimary: true, clientX: hr.x + 4, clientY: hr.y + 4 }));
+      await _mrdFrame();
+      window.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, pointerId: 1, clientX: t.x + t.width / 2, clientY: t.y + t.height / 2 }));
+      await _waitFor(() => Math.abs(cells[0].getBoundingClientRect().left - c0.left) > 2, 1500).catch(() => { throw new Error("dragged tile did not reflow live"); });
+      if (_hooks().getHistoryCounts().past !== p1) throw new Error("drag move wrote history before drop");
+      window.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, pointerId: 1, clientX: t.x + t.width / 2, clientY: t.y + t.height / 2 }));
+      const want = [before[1], before[2], before[0]];
+      await _waitFor(() => JSON.stringify(_wp5ImgSrcs()) === JSON.stringify(want), 2000).catch(() => { throw new Error("drop did not reorder the blocks to 2,3,1"); });
+      if (_hooks().getHistoryCounts().past !== p1 + 1) throw new Error("reorder did not make exactly one undo step");
+      document.activeElement?.blur?.(); _key("z", { ctrlKey: true });
+      await _waitFor(() => JSON.stringify(_wp5ImgSrcs()) === JSON.stringify(before), 2000).catch(() => { throw new Error("one undo did not restore the order"); });
+    });
+  }},
+  { name: "Esc during a tile drag cancels with no change", fn: async () => {
+    await _wp5OnSlide("WP5 reorder esc", 3, {}, async (vp) => {
+      const before = _wp5ImgSrcs();
+      const cells = _$$("[data-testid='image-grid-cell']", vp);
+      cells[0].querySelector("img").dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
+      const h = await _waitFor(() => _$("[data-testid='tile-drag-handle']", cells[0]), 2000);
+      const hr = h.getBoundingClientRect(), c0 = cells[0].getBoundingClientRect(), t = cells[2].getBoundingClientRect();
+      const p1 = _hooks().getHistoryCounts().past;
+      h.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, cancelable: true, button: 0, pointerId: 1, isPrimary: true, clientX: hr.x + 4, clientY: hr.y + 4 }));
+      await _mrdFrame();
+      window.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, pointerId: 1, clientX: t.x + t.width / 2, clientY: t.y + t.height / 2 }));
+      await _waitFor(() => Math.abs(cells[0].getBoundingClientRect().left - c0.left) > 2, 1500).catch(() => { throw new Error("drag did not start"); });
+      document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+      await _mrdFrame();
+      window.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, pointerId: 1, clientX: t.x + t.width / 2, clientY: t.y + t.height / 2 }));
+      await _wait(300);
+      if (JSON.stringify(_wp5ImgSrcs()) !== JSON.stringify(before)) throw new Error("Esc did not cancel the reorder");
+      if (_hooks().getHistoryCounts().past !== p1) throw new Error("a cancelled drag wrote history");
+      if (Math.abs(cells[0].getBoundingClientRect().left - c0.left) > 0.5) throw new Error("tile did not go back after cancel");
+    });
+  }},
+]);
+
+uiSuite("wp5-story-motion-gallery", [
+  { name: "reduced motion: zoom in and out are instant (no fly animation)", fn: async () => {
+    await _wp5OnSlide("WP5 motion", 3, { story: true }, async () => {
+      await _wp5Enter();
+      await _wp5Step("ArrowRight", () => _wp5ZoomedAt(1), "image 1 (motion)");
+      if (!/350ms/.test(_$("[data-story-image]")?.style.transition || "")) throw new Error("control: no fly-zoom transition with motion allowed");
+      await _wp5Step("ArrowLeft", _wp5Grid, "grid (motion)");
+      const mm = window.matchMedia;
+      window.matchMedia = (q) => (/prefers-reduced-motion/.test(String(q))
+        ? { matches: true, media: String(q), onchange: null, addListener() {}, removeListener() {}, addEventListener() {}, removeEventListener() {}, dispatchEvent() { return false; } }
+        : mm.call(window, q));
+      await _wp5Step("ArrowRight", () => _wp5ZoomedAt(1), "image 1 (reduced)");
+      const box = _$("[data-story-image]"), rail = _$("[data-story-rail]");
+      if (box.style.transition !== "none" || box.style.transform !== "" || box.style.opacity !== "") throw new Error(`reduced motion still animates: transition=${box.style.transition}, transform=${box.style.transform}`);
+      if (rail.style.opacity !== "") throw new Error("reduced motion: rail fades in");
+      document.activeElement?.blur?.(); _key("ArrowLeft");
+      await _mrdFrame();
+      if (_wp5Layer()) throw new Error("reduced motion: zoom out is not instant");
+    });
+  }},
+  { name: "FX2b: with the Present gallery open, arrows do not step the story", fn: async () => {
+    await _wp5OnSlide("WP5 gallery", 3, { story: true }, async () => {
+      const here = _wp5Key();
+      await _wp5Enter();
+      document.activeElement?.blur?.(); _key("g");
+      await _waitFor(() => _mrdGalleryOpen(), 2000).catch(() => { throw new Error("gallery did not open in Present"); });
+      document.activeElement?.blur?.(); _key("ArrowRight");
+      await _waitFor(() => _wp5Key() !== here, 2000).catch(() => { throw new Error("ArrowRight in the gallery did not move as a plain slide"); });
+      if (_wp5Layer()) throw new Error("ArrowRight in the gallery stepped the story");
+      document.activeElement?.blur?.(); _key("ArrowLeft");
+      await _waitFor(() => _wp5Key() === here, 2000).catch(() => { throw new Error("ArrowLeft in the gallery did not go back"); });
+      await _wait(150);
+      if (_wp5Layer()) throw new Error("ArrowLeft in the gallery entered the story zoomed");
+      document.activeElement?.blur?.(); _key("Escape");
+      await _waitFor(() => !_mrdGalleryOpen(), 2000);
+      await _wp5Step("ArrowRight", () => _wp5ZoomedAt(1), "image 1 after the gallery closes");
+    });
+  }},
+]);
+
+// ── WP5b: story steps by wheel and swipe, Preview, phone layout, large images ──
+// Same story-slide setup and cleanup as WP5 (_wp5OnSlide). Wheel and swipe go
+// to the Present container, where SlidePanel listens for them.
+const _wp5bFsEl = () => _$$("div[tabindex='0']").find((d) => d.style.position === "fixed" && d.style.zIndex === "9999") || null;
+const _wp5bWheel = (dy) => {
+  const el = _wp5bFsEl(); if (!el) throw new Error("no Present container");
+  el.dispatchEvent(new WheelEvent("wheel", { deltaY: dy, deltaMode: 0, bubbles: true, cancelable: true }));
+};
+const _wp5bState = () => `layer=${!!_wp5Layer()}, current=${_wp5CurThumb()?.getAttribute("aria-label") || "-"}, slide=${_wp5Key()}`;
+// One wheel notch. Wait past the 200 ms reset first, so each notch starts at 0.
+const _wp5bWheelStep = async (dy, want, label) => {
+  document.activeElement?.blur?.(); await _wait(260);
+  _wp5bWheel(dy);
+  await _waitFor(want, 2500).catch(() => { throw new Error(`wheel ${dy} → ${label}: not reached (${_wp5bState()})`); });
+};
+// A synthetic touch. Use TouchEvent when the browser has it, else a plain Event
+// with the same touches/changedTouches fields that useSwipe reads.
+const _wp5bTouch = (el, type, x, y) => {
+  const pt = { identifier: 1, target: el, clientX: x, clientY: y, pageX: x, pageY: y, screenX: x, screenY: y };
+  let ev;
+  try {
+    const t = new Touch(pt);
+    ev = new TouchEvent(type, { bubbles: true, cancelable: true, touches: type === "touchend" ? [] : [t], changedTouches: [t] });
+  } catch {
+    ev = new Event(type, { bubbles: true, cancelable: true });
+    Object.defineProperty(ev, "touches", { value: type === "touchend" ? [] : [pt] });
+    Object.defineProperty(ev, "changedTouches", { value: [pt] });
+  }
+  el.dispatchEvent(ev);
+};
+const _wp5bSwipe = async (dx, dy = 4) => {
+  const el = _wp5bFsEl(); if (!el) throw new Error("no Present container");
+  const r = el.getBoundingClientRect();
+  const x0 = r.left + r.width / 2 - dx / 2, y0 = r.top + r.height / 2 - dy / 2;
+  _wp5bTouch(el, "touchstart", x0, y0); await _wait(40);
+  _wp5bTouch(el, "touchend", x0 + dx, y0 + dy);
+};
+const _wp5bSwipeStep = async (dx, want, label) => {
+  document.activeElement?.blur?.();
+  await _wp5bSwipe(dx);
+  await _waitFor(want, 2500).catch(() => { throw new Error(`swipe ${dx}px → ${label}: not reached (${_wp5bState()})`); });
+};
+// Hold a state for a short time: a no-op gesture must not move the story.
+const _wp5bHold = async (ok, label, ms = 400) => {
+  const end = performance.now() + ms;
+  while (performance.now() < end) { if (!ok()) throw new Error(`${label} (${_wp5bState()})`); await _wait(40); }
+};
+// Phone size: the app reads window.innerWidth (useIsMobile, MOBILE_BP 500). A
+// transform on #root makes it the box for the fixed Present container, so the
+// layout is really 390 px wide. Everything is restored after the body.
+const _wp5bPhone = async (body) => {
+  const root = document.getElementById("root"); if (!root) throw new Error("no #root");
+  const W = 390, H = Math.min(window.innerHeight, 844);
+  const dW = Object.getOwnPropertyDescriptor(window, "innerWidth"), dH = Object.getOwnPropertyDescriptor(window, "innerHeight");
+  const css = root.getAttribute("style");
+  const put = (k, d) => { if (d) Object.defineProperty(window, k, d); else delete window[k]; };
+  Object.defineProperty(window, "innerWidth", { configurable: true, get: () => W });
+  Object.defineProperty(window, "innerHeight", { configurable: true, get: () => H });
+  root.style.width = `${W}px`; root.style.height = `${H}px`; root.style.overflow = "hidden"; root.style.transform = "translateZ(0)";
+  window.dispatchEvent(new Event("resize"));
+  try {
+    await _waitFor(() => _$("header")?.style.height === "40px", 2500).catch(() => { throw new Error("the app did not switch to the phone layout"); });
+    await body(root);
+  } finally {
+    put("innerWidth", dW); put("innerHeight", dH);
+    if (css == null) root.removeAttribute("style"); else root.setAttribute("style", css);
+    window.dispatchEvent(new Event("resize"));
+    await _waitFor(() => _$("header")?.style.height === "44px", 2500).catch(() => {});
+  }
+};
+const _wp5bInside = (a, b, tol = 1) => a.left >= b.left - tol && a.top >= b.top - tol && a.right <= b.right + tol && a.bottom <= b.bottom + tol;
+const _wp5bOverlap = (a, b) => Math.max(0, Math.min(a.right, b.right) - Math.max(a.left, b.left)) * Math.max(0, Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top));
+const _wp5bBox = (r) => `${Math.round(r.left)},${Math.round(r.top)} ${Math.round(r.width)}x${Math.round(r.height)}`;
+// A 1600x900 JPEG with a gradient, a number and many small squares, so the
+// file is not trivial to decode.
+const _wp5bBig = (k) => {
+  const cv = document.createElement("canvas"); cv.width = 1600; cv.height = 900;
+  const g = cv.getContext("2d");
+  const gr = g.createLinearGradient(0, 0, 1600, 900);
+  gr.addColorStop(0, _tlColors[k % 5]); gr.addColorStop(1, `hsl(${(k * 36) % 360},70%,35%)`);
+  g.fillStyle = gr; g.fillRect(0, 0, 1600, 900);
+  for (let i = 0; i < 400; i++) { g.fillStyle = `hsla(${(i * 37 + k * 11) % 360},80%,60%,0.5)`; g.fillRect((i * 97 + k * 13) % 1560, (i * 53 + k * 7) % 860, 40, 40); }
+  g.fillStyle = "#fff"; g.font = "bold 360px sans-serif"; g.fillText(String(k + 1), 560, 600);
+  return cv.toDataURL("image/jpeg", 0.92);
+};
+const _wp5bLayerImg = () => { const l = _wp5Layer(); return l ? _$("[data-story-image] img", l) : null; };
+
+uiSuite("wp5b-story-gaps", [
+  { name: "wheel down steps the story like ArrowRight, then leaves the slide", fn: async () => {
+    await _wp5OnSlide("WP5b wheel fwd", 4, { story: true }, async () => {
+      const here = _wp5Key();
+      await _wp5Enter();
+      if (_wp5Layer()) throw new Error("the story slide opened zoomed, expected the grid");
+      for (let k = 1; k <= 4; k++) {
+        await _wp5bWheelStep(120, () => _wp5ZoomedAt(k), `image ${k}`);
+        if (_wp5Key() !== here) throw new Error(`left the slide at image ${k}`);
+      }
+      await _wp5bWheelStep(120, _wp5Grid, "grid after image 4");
+      if (_wp5Key() !== here) throw new Error("left the slide before the final grid");
+      await _wp5bWheelStep(120, () => _wp5Key() !== here, "next slide");
+    });
+  }},
+  { name: "wheel up steps the story back like ArrowLeft, then leaves the slide", fn: async () => {
+    await _wp5OnSlide("WP5b wheel back", 4, { story: true }, async () => {
+      const here = _wp5Key();
+      await _wp5Enter();
+      await _wp5bWheelStep(120, () => _wp5ZoomedAt(1), "image 1");
+      await _wp5bWheelStep(120, () => _wp5ZoomedAt(2), "image 2");
+      await _wp5bWheelStep(-120, () => _wp5ZoomedAt(1), "image 1 (back)");
+      await _wp5bWheelStep(-120, _wp5Grid, "grid before image 1");
+      if (_wp5Key() !== here) throw new Error("left the slide at the first grid");
+      await _wp5bWheelStep(-120, () => _wp5Key() !== here, "previous slide");
+      // Back onto the story slide from the previous slide: it starts at the grid.
+      await _wp5bWheelStep(120, () => _wp5Key() === here && _wp5Grid(), "story slide grid");
+    });
+  }},
+  { name: "wheel threshold: a small delta does nothing, deltas add up, one notch is one step", fn: async () => {
+    await _wp5OnSlide("WP5b wheel debounce", 4, { story: true }, async () => {
+      const here = _wp5Key();
+      await _wp5Enter();
+      document.activeElement?.blur?.();
+      // 60 < SCROLL_THRESHOLD (120): no step, and the sum resets after 200 ms.
+      _wp5bWheel(60);
+      await _wp5bHold(() => _wp5Grid() && _wp5Key() === here, "a 60 px wheel moved the story");
+      _wp5bWheel(60);
+      await _wp5bHold(() => _wp5Grid() && _wp5Key() === here, "two 60 px wheels 400 ms apart moved the story");
+      // Two halves inside the 200 ms window add up to one step.
+      _wp5bWheel(60); await _wait(30); _wp5bWheel(60);
+      await _waitFor(() => _wp5ZoomedAt(1), 2000).catch(() => { throw new Error(`60+60 px did not step to image 1 (${_wp5bState()})`); });
+      // One large delta is one step, not three.
+      await _wait(260); _wp5bWheel(360);
+      await _waitFor(() => _wp5ZoomedAt(2), 2000).catch(() => { throw new Error(`a 360 px wheel did not step to image 2 (${_wp5bState()})`); });
+      await _wp5bHold(() => _wp5ZoomedAt(2), "a 360 px wheel did more than one step");
+    });
+  }},
+  { name: "touch swipe left steps forward, swipe right steps back; short or vertical swipes do nothing", fn: async () => {
+    await _wp5OnSlide("WP5b swipe", 4, { story: true }, async () => {
+      const here = _wp5Key();
+      await _wp5Enter();
+      await _wp5bSwipeStep(-200, () => _wp5ZoomedAt(1), "image 1");
+      await _wp5bSwipeStep(-200, () => _wp5ZoomedAt(2), "image 2");
+      await _wp5bSwipeStep(200, () => _wp5ZoomedAt(1), "image 1 (back)");
+      // Under the 50 px threshold: no step.
+      await _wp5bSwipe(-30);
+      await _wp5bHold(() => _wp5ZoomedAt(1), "a 30 px swipe moved the story");
+      // Mostly vertical: no step.
+      await _wp5bSwipe(-60, 220);
+      await _wp5bHold(() => _wp5ZoomedAt(1), "a vertical swipe moved the story");
+      await _wp5bSwipeStep(200, _wp5Grid, "grid before image 1");
+      if (_wp5Key() !== here) throw new Error("left the slide at the first grid");
+      await _wp5bSwipeStep(200, () => _wp5Key() !== here, "previous slide");
+    });
+  }},
+  { name: "▶ Preview opens Present on this slide at the grid; Esc returns to the editor on the same slide", fn: async () => {
+    await _wp5OnSlide("WP5b preview", 3, { story: true }, async () => {
+      const here = _wp5Key();
+      const btn = await _waitFor(() => _$("[data-testid='story-preview']"), 2000).catch(() => { throw new Error("no ▶ Preview button on a story slide"); });
+      _click(btn);
+      await _waitFor(() => _wp5Fs() && !_$("header"), 2500).catch(() => { throw new Error("▶ Preview did not open Present"); });
+      await _mrdFrame();
+      if (_wp5Key() !== here) throw new Error(`Present opened on ${_wp5Key()}, expected ${here}`);
+      if (_wp5Layer()) throw new Error("Preview opened zoomed, expected the grid (step 0)");
+      await _wp5Step("ArrowRight", () => _wp5ZoomedAt(1), "image 1");
+      await _wp5Step("Escape", _wp5Grid, "grid after Esc");
+      if (!_wp5Fs()) throw new Error("Esc while zoomed left Present");
+      document.activeElement?.blur?.(); _key("Escape");
+      await _waitFor(() => !_wp5Fs() && _$("header"), 2500).catch(() => { throw new Error("Esc on the grid did not return to the editor"); });
+      if (_wp5Key() !== here) throw new Error(`editor is on ${_wp5Key()} after Esc, expected ${here}`);
+      await _waitFor(() => _$("[data-testid='story-preview']"), 2000).catch(() => { throw new Error("the editor toolbar did not come back"); });
+    });
+  }},
+  { name: "phone size: toolbar shows story icons only; zoomed rail stays on screen and clear of the image", fn: async () => {
+    await _wp5OnSlide("WP5b phone", 4, { story: true }, async () => {
+      const here = _wp5Key();
+      await _wp5bPhone(async (root) => {
+        const tog = await _waitFor(() => _$("[data-testid='story-toggle']"), 2500).catch(() => { throw new Error("no story toggle in the phone layout"); });
+        const pre = _$("[data-testid='story-preview']");
+        if (!pre) throw new Error("no ▶ Preview button in the phone layout");
+        for (const [b, icon] of [[tog, "🎞"], [pre, "▶"]]) {
+          const txt = (b.textContent || "").trim();
+          if (txt !== icon || b.querySelector("span")) throw new Error(`phone toolbar button shows ${JSON.stringify(txt)}, expected the icon ${icon} only`);
+        }
+        if (_wp5Key() !== here) throw new Error("the phone layout changed the slide");
+        _click(pre);
+        await _waitFor(() => _wp5Fs(), 2500).catch(() => { throw new Error("▶ Preview did not open Present in the phone layout"); });
+        await _mrdFrame();
+        const R = root.getBoundingClientRect();
+        if (R.width > 391) throw new Error(`phone box is ${Math.round(R.width)} px wide`);
+        for (let k = 1; k <= 4; k++) {
+          await _wp5Step("ArrowRight", () => _wp5ZoomedAt(k), `image ${k}`);
+          await _wait(420); await _mrdFrame(); // let the 350 ms zoom finish
+          const rail = _$("[data-story-rail]", _wp5Layer()).getBoundingClientRect();
+          const box = _$("[data-story-image]", _wp5Layer()).getBoundingClientRect();
+          const img = _wp5bLayerImg()?.getBoundingClientRect();
+          if (!(rail.width > 0 && rail.height > 0)) throw new Error(`image ${k}: the rail has no size (${_wp5bBox(rail)})`);
+          if (!(box.width > 20 && box.height > 20)) throw new Error(`image ${k}: the zoomed image box is too small (${_wp5bBox(box)})`);
+          if (!_wp5bInside(rail, R)) throw new Error(`image ${k}: rail ${_wp5bBox(rail)} is outside the phone box ${_wp5bBox(R)}`);
+          if (!_wp5bInside(box, R)) throw new Error(`image ${k}: image box ${_wp5bBox(box)} is outside the phone box ${_wp5bBox(R)}`);
+          if (img && !_wp5bInside(img, box)) throw new Error(`image ${k}: the zoomed img ${_wp5bBox(img)} spills out of its box ${_wp5bBox(box)}`);
+          if (_wp5bOverlap(rail, box) > 1) throw new Error(`image ${k}: rail ${_wp5bBox(rail)} overlaps the image box ${_wp5bBox(box)}`);
+          const thumbs = _$$("[data-story-rail] > *", _wp5Layer()).map((t) => t.getBoundingClientRect());
+          if (thumbs.length !== 4) throw new Error(`image ${k}: rail has ${thumbs.length} thumbs, expected 4`);
+          thumbs.forEach((t, i) => {
+            if (!(t.width > 0 && t.height > 0)) throw new Error(`image ${k}: thumb ${i + 1} has no size`);
+            if (!_wp5bInside(t, rail)) throw new Error(`image ${k}: thumb ${i + 1} ${_wp5bBox(t)} is outside the rail ${_wp5bBox(rail)}`);
+            if (_wp5bOverlap(t, box) > 1) throw new Error(`image ${k}: thumb ${i + 1} overlaps the image box`);
+            if (i > 0 && t.top < thumbs[i - 1].bottom - 1) throw new Error(`image ${k}: thumbs ${i} and ${i + 1} overlap`);
+          });
+        }
+        await _wp5Exit();
+      });
+    });
+  }},
+  { name: "10 large images (1600x900): every Present step shows the right image in time, no console errors", fn: async () => {
+    const big = Array.from({ length: 10 }, (_, k) => _wp5bBig(k));
+    const errs = [];
+    const ce = console.error;
+    const onErr = (e) => errs.push(String(e?.message || e?.reason || e).slice(0, 160));
+    console.error = (...a) => { errs.push(a.map((x) => String(x)).join(" ").slice(0, 160)); ce.apply(console, a); };
+    window.addEventListener("error", onErr); window.addEventListener("unhandledrejection", onErr);
+    try {
+      await _wp5OnSlide("WP5b big", 2, { story: true }, async () => {
+        const mark = "WP5b ten big";
+        await _mrdInject([{ type: "heading", text: mark }, ...big.map((src) => ({ type: "image", src }))], { imageCols: undefined, story: true },
+          (vp) => vp?.textContent.includes(mark) && vp.querySelectorAll("img").length >= 10 ? vp : null);
+        const srcs = _wp5ImgSrcs();
+        if (srcs.length !== 10 || new Set(srcs).size !== 10) throw new Error(`deck has ${srcs.length} images (${new Set(srcs).size} distinct), expected 10`);
+        if (srcs.some((s, i) => s !== big[i])) throw new Error("the deck changed an image src on load");
+        const here = _wp5Key();
+        await _wp5Enter();
+        const times = [];
+        for (let k = 1; k <= 10; k++) {
+          document.activeElement?.blur?.();
+          const t0 = performance.now();
+          _key("ArrowRight");
+          await _waitFor(() => { const im = _wp5bLayerImg(); return _wp5ZoomedAt(k) && im && im.getAttribute("src") === srcs[k - 1] && im.complete && im.naturalWidth === 1600 && im.naturalHeight === 900; }, 3000)
+            .catch(() => { const im = _wp5bLayerImg(); throw new Error(`image ${k}: not shown (${_wp5bState()}, src ok=${im?.getAttribute("src") === srcs[k - 1]}, size=${im?.naturalWidth}x${im?.naturalHeight})`); });
+          times.push(Math.round(performance.now() - t0));
+          if (times[k - 1] > 1500) throw new Error(`image ${k} took ${times[k - 1]} ms (limit 1500); times ${times.join(",")}`);
+          if (_wp5Key() !== here) throw new Error(`left the slide at image ${k}`);
+        }
+        await _wp5Step("ArrowRight", _wp5Grid, "grid after image 10");
+      });
+    } finally {
+      console.error = ce;
+      window.removeEventListener("error", onErr); window.removeEventListener("unhandledrejection", onErr);
+    }
+    if (errs.length) throw new Error(`console errors: ${errs.slice(0, 3).join(" | ")}`);
+  }},
+]);
+
+uiSuite("wp5-image-drop", [
+  { name: "OS drop keeps file order; stored src is a safe JPEG data URI; no blob:", fn: async () => {
+    await _wp5OnSlide("WP5 drop", 0, {}, async (vp) => {
+      const title = _wp5Deck().deckTitle;
+      const files = [await _rfiPng(200, 100, 0), await _rfiPng(300, 100, 1), await _rfiPng(400, 100, 2)];
+      const ev = _wp5Drop(vp, files);
+      if (!ev.defaultPrevented) throw new Error("image drop was not taken by the slide panel");
+      await _waitFor(() => _wp5ImgSrcs().length === 3, 10000).catch(() => { throw new Error(`slide has ${_wp5ImgSrcs().length} images after the drop`); });
+      const src = _wp5ImgSrcs();
+      src.forEach((s, i) => { if (!SAFE_RASTER_DATA_IMAGE.test(s) || !/^data:image\/jpeg;base64,/i.test(s)) throw new Error(`image ${i + 1} src is not a safe JPEG data URI`); });
+      const asp = await Promise.all(src.map(_wp5Aspect));
+      if (![2, 3, 4].every((a, i) => Math.abs(asp[i] - a) < 0.1)) throw new Error(`drop order lost: aspects ${asp.map((a) => a.toFixed(2)).join(",")}`);
+      _wp5NoBlob();
+      if (_wp5Deck().deckTitle !== title) throw new Error("image drop changed the deck");
+    });
+  }},
+  { name: "mixed image drop: SVG and oversize files are rejected, images kept, deck kept", fn: async () => {
+    await _wp5OnSlide("WP5 drop mixed", 0, {}, async (vp) => {
+      const title = _wp5Deck().deckTitle;
+      const svg = new File(['<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><rect width="10" height="10"/></svg>'], "a.svg", { type: "image/svg+xml" });
+      const big = new File([new Uint8Array(26 * 1024 * 1024)], "big.png", { type: "image/png" });
+      const files = [await _rfiPng(200, 100, 0), svg, big, await _rfiPng(300, 100, 1)];
+      const ev = _wp5Drop(vp, files);
+      if (!ev.defaultPrevented) throw new Error("mixed drop was not taken by the slide panel");
+      const msg = await _waitFor(() => _wp5Toast(/not added/), 10000).catch(() => { throw new Error("no reject notice"); });
+      if (msg !== "Added 2 · 2 not added") throw new Error(`notice is ${JSON.stringify(msg)}`);
+      const src = _wp5ImgSrcs();
+      if (src.length !== 2) throw new Error(`slide has ${src.length} images, expected 2`);
+      if (!src.every((s) => /^data:image\/jpeg;base64,/i.test(s) && SAFE_RASTER_DATA_IMAGE.test(s))) throw new Error("a kept src is not a safe JPEG data URI");
+      const asp = await Promise.all(src.map(_wp5Aspect));
+      if (Math.abs(asp[0] - 2) > 0.1 || Math.abs(asp[1] - 3) > 0.1) throw new Error("mixed drop lost the image order");
+      _wp5NoBlob();
+      await _wait(300);
+      if (_wp5Deck().deckTitle !== title) throw new Error("a mixed image drop changed the deck");
+    });
+  }},
+  { name: "a drop of a .vela file plus an image loads the deck and adds no image", fn: async () => {
+    await _wp5Exit(); await _selectFirstModule();
+    const title = _wp5Deck().deckTitle;
+    const deck = { deckTitle: "WP5 mixed deck", lanes: [{ id: "wp5x", title: "WP5 lane", items: [{ id: "wp5xm", title: "WP5 mixed module", slides: [{ blocks: [{ type: "heading", text: "WP5 MIXED DECK" }] }] }] }] };
+    const vela = new File([JSON.stringify(deck)], "mixed.vela", { type: "" });
+    try {
+      _wp5Drop(_mrdViewport(), [await _rfiPng(200, 100, 0), vela]);
+      await _waitFor(() => _wp5Deck().deckTitle === "WP5 mixed deck", 5000).catch(() => { throw new Error(`deck not loaded, title is ${JSON.stringify(_wp5Deck().deckTitle)}`); });
+      await _wait(300);
+      if (_wp5Deck().firstBlockText !== "WP5 MIXED DECK") throw new Error("loaded deck content is wrong");
+      const n = _wp5ImgSrcs().length;
+      if (n !== 0) throw new Error(`mixed drop added ${n} image(s) to the loaded deck`);
+      _wp5NoBlob();
+    } finally {
+      if (!_hooks().restoreStartupDeck?.()) throw new Error("could not restore the demo deck");
+      await _waitFor(() => _wp5Deck().deckTitle === title, 3000).catch(() => { throw new Error("demo deck not restored"); });
+      await _selectFirstModule();
+    }
+  }},
+  { name: "FX2a: images-only drop in Present shows a toast; deck unchanged", fn: async () => {
+    await _wp5OnSlide("WP5 drop present", 2, {}, async () => {
+      await _wp5Enter();
+      const title = _wp5Deck().deckTitle, before = JSON.stringify(_wp5Cur());
+      const target = document.elementFromPoint(innerWidth / 2, innerHeight / 2) || document.body;
+      const files = [await _rfiPng(200, 100, 0), await _rfiPng(300, 100, 1)];
+      _wp5Drop(target, files, ["dragenter", "dragover"]);
+      await _waitFor(() => _$text("Exit Present to add images"), 2000).catch(() => { throw new Error("drag overlay does not say to exit Present"); });
+      _wp5Drop(target, files, ["drop"]);
+      await _waitFor(() => _wp5Toast(/^Exit Present to add images$/), 2000).catch(() => { throw new Error("no 'Exit Present to add images' toast"); });
+      await _wait(800);
+      const leaf = _$$("*").filter((el) => el.children.length === 0 && (el.textContent || "").includes("Exit Present to add images"));
+      if (leaf.some((el) => !el.closest(".nav-toast-in, .nav-toast-out"))) throw new Error("drag overlay still shown after the drop");
+      if (!_wp5Fs()) throw new Error("drop left Present");
+      if (_wp5Deck().deckTitle !== title || JSON.stringify(_wp5Cur()) !== before) throw new Error("drop in Present changed the deck");
+    });
+  }},
+  { name: "a .vela-only drop still loads a deck", fn: async () => {
+    await _wp5Exit(); await _selectFirstModule();
+    const title = _wp5Deck().deckTitle;
+    const deck = { deckTitle: "WP5 dropped deck", lanes: [{ id: "wp5l", title: "WP5 lane", items: [{ id: "wp5m", title: "WP5 dropped module", slides: [{ blocks: [{ type: "heading", text: "WP5 DROPPED DECK" }] }] }] }] };
+    const vela = new File([JSON.stringify(deck)], "wp5.vela", { type: "" });
+    try {
+      _wp5Drop(_mrdViewport(), [vela]);
+      await _waitFor(() => _wp5Deck().deckTitle === "WP5 dropped deck", 5000).catch(() => { throw new Error(`deck not loaded, title is ${JSON.stringify(_wp5Deck().deckTitle)}`); });
+      _wp5NoBlob();
+    } finally {
+      if (!_hooks().restoreStartupDeck?.()) throw new Error("could not restore the demo deck");
+      await _waitFor(() => _wp5Deck().deckTitle === title, 3000).catch(() => { throw new Error("demo deck not restored"); });
+      await _selectFirstModule();
+    }
+  }},
+]);
+
+// Slide toolbar auto-compact: one row at any width; labels hide from the right.
+const _tbEl = () => _$("[data-testid='slide-toolbar']");
+const _tbButtons = () => Array.from(_tbEl()?.querySelectorAll("button") || []);
+const _tbOneRow = () => { const el = _tbEl(), c = _tbButtons().map((b) => { const r = b.getBoundingClientRect(); return r.top + r.height / 2; }); return c.length > 0 && c.every((y) => Math.abs(y - c[0]) < 2) && el.scrollWidth <= el.clientWidth + 1; }; // one row, and the row fits
+const _tbAtWidth = async (w, body) => {
+  await _selectFirstModule();
+  const el = await _waitFor(_tbEl, 3000).catch(() => { throw new Error("no slide toolbar"); });
+  const old = el.style.width;
+  try { el.style.width = w + "px"; await _wait(250); await body(el); }
+  finally { el.style.width = old; await _wait(150); }
+};
+uiSuite("toolbar-auto-compact", [
+  { name: "narrow toolbar: all buttons share one row", fn: async () => {
+    await _tbAtWidth(620, async () => {
+      if (!_tbOneRow()) throw new Error(`toolbar buttons wrap to more than one row (${_tbButtons().map((b) => Math.round(b.getBoundingClientRect().top)).join(",")})`);
+    });
+  }},
+  { name: "narrow toolbar: a button with a hidden label has an aria-label", fn: async () => {
+    await _tbAtWidth(620, async () => {
+      const ov = _$("[data-testid='editor-gallery-toggle']");
+      if (!ov) throw new Error("no Overview button");
+      if (ov.querySelector("span")) throw new Error("the rightmost label (Overview) is still shown at 620 px");
+      if (ov.getAttribute("aria-label") !== "Overview") throw new Error(`Overview aria-label is ${ov.getAttribute("aria-label")}`);
+      if (!ov.title) throw new Error("Overview lost its title tooltip");
+      const firstLabelled = _tbButtons()[0];
+      if (!firstLabelled.querySelector("span")) throw new Error("the leftmost label hid before the rightmost labels");
+    });
+  }},
+  { name: "wide toolbar: all labels show, no aria-label added", fn: async () => {
+    await _tbAtWidth(2400, async () => {
+      const bad = _tbButtons().filter((b) => !b.querySelector("span"));
+      if (bad.length) throw new Error(`${bad.length} button(s) without a label at 2400 px`);
+      const extra = _tbButtons().filter((b) => b.getAttribute("aria-label") && b.dataset.testid !== "story-preview");
+      if (extra.length) throw new Error(`aria-label set on a labelled button: ${extra.map((b) => b.getAttribute("aria-label")).join(",")}`);
+      if (!_tbOneRow()) throw new Error("toolbar is not one row at 2400 px");
+    });
+  }},
+  { name: "narrower toolbar: icons use compact padding, still one row that fits", fn: async () => {
+    await _tbAtWidth(360, async (el) => {
+      if (!_tbOneRow()) throw new Error(`toolbar wraps or overflows at 360 px (scrollWidth ${el.scrollWidth}, clientWidth ${el.clientWidth})`);
+      if (_tbButtons().some((b) => b.querySelector("span"))) throw new Error("a label is still shown at 360 px");
+      const pad = getComputedStyle(_tbButtons()[0]).paddingLeft;
+      if (pad !== "6px") throw new Error(`icon buttons do not use compact padding at 360 px (padding-left ${pad})`);
+    });
+  }},
+]);
 
 // ━━━ UI TEST RUNNER COMPONENT ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 

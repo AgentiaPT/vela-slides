@@ -157,7 +157,8 @@ function innerReducer(state, a) {
     // sanitizeSlide). The STARTUP_PATCH.slides path dispatches raw deck JSON here, making
     // those zero-click. Sanitize the merged slide through the canonical sanitizeSlide (a
     // fresh object — no shared-ref mutation), matching the LOAD_LANES backstop.
-    case "UPDATE_SLIDE": _dirtyMods.add(a.id); return mapItems((i) => i.id === a.id ? { ...i, slides: i.slides.map((s, idx) => { if (idx !== a.index) return s; const p = a.patch || {}; const updated = a.merge ? { ...s, ...p } : { title: s.title, duration: s.duration, ...p }; if (s.timeLock && !a.merge && !("timeLock" in p)) { updated.timeLock = true; updated.duration = s.duration; } return sanitizeSlide(updated) || s; }) } : i);
+    // A replace (merge:false, e.g. an AI rewrite of the blocks) keeps story mode unless the patch sets `story`.
+    case "UPDATE_SLIDE": _dirtyMods.add(a.id); return mapItems((i) => i.id === a.id ? { ...i, slides: i.slides.map((s, idx) => { if (idx !== a.index) return s; const p = a.patch || {}; const updated = a.merge ? { ...s, ...p } : { title: s.title, duration: s.duration, ...p }; if (s.timeLock && !a.merge && !("timeLock" in p)) { updated.timeLock = true; updated.duration = s.duration; } if (s.story === true && !a.merge && !("story" in p)) updated.story = true; return sanitizeSlide(updated) || s; }) } : i);
     case "REMOVE_SLIDE": _dirtyMods.add(a.id); return mapItems((i) => i.id === a.id ? { ...i, slides: i.slides.filter((_, idx) => idx !== a.index) } : i);
     // Multi-slide delete as a SINGLE history-producing reduce (PowerPoint parity:
     // one gesture = one Ctrl+Z). Removes all `indices` from one module at once.
@@ -166,10 +167,14 @@ function innerReducer(state, a) {
     // at `index`, order preserved. Single-slide paste can route through this too.
     case "INSERT_SLIDES": { _dirtyMods.add(a.id); const add = (Array.isArray(a.slides) ? a.slides : []).map(sanitizeSlide).filter(Boolean); if (!add.length) return state; return mapItems((i) => { if (i.id !== a.id) return i; const ns = [...i.slides]; ns.splice(a.index, 0, ...add); return { ...i, slides: ns }; }); }
     case "TOGGLE_SLIDE_HIDDEN": _dirtyMods.add(a.id); return mapItems((i) => i.id === a.id ? { ...i, slides: i.slides.map((s, idx) => idx === a.index ? (s.hidden ? (() => { const c = { ...s }; delete c.hidden; return c; })() : { ...s, hidden: true }) : s) } : i);
+    // CR07: editor review mark. Undoable like hidden; the review-cycle toggle itself is SlidePanel view state.
+    case "TOGGLE_SLIDE_REVIEWED": _dirtyMods.add(a.id); return mapItems((i) => i.id === a.id ? { ...i, slides: i.slides.map((s, idx) => idx === a.index ? (s.reviewed ? (() => { const c = { ...s }; delete c.reviewed; return c; })() : { ...s, reviewed: true }) : s) } : i);
     case "DUPLICATE_SLIDE": _dirtyMods.add(a.id); return mapItems((i) => { if (i.id !== a.id || !i.slides[a.index]) return i; const dup = JSON.parse(JSON.stringify(i.slides[a.index])); const ns = [...i.slides]; ns.splice(a.index + 1, 0, dup); return { ...i, slides: ns }; });
     case "MOVE_SLIDE": _dirtyMods.add(a.id); return mapItems((i) => { if (i.id !== a.id) return i; const ns = [...i.slides]; const t = a.from + a.dir; if (t < 0 || t >= ns.length) return i; [ns[a.from], ns[t]] = [ns[t], ns[a.from]]; return { ...i, slides: ns }; });
     case "REORDER_SLIDE": _dirtyMods.add(a.id); return mapItems((i) => { if (i.id !== a.id) return i; const ns = [...i.slides]; const [moved] = ns.splice(a.from, 1); ns.splice(a.to, 0, moved); return { ...i, slides: ns }; });
-    case "MOVE_SLIDE_TO_MODULE": { let slide = null; _dirtyMods.add(a.fromId); _dirtyMods.add(a.toId); return { ...state, lanes: state.lanes.map((l) => ({ ...l, items: l.items.map((i) => { if (i.id === a.fromId) { slide = i.slides[a.index]; return { ...i, slides: i.slides.filter((_, idx) => idx !== a.index) }; } return i; }).map((i) => { if (i.id === a.toId && slide) { if (a.toIndex != null) { const _ns = [...i.slides]; _ns.splice(a.toIndex, 0, slide); return { ...i, slides: _ns }; } return { ...i, slides: [...i.slides, slide] }; } return i; }) })), selectedId: a.toId, slideIndex: a.toIndex != null ? a.toIndex : (() => { for (const l of state.lanes) { const it = l.items.find((i) => i.id === a.toId); if (it) return it.slides?.length || 0; } return 0; })() }; }
+    // Remove from ALL lanes first, then insert: a one-pass map lost the slide when
+    // the target section sat in an earlier lane than the source (CR21).
+    case "MOVE_SLIDE_TO_MODULE": { let slide = null; _dirtyMods.add(a.fromId); _dirtyMods.add(a.toId); return { ...state, lanes: state.lanes.map((l) => ({ ...l, items: l.items.map((i) => { if (i.id === a.fromId) { slide = i.slides[a.index]; return { ...i, slides: i.slides.filter((_, idx) => idx !== a.index) }; } return i; }) })).map((l) => ({ ...l, items: l.items.map((i) => { if (i.id === a.toId && slide) { if (a.toIndex != null) { const _ns = [...i.slides]; _ns.splice(a.toIndex, 0, slide); return { ...i, slides: _ns }; } return { ...i, slides: [...i.slides, slide] }; } return i; }) })), selectedId: a.toId, slideIndex: a.toIndex != null ? a.toIndex : (() => { for (const l of state.lanes) { const it = l.items.find((i) => i.id === a.toId); if (it) return it.slides?.length || 0; } return 0; })() }; }
     // Multi-slide move to another module as a SINGLE reduce (one undo). Gathers the
     // slides at `indices` (ascending, order preserved) from fromId, drops them all,
     // then inserts them into toId at `toIndex` (or appends). Undo reverses the whole
@@ -183,7 +188,7 @@ function innerReducer(state, a) {
       return { ...state, lanes: state.lanes.map((l) => ({ ...l, items: l.items.map((i) => {
         if (i.id === a.fromId) { movedSlides = idxs.map((ix) => i.slides[ix]).filter(Boolean); return { ...i, slides: i.slides.filter((_, ix) => !drop.has(ix)) }; }
         return i;
-      }).map((i) => {
+      }) })).map((l) => ({ ...l, items: l.items.map((i) => {
         if (i.id === a.toId && movedSlides.length) {
           if (a.toIndex != null) { const _ns = [...i.slides]; _ns.splice(a.toIndex, 0, ...movedSlides); return { ...i, slides: _ns }; }
           return { ...i, slides: [...i.slides, ...movedSlides] };

@@ -116,5 +116,10 @@ updates:
     open-pull-requests-limit: 5
     cooldown:
       default-days: 7
+    # node stays on 22 (CI's line): 25+ images drop corepack, which the
+    # Dockerfile's pnpm step needs. Minor/patch updates still flow.
+    ignore:
+      - dependency-name: "node"
+        update-types: ["version-update:semver-major"]
     labels:
       - "dependencies"

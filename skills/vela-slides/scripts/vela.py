@@ -693,7 +693,11 @@ def _turbo_encode_block(block, palette):
         return [18, quads, block.get("xLeft", ""), block.get("xRight", ""),
                 block.get("yTop", ""), block.get("yBottom", "")]
     if t == "checklist":
-        items = [[i.get("text", ""), i.get("status", "pending")]
+        # A plain-string item (valid in the app and validate.py) stays a bare
+        # string, so it decodes back unchanged.
+        items = [i if isinstance(i, str) else
+                 [i.get("text", ""), i.get("status", "pending")]
+                 + ([i["label"]] if i.get("label") else [])
                  for i in block.get("items", [])]
         return [19, items, block.get("size", ""),
                 1 if block.get("showLabels", True) else 0]
@@ -901,7 +905,14 @@ def _turbo_decode_block(arr, palette):
         if len(arr) > 5 and arr[5]: r["yBottom"] = arr[5]
         return r
     if tid == 19:  # checklist
-        items = [{"text": i[0], "status": i[1]} for i in arr[1]]
+        items = []
+        for i in arr[1]:
+            if isinstance(i, str):
+                items.append(i)
+                continue
+            item = {"text": i[0], "status": i[1]}
+            if len(i) > 2 and i[2]: item["label"] = i[2]
+            items.append(item)
         r = {"type": "checklist", "items": items}
         if len(arr) > 2 and arr[2]: r["size"] = arr[2]
         if len(arr) > 3 and not arr[3]: r["showLabels"] = False
@@ -941,10 +952,15 @@ def turbo_deck(deck):
         # slide has imageCols but no studyNotes.
         sn = s.get("studyNotes")
         ic = s.get("imageCols")
-        if sn or ic:
+        #   12 = story      (true: present the slide's images one by one)
+        # Positions 10 and 11 get null placeholders when story is set without them.
+        st = s.get("story") is True
+        if sn or ic or st:
             arr.append(sn if sn else None)
-        if ic:
-            arr.append(ic)
+        if ic or st:
+            arr.append(ic if ic else None)
+        if st:
+            arr.append(True)
         return arr
 
     def encode_item(item):
@@ -995,11 +1011,13 @@ def unturbo_deck(data):
         if s[8]: result["duration"] = s[8]
         result["blocks"] = [_turbo_decode_block(b, palette) for b in s[9]]
         # Optional trailing positions (backward compatible with length-10 turbo):
-        #   10 = studyNotes, 11 = imageCols
+        #   10 = studyNotes, 11 = imageCols, 12 = story
         if len(s) > 10 and s[10]:
             result["studyNotes"] = s[10]
         if len(s) > 11 and s[11]:
             result["imageCols"] = s[11]
+        if len(s) > 12 and s[12] is True:
+            result["story"] = True
         return result
 
     def decode_item(item):

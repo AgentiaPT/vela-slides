@@ -17,7 +17,242 @@ class SlideErrorBoundary extends React.Component {
 }
 
 // ━━━ Editable Text ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// ━━━ Inline Formatting: **bold**, *italic*, ***both***, ~~strike~~ ━━━
+// ━━━ Inline Formatting: **bold**, *italic*, ***both***, ~~strike~~, ++underline++ ━━━
+// ++underline++ delimiters are STRICT (flanking), so existing text never changes:
+// "C++", "i++ and j++", "a ++ b ++ c", "x+++y" and a lone "++" stay literal.
+// An opening "++" must not follow a letter, digit or "+", and the next character
+// must be a non-space that is not "+". A closing "++" must follow a non-space that
+// is not "+", and must not precede a letter, digit or "+". A span never crosses a
+// newline (parseInline renders line by line). No regex lookbehind: older Safari
+// rejects it at parse time, which would break the whole app. Linear time: when a
+// valid opener has no closer on its line, no later opener on that line has one.
+const UL_EDGE_WORD = /[\p{L}\p{N}+]/u;
+const UL_SPACE = /\s/;
+function ulCharBefore(s, i) {
+  if (i <= 0) return "";
+  const c = s.charCodeAt(i - 1);
+  return (c >= 0xDC00 && c <= 0xDFFF && i >= 2) ? s.slice(i - 2, i) : s[i - 1];
+}
+function ulCharAt(s, i) { return i < s.length ? String.fromCodePoint(s.codePointAt(i)) : ""; }
+// First strict ++…++ span at or after `from`: [start, end) incl. delimiters, or null.
+function findUnderlineSpan(s, from) {
+  if (typeof s !== "string") return null;
+  let o = s.indexOf("++", from || 0);
+  while (o >= 0) {
+    const prev = ulCharBefore(s, o), next = ulCharAt(s, o + 2);
+    if (!UL_EDGE_WORD.test(prev) && next && next !== "+" && !UL_SPACE.test(next)) {
+      const nl = s.indexOf("\n", o);
+      const lim = nl < 0 ? s.length : nl;
+      let c = s.indexOf("++", o + 3);
+      while (c >= 0 && c + 2 <= lim) {
+        const before = ulCharBefore(s, c), after = ulCharAt(s, c + 2);
+        if (before !== "+" && !UL_SPACE.test(before) && !UL_EDGE_WORD.test(after)) return [o, c + 2];
+        c = s.indexOf("++", c + 1);
+      }
+      if (nl < 0) return null;
+      o = s.indexOf("++", nl + 1);
+      continue;
+    }
+    o = s.indexOf("++", o + 1);
+  }
+  return null;
+}
+function findUnderlineSpans(s) {
+  const spans = [];
+  let at = 0, sp;
+  while ((sp = findUnderlineSpan(s, at))) { spans.push(sp); at = sp[1]; }
+  return spans;
+}
+
+// One inline tokenizer for the slide (parseInline) and the editor HTML
+// (inlineMdToHtml), so the editor shows the same marks as the slide. Returns
+// null (no marks, no links: the line renders as is) or { working, linkTokens,
+// parts }. A part is a string or { text, bold?, italic?, strike?, underline?,
+// tok?, ulg? }: tok = id of the bold/italic/strike token it came from, ulg = id
+// of the ++…++ span it is in. The editor nests its tags from these ids, so its
+// HTML is always well formed: two separate passes of tag regexes could make a
+// pair that crosses another pair, the browser re-nests it, and a blur commit
+// then changes the deck text.
+function inlineLineParts(line) {
+  const hasLink = line.includes("[") && line.includes("](");
+  const hasFmt = line.includes("*") || line.includes("__") || line.includes("~~") || line.includes("++");
+  if (!hasLink && !hasFmt) return null;
+
+  // Pass 1: extract [label](target) link spans into sentinel placeholders
+  let working = line;
+  const linkTokens = [];
+  if (hasLink) {
+    const linkRe = /\[([^\[\]\n]+?)\]\(([^\s\)\n]+?)\)/g;
+    working = line.replace(linkRe, (raw, label, target) => {
+      const idx = linkTokens.length;
+      linkTokens.push({ label, target, raw });
+      return `\u0000LINK${idx}\u0000`;
+    });
+  }
+  if (!hasFmt) return { working, linkTokens, parts: [working] };
+
+  // Pass 2: existing bold/italic/strike tokenizer on the sentinel-bearing string,
+  // plus strict ++underline++ (findUnderlineSpan). Underline is ONE level deep and
+  // combines with the other marks: a ++…++ span's content runs through the
+  // bold/italic/strike tokenizer ("++**x**++"), and a bold/italic/strike token's
+  // text is split into underline spans ("**++x++**"). (Unlike ~~, which does not
+  // nest with the other marks in this renderer.) A line with no strict ++ pair
+  // tokenizes exactly as before.
+  const parts = [];
+  let ids = 0;
+  const re = /(\*\*\*(.+?)\*\*\*|\*\*(.+?)\*\*|\*(.+?)\*|___(.+?)___|__(.+?)__|_(.+?)_|~~(.+?)~~)/g;
+  const toPart = (m) => m[2] ? { text: m[2], bold: true, italic: true }
+    : m[3] ? { text: m[3], bold: true }
+    : m[4] ? { text: m[4], italic: true }
+    : m[5] ? { text: m[5], bold: true, italic: true }
+    : m[6] ? { text: m[6], bold: true }
+    : m[7] ? { text: m[7], italic: true }
+    : m[8] ? { text: m[8], strike: true } : null;
+  const splitUl = (p, out) => {
+    let at = 0;
+    for (const [a, b] of findUnderlineSpans(p.text)) {
+      if (a > at) out.push({ ...p, text: p.text.slice(at, a) });
+      out.push({ ...p, text: p.text.slice(a + 2, b - 2), underline: true });
+      at = b;
+    }
+    if (at === 0) out.push(p);
+    else if (at < p.text.length) out.push({ ...p, text: p.text.slice(at) });
+  };
+  // ul=false for underline content: depth stays one level.
+  const tokenize = (str, ul, out) => {
+    let last = 0, u = null, uDone = !ul;
+    for (;;) {
+      if (!uDone && (!u || u[0] < last)) { u = findUnderlineSpan(str, last); if (!u) uDone = true; }
+      re.lastIndex = last; // the recursive call below reuses `re`
+      const m = re.exec(str);
+      if (u && !uDone && (!m || u[0] < m.index)) {
+        if (u[0] > last) out.push(str.slice(last, u[0]));
+        const inner = [], ulg = ++ids;
+        tokenize(str.slice(u[0] + 2, u[1] - 2), false, inner);
+        for (const q of inner) out.push(typeof q === "string" ? { text: q, underline: true, ulg } : { ...q, underline: true, ulg });
+        last = u[1];
+        continue;
+      }
+      if (!m) break;
+      if (m.index > last) out.push(str.slice(last, m.index));
+      const p = toPart(m);
+      if (p) { p.tok = ++ids; if (ul) splitUl(p, out); else out.push(p); }
+      last = m.index + m[0].length;
+    }
+    if (last < str.length) out.push(str.slice(last));
+  };
+  tokenize(working, working.includes("++"), parts);
+  return { working, linkTokens, parts };
+}
+
+// Markdown inline -> HTML for the contentEditable editor. Escape FIRST, then add
+// only code-generated tags (no attributes): deck text can never become live
+// markup here (a deck "<u ...>" string stays literal text). The tokens come
+// from the escaped string; an entity starts with "&" and ends with ";", which
+// no mark uses and which flank "++" like the raw "&", "<" and ">", so the marks
+// are the same as parseInline finds in the raw text. Links stay literal text.
+function inlineMdToHtml(t) {
+  if (!t) return "";
+  const h = t.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  return h.split("\n").map((line) => {
+    const lp = inlineLineParts(line);
+    if (!lp) return line;
+    const lit = (x) => x.replace(/\u0000LINK(\d+)\u0000/g, (m, i) => (lp.linkTokens[i] ? lp.linkTokens[i].raw : m));
+    let out = "", ulg = 0, tok = 0, tokClose = "";
+    const endTok = () => { out += tokClose; tok = 0; tokClose = ""; };
+    const endUl = () => { endTok(); if (ulg) out += "</u>"; ulg = 0; };
+    for (const p of lp.parts) {
+      if (typeof p === "string") { endUl(); out += lit(p); continue; }
+      if ((p.ulg || 0) !== ulg) { endUl(); if (p.ulg) { out += "<u>"; ulg = p.ulg; } }
+      if ((p.tok || 0) !== tok) {
+        endTok();
+        if (p.tok) {
+          tok = p.tok;
+          out += (p.bold ? "<strong>" : "") + (p.italic ? "<em>" : "") + (p.strike ? "<s>" : "");
+          tokClose = (p.strike ? "</s>" : "") + (p.italic ? "</em>" : "") + (p.bold ? "</strong>" : "");
+        }
+      }
+      out += p.underline && !p.ulg ? "<u>" + lit(p.text) + "</u>" : lit(p.text);
+    }
+    endUl();
+    return out;
+  }).join("<br>");
+}
+
+// contentEditable HTML -> markdown inline. Only real U elements become ++…++
+// (never a styled span). An underline that cannot round-trip under the strict
+// rules (mid-word, or one that would pair with literal "++" text) is dropped,
+// not saved as stray "++" characters; the text itself is always kept.
+const UL_OPEN = { ul: 1 }, UL_CLOSE = { ul: 2 };
+function inlineHtmlToMd(root) {
+  const segs = [];
+  const walk = (el) => {
+    let r = "";
+    const emit = (x) => { if (x) { segs.push(x); r += x; } };
+    for (const n of el.childNodes) {
+      if (n.nodeType === 3) { emit(n.textContent); }
+      else if (n.nodeName === "BR") { emit("\n"); }
+      else if (n.nodeName === "STRONG" || n.nodeName === "B") { emit("**"); r += walk(n); emit("**"); }
+      else if (n.nodeName === "EM" || n.nodeName === "I") { emit("*"); r += walk(n); emit("*"); }
+      else if (n.nodeName === "S" || n.nodeName === "DEL" || n.nodeName === "STRIKE") { emit("~~"); r += walk(n); emit("~~"); }
+      else if (n.nodeName === "U") { segs.push(UL_OPEN); r += walk(n); segs.push(UL_CLOSE); }
+      else if (n.nodeName === "DIV" || n.nodeName === "P") {
+        if (r.length > 0 && !r.endsWith("\n")) emit("\n");
+        r += walk(n);
+      }
+      else { r += walk(n); }
+    }
+    return r;
+  };
+  walk(root);
+  // Plain text + outermost underline ranges (nested U inside U is redundant).
+  let S = "";
+  const raw = [];
+  let depth = 0, start = 0;
+  for (const x of segs) {
+    if (x === UL_OPEN) { if (depth++ === 0) start = S.length; }
+    else if (x === UL_CLOSE) { if (--depth === 0) raw.push([start, S.length]); }
+    else S += x;
+  }
+  if (!raw.length) return S;
+  // Split at newlines, move edge whitespace outside, merge touching ranges.
+  const live = [];
+  for (const [a0, b0] of raw) {
+    let a = a0;
+    while (a < b0) {
+      const nl = S.indexOf("\n", a);
+      let b = (nl < 0 || nl >= b0) ? b0 : nl;
+      const next = b < b0 ? b + 1 : b0;
+      let x = a;
+      while (x < b && UL_SPACE.test(S[x])) x++;
+      while (b > x && UL_SPACE.test(S[b - 1])) b--;
+      if (x < b) {
+        const last = live[live.length - 1];
+        if (last && last[1] === x) last[1] = b; else live.push([x, b]);
+      }
+      a = next;
+    }
+  }
+  // Keep only ranges that the renderer will parse back as exactly that span.
+  let keep = live;
+  for (;;) {
+    let out = "", at = 0;
+    const pos = [];
+    for (const [a, b] of keep) {
+      out += S.slice(at, a);
+      const o = out.length;
+      out += "++" + S.slice(a, b) + "++";
+      pos.push(o + ":" + out.length);
+      at = b;
+    }
+    out += S.slice(at);
+    const found = new Set(findUnderlineSpans(out).map(([a, b]) => a + ":" + b));
+    const next = keep.filter((_, i) => found.has(pos[i]));
+    if (next.length === keep.length) return out;
+    keep = next;
+  }
+}
+
 // ctx (optional): { glossary?, keyPrefix? } — when provided, also parses markdown
 // links [label](https://…) → sanitized <a>, and [label](#term) → <GlossaryLink>.
 // All existing call sites omit ctx and behavior is identical to before.
@@ -61,43 +296,11 @@ function parseInline(text, ctx) {
 
   const parseLine = (line, lineKey) => {
     // Fast path: no link, no formatting → return untouched
-    const hasLink = line.includes("[") && line.includes("](");
-    const hasFmt = line.includes("*") || line.includes("__") || line.includes("~~");
-    if (!hasLink && !hasFmt) return line;
+    const lp = inlineLineParts(line);
+    if (!lp) return line;
 
-    // Pass 1: extract [label](target) link spans into sentinel placeholders
-    let working = line;
-    const linkTokens = [];
-    if (hasLink) {
-      const linkRe = /\[([^\[\]\n]+?)\]\(([^\s\)\n]+?)\)/g;
-      working = line.replace(linkRe, (_, label, target) => {
-        const idx = linkTokens.length;
-        linkTokens.push({ label, target });
-        return `\u0000LINK${idx}\u0000`;
-      });
-    }
-
-    // Pass 2: existing bold/italic/strike tokenizer on the sentinel-bearing string
-    if (!hasFmt && linkTokens.length === 0) return working;
-    const parts = [];
-    if (hasFmt) {
-      const re = /(\*\*\*(.+?)\*\*\*|\*\*(.+?)\*\*|\*(.+?)\*|___(.+?)___|__(.+?)__|_(.+?)_|~~(.+?)~~)/g;
-      let last = 0, m;
-      while ((m = re.exec(working)) !== null) {
-        if (m.index > last) parts.push(working.slice(last, m.index));
-        if (m[2]) parts.push({ text: m[2], bold: true, italic: true });
-        else if (m[3]) parts.push({ text: m[3], bold: true });
-        else if (m[4]) parts.push({ text: m[4], italic: true });
-        else if (m[5]) parts.push({ text: m[5], bold: true, italic: true });
-        else if (m[6]) parts.push({ text: m[6], bold: true });
-        else if (m[7]) parts.push({ text: m[7], italic: true });
-        else if (m[8]) parts.push({ text: m[8], strike: true });
-        last = m.index + m[0].length;
-      }
-      if (last < working.length) parts.push(working.slice(last));
-    } else {
-      parts.push(working);
-    }
+    // Pass 1 + 2 (shared with the editor HTML): inlineLineParts.
+    const { working, linkTokens, parts } = lp;
 
     // Pass 3: rehydrate link sentinels inside both plain runs and styled spans
     if (parts.length === 1 && typeof parts[0] === "string" && linkTokens.length === 0) return working;
@@ -112,7 +315,7 @@ function parseInline(text, ctx) {
       } else {
         const children = spliceSentinels(p.text, linkTokens, `${keyPrefix}-${lineKey}-s${i}`);
         out.push(
-          <span key={`${keyPrefix}-${lineKey}-s${i}`} style={{ fontWeight: p.bold ? 700 : undefined, fontStyle: p.italic ? "italic" : undefined, textDecoration: p.strike ? "line-through" : undefined }}>
+          <span key={`${keyPrefix}-${lineKey}-s${i}`} data-vela-u={p.underline ? "1" : undefined} style={{ fontWeight: p.bold ? 700 : undefined, fontStyle: p.italic ? "italic" : undefined, textDecoration: p.strike ? (p.underline ? "line-through underline" : "line-through") : (p.underline ? "underline" : undefined) }}>
             {children.length === 1 ? children[0] : children}
           </span>
         );
@@ -199,46 +402,24 @@ function GlossaryLink({ label, term, entry }) {
   );
 }
 
-function EditableText({ text, onSave, editable, style, multiline, className, prefix, suffix }) {
-  const [editing, setEditing] = useState(false);
+// Faint editor-only text shown in an empty inline-editable text (CR26).
+const EDIT_PLACEHOLDER = "Text";
+
+// controlled: show only the saved `text` prop after a commit (no optimistic local
+// copy), for callers whose onSave normalizes the value (checklist status label).
+// autoEdit: start in edit mode on mount (the image "+ Add title" chip); default off.
+// onEditEnd: called after an edit ends (commit or cancel), whatever the value.
+function EditableText({ text, onSave, editable, style, multiline, className, prefix, suffix, controlled, autoEdit, onEditEnd, oneLine }) {
+  const [editing, setEditing] = useState(() => !!autoEdit && !!editable && !!onSave);
   const [hovered, setHovered] = useState(false);
   const [localText, setLocalText] = useState(text);
   const ref = useRef(null);
 
   useEffect(() => { setLocalText(text); }, [text]);
 
-  // Convert markdown inline to HTML for WYSIWYG editing
-  const mdToHtml = (t) => {
-    if (!t) return "";
-    return t
-      .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
-      .replace(/\*\*\*(.+?)\*\*\*/g, "<strong><em>$1</em></strong>")
-      .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
-      .replace(/\*(.+?)\*/g, "<em>$1</em>")
-      .replace(/___(.+?)___/g, "<strong><em>$1</em></strong>")
-      .replace(/__(.+?)__/g, "<strong>$1</strong>")
-      .replace(/_(.+?)_/g, "<em>$1</em>")
-      .replace(/~~(.+?)~~/g, "<s>$1</s>")
-      .replace(/\n/g, "<br>");
-  };
-
-  // Convert contentEditable HTML back to markdown
-  const htmlToMd = (el) => {
-    let r = "";
-    for (const n of el.childNodes) {
-      if (n.nodeType === 3) { r += n.textContent; }
-      else if (n.nodeName === "BR") { r += "\n"; }
-      else if (n.nodeName === "STRONG" || n.nodeName === "B") { r += "**" + htmlToMd(n) + "**"; }
-      else if (n.nodeName === "EM" || n.nodeName === "I") { r += "*" + htmlToMd(n) + "*"; }
-      else if (n.nodeName === "S" || n.nodeName === "DEL" || n.nodeName === "STRIKE") { r += "~~" + htmlToMd(n) + "~~"; }
-      else if (n.nodeName === "DIV" || n.nodeName === "P") {
-        if (r.length > 0 && !r.endsWith("\n")) r += "\n";
-        r += htmlToMd(n);
-      }
-      else { r += htmlToMd(n); }
-    }
-    return r;
-  };
+  // Markdown inline <-> HTML for WYSIWYG editing (top-level, shared + testable).
+  const mdToHtml = inlineMdToHtml;
+  const htmlToMd = inlineHtmlToMd;
 
   useEffect(() => {
     if (!editing || !ref.current) return;
@@ -248,50 +429,167 @@ function EditableText({ text, onSave, editable, style, multiline, className, pre
     try { const s = window.getSelection(); s.selectAllChildren(el); s.collapseToEnd(); } catch (_) {}
   }, [editing]);
 
-  const baseStyle = { ...style, whiteSpace: "pre-line" };
+  // oneLine (story grid caption row): the static text stays on one line with an
+  // ellipsis; the edit field below may wrap and grow.
+  const baseStyle = oneLine ? { ...style, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } : { ...style, whiteSpace: "pre-line" };
 
   if (!editable || !onSave) return <div className={className} style={baseStyle}>{prefix}{parseInline(text)}{suffix}</div>;
 
   const commit = () => {
     const el = ref.current;
-    if (!el) { setEditing(false); setHovered(false); return; }
+    if (!el) { setEditing(false); setHovered(false); onEditEnd?.(); return; }
     const v = htmlToMd(el).trim();
-    if (v !== text) { setLocalText(v); onSave(v); }
+    if (v !== text) { if (!controlled) setLocalText(v); onSave(v); }
     setEditing(false);
     setHovered(false);
+    onEditEnd?.();
   };
-  const cancel = () => { setEditing(false); setHovered(false); };
+  const cancel = () => { setEditing(false); setHovered(false); onEditEnd?.(); };
   const begin = (e) => { e.stopPropagation(); e.preventDefault(); setEditing(true); };
 
   const onKey = (e) => {
     e.stopPropagation();
+    // An IME composition owns Enter and Esc (confirm or drop a candidate).
+    if (e.nativeEvent?.isComposing || e.keyCode === 229) return;
     if (e.key === "Escape") cancel();
     if (e.key === "Enter" && !multiline && !e.shiftKey) { e.preventDefault(); commit(); }
     if ((e.ctrlKey || e.metaKey) && e.key === "b") { e.preventDefault(); document.execCommand("bold"); }
     if ((e.ctrlKey || e.metaKey) && e.key === "i") { e.preventDefault(); document.execCommand("italic"); }
+    // Explicit like b/i: same result in every browser (Firefox maps Ctrl+U to view-source).
+    if ((e.ctrlKey || e.metaKey) && e.key === "u") { e.preventDefault(); document.execCommand("underline"); }
+  };
+  // Paste plain text only. The browser's default rich paste puts clipboard HTML
+  // (for example a copied web image with a remote src) into the live editable
+  // DOM until commit; commit keeps only text and inline marks anyway.
+  const onPaste = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const t = e.clipboardData?.getData("text/plain") || "";
+    if (!t) return;
+    if (document.execCommand("insertText", false, t)) return;
+    const s = window.getSelection();
+    if (!s || !s.rangeCount || !ref.current?.contains(s.anchorNode)) return;
+    const r = s.getRangeAt(0); r.deleteContents();
+    const n = document.createTextNode(t); r.insertNode(n); r.setStartAfter(n); r.collapse(true);
+    s.removeAllRanges(); s.addRange(r);
   };
 
   if (editing) return (
     <div key="editing" ref={ref} contentEditable suppressContentEditableWarning
-      onBlur={commit} onKeyDown={onKey}
+      onBlur={commit} onKeyDown={onKey} onPaste={onPaste}
       onClick={(e) => e.stopPropagation()}
       onMouseDown={(e) => e.stopPropagation()}
       className={className}
-      style={{ ...baseStyle, outline: `2px solid ${T.accent}`, outlineOffset: 2, borderRadius: 2, cursor: "text", minHeight: "1em", whiteSpace: "pre-wrap" }}
+      style={{ ...baseStyle, outline: `2px solid ${T.accent}`, outlineOffset: 2, borderRadius: 2, cursor: "text", minHeight: "1em", minWidth: "2em", whiteSpace: "pre-wrap", ...(oneLine ? { overflow: "visible", textOverflow: "clip", height: "auto" } : {}) }}
     />
   );
 
+  // CR26: an empty text keeps a clickable target (min size + a faint editor-only
+  // placeholder), so a cleared text can be edited again. The placeholder sits at
+  // the left and the right padding is room for the item's hover toolbar
+  // (top-right, ~80px), so the toolbar never covers it. Present/export render
+  // with editable=false and never see the placeholder.
+  const empty = !String(localText || "").trim();
   return (
     <div key="display" className={className}
       onClick={begin}
       onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}
       style={{ ...baseStyle, cursor: "pointer", borderRadius: 2,
+        ...(empty ? { minWidth: "2em", minHeight: "1em", paddingRight: 100, textAlign: "left" } : {}),
         outline: hovered ? `1px dashed ${T.accent}60` : "1px dashed transparent",
         outlineOffset: 2, transition: "outline 0.15s ease" }}
-    >{prefix}{parseInline(localText)}{suffix}</div>
+    >{prefix}{empty ? <EditPlaceholder /> : parseInline(localText)}{suffix}</div>
   );
 }
 
+
+// CR26: the editor-only placeholder keeps its box (same size and hit area) but
+// stays invisible unless the holding block is hovered or has focus. Listeners sit
+// on the closest block wrapper, so the layout never changes.
+function EditPlaceholder({ svg }) {
+  const ref = useRef(null);
+  const [on, setOn] = useState(false);
+  useEffect(() => {
+    const host = ref.current?.closest?.("[data-block-type]");
+    if (!host) { setOn(true); return; }
+    const over = () => setOn(true);
+    const out = (e) => { if (!e.relatedTarget || !host.contains(e.relatedTarget)) setOn(host.contains(document.activeElement)); };
+    const fin = () => setOn(true);
+    const fout = (e) => { if (!e.relatedTarget || !host.contains(e.relatedTarget)) setOn(false); };
+    host.addEventListener("mouseover", over); host.addEventListener("mouseout", out);
+    host.addEventListener("focusin", fin); host.addEventListener("focusout", fout);
+    return () => { host.removeEventListener("mouseover", over); host.removeEventListener("mouseout", out); host.removeEventListener("focusin", fin); host.removeEventListener("focusout", fout); };
+  }, []);
+  const o = on ? 0.35 : 0;
+  return svg
+    ? <tspan ref={ref} data-vela-placeholder="" opacity={o} fontStyle="italic">{EDIT_PLACEHOLDER}</tspan>
+    : <span ref={ref} data-vela-placeholder="" style={{ opacity: o, fontStyle: "italic", transition: "opacity 0.15s ease" }}>{EDIT_PLACEHOLDER}</span>;
+}
+
+// CR26: inline edit for an SVG <text> label (cycle, funnel, flow loop). SVG text
+// cannot be contentEditable, so a click opens an HTML input in a <foreignObject>
+// over the text. The click stops here, so ZoomWrap does not zoom. Enter or blur
+// commits through the same onSave -> onChange path as EditableText; Escape
+// cancels. Read-only (present/export) renders the plain <text>.
+function SvgEditText({ text, editable, onSave, suffix, ...textProps }) {
+  const [box, setBox] = useState(null);
+  const ref = useRef(null);
+  const inRef = useRef(null);
+  const doneRef = useRef(false);
+  useEffect(() => {
+    if (!box || !inRef.current) return;
+    // preventScroll: focus must not scroll the slide (no layout jump on open).
+    try { inRef.current.focus({ preventScroll: true }); } catch (_) { inRef.current.focus(); }
+    try { inRef.current.select(); } catch (_) {}
+  }, [box]);
+  const val = text == null ? "" : String(text);
+  if (!editable || !onSave) return <text {...textProps}>{val}{suffix}</text>;
+  const fs = parseFloat(textProps.fontSize) || 12;
+  const begin = (e) => {
+    e.stopPropagation(); e.preventDefault();
+    const el = ref.current; const m = el?.ownerSVGElement?.getScreenCTM?.();
+    if (!el || !m) return;
+    const r = el.getBoundingClientRect(); const inv = m.inverse();
+    const a = new DOMPoint(r.left, r.top).matrixTransform(inv);
+    const b = new DOMPoint(r.right, r.bottom).matrixTransform(inv);
+    // Size the overlay to the text box (long side = width, short side = line
+    // height), so it does not cover the adjacent labels.
+    const dx = Math.abs(b.x - a.x), dy = Math.abs(b.y - a.y);
+    const w = Math.max(dx, dy, fs * 4) + fs;
+    const h = Math.max(Math.min(dx, dy), fs * 1.2) + 2;
+    doneRef.current = false;
+    setBox({ x: (a.x + b.x) / 2 - w / 2, y: (a.y + b.y) / 2 - h / 2, w, h, v: val });
+  };
+  const finish = (save) => {
+    if (doneRef.current) return;
+    doneRef.current = true;
+    const v = sanitizeString(inRef.current?.value || "").trim();
+    setBox(null);
+    if (save && v !== val) onSave(v);
+  };
+  const empty = !val.trim();
+  const stop = (e) => e.stopPropagation();
+  return <>
+    <text ref={ref} data-svg-edit="" {...textProps} onClick={begin}
+      style={{ ...(textProps.style || {}), cursor: "pointer", visibility: box ? "hidden" : undefined }}>
+      {empty ? <EditPlaceholder svg /> : val}{suffix}
+    </text>
+    {box && <foreignObject x={box.x} y={box.y} width={box.w} height={box.h} style={{ overflow: "visible" }}>
+      <input ref={inRef} data-testid="svg-text-edit" defaultValue={box.v}
+        onClick={stop} onMouseDown={stop} onBlur={() => finish(true)}
+        onKeyDown={(e) => {
+          e.stopPropagation();
+          if (e.nativeEvent?.isComposing || e.keyCode === 229) return; // IME composition owns Enter/Esc
+          if (e.key === "Enter") { e.preventDefault(); finish(true); }
+          else if (e.key === "Escape") { e.preventDefault(); finish(false); }
+        }}
+        style={{ width: "100%", height: "100%", boxSizing: "border-box", margin: 0, padding: `0 ${fs * 0.3}px`,
+          fontSize: fs, fontWeight: textProps.fontWeight, fontFamily: textProps.fontFamily,
+          textAlign: "center", color: T.text, background: T.bgInput, border: "none",
+          outline: `2px solid ${T.accent}`, borderRadius: 2 }} />
+    </foreignObject>}
+  </>;
+}
 
 // ━━━ Block Helpers ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 const stg = (base, offset = 0) => `stg-${Math.min(base + offset, 7)}`;
@@ -505,13 +803,88 @@ function IconBubble({ icon, size = 20, color, bg, shape, strokeWidth = 1.5 }) {
   return <div style={{ width: d, height: d, borderRadius: shape === "square" ? 8 : "50%", background: cssColor(bg), display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>{el}</div>;
 }
 
+// ━━━ Link Badge — one placement rule for every link badge (CR17) ━━━━━━━━━━━━━
+// A badge pinned to the wrapper's top-right corner lands on the last letters of
+// a short label (the wrapper hugs the text) or far to the right of it (a wide
+// cell or a longer second line). LinkBadge instead measures where the FIRST text
+// element of its wrapper (the item's label / the block's text) ends and sits just
+// after that point, centred on that line. Chrome is skipped: absolutely
+// positioned descendants and SVG are not treated as label text. With no
+// measurable text it falls back to the caller's corner anchor.
+function linkBadgeTextEnd(wrap, self, label) {
+  const skip = (node) => {
+    for (let p = node.parentElement; p && p !== wrap; p = p.parentElement) {
+      if (p === self || p.namespaceURI === "http://www.w3.org/2000/svg") return true;
+      const cs = getComputedStyle(p);
+      if (cs.position === "absolute" || cs.position === "fixed" || cs.display === "none") return true;
+    }
+    return false;
+  };
+  const walker = document.createTreeWalker(wrap, NodeFilter.SHOW_TEXT, {
+    acceptNode: (n) => (n.nodeValue.trim() && !skip(n)) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT,
+  });
+  const hostOf = (n) => {
+    let h = n.parentElement;
+    while (h && h !== wrap && getComputedStyle(h).display.startsWith("inline")) h = h.parentElement;
+    return h;
+  };
+  // Prefer the element that shows the link label (an item title, not a step
+  // number or a date above it); else the first text element.
+  const norm = (t) => String(t || "").replace(/[*_~`]/g, "").replace(/\s+/g, " ").trim();
+  const want = norm(label);
+  let host = null;
+  for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+    const h = hostOf(n);
+    if (!h) continue;
+    if (!host) host = h;
+    if (!want) break;
+    if (norm(h.textContent) === want) { host = h; break; }
+  }
+  if (!host) return null;
+  const range = document.createRange();
+  range.selectNodeContents(host);
+  const rects = Array.from(range.getClientRects()).filter((r) => r.width > 0.5 && r.height > 0.5);
+  return rects.length ? rects[rects.length - 1] : null;
+}
+function LinkBadge({ fallback, style, label, gap = 4, children, ...rest }) {
+  const ref = useRef(null);
+  const [pos, setPos] = useState(null);
+  const measure = React.useCallback(() => {
+    const self = ref.current;
+    const wrap = self?.parentElement;
+    if (!self || !wrap) return;
+    try {
+      const end = linkBadgeTextEnd(wrap, self, label);
+      const wr = wrap.getBoundingClientRect();
+      const scale = wrap.offsetWidth > 0 ? wr.width / wrap.offsetWidth : 1;
+      const next = end ? {
+        left: Math.round(((end.right - wr.left) / scale + gap) * 10) / 10,
+        top: Math.round((((end.top - wr.top) + end.height / 2) / scale - self.offsetHeight / 2) * 10) / 10,
+      } : null;
+      setPos((prev) => (prev?.left === next?.left && prev?.top === next?.top) ? prev : next);
+    } catch (_) {}
+  }, [gap, label]);
+  React.useLayoutEffect(() => { measure(); });
+  useEffect(() => {
+    const wrap = ref.current?.parentElement;
+    if (!wrap || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(() => measure());
+    ro.observe(wrap);
+    try { document.fonts?.ready?.then(() => measure()); } catch (_) {}
+    return () => ro.disconnect();
+  }, [measure]);
+  return <div ref={ref} data-link-badge="true" data-link-badge-placed={pos ? "text-end" : "corner"} {...rest}
+    style={{ ...style, position: "absolute", ...(pos ? { top: pos.top, left: pos.left } : fallback) }}>{children}</div>;
+}
+
 // ━━━ Per-Item Chrome — hover toolbar (🔗 link + ✕ delete) for one item of a multi-item block ━━
 // In edit mode, hovering an item shows a small cluster to attach/edit a link or delete the item.
 // Out of edit mode, a linked item becomes clickable (and feeds PDF export via data-pdf-link).
 // Pass onDelete/onSetLink to enable each action; omit one to hide that button.
 //
 // Overlap handling: the toolbar anchors INSIDE the item's top-right corner so it never
-// pokes into a neighbouring item or past the slide edge. Hovering an item also notifies
+// pokes into a neighbouring item or past the slide edge. If that corner covers text,
+// placeItemCluster moves it to a free spot just outside the item. Hovering an item also notifies
 // ItemHoverContext, which the block lets read to hide its own (block-level) toolbar — so
 // the item toolbar and the block toolbar are never shown stacked on the same corner.
 const ItemHoverContext = React.createContext(null);
@@ -519,6 +892,39 @@ const itemChromeBtn = (bg, border, color) => ({ width: 18, height: 18, borderRad
 // Reorder arrow — a full-size round button (same footprint as the link/delete
 // chrome) so it's an easy click target. Dimmed + non-interactive at a boundary.
 const reorderArrowBtn = (enabled) => ({ ...itemChromeBtn(T.bgPanel, T.border, enabled ? T.text : T.border), fontSize: 10, fontWeight: 700, cursor: enabled ? "pointer" : "default", opacity: enabled ? 1 : 0.4 });
+
+// The hover cluster must never cover text: a click on short text must start the
+// inline edit, not Move/Delete/Link. Try the anchor corner first, then spots
+// just outside the item (right, top, left, bottom; touching it, so the hover
+// stays on). Take the first spot that is inside the slide and covers no text of
+// the slide; else the first that covers none of this item's own text. Returns a
+// local {left, top} or null (keep the anchor).
+function placeItemCluster(wrap, cluster, a) {
+  const W = wrap.offsetWidth, H = wrap.offsetHeight, cw = cluster.offsetWidth, ch = cluster.offsetHeight;
+  if (!W || !cw) return null;
+  const wr = wrap.getBoundingClientRect();
+  const k = wr.width / W || 1;
+  const num = (v) => typeof v === "number" ? v : null;
+  const al = num(a.left), ar = num(a.right), at = num(a.top);
+  const spots = [
+    { left: al != null ? al : W - cw - (ar || 0), top: at != null ? at : 2 },
+    { left: W, top: 0 }, { left: W - cw, top: -ch }, { left: -cw, top: 0 }, { left: W - cw, top: H },
+  ];
+  const root = wrap.closest("[data-vela-slide-content]") || wrap.closest("[data-block-type]") || wrap.parentElement;
+  const rr = root.getBoundingClientRect();
+  const own = [], all = [];
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, { acceptNode: (n) => (n.nodeValue.trim() && !cluster.contains(n)) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT });
+  for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+    const range = document.createRange(); range.selectNodeContents(n);
+    for (const r of range.getClientRects()) if (r.width > 0.5 && r.height > 0.5) { all.push(r); if (wrap.contains(n)) own.push(r); }
+  }
+  const box = (s) => ({ l: wr.left + s.left * k, t: wr.top + s.top * k, r: wr.left + (s.left + cw) * k, b: wr.top + (s.top + ch) * k });
+  const hits = (b, rects) => rects.some((r) => b.l < r.right - 0.5 && b.r > r.left + 0.5 && b.t < r.bottom - 0.5 && b.b > r.top + 0.5);
+  const inside = (b) => b.l >= rr.left - 0.5 && b.r <= rr.right + 0.5 && b.t >= rr.top - 0.5 && b.b <= rr.bottom + 0.5;
+  const pick = spots.find((s) => { const b = box(s); return inside(b) && !hits(b, all); })
+    || spots.find((s) => { const b = box(s); return inside(b) && !hits(b, own); });
+  return !pick || pick === spots[0] ? null : pick;
+}
 
 // noLinkBadge: keep link click-through + PDF export but render no link UI (badge/popup/button)
 // — used by grid, where the inner block already owns the link-editing chrome.
@@ -540,8 +946,17 @@ function ItemChrome({ editable, presenting, onDelete, link, onSetLink, children,
   // stays focused instead of the neighbour now under the cursor. The pin clears on
   // the next mouse move, handing control back to plain hover.
   const clusterVisible = reorder && reorder.anyPinned ? reorder.pinned : hovered;
+  const wrapRef = useRef(null);
+  const clusterRef = useRef(null);
+  const [clusterAt, setClusterAt] = useState(null);
+  const clusterShown = clusterVisible && editMode && (showLinkUI || deletable || reorder);
+  React.useLayoutEffect(() => {
+    let next = null;
+    if (clusterShown && wrapRef.current && clusterRef.current) { try { next = placeItemCluster(wrapRef.current, clusterRef.current, a); } catch (_) {} }
+    setClusterAt((prev) => (prev?.left === next?.left && prev?.top === next?.top) ? prev : next);
+  });
   return (
-    <div className={className} style={{ position: "relative", ...(clickable ? { cursor: "pointer" } : {}), ...wrapStyle }}
+    <div ref={wrapRef} className={className} style={{ position: "relative", ...(clickable ? { cursor: "pointer" } : {}), ...wrapStyle }}
       title={link ? linkPreview(link, linkLabel) : undefined}
       onMouseMove={reorder && reorder.anyPinned ? () => reorder.clearPin?.() : undefined}
       data-pdf-link={link || undefined}
@@ -549,11 +964,11 @@ function ItemChrome({ editable, presenting, onDelete, link, onSetLink, children,
       onMouseEnter={enter} onMouseLeave={leave}>
       {children}
       {/* Idle link badge — edit mode, cluster not shown */}
-      {link && showLinkUI && !clusterVisible && editMode && <div onClick={(e) => { e.stopPropagation(); setEditingLink(true); }} style={{ position: "absolute", ...ba, width: 14, height: 14, borderRadius: "50%", background: T.accent + "80", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 7, zIndex: 5, cursor: "pointer" }} title={link}>🔗</div>}
+      {link && showLinkUI && !clusterVisible && editMode && <LinkBadge fallback={ba} label={linkLabel} onClick={(e) => { e.stopPropagation(); setEditingLink(true); }} style={{ width: 14, height: 14, borderRadius: "50%", background: T.accent + "80", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 7, zIndex: 5, cursor: "pointer" }} title={link}>🔗</LinkBadge>}
       {/* Idle link badge — presenter */}
-      {link && presenting && !noLinkBadge && <div onClick={(e) => { e.stopPropagation(); openExternalLink(link); }} style={{ position: "absolute", ...ba, padding: "2px 5px", borderRadius: 4, background: T.accent, fontSize: 9, color: "#fff", zIndex: 12, cursor: "pointer", opacity: hovered ? 1 : 0.3, transition: "opacity 0.2s", boxShadow: "0 2px 6px rgba(0,0,0,0.4)" }}>🔗</div>}
+      {link && presenting && !noLinkBadge && <LinkBadge fallback={ba} label={linkLabel} onClick={(e) => { e.stopPropagation(); openExternalLink(link); }} style={{ padding: "2px 5px", borderRadius: 4, background: T.accent, fontSize: 9, color: "#fff", zIndex: 12, cursor: "pointer", opacity: hovered ? 1 : 0.3, transition: "opacity 0.2s", boxShadow: "0 2px 6px rgba(0,0,0,0.4)" }}>🔗</LinkBadge>}
       {/* Hover cluster — edit mode (or pinned after a reorder move) */}
-      {clusterVisible && editMode && (showLinkUI || deletable || reorder) && <div style={{ position: "absolute", ...a, display: "flex", alignItems: "center", gap: 3, zIndex: 11 }}>
+      {clusterShown && <div ref={clusterRef} data-item-cluster="" style={{ position: "absolute", ...(clusterAt || a), display: "flex", alignItems: "center", gap: 3, zIndex: 11 }}>
         {reorder && <button onClick={(e) => { e.stopPropagation(); reorder.onUp?.(); }} disabled={!reorder.onUp} style={reorderArrowBtn(!!reorder.onUp)} title="Move up">▲</button>}
         {reorder && <button onClick={(e) => { e.stopPropagation(); reorder.onDown?.(); }} disabled={!reorder.onDown} style={reorderArrowBtn(!!reorder.onDown)} title="Move down">▼</button>}
         {showLinkUI && <button onClick={(e) => { e.stopPropagation(); setEditingLink(!editingLink); }} style={itemChromeBtn(link ? T.accent : T.bgPanel, link ? T.accent : T.border, link ? "#fff" : T.textDim)} title={link ? `Link: ${link}` : "Add link"}>🔗</button>}
@@ -562,7 +977,7 @@ function ItemChrome({ editable, presenting, onDelete, link, onSetLink, children,
       {/* Link editor popup */}
       {editingLink && editMode && showLinkUI && <div onClick={(e) => e.stopPropagation()} style={{ position: "absolute", top: -30, right: 0, zIndex: 12, display: "flex", gap: 4, alignItems: "center", background: T.bgPanel, border: `1px solid ${T.border}`, borderRadius: 6, padding: "3px 6px", boxShadow: "0 4px 12px rgba(0,0,0,0.5)" }}>
         <span style={{ fontSize: 9, color: T.textDim }}>🔗</span>
-        <input autoFocus defaultValue={link || ""} placeholder="https://..." onKeyDown={(e) => { e.stopPropagation(); if (e.key === "Enter") { onSetLink(e.target.value.trim() || undefined); setEditingLink(false); } if (e.key === "Escape") setEditingLink(false); }} onBlur={(e) => { onSetLink(e.target.value.trim() || undefined); setEditingLink(false); }} style={{ width: 200, padding: "2px 6px", fontSize: 10, fontFamily: FONT.mono, background: T.bg, color: T.text, border: `1px solid ${T.border}`, borderRadius: 4, outline: "none" }} />
+        <input autoFocus defaultValue={link || ""} placeholder="https://..." onKeyDown={(e) => { e.stopPropagation(); if (e.key === "Enter") { onSetLink(linkFromInput(e.target.value)); setEditingLink(false); } if (e.key === "Escape") setEditingLink(false); }} onBlur={(e) => { onSetLink(linkFromInput(e.target.value)); setEditingLink(false); }} style={{ width: 200, padding: "2px 6px", fontSize: 10, fontFamily: FONT.mono, background: T.bg, color: T.text, border: `1px solid ${T.border}`, borderRadius: 4, outline: "none" }} />
         {link && <button onClick={() => { onSetLink(undefined); setEditingLink(false); }} style={{ background: "none", border: "none", color: T.red, fontSize: 10, cursor: "pointer", padding: 0 }}>✕</button>}
       </div>}
     </div>
@@ -645,9 +1060,9 @@ function GridCellBlock({ block, staggerIdx, slideTheme, editable, onChange, slid
       <RenderBlock block={block} staggerIdx={staggerIdx} slideTheme={slideTheme} editable={link ? false : editMode} slideAlign={slideAlign} fontScale={fontScale} presenting={presenting}
         onChange={onChange} />
       {/* Presenter mode: persistent link pill */}
-      {link && presenting && <div onClick={(e) => { e.stopPropagation(); openExternalLink(link); }} style={{ position: "absolute", top: -8, right: -8, padding: "1px 6px", borderRadius: 4, background: T.accent, fontSize: 9, fontFamily: FONT.mono, color: "#fff", fontWeight: 600, zIndex: 12, cursor: "pointer", opacity: hovered ? 1 : 0.3, transition: "opacity 0.2s", boxShadow: "0 2px 6px rgba(0,0,0,0.4)" }}>🔗</div>}
+      {link && presenting && <LinkBadge fallback={{ top: -8, right: -8 }} label={block.text || block.value || block.title} onClick={(e) => { e.stopPropagation(); openExternalLink(link); }} style={{ padding: "1px 6px", borderRadius: 4, background: T.accent, fontSize: 9, fontFamily: FONT.mono, color: "#fff", fontWeight: 600, zIndex: 12, cursor: "pointer", opacity: hovered ? 1 : 0.3, transition: "opacity 0.2s", boxShadow: "0 2px 6px rgba(0,0,0,0.4)" }}>🔗</LinkBadge>}
       {/* Link badge (not hovered, edit mode) */}
-      {link && !hovered && editMode && <div style={{ position: "absolute", top: -8, right: -8, width: 14, height: 14, borderRadius: "50%", background: T.accent + "80", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 7, zIndex: 5, cursor: "pointer" }} title={link} onClick={(e) => { e.stopPropagation(); setEditingLink(true); }}>🔗</div>}
+      {link && !hovered && editMode && <LinkBadge fallback={{ top: -8, right: -8 }} label={block.text || block.value || block.title} style={{ width: 14, height: 14, borderRadius: "50%", background: T.accent + "80", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 7, zIndex: 5, cursor: "pointer" }} title={link} onClick={(e) => { e.stopPropagation(); setEditingLink(true); }}>🔗</LinkBadge>}
       {/* Hover chrome (edit mode) */}
       {hovered && editMode && <div style={{ position: "absolute", top: -10, right: -10, display: "flex", gap: 3, zIndex: 11 }}>
         <button onClick={(e) => { e.stopPropagation(); setEditingLink(!editingLink); }} style={{ width: 18, height: 18, borderRadius: "50%", background: link ? T.accent : T.bgPanel, border: `1px solid ${link ? T.accent : T.border}`, color: link ? "#fff" : T.textDim, fontSize: 9, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", lineHeight: 1, padding: 0, boxShadow: "0 2px 6px rgba(0,0,0,0.4)" }} title={link ? `Link: ${link}` : "Add link"}>🔗</button>
@@ -655,25 +1070,80 @@ function GridCellBlock({ block, staggerIdx, slideTheme, editable, onChange, slid
       {/* Link editor popup */}
       {editingLink && editMode && <div onClick={(e) => e.stopPropagation()} style={{ position: "absolute", top: -30, left: 0, zIndex: 12, display: "flex", gap: 4, alignItems: "center", background: T.bgPanel, border: `1px solid ${T.border}`, borderRadius: 6, padding: "3px 6px", boxShadow: "0 4px 12px rgba(0,0,0,0.5)" }}>
         <span style={{ fontSize: 9, color: T.textDim }}>🔗</span>
-        <input autoFocus defaultValue={link || ""} placeholder="https://..." onKeyDown={(e) => { e.stopPropagation(); if (e.key === "Enter") { setLink(e.target.value.trim()); setEditingLink(false); } if (e.key === "Escape") setEditingLink(false); }} onBlur={(e) => { setLink(e.target.value.trim()); setEditingLink(false); }} style={{ width: 200, padding: "2px 6px", fontSize: 10, fontFamily: FONT.mono, background: T.bg, color: T.text, border: `1px solid ${T.border}`, borderRadius: 4, outline: "none" }} />
+        <input autoFocus defaultValue={link || ""} placeholder="https://..." onKeyDown={(e) => { e.stopPropagation(); if (e.key === "Enter") { setLink(linkFromInput(e.target.value)); setEditingLink(false); } if (e.key === "Escape") setEditingLink(false); }} onBlur={(e) => { setLink(linkFromInput(e.target.value)); setEditingLink(false); }} style={{ width: 200, padding: "2px 6px", fontSize: 10, fontFamily: FONT.mono, background: T.bg, color: T.text, border: `1px solid ${T.border}`, borderRadius: 4, outline: "none" }} />
         {link && <button onClick={() => { setLink(undefined); setEditingLink(false); }} style={{ background: "none", border: "none", color: T.red, fontSize: 10, cursor: "pointer", padding: 0 }}>✕</button>}
       </div>}
     </div>
   );
 }
 
+// ━━━ Grid-cell image (capped upscale) ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// A grid cell fills its track, so a small icon or logo would otherwise stretch
+// to the whole free area. Cap the drawn box at GRID_IMG_MAX_UPSCALE x the natural
+// pixel size (read on load, cached by src) and center it in the cell. Until the
+// size is known the image stays hidden, so a huge first frame never shows.
+// Images without an intrinsic size (naturalWidth 0) or that fail to load are
+// not capped.
+const GRID_IMG_MAX_UPSCALE = 2;
+const IMAGE_NATURAL_SIZE = new Map();
+function GridCellImage({ src, alt, style }) {
+  const [, setTick] = useState(0);
+  const imgRef = useRef(null);
+  const size = IMAGE_NATURAL_SIZE.get(src);
+  const remember = (w, h) => {
+    if (!IMAGE_NATURAL_SIZE.has(src) && IMAGE_NATURAL_SIZE.size >= 256) IMAGE_NATURAL_SIZE.delete(IMAGE_NATURAL_SIZE.keys().next().value);
+    IMAGE_NATURAL_SIZE.set(src, { w, h });
+    setTick((t) => t + 1);
+  };
+  // The cache is bounded, so it can evict the entry of an image that is still
+  // on screen. That <img> has already loaded and onLoad does not fire again, so
+  // a cache miss would hide it for good. Measure it again here, before paint.
+  useLayoutEffect(() => {
+    const el = imgRef.current;
+    if (!IMAGE_NATURAL_SIZE.has(src) && el && el.complete && el.getAttribute("src") === src) remember(el.naturalWidth || 0, el.naturalHeight || 0);
+  });
+  const capped = size && size.w > 0 && size.h > 0;
+  return <img ref={imgRef} src={src} alt={alt} data-grid-cap={capped ? GRID_IMG_MAX_UPSCALE : undefined}
+    onLoad={(e) => remember(e.currentTarget.naturalWidth || 0, e.currentTarget.naturalHeight || 0)}
+    onError={() => remember(0, 0)}
+    style={{ ...style, margin: "auto", maxWidth: capped ? size.w * GRID_IMG_MAX_UPSCALE : undefined, maxHeight: capped ? size.h * GRID_IMG_MAX_UPSCALE : undefined, visibility: size ? undefined : "hidden" }} />;
+}
+
 // ━━━ Zoomable Block Wrapper ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// App-owned record of the open modal dialogs and zoom overlays. Esc and the
+// fullscreen-exit handler decide from this, never from a page-wide marker
+// query: deck SVG markup is in the same document (and a zoom clones it onto
+// <body>), so a marker attribute is not proof that app chrome is open (UI
+// integrity — a deck must not change what Esc does).
+const VELA_OPEN_CHROME = { modals: new Set(), zooms: new Set(), panels: new Set() };
+
 function ZoomWrap({ children, enabled, link, fill }) {
   const [zoomed, setZoomed] = useState(false);
   const [hovered, setHovered] = useState(false);
   const sourceRef = useRef(null);
-  const cloneRef = useRef(null);
 
+  // The overlay is plain DOM on <body> (or on the fullscreen element, the only
+  // subtree the browser shows in fullscreen). Rendered inside the slide, it was
+  // trapped by the canvas transform: position:fixed then fills the scaled slide,
+  // not the window, so a large image zoomed to the same size or smaller.
   useEffect(() => {
-    if (!zoomed || !sourceRef.current || !cloneRef.current) return;
+    if (!zoomed || !sourceRef.current) return;
     const el = sourceRef.current;
-    const container = cloneRef.current;
-    container.innerHTML = "";
+    const host = document.fullscreenElement || document.body;
+    const overlay = document.createElement("div");
+    overlay.setAttribute("data-vela-zoom", "");
+    overlay.tabIndex = 0;
+    overlay.style.cssText = "position:fixed;inset:0;z-index:999999;background:#060a14;cursor:zoom-out;outline:none";
+    const hint = document.createElement("div");
+    hint.textContent = "ESC or click to close";
+    hint.style.cssText = "position:absolute;top:12px;right:16px;color:#64748b;font-size:11px;font-family:monospace;z-index:10";
+    const container = document.createElement("div");
+    // Keep the inherited text color and font, which the clone loses outside the slide.
+    const cs = getComputedStyle(el);
+    container.style.cssText = "position:absolute;top:40px;left:40px;right:40px;bottom:40px;cursor:default";
+    container.style.color = cs.color;
+    container.style.fontFamily = cs.fontFamily;
+    overlay.append(hint, container);
     // Find the SVG or IMG and render it full-viewport (skip the zoom badge icon)
     const svg = Array.from(el.querySelectorAll("svg[viewBox]")).find(s => !s.closest("[data-zoom-badge]"));
     const img = el.querySelector("img[src]");
@@ -693,7 +1163,41 @@ function ZoomWrap({ children, enabled, link, fill }) {
       clone.style.cssText = "transform:scale(2);transform-origin:center center;position:absolute;top:50%;left:50%;translate:-50% -50%";
       container.appendChild(clone);
     }
+    const close = () => setZoomed(false);
+    overlay.addEventListener("click", close);
+    container.addEventListener("click", (e) => e.stopPropagation());
+    // Esc closes only the zoom: stop it here so the window-level slide handler
+    // does not also leave Present mode. Arrow and page keys step to the previous
+    // or next zoomable block on the same slide, never to another slide. Past the
+    // first or last zoomable block on the slide, they close the zoom.
+    const step = { ArrowRight: 1, ArrowDown: 1, PageDown: 1, ArrowLeft: -1, ArrowUp: -1, PageUp: -1 };
+    overlay.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); close(); return; }
+      const dir = step[e.key];
+      if (!dir) return;
+      e.preventDefault(); e.stopPropagation();
+      const slide = el.closest("[data-vela-slide-content]");
+      const list = slide ? Array.from(slide.querySelectorAll("[data-vela-zoomable]")).filter((z) => z.getBoundingClientRect().width > 0) : [];
+      const next = list[list.indexOf(el) + dir];
+      close();
+      if (next && list.includes(el)) next.dispatchEvent(new Event("vela-zoom-open"));
+    });
+    // SlidePanel asks an open zoom to close when the browser leaves fullscreen on Esc.
+    window.addEventListener("vela-close-zoom", close);
+    host.appendChild(overlay);
+    VELA_OPEN_CHROME.zooms.add(overlay);
+    overlay.focus();
+    return () => { window.removeEventListener("vela-close-zoom", close); VELA_OPEN_CHROME.zooms.delete(overlay); overlay.remove(); };
   }, [zoomed]);
+
+  // Arrow keys in another block's zoom open this block's zoom.
+  useEffect(() => {
+    const el = sourceRef.current;
+    if (!enabled || !el) return;
+    const open = () => setZoomed(true);
+    el.addEventListener("vela-zoom-open", open);
+    return () => el.removeEventListener("vela-zoom-open", open);
+  }, [enabled]);
 
   if (!enabled) return children;
 
@@ -705,7 +1209,7 @@ function ZoomWrap({ children, enabled, link, fill }) {
   const triggerZoom = (e) => { e.stopPropagation(); setZoomed(true); };
 
   return <>
-    <div ref={sourceRef} style={{ position: "relative", cursor: hasLink ? "pointer" : "zoom-in", ...(fill ? { display: "flex", flexDirection: "column", flex: 1, minHeight: 0, minWidth: 0, width: "100%" } : {}) }}
+    <div ref={sourceRef} data-vela-zoomable="" style={{ position: "relative", cursor: hasLink ? "pointer" : "zoom-in", ...(fill ? { display: "flex", flexDirection: "column", flex: 1, minHeight: 0, minWidth: 0, width: "100%" } : {}) }}
       onClick={hasLink ? undefined : triggerZoom}
       onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}>
       {children}
@@ -713,14 +1217,6 @@ function ZoomWrap({ children, enabled, link, fill }) {
         {getIcon("Maximize2", { size: 10, color: "#e2e8f0" })} zoom
       </div>
     </div>
-    {zoomed && <div
-      onClick={() => setZoomed(false)}
-      onKeyDown={(e) => { if (e.key === "Escape") setZoomed(false); }}
-      tabIndex={0} ref={(el) => el?.focus()}
-      style={{ position: "fixed", inset: 0, zIndex: 999999, background: "#060a14", cursor: "zoom-out" }}>
-      <div style={{ position: "absolute", top: 12, right: 16, color: "#64748b", fontSize: 11, fontFamily: "monospace", zIndex: 10 }}>ESC or click to close</div>
-      <div ref={cloneRef} onClick={(e) => e.stopPropagation()} style={{ position: "absolute", top: 40, left: 40, right: 40, bottom: 40, cursor: "default" }} />
-    </div>}
   </>;
 }
 
@@ -794,6 +1290,10 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
   // the comparison/matrix cases read pinKey/setPinKey directly for their columns.
   const [pinKey, setPinKey] = useState(null);
   const _pin = { key: pinKey, set: setPinKey };
+  // Image "+ Add title" chip (editor only): mounted only while the image is
+  // hovered or a new caption is being typed, so a plain render adds no DOM.
+  const [chipHover, setChipHover] = useState(false);
+  const [chipAdding, setChipAdding] = useState(false);
   switch (block.type) {
 
     case "heading": {
@@ -833,9 +1333,23 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
         minHeight: 0,
         overflow: "hidden",
       } : null;
-      return <ZoomWrap enabled={!!block.src && !block._solo} link={block.link} fill={!!block._gridCell}><div className={cls} style={{ display: "flex", flexDirection: "column", alignItems: block.align === "left" ? "flex-start" : block.align === "right" ? "flex-end" : "center", ...(block._solo ? { flex: 1, width: "100%", justifyContent: "center" } : {}), ...(block._gridCell ? { flex: 1, minHeight: 0, minWidth: 0, width: "100%", justifyContent: "center", position: "relative" } : {}), ...block.style }}>
+      // Story flags are set by SlideContent after sanitization (never deck keys):
+      // _storyN = 1-based story number (caption prefix + data-story-idx),
+      // _storyNav = a tile click jumps to the story image (no ZoomWrap zoom),
+      // _captionChip = this surface may offer the editor "+ Add title" chip.
+      const storyN = Number.isInteger(block._storyN) && block._storyN > 0 ? block._storyN : undefined;
+      const showChip = !!block._captionChip && canEdit && !!block.src && !block.caption && !block._storyNav;
+      // _storyRow = this cell is in a story-active grid: every cell reserves one
+      // uniform caption row (one line, ellipsis), also without a caption, so the
+      // tiles of a row keep equal image sizes. Without the flag: unchanged.
+      const storyRow = !!block._gridCell && !!block._storyRow;
+      const captionStyle = { fontFamily: FONT.body, fontSize: SIZES.sm, color: st.textDim, marginTop: 8, flexShrink: 0, ...(storyRow ? { lineHeight: 1.4, height: "1.4em", maxWidth: "100%" } : {}) };
+      const captionAdding = !block.caption && chipAdding && canEdit;
+      return <ZoomWrap enabled={!!block.src && !block._solo && !block._storyNav} link={block.link} fill={!!block._gridCell}><div className={cls} data-story-idx={storyN}
+        onMouseEnter={block._captionChip ? () => setChipHover(true) : undefined} onMouseLeave={block._captionChip ? () => setChipHover(false) : undefined}
+        style={{ display: "flex", flexDirection: "column", alignItems: block.align === "left" ? "flex-start" : block.align === "right" ? "flex-end" : "center", ...(block._solo ? { flex: 1, width: "100%", justifyContent: "center" } : {}), ...(block._gridCell ? { flex: 1, minHeight: 0, minWidth: 0, width: "100%", justifyContent: "center", position: "relative" } : {}), ...(block._storyNav && block.src ? { cursor: "zoom-in" } : {}), ...block.style }}>
         {block._gridCell ? <div data-image-grid-media="" style={gridMediaStyle}>
-          {block.src ? <img src={block.src} alt={block.alt || ""} style={
+          {block.src ? <GridCellImage src={block.src} alt={block.alt || ""} style={
           // Absolutely fill the grid cell so the row height is driven ONLY by the
           // grid track (minmax(0,1fr)), never by the image's intrinsic height. A
           // portrait/tall image therefore letterboxes (objectFit:contain) into the
@@ -848,7 +1362,14 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
           ? { width: "100%", height: "100%", objectFit: block.fit || "contain", borderRadius: 0 }
           : { maxWidth: block.maxWidth || "100%", maxHeight: block.maxHeight ?? "100%", borderRadius: block.rounded ?? 8, objectFit: block.fit || "contain", boxShadow: block.shadow ? "0 8px 32px rgba(0,0,0,0.3)" : "none" }
         } /> : <div style={{ padding: 32, color: st.textDim, fontFamily: FONT.mono, fontSize: 11 }}>Paste image (Ctrl+V)</div>}
-        {block.caption && <EditableText text={block.caption} editable={textEditable} onSave={(v) => onChange?.({ caption: v })} style={{ fontFamily: FONT.body, fontSize: SIZES.sm, color: st.textDim, marginTop: 8, flexShrink: 0 }} />}
+        {block.caption && <EditableText text={block.caption} editable={textEditable} onSave={(v) => onChange?.({ caption: v })} prefix={storyN ? `${storyN} · ` : undefined} style={captionStyle} oneLine={storyRow} />}
+        {captionAdding && <EditableText text="" autoEdit editable={textEditable} onSave={(v) => { if (v) onChange?.({ caption: v }); }} onEditEnd={() => { setChipAdding(false); setChipHover(false); }} style={captionStyle} oneLine={storyRow} />}
+        {storyRow && !block.caption && !captionAdding && <div aria-hidden="true" data-story-caption-row="" style={captionStyle} />}
+        {showChip && chipHover && !chipAdding && <div data-no-pdf="" data-testid="caption-chip" role="button" tabIndex={0}
+          onClick={(e) => { e.stopPropagation(); e.preventDefault(); setChipAdding(true); }}
+          onMouseDown={(e) => e.stopPropagation()}
+          onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.stopPropagation(); e.preventDefault(); setChipAdding(true); } }}
+          style={{ position: "absolute", left: "50%", bottom: 8, transform: "translateX(-50%)", zIndex: 6, padding: "2px 8px", borderRadius: 10, background: "rgba(15,23,42,0.78)", color: "#e2e8f0", fontFamily: FONT.mono, fontSize: 10, whiteSpace: "nowrap", cursor: "pointer", boxShadow: "0 2px 6px rgba(0,0,0,0.35)" }}>+ Add title</div>}
       </div></ZoomWrap>;
     }
 
@@ -1009,7 +1530,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
                 <div style={{ width: 22, height: 22, borderRadius: "50%", border: `2px dashed ${gc}`, display: "flex", alignItems: "center", justifyContent: "center" }}>
                   {getIcon(block.gateIcon || "UserCheck", { size: 10, color: gc })}
                 </div>
-                {block.gateLabel && <span style={{ position: "absolute", top: 24, fontSize: 7, color: gc, fontWeight: 600, lineHeight: 1, whiteSpace: "nowrap" }}>{block.gateLabel}</span>}
+                {block.gateLabel && <div style={{ position: "absolute", top: 24, width: "max-content", fontSize: 7, color: gc, fontWeight: 600, lineHeight: 1, whiteSpace: "nowrap" }}><EditableText text={block.gateLabel} editable={textEditable} onSave={(v) => onChange?.({ gateLabel: v || undefined })} /></div>}
               </div>}
               {renderArrowSvg()}
             </div>
@@ -1028,7 +1549,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
             <line x1={`${x2}%`} y1="4" x2={`${x2}%`} y2="20" stroke={loopCol} strokeWidth="1.5" strokeDasharray={loopDash} strokeLinecap="round" />
             <line x1={`${x2}%`} y1="20" x2={`${x1}%`} y2="20" stroke={loopCol} strokeWidth="1.5" strokeDasharray={loopDash} strokeLinecap="round" />
             <line x1={`${x1}%`} y1="20" x2={`${x1}%`} y2="4" stroke={loopCol} strokeWidth="1.5" strokeDasharray={loopDash} strokeLinecap="round" markerEnd={`url(#loopArr-${staggerIdx})`} />
-            {block.loopLabel && <text x="50%" y="32" textAnchor="middle" fill={loopCol} fontSize="10" fontFamily="monospace" style={{ fontStyle: "italic" }}>{block.loopLabel}</text>}
+            {(block.loopLabel || textEditable) && <SvgEditText text={block.loopLabel} editable={textEditable} onSave={(v) => onChange?.({ loopLabel: v })} x="50%" y="32" textAnchor="middle" fill={loopCol} fontSize="10" fontFamily="monospace" style={{ fontStyle: "italic" }} />}
           </>; })()}
         </svg>}
         {block.loop && isVert && <svg style={{ position: "absolute", top: 0, bottom: 0, right: 0, width: 36, height: "100%", overflow: "visible" }}>
@@ -1037,7 +1558,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
             <line x1="4" y1={`${y2}%`} x2="20" y2={`${y2}%`} stroke={loopCol} strokeWidth="1.5" strokeDasharray={loopDash} strokeLinecap="round" />
             <line x1="20" y1={`${y2}%`} x2="20" y2={`${y1}%`} stroke={loopCol} strokeWidth="1.5" strokeDasharray={loopDash} strokeLinecap="round" />
             <line x1="20" y1={`${y1}%`} x2="4" y2={`${y1}%`} stroke={loopCol} strokeWidth="1.5" strokeDasharray={loopDash} strokeLinecap="round" markerEnd={`url(#loopArrV-${staggerIdx})`} />
-            {block.loopLabel && <text x="28" y="50%" textAnchor="middle" fill={loopCol} fontSize="10" fontFamily="monospace" style={{ fontStyle: "italic" }} transform={`rotate(90, 28, 50%)`} dominantBaseline="middle">{block.loopLabel}</text>}
+            {(block.loopLabel || textEditable) && <SvgEditText text={block.loopLabel} editable={textEditable} onSave={(v) => onChange?.({ loopLabel: v })} x="28" y="50%" textAnchor="middle" fill={loopCol} fontSize="10" fontFamily="monospace" style={{ fontStyle: "italic" }} transform={`rotate(90, 28, 50%)`} dominantBaseline="middle" />}
           </>; })()}
         </svg>}
       </div></ZoomWrap>
@@ -1080,10 +1601,10 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: -6 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
               <EditableIcon editable={editable && !presenting} value={block.leftIcon} size={14} onPick={(name) => onChange?.({ leftIcon: name || undefined })}>{block.leftIcon ? getIcon(block.leftIcon, { size: 14, color: labelColor }) : null}</EditableIcon>
-              {block.leftLabel && <span style={{ fontSize: 11, fontWeight: 600, color: labelColor }}>{block.leftLabel}</span>}
+              {block.leftLabel && <EditableText text={block.leftLabel} editable={textEditable} onSave={(v) => onChange?.({ leftLabel: v || undefined })} style={{ fontSize: 11, fontWeight: 600, color: labelColor }} />}
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-              {block.rightLabel && <span style={{ fontSize: 11, fontWeight: 600, color: labelColor }}>{block.rightLabel}</span>}
+              {block.rightLabel && <EditableText text={block.rightLabel} editable={textEditable} onSave={(v) => onChange?.({ rightLabel: v || undefined })} style={{ fontSize: 11, fontWeight: 600, color: labelColor }} />}
               <EditableIcon editable={editable && !presenting} value={block.rightIcon} size={14} onPick={(name) => onChange?.({ rightIcon: name || undefined })}>{block.rightIcon ? getIcon(block.rightIcon, { size: 14, color: labelColor }) : null}</EditableIcon>
             </div>
           </div>
@@ -1108,9 +1629,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
         })}
         {canEdit && hasItems && <AddItem label="Add bar" accent={st.accent} onAdd={() => addItemAt(block, onChange, newItemFor(block,"progress"))} />}
         {block.annotation && (
-          <div style={{ textAlign: "center", marginTop: -4, fontSize: 11, fontStyle: "italic", color: block.annotationColor || "#94a3b8" }}>
-            {block.annotation}
-          </div>
+          <EditableText text={block.annotation} editable={textEditable} onSave={(v) => onChange?.({ annotation: v || undefined })} style={{ textAlign: "center", marginTop: -4, fontSize: 11, fontStyle: "italic", color: block.annotationColor || "#94a3b8" }} />
         )}
       </div>;
     }
@@ -1251,6 +1770,8 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
         [pts[pi], pts[t]] = [pts[t], pts[pi]];
         return { ...col, items: pts };
       }) });
+      const setColField = (side, patch) => { const cols = [...items]; while (cols.length < 2) cols.push({}); cols[side] = { ...cols[side], ...patch }; onChange?.({ items: cols }); };
+      const setPointText = (side, pi, v) => onChange?.({ items: items.map((col, k) => k !== side ? col : { ...col, items: (col.items || []).map((p, j) => j !== pi ? p : (typeof p === "string" ? v : { ...p, text: v })) }) });
       const pointReorder = (side, pts, pi) => (onChange && (pts || []).length > 1)
         ? reorderCtl(pts.length, pi, (dir) => movePoint(side, pi, dir), (k) => `c${side}_${k}`, _pin) : undefined;
       return <div className={cls} style={{ display: "flex", gap: 0, flex: 1, alignItems: "stretch", ...block.style }}>
@@ -1260,7 +1781,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
               <EditableIcon editable={editable && !presenting} value={left.icon} size={18} onPick={onChange ? (name) => onChange({ items: items.map((c, k) => k === 0 ? { ...c, icon: name || undefined } : c) }) : undefined}>
                 {left.icon ? <IconBubble icon={left.icon} size={18} color={leftColor} bg={`${leftColor}15`} /> : null}
               </EditableIcon>
-              <span style={{ fontFamily: FONT.display, fontSize: SIZES[block.titleSize || "md"], fontWeight: 700, color: `${leftColor}cc` }}>{left.title || "A"}</span>
+              <EditableText text={left.title || "A"} editable={textEditable} onSave={(v) => setColField(0, { title: v })} style={{ fontFamily: FONT.display, fontSize: SIZES[block.titleSize || "md"], fontWeight: 700, color: `${leftColor}cc` }} />
             </div>
             {(left.items || []).map((pt, pi) => (
               <ItemChrome key={pi} editable={editable} presenting={presenting}
@@ -1270,14 +1791,14 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
                 onSetLink={onChange ? (url) => linkPoint(0, pi, url) : undefined}
                 onDelete={onChange ? () => deletePoint(0, pi) : undefined}>
                 <span style={{ width: 6, height: 6, borderRadius: "50%", background: leftColor, flexShrink: 0, marginTop: 7 }} />
-                <span>{typeof pt === "string" ? pt : pt.text || ""}</span>
+                <EditableText text={typeof pt === "string" ? pt : pt.text || ""} editable={textEditable} onSave={(v) => setPointText(0, pi, v)} />
               </ItemChrome>
             ))}
             {canEdit && <AddItem variant="chip" label="Add point" accent={leftColor} onAdd={() => addPoint(0)} />}
           </div>
         </div>
         {block.hideDivider ? null : <div style={{ display: "flex", alignItems: "center", justifyContent: "center", zIndex: 2, margin: "0 -18px" }}>
-          <div style={{ width: 36, height: 36, borderRadius: "50%", background: st.bg || "#1e293b", border: `2px solid ${st.border || "#475569"}`, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: FONT.mono, fontSize: 11, fontWeight: 700, color: st.muted }}>{dividerLabel}</div>
+          <div style={{ width: 36, height: 36, borderRadius: "50%", background: st.bg || "#1e293b", border: `2px solid ${st.border || "#475569"}`, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: FONT.mono, fontSize: 11, fontWeight: 700, color: st.muted }}><EditableText text={dividerLabel} editable={textEditable} onSave={(v) => onChange?.({ dividerLabel: v || undefined })} /></div>
         </div>}
         <div style={{ flex: 1, background: `${rightColor}08`, border: `1px solid ${rightColor}30`, borderRadius: "0 12px 12px 0", padding: "20px 22px", display: "flex", flexDirection: "column", alignItems: "center" }}>
           <div style={{ display: "flex", flexDirection: "column", gap: 10, maxWidth: "100%" }}>
@@ -1285,7 +1806,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
               <EditableIcon editable={editable && !presenting} value={right.icon} size={18} onPick={onChange ? (name) => onChange({ items: items.map((c, k) => k === 1 ? { ...c, icon: name || undefined } : c) }) : undefined}>
                 {right.icon ? <IconBubble icon={right.icon} size={18} color={rightColor} bg={`${rightColor}15`} /> : null}
               </EditableIcon>
-              <span style={{ fontFamily: FONT.display, fontSize: SIZES[block.titleSize || "md"], fontWeight: 700, color: `${rightColor}cc` }}>{right.title || "B"}</span>
+              <EditableText text={right.title || "B"} editable={textEditable} onSave={(v) => setColField(1, { title: v })} style={{ fontFamily: FONT.display, fontSize: SIZES[block.titleSize || "md"], fontWeight: 700, color: `${rightColor}cc` }} />
             </div>
             {(right.items || []).map((pt, pi) => (
               <ItemChrome key={pi} editable={editable} presenting={presenting}
@@ -1295,7 +1816,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
                 onSetLink={onChange ? (url) => linkPoint(1, pi, url) : undefined}
                 onDelete={onChange ? () => deletePoint(1, pi) : undefined}>
                 <span style={{ width: 6, height: 6, borderRadius: "50%", background: rightColor, flexShrink: 0, marginTop: 7 }} />
-                <span>{typeof pt === "string" ? pt : pt.text || ""}</span>
+                <EditableText text={typeof pt === "string" ? pt : pt.text || ""} editable={textEditable} onSave={(v) => setPointText(1, pi, v)} />
               </ItemChrome>
             ))}
             {canEdit && <AddItem variant="chip" label="Add point" accent={rightColor} onAdd={() => addPoint(1)} />}
@@ -1323,12 +1844,12 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
               <polygon points={`${x1},${y} ${x2},${y} ${x4},${y + stageH} ${x3},${y + stageH}`}
                 fill={`${col}${isHighlight ? "22" : "18"}`} stroke={`${col}80`} strokeWidth={isHighlight ? 2 : 1.5}
                 strokeDasharray={isHighlight ? "8,4" : "none"} />
-              <text x="350" y={y + stageH * 0.38} textAnchor="middle" fill={`${col}dd`}
-                fontSize="14" fontWeight="600" fontFamily="Inter, sans-serif">{item.label || ""}{isHighlight ? " \u26A0" : ""}</text>
-              {item.value && <text x="350" y={y + stageH * 0.72} textAnchor="middle" fill={col}
-                fontSize="20" fontWeight="800" fontFamily="Inter, sans-serif">{item.value}</text>}
-              {item.drop && <text x={x4 + 16} y={y + stageH * 0.55} textAnchor="start" fill={isHighlight ? col : st.muted}
-                fontSize="12" fontWeight={isHighlight ? 700 : 400} fontFamily="Inter, sans-serif">{item.drop}</text>}
+              <SvgEditText text={item.label} editable={textEditable} onSave={(v) => patchItemAt(block, onChange, i, { label: v })} suffix={isHighlight ? " \u26A0" : ""} x="350" y={y + stageH * 0.38} textAnchor="middle" fill={`${col}dd`}
+                fontSize="14" fontWeight="600" fontFamily="Inter, sans-serif" />
+              {(item.value || textEditable) && <SvgEditText text={item.value} editable={textEditable} onSave={(v) => patchItemAt(block, onChange, i, { value: v })} x="350" y={y + stageH * 0.72} textAnchor="middle" fill={col}
+                fontSize="20" fontWeight="800" fontFamily="Inter, sans-serif" />}
+              {(item.drop || textEditable) && <SvgEditText text={item.drop} editable={textEditable} onSave={(v) => patchItemAt(block, onChange, i, { drop: v })} x={x4 + 16} y={y + stageH * 0.55} textAnchor="start" fill={isHighlight ? col : st.muted}
+                fontSize="12" fontWeight={isHighlight ? 700 : 400} fontFamily="Inter, sans-serif" />}
             </g>;
           })}
         </svg>
@@ -1353,9 +1874,9 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
               </marker>;
             })}
           </defs>
-          {block.centerLabel && <>
-            <text x={cx} y={cy - 8} textAnchor="middle" fill={st.border || "#475569"} fontSize="16" fontWeight="700" fontFamily="Inter, sans-serif" letterSpacing="3">{block.centerLabel}</text>
-            {block.centerSub && <text x={cx} y={cy + 14} textAnchor="middle" fill={st.muted} fontSize="13" fontFamily="Inter, sans-serif">{block.centerSub}</text>}
+          {(block.centerLabel || textEditable) && <>
+            <SvgEditText text={block.centerLabel} editable={textEditable} onSave={(v) => onChange?.({ centerLabel: v })} x={cx} y={cy - 8} textAnchor="middle" fill={st.border || "#475569"} fontSize="16" fontWeight="700" fontFamily="Inter, sans-serif" letterSpacing="3" />
+            {(block.centerSub || textEditable) && <SvgEditText text={block.centerSub} editable={textEditable} onSave={(v) => onChange?.({ centerSub: v })} x={cx} y={cy + 14} textAnchor="middle" fill={st.muted} fontSize="13" fontFamily="Inter, sans-serif" />}
           </>}
           {items.map((item, i) => {
             const angle = (2 * Math.PI * i / n) - Math.PI / 2;
@@ -1379,8 +1900,8 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
                 markerEnd={`url(#cyc-arr-${staggerIdx}-${i})`} />
               <circle cx={nx} cy={ny} r={nodeR} fill={`${col}15`} stroke={col} strokeWidth="2.5" />
               {item.icon && <text x={nx} y={ny - 6} textAnchor="middle" fontSize="18" fontFamily="Inter, sans-serif">{item.icon}</text>}
-              <text x={nx} y={ny + (item.icon ? 14 : 5)} textAnchor="middle" fill={`${col}dd`}
-                fontSize="12" fontWeight="700" fontFamily="Inter, sans-serif">{item.label || ""}</text>
+              <SvgEditText text={item.label} editable={textEditable} onSave={(v) => patchItemAt(block, onChange, i, { label: v })} x={nx} y={ny + (item.icon ? 14 : 5)} textAnchor="middle" fill={`${col}dd`}
+                fontSize="12" fontWeight="700" fontFamily="Inter, sans-serif" />
             </g>;
           })}
         </svg>
@@ -1408,8 +1929,8 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
                   {getIcon(item.icon, { size: 20, color: col, strokeWidth: 2 })}
                 </div> : null}
               </EditableIcon>}
-              <div style={{ fontFamily: FONT.display, fontSize: SIZES[block.size || (block.compact ? "2xl" : "3xl")], fontWeight: 800, color: col, lineHeight: 1 }}>{item.value || ""}</div>
-              {item.label && <div style={{ fontFamily: FONT.mono, fontSize: SIZES.xs, fontWeight: 600, letterSpacing: "0.1em", textTransform: "uppercase", color: st.muted }}>{item.label}</div>}
+              <EditableText text={String(item.value || "")} editable={textEditable} onSave={(v) => patchItemAt(block, onChange, i, { value: v })} style={{ fontFamily: FONT.display, fontSize: SIZES[block.size || (block.compact ? "2xl" : "3xl")], fontWeight: 800, color: col, lineHeight: 1 }} />
+              {item.label && <ItemText block={block} onChange={onChange} editable={textEditable} idx={i} prop="label" style={{ fontFamily: FONT.mono, fontSize: SIZES.xs, fontWeight: 600, letterSpacing: "0.1em", textTransform: "uppercase", color: st.muted }} />}
             </ItemChrome>
           </React.Fragment>;
         })}
@@ -1451,12 +1972,15 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
         [pts[pi], pts[t]] = [pts[t], pts[pi]];
         return { ...qq, items: pts };
       }) });
+      const setQField = (qi, patch) => onChange?.({ [qKey]: [0, 1, 2, 3].map((k) => k === qi ? { ...(quadrants[k] || {}), ...patch } : (quadrants[k] || {})) });
+      const setQPointText = (qi, pi, v) => onChange?.({ [qKey]: quadrants.map((qq, k) => k !== qi ? qq : { ...qq, items: (qq.items || []).map((p, j) => j !== pi ? p : (typeof p === "string" ? v : { ...p, text: v })) }) });
+      const axisText = (key, text, style) => <EditableText text={text} editable={textEditable} onSave={(v) => onChange?.({ [key]: v || undefined })} style={style} />;
       const qPointReorder = (qi, pts, pi) => (onChange && (pts || []).length > 1)
         ? reorderCtl(pts.length, pi, (dir) => moveQPoint(qi, pi, dir), (k) => `q${qi}_${k}`, _pin) : undefined;
-      const renderRow = (indices, radii, yLabel) => (
+      const renderRow = (indices, radii, yLabel, yKey) => (
         <div style={{ display: "flex", gap: 0, alignItems: "stretch" }}>
           {hasY && <div style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 24, flexShrink: 0 }}>
-            {yLabel && <span style={yLabelStyle}>{yLabel}</span>}
+            {yLabel && <div style={{ ...yLabelStyle, width: "max-content", flexShrink: 0 }}>{axisText(yKey, yLabel)}</div>}
           </div>}
           <div style={{ display: "flex", gap: 6, flex: 1 }}>
             {indices.map((qi) => {
@@ -1467,7 +1991,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
                   <EditableIcon editable={editable && !presenting} value={qd.icon} size={16} onPick={onChange ? (name) => onChange({ [qKey]: quadrants.map((qq, k) => k === qi ? { ...qq, icon: name || undefined } : qq) }) : undefined}>
                     {qd.icon ? <span style={{ display: "flex" }}>{getIcon(qd.icon, { size: 16, color: qc, strokeWidth: 2 })}</span> : null}
                   </EditableIcon>
-                  <span style={{ fontFamily: FONT.display, fontSize: SIZES.sm, fontWeight: 700, color: `${qc}cc` }}>{qd.title || ""}</span>
+                  <EditableText text={qd.title || ""} editable={textEditable} onSave={(v) => setQField(qi, { title: v })} style={{ fontFamily: FONT.display, fontSize: SIZES.sm, fontWeight: 700, color: `${qc}cc` }} />
                 </div>
                 {(qd.items || []).map((pt, pi) => (
                   <ItemChrome key={pi} editable={editable} presenting={presenting}
@@ -1476,7 +2000,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
                     reorder={qPointReorder(qi, qd.items, pi)}
                     onSetLink={onChange ? (url) => linkQPoint(qi, pi, url) : undefined}
                     onDelete={onChange ? () => deleteQPoint(qi, pi) : undefined}>
-                    <span style={{ color: qc }}>•</span> {typeof pt === "string" ? pt : pt.text || ""}
+                    <span style={{ color: qc }}>•</span> <EditableText text={typeof pt === "string" ? pt : pt.text || ""} editable={textEditable} onSave={(v) => setQPointText(qi, pi, v)} />
                   </ItemChrome>
                 ))}
                 {canEdit && <AddItem variant="chip" label="Add point" accent={qc} style={{ marginTop: 4 }} onAdd={() => addQPoint(qi)} />}
@@ -1487,12 +2011,12 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
       );
       return <div className={cls} style={{ flex: 1, display: "flex", flexDirection: "column", justifyContent: "center", width: "100%", ...block.style }}>
           {(xLeft || xRight) && <div style={{ display: "flex", justifyContent: "space-around", marginBottom: 8, paddingLeft: hasY ? 24 : 0, padding: "0 20px" }}>
-            <span style={{ fontFamily: FONT.mono, fontSize: SIZES.xs, fontWeight: 600, color: st.muted, letterSpacing: "0.08em" }}>{xLeft}</span>
-            <span style={{ fontFamily: FONT.mono, fontSize: SIZES.xs, fontWeight: 600, color: st.muted, letterSpacing: "0.08em" }}>{xRight}</span>
+            {axisText("xLeft", xLeft, { fontFamily: FONT.mono, fontSize: SIZES.xs, fontWeight: 600, color: st.muted, letterSpacing: "0.08em" })}
+            {axisText("xRight", xRight, { fontFamily: FONT.mono, fontSize: SIZES.xs, fontWeight: 600, color: st.muted, letterSpacing: "0.08em" })}
           </div>}
-          {renderRow([0, 1], ["10px 4px 4px 4px", "4px 10px 4px 4px"], yTop)}
+          {renderRow([0, 1], ["10px 4px 4px 4px", "4px 10px 4px 4px"], yTop, "yTop")}
           <div style={{ height: 6 }} />
-          {renderRow([2, 3], ["4px 4px 4px 10px", "4px 4px 10px 4px"], yBottom)}
+          {renderRow([2, 3], ["4px 4px 4px 10px", "4px 4px 10px 4px"], yBottom, "yBottom")}
       </div>;
     }
 
@@ -1504,6 +2028,9 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
         pending: { bg: "transparent", icon: null, label: "PENDING", textColor: st.muted },
         blocked: { bg: `#ef444425`, icon: "X", label: "BLOCKED", textColor: "#fca5a5" },
       };
+      // A plain-string item is edited as { text }: only the edited item changes
+      // form (patchItemAt would spread the string), so untouched decks keep theirs.
+      const patchCheck = (i, patch) => patchItemAt({ ...block, items: items.map((it, j) => j === i && typeof it === "string" ? { text: it } : it) }, onChange, i, patch);
       return <div className={cls} style={{ display: "flex", flexDirection: "column", gap: 6, width: "100%", ...block.style }}>
         {items.map((item, i) => {
           const status = item.status || "pending";
@@ -1519,8 +2046,19 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
               {status === "partial" && <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, height: "50%", background: "#f59e0b" }} />}
               {cfg.icon && <span style={{ display: "flex", zIndex: 1 }}>{getIcon(cfg.icon, { size: 12, color: status === "done" ? "#fff" : "#ef4444", strokeWidth: 3 })}</span>}
             </div>
-            <span style={{ fontFamily: FONT.body, fontSize: SIZES[block.size || "sm"], color: cfg.textColor, flex: 1 }}>{typeof item === "string" ? item : item.text || ""}</span>
-            {block.showLabels !== false && <span style={{ marginLeft: "auto", fontFamily: FONT.mono, fontSize: SIZES.xs, fontWeight: 600, color: labelColor }}>{cfg.label}</span>}
+            {typeof item === "string"
+              ? <EditableText text={item} editable={textEditable} onSave={(v) => patchCheck(i, { text: v })} style={{ fontFamily: FONT.body, fontSize: SIZES[block.size || "sm"], color: cfg.textColor, flex: 1 }} />
+              : <ItemText block={block} onChange={onChange} editable={textEditable} idx={i} prop="text" style={{ fontFamily: FONT.body, fontSize: SIZES[block.size || "sm"], color: cfg.textColor, flex: 1 }} />}
+            {block.showLabels !== false && (
+              <EditableText text={item.label || cfg.label} editable={textEditable} onSave={(v) => {
+                  // A typed status name (key or default label) switches the status;
+                  // any other text is a custom label; empty text restores the default.
+                  // Case, "_", "-" and runs of spaces do not matter ("in_progress").
+                  const norm = (t) => String(t).trim().toLowerCase().replace(/[\s_-]+/g, " ");
+                  const key = norm(v);
+                  const hit = Object.keys(statusConfig).find((k) => k === key || norm(statusConfig[k].label) === key);
+                  patchCheck(i, hit ? { status: hit, label: undefined } : { label: v || undefined });
+                }} controlled style={{ marginLeft: "auto", fontFamily: FONT.mono, fontSize: SIZES.xs, fontWeight: 600, color: labelColor, textTransform: "uppercase" }} />)}
           </ItemChrome>;
         })}
         {canEdit && <AddItem label="Add item" accent={st.accent} onAdd={() => addItemAt(block, onChange, newItemFor(block,"checklist"))} />}

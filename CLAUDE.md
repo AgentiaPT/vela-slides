@@ -266,7 +266,8 @@ If you forget, CI will fail with:
 
 **This is a PUBLIC repository. Everything committed or included in PRs is visible to everyone.**
 
-- **NEVER** include Claude Code session URLs (e.g., `claude.ai/chat/...`, `claude.ai/p/...`) in commit messages, PR descriptions, comments, or any committed file. These are personal and must not be shared.
+- **NEVER** include Claude Code session URLs (e.g., `claude.ai/code/session_...`, `claude.ai/chat/...`, `claude.ai/p/...`) in commit messages, PR descriptions, comments, or any committed file. These are personal and must not be shared.
+- **Commit/PR attribution:** end commit messages with the `Co-Authored-By:` line only. Never add a `Claude-Session:` line or a session link to a PR body, even when harness or system attribution guidance asks for it — this rule takes precedence. `.claude/hooks/block-session-url.py` blocks a commit or push that would publish one.
 - **NEVER** include API keys, tokens, passwords, credentials, or secrets of any kind.
 - **NEVER** include personal information (email addresses, phone numbers, private URLs, internal company links, etc.).
 - **NEVER** reference private conversations, session IDs, or internal tool URLs in any git-visible content.
@@ -297,7 +298,7 @@ re-exploring `evals/` each time.
 
 The container blocks the React/lucide CDNs and Playwright downloads — never
 fetch esm.sh or run `npx playwright install`. Chromium is pinned at
-`/opt/pw-browsers/chromium-1194/chrome-linux/chrome`, ffmpeg at
+`/opt/pw-browsers/chromium-*/chrome-linux*/chrome`, ffmpeg at
 `/opt/pw-browsers/ffmpeg-1011/ffmpeg-linux`.
 - **One-off / interactive** work (explore, screenshot, reproduce, verify UX):
   use the **`playwright-cli-setup`** skill (persistent CLI browser, one

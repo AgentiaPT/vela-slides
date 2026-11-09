@@ -138,8 +138,12 @@ const velaClipboardReadSlides = async () => {
   return [];
 };
 
-const VELA_VERSION = "13.74";
+const VELA_VERSION = "13.78";
 const VELA_CHANGELOG = [
+  { v: "13.78", d: ["Images: up to 10 per slide; overflow goes to a new slide.", "Images: drag image files from your computer onto a slide.", "Images: drag tiles to reorder.", "Story mode: present a slide's images one by one.", "Export: expand story slides to one page per image (PDF/PPTX).", "Text: Ctrl+U underline is saved and shows everywhere (++text++).", "Images: dropped files use the same ordered, safe queue as pasted images.", "Story mode: grid tiles keep a one-line title row, so tiles align.", "Vector PDF: text after bold/italic/underline/link keeps its space and letter spacing.", "Drop: images dropped outside a slide show a hint; a deck file dropped with images still loads.", "Slide toolbar stays on one row; labels change to icons when space is short."] },
+  { v: "13.77", d: ["Two-column slides: edits to a column block (link, text, hide, delete) are saved; before, they were lost.", "Link boxes accept a bare domain (example.com) or an email address; before, these were saved as an empty link.", "Desktop: outside edits to decks up to 50 MB now reload live (was 5 MB).", "Present: Esc exits fullscreen, also inside Claude.ai artifacts.", "Esc closes the gallery, presenter view, image zoom or an open dialog first.", "Present toolbar: removed the duplicate gallery icon; presenter view uses a notes icon.", "Image zoom fills the window again (it was limited to the scaled slide).", "Zoom: arrow keys step through the images on the slide; past the first or last image they close the zoom.", "Present toolbar stays faint until you point at it.", "Editor: Ctrl+E toggles the TOC (as in present mode); [ also works with AltGr keyboards."] },
+  { v: "13.76", d: ["TOC: dragging a slide or section near the list edge auto-scrolls the list.", "TOC: moving a slide to a section in an earlier lane no longer loses the slide.", "Images: a pasted image on an empty slide fills the slide, not one half.", "Images: grids pick rows and columns by image aspect ratio.", "Images: solo and wide images fill the free slide area.", "Images: images shrink to fit, so text below an image stays on the slide.", "Editing: all text in checklist, comparison, matrix, number-row, progress and flow blocks is editable inline.", "Checklist: type a status name to change the status; custom status labels survive compact/turbo formats."] },
+  { v: "13.75", d: ["Editor: mark slides reviewed (✓); Review cycle makes arrow keys skip reviewed slides.", "View switch (editor | presenter | gallery) next to Present.", "Gallery: hide/unhide a slide beside delete; TOC: delete icon on slide rows (undoable).", "Fullscreen nav icons stay visible on any slide background.", "Branding: right-side settings pane; accent line removable at 0px.", "Block toolbar stays visible on full-bleed images; link badges sit right after the text.", "Vector PDF: € and other WinAnsi symbols render as text at correct size.", "validate: reports a gradient in solid-color bg fields (use bgGradient).", "Opening or switching a deck keeps lane/module ids.", "Desktop: window title shows the deck title; keyboard works after alt-tab; AI agents detected on first start; HTML export fixed."] },
   { v: "13.74", d: ["Security: CLI output now neutralizes terminal control sequences in deck text (CWE-150 class), closing a display-spoofing channel.", "Security: the machine-readable --json output is fully escaped for the same class.", "Added one canonical output encoder, a CI gate keeping every CLI output path routed through it, and regression tests."] },
   { v: "13.73", d: ["Security (High): hardened the deck-injection build path — trusted app source is now transformed before untrusted deck data is injected.", "Security: added a fail-closed integrity check that refuses to write an artifact whose trusted bytes changed.", "Local preview server: same injection-last ordering applied to its HTML build path.", "Tests: added build-pipeline trust-boundary regression coverage."] },
   { v: "13.72", d: "Demo: synchronized the bundled product-tour deck and its content fingerprint." },
@@ -421,7 +425,10 @@ function applyStartupPatch(loadedDeck, dispatch) {
   if (STARTUP_PATCH.lanes) {
     dbg("[PATCH] Full deck replace");
     try {
-      const sanitized = validateAndSanitizeDeck(STARTUP_PATCH);
+      // keepIds: a startup patch REPLACES the whole deck (nothing else in state to
+      // collide with), so its own valid, unique ids survive. Minting fresh ids here
+      // churned every lane/module id on each desktop/local open (CR01).
+      const sanitized = validateAndSanitizeDeck(STARTUP_PATCH, { keepIds: true });
       dispatch({ type: "LOAD", payload: { ...sanitized, deckTitle: sanitizeDeckTitle(STARTUP_PATCH.deckTitle) } });
     } catch (e) {
       // Fail closed: never load an unsanitized deck. validateAndSanitizeDeck only throws
@@ -565,6 +572,30 @@ function sanitizeUrl(url, allowedProtocols = ["http:", "https:", "mailto:"]) {
     // data: image path is validated raw downstream). Backslashes already rejected.
     return trimmed;
   } catch (_) { return ""; }
+}
+
+// A link typed into an editor link box. People type "example.com" or
+// "www.example.com"; sanitizeUrl needs an explicit scheme, so a bare domain was
+// saved as empty with no feedback. Add https:// (or mailto: for a plain email
+// address) when no scheme is given, then gate through sanitizeUrl as before.
+// Schemeless input gets a scheme ONLY when it is a plain email address or looks
+// like a real host (dotted labels, optional port, then a path/query/fragment
+// with no whitespace). Anything else — free text, "a@b", "user@host/x" (would
+// become https userinfo), "sms:123" (would parse as host:port), ".." — returns
+// undefined, which the link box treats as "no link" (an empty box does the same).
+const LINK_HOST_LABEL = "[\\p{L}\\p{N}](?:[\\p{L}\\p{N}-]{0,61}[\\p{L}\\p{N}])?";
+const LINK_HOST = `(?:${LINK_HOST_LABEL}\\.)+${LINK_HOST_LABEL}`;
+const LINK_BARE_EMAIL = new RegExp(`^[A-Za-z0-9.!#$%&'*+=?^_\`{|}~-]+@${LINK_HOST}$`, "u");
+const LINK_BARE_HOST = new RegExp(`^${LINK_HOST}(?::\\d{1,5})?(?:[/?#]\\S*)?$`, "u");
+function linkFromInput(value) {
+  const t = String(value == null ? "" : value).trim();
+  if (!t) return undefined;
+  // "host:8080" is a host and port, not a scheme.
+  if (/^[a-z][a-z0-9+.\-]*:(?!\d)/i.test(t)) return sanitizeUrl(t) || undefined;
+  if (LINK_BARE_EMAIL.test(t)) return sanitizeUrl("mailto:" + t) || undefined;
+  const bare = t.replace(/^\/+/, "");
+  if (!LINK_BARE_HOST.test(bare)) return undefined;
+  return sanitizeUrl("https://" + bare) || undefined;
 }
 
 // Open a deck-supplied URL safely — re-sanitize at the sink so a javascript:/data:/
@@ -961,6 +992,20 @@ function sanitizeSvgMarkup(raw) {
           for (const a of attrs) {
             const name = a.name.toLowerCase();
             if (name.startsWith("on")) { child.removeAttribute(a.name); continue; }
+            // UI-integrity (namespace forgery, §3.13): the app marks its own chrome
+            // and export plumbing with data-* attributes and queries them. No deck
+            // feature needs data-* in SVG, so drop every one (both spellings: a
+            // prefixed name keeps "data-…" as its localName).
+            if (name.startsWith("data-") || (a.localName || "").toLowerCase().startsWith("data-")) { child.removeAttribute(a.name); continue; }
+            // UI-integrity (§3.15): class lets deck SVG opt into the app's global
+            // stylesheet rules (hover transforms etc. on the root <svg>, which
+            // SVG_ROOT_BLOCKED forbids as attributes). role / aria-* / tabindex /
+            // autofocus let deck SVG take focus and pose as app widgets that the
+            // keyboard handlers treat specially. No deck diagram needs them; paint
+            // uses presentation attributes and refs use id, which stays.
+            // Both spellings, as for data-* above.
+            const chromeAttr = /^(?:class|role|tabindex|autofocus|aria-.*)$/;
+            if (chromeAttr.test(name) || chromeAttr.test((a.localName || "").toLowerCase())) { child.removeAttribute(a.name); continue; }
             // src/srcset never appear on legitimate SVG elements (SVG uses href/
             // xlink:href), so they survive the SVG parse inert — but the sanitized
             // string is later parsed in an HTML context (dangerouslySetInnerHTML into a
@@ -1397,7 +1442,7 @@ const SAFE_SLIDE_KEYS = new Set([
   "align", "verticalAlign", "padding", "gap",
   "splitGap", "contentFlex", "imageFlex", "imageCols",
   // presentation metadata
-  "duration", "timeLock", "hidden", "notes", "speakerNotes", "studyNotes",
+  "duration", "timeLock", "hidden", "reviewed", "story", "notes", "speakerNotes", "studyNotes",
   "comments", "image",
 ]);
 const SAFE_BLOCK_KEYS = new Set([
@@ -1535,6 +1580,9 @@ function sanitizeBlock(block, depth = 0) {
     }
     if (clean.type === "flow" || clean.type === "steps" || clean.type === "timeline" || clean.type === "tag-group" || clean.type === "funnel" || clean.type === "cycle" || clean.type === "number-row" || clean.type === "checklist") {
       clean.items = clean.items.slice(0, 20).map((it) => {
+        // A checklist item may be a plain string (the renderer and validate.py
+        // accept it); keep it as sanitized text instead of dropping it.
+        if (typeof it === "string" && clean.type === "checklist") return sanitizeString(it, 1000);
         if (!it || typeof it !== "object") return null;
         const c = { ...it };
         if (c.label) c.label = sanitizeString(c.label, 200);
@@ -1623,7 +1671,8 @@ function sanitizeComment(c) {
     anchor: typeof c.anchor === "string" ? sanitizeString(c.anchor, 200) : null,
     blockIndex: typeof c.blockIndex === "number" ? c.blockIndex : null,
     status: VALID_COMMENT_STATUSES.has(c.status) ? c.status : "open",
-    createdAt: typeof c.createdAt === "string" ? c.createdAt.slice(0, 30) : now(),
+    // null, not now(): a stamp here changed an unchanged deck on each open (CR01).
+    createdAt: typeof c.createdAt === "string" ? c.createdAt.slice(0, 30) : null,
     resolvedAt: typeof c.resolvedAt === "string" ? c.resolvedAt.slice(0, 30) : null,
   };
 }
@@ -1692,6 +1741,12 @@ function sanitizeSlide(slide) {
   }
   // `hidden` (slide excluded from presentation/counts) — strict boolean only.
   if ("hidden" in clean) { if (clean.hidden === true) clean.hidden = true; else delete clean.hidden; }
+  // `reviewed` (editor review-cycle mark; never rendered or exported) — strict boolean only.
+  if ("reviewed" in clean) { if (clean.reviewed === true) clean.reviewed = true; else delete clean.reviewed; }
+  // `story` (Present shows the slide's images one by one) — strict boolean only.
+  // Any other shape is deleted, never coerced: it gates a presentation mode, so
+  // a truthy string/number from a deck must not switch it on.
+  if ("story" in clean) { if (clean.story === true) clean.story = true; else delete clean.story; }
   // NOTE: wrap the sanitizeBlock calls — a bare `.map(sanitizeBlock)` would pass
   // the array INDEX into the recursion-depth parameter.
   if (Array.isArray(clean.blocks)) clean.blocks = clean.blocks.slice(0, 30).map((b) => sanitizeBlock(b)).filter(Boolean);
@@ -1728,12 +1783,27 @@ function sanitizeSlide(slide) {
   return clean;
 }
 
+// Deterministic short id from a string (djb2, base36). Used where a value is
+// DERIVED from deck content during sanitize, so the same deck gives the same
+// value on every open (CR01): a random id here made an unchanged deck look
+// edited. Not a security primitive — the output is a fixed charset.
+function stableIdFrom(str) {
+  let h = 5381;
+  for (let i = 0; i < str.length; i++) h = ((h << 5) + h + str.charCodeAt(i)) | 0;
+  return (h >>> 0).toString(36);
+}
+
 function sanitizeItem(item) {
   if (!item || typeof item !== "object") return null;
   const comments = Array.isArray(item.comments) ? item.comments.slice(0, MAX_COMMENTS).map(sanitizeComment).filter(Boolean) : [];
-  // Migrate legacy notes to a module-level comment if no comments exist
+  const createdAt = typeof item.createdAt === "string" ? item.createdAt.slice(0, 30) : null;
+  // Migrate legacy notes to a module-level comment if no comments exist.
+  // id + createdAt are derived from the module (not uid()/now()), so re-opening
+  // the same deck gives the same comment (CR01).
   if (comments.length === 0 && typeof item.notes === "string" && item.notes.trim()) {
-    comments.push({ id: "c_" + uid(), text: sanitizeString(item.notes.trim(), 1000), anchor: null, blockIndex: null, status: "open", createdAt: now(), resolvedAt: null });
+    const text = sanitizeString(item.notes.trim(), 1000);
+    const seed = (typeof item.id === "string" ? item.id.slice(0, 64) : "") + "\u0000" + (typeof item.title === "string" ? item.title.slice(0, 200) : "") + "\u0000" + text;
+    comments.push({ id: "c_n" + stableIdFrom(seed), text, anchor: null, blockIndex: null, status: "open", createdAt, resolvedAt: null });
   }
   return {
     id: uid(),
@@ -1744,7 +1814,9 @@ function sanitizeItem(item) {
     importance: VALID_IMPORTANCES.has(item.importance) ? item.importance : "should",
     order: typeof item.order === "number" ? item.order : 0,
     slides: Array.isArray(item.slides) ? item.slides.slice(0, 100).map(sanitizeSlide).filter(Boolean) : [],
-    createdAt: typeof item.createdAt === "string" ? item.createdAt.slice(0, 30) : now(),
+    // A missing createdAt stays absent (nothing reads it): stamping now() here
+    // changed the deck on every open (CR01).
+    ...(createdAt !== null ? { createdAt } : {}),
     ...(item.presentCard ? { presentCard: true } : {}),
   };
 }
@@ -1812,15 +1884,78 @@ function resanitizeLoadedBranding(branding) {
   return b;
 }
 
-function validateAndSanitizeDeck(raw) {
+// Lane/module ids a deck may keep when the caller passes { keepIds: true }.
+// Type-checked first (no coercion), charset-limited, no leading "_" (reserved
+// for renderer-private keys). Anything else is replaced by a fresh uid().
+const KEEPABLE_DECK_ID = /^[A-Za-z0-9][A-Za-z0-9-]{0,63}$/;
+// Ids key plain-object maps (gallery counts/colours, per-module storage
+// chunks). An id that names an Object.prototype member would read the
+// inherited value (a function) instead of "missing", so it is not keepable.
+const isKeepableDeckId = (v) => typeof v === "string" && KEEPABLE_DECK_ID.test(v) && !(v in Object.prototype);
+
+// Live deck update (external edit / deck switch): `sanitized` came from
+// validateAndSanitizeDeck(raw, { keepIds: true }). A lane/module whose id was
+// freshly minted (the raw id was missing/invalid/duplicate) takes the id at the
+// same position in `cur`, so selection survives an editor that dropped ids —
+// but only when that id is valid and not already used in `sanitized` (ids stay
+// unique). Ids the file kept are never overwritten (CR01).
+function adoptPriorDeckIds(sanitized, raw, cur) {
+  if (!sanitized || !Array.isArray(sanitized.lanes) || !cur || !Array.isArray(cur.lanes)) return sanitized;
+  const rawIds = new Set();
+  for (const l of (raw && Array.isArray(raw.lanes) ? raw.lanes : [])) {
+    if (l && typeof l.id === "string") rawIds.add(l.id);
+    for (const it of (l && Array.isArray(l.items) ? l.items : [])) if (it && typeof it.id === "string") rawIds.add(it.id);
+  }
+  const used = new Set();
+  for (const l of sanitized.lanes) { used.add(l.id); for (const it of l.items || []) used.add(it.id); }
+  const adopt = (obj, prior) => {
+    if (rawIds.has(obj.id) || !prior || !isKeepableDeckId(prior.id) || used.has(prior.id)) return;
+    used.delete(obj.id); obj.id = prior.id; used.add(obj.id);
+  };
+  sanitized.lanes.forEach((l, li) => {
+    const cl = cur.lanes[li];
+    adopt(l, cl);
+    (l.items || []).forEach((it, ii) => adopt(it, cl && Array.isArray(cl.items) ? cl.items[ii] : null));
+  });
+  return sanitized;
+}
+
+// The deck content the local/desktop shell writes to the file (part-app.jsx
+// flushLocalStateRef). Its JSON is the no-edit guard's signature: a flush whose
+// signature equals the file's known content is skipped, so opening a deck the
+// user did not change never writes the file (CR01).
+function localDeckPayload(s) {
+  return { deckTitle: s.deckTitle, lanes: s.lanes, branding: s.branding, guidelines: s.guidelines };
+}
+
+function validateAndSanitizeDeck(raw, opts) {
   if (!raw || typeof raw !== "object") throw new Error("Invalid deck format");
   if (!Array.isArray(raw.lanes)) throw new Error("Missing lanes array");
+  // Default (fresh import): every lane/module id is re-minted so an imported
+  // deck can never collide with ids already in state. keepIds (full-deck
+  // replace, e.g. the startup patch): keep each valid id that is unique across
+  // ALL lanes + modules of this deck; a duplicate or invalid id is repaired
+  // with a fresh one, so the collision defense still holds inside the deck.
+  const keepIds = !!(opts && opts.keepIds === true);
+  const seenIds = new Set();
+  const deckId = (v) => {
+    if (keepIds && isKeepableDeckId(v) && !seenIds.has(v)) { seenIds.add(v); return v; }
+    let id = uid();
+    while (seenIds.has(id)) id = uid();
+    seenIds.add(id);
+    return id;
+  };
   // Clamp rather than throw: a >50-lane deck must not be able to trip an exception
   // that a fail-open caller would catch and then load raw, unsanitized (sanitizer off-switch).
   const lanes = raw.lanes.slice(0, 50).map((lane) => {
     if (!lane || typeof lane !== "object") return null;
-    const items = Array.isArray(lane.items) ? lane.items.slice(0, 200).map(sanitizeItem).filter(Boolean) : [];
-    return { id: uid(), title: sanitizeString(lane.title || "Untitled", 100), collapsed: !!lane.collapsed, items };
+    const laneId = deckId(lane.id);
+    const items = Array.isArray(lane.items) ? lane.items.slice(0, 200).map((item) => {
+      const clean = sanitizeItem(item);
+      if (clean) clean.id = deckId(item.id);
+      return clean;
+    }).filter(Boolean) : [];
+    return { id: laneId, title: sanitizeString(lane.title || "Untitled", 100), collapsed: !!lane.collapsed, items };
   }).filter(Boolean);
   const rawBranding = raw.branding && typeof raw.branding === "object" ? raw.branding : {};
   const importedBranding = {
@@ -1859,18 +1994,42 @@ function validateAndSanitizeDeck(raw) {
 }
 
 // ━━━ Image Compression ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-function compressImage(dataUrl, maxWidth = 800, quality = 0.7) {
+const PNG_KEEP_MAX = 400000; // max data-URL length of a kept (transparent) PNG
+// `opts.strict` (drop + paste): resolve null — never the original — when the
+// image cannot be decoded or exceeds IMAGE_MAX_PIXELS, so an undecodable or
+// decompression-bomb file is rejected instead of stored raw. Without it the
+// behaviour is unchanged (chat keeps the fail-open default).
+function compressImage(dataUrl, maxWidth = 800, quality = 0.7, opts) {
+  const strict = !!(opts && opts.strict);
   return new Promise((resolve) => {
     const img = new Image();
     img.onload = () => {
+      if (strict && !((img.naturalWidth || 0) * (img.naturalHeight || 0) <= IMAGE_MAX_PIXELS)) { resolve(null); return; }
       let w = img.width, h = img.height;
       if (w > maxWidth) { h = Math.round(h * maxWidth / w); w = maxWidth; }
       const c = document.createElement("canvas");
       c.width = w; c.height = h;
-      c.getContext("2d").drawImage(img, 0, 0, w, h);
+      const ctx = c.getContext("2d");
+      ctx.drawImage(img, 0, 0, w, h);
+      // HI7: JPEG has no alpha. An image with transparent pixels (PNG, GIF,
+      // WebP, SVG...) keeps them as PNG, but only while the PNG stays small
+      // (PNG_KEEP_MAX chars), so a paste cannot grow the deck without bound.
+      // Otherwise (or for an image too large to scan) it is JPEG on white, not on
+      // the canvas's transparent black.
+      let alpha = false;
+      if (!/^data:image\/jpe?g[;,]/i.test(dataUrl) && w * h <= 4e6) {
+        try { const px = ctx.getImageData(0, 0, w, h).data; for (let k = 3; k < px.length; k += 4) if (px[k] < 255) { alpha = true; break; } } catch (_) { alpha = false; }
+      }
+      if (alpha) {
+        const png = c.toDataURL("image/png");
+        if (png.length <= PNG_KEEP_MAX) { resolve(png); return; }
+      }
+      ctx.globalCompositeOperation = "destination-over";
+      ctx.fillStyle = "#ffffff";
+      ctx.fillRect(0, 0, w, h);
       resolve(c.toDataURL("image/jpeg", quality));
     };
-    img.onerror = () => resolve(dataUrl);
+    img.onerror = () => resolve(strict ? null : dataUrl);
     img.src = dataUrl;
   });
 }
@@ -1887,6 +2046,13 @@ const imageAspect = (dataUrl) => new Promise((resolve) => {
   img.onerror = () => resolve(1);
   img.src = dataUrl;
 });
+// Natural size {w, h} of a data URL image; {w: 0, h: 0} on error (CR23 paste caps).
+const imageNaturalSize = (dataUrl) => new Promise((resolve) => {
+  const img = new Image();
+  img.onload = () => resolve({ w: img.naturalWidth || 0, h: img.naturalHeight || 0 });
+  img.onerror = () => resolve({ w: 0, h: 0 });
+  img.src = dataUrl;
+});
 
 // Decide the layout for a slide an image is being pasted onto. Returns the layout
 // the slide should carry: an explicit author layout is preserved; an empty/mostly-
@@ -1894,7 +2060,7 @@ const imageAspect = (dataUrl) => new Promise((resolve) => {
 // the image below ("stack"); otherwise the slide is promoted to "image-right" so
 // the image sits beside the existing body content. aspect = image width / height.
 const PASTE_TITLE_BLOCKS = new Set(["heading", "text", "subtitle", "badge", "quote"]);
-function pasteImageLayout(slide, aspect, n) {
+function pasteImageLayout(slide, aspect, n, aspects, measure, naturalW) {
   const layout = slide && slide.layout;
   if (layout && layout !== "stack") return layout; // respect explicit author layout
   const body = ((slide && slide.blocks) || []).filter((b) => b.type !== "image" && b.type !== "spacer" && b.type !== "divider");
@@ -1903,9 +2069,114 @@ function pasteImageLayout(slide, aspect, n) {
   // Heavy body text + a grid of images (>=3): don't cram the grid into a half.
   // Keep the slide stacked so the text reads as a full-width header and the
   // image run grids full-width below it (the renderer auto-grids the run).
-  if (hasContent && n >= 3) return "stack";
   const wide = aspect >= 1.6;
-  return (!mostlyTitle && !wide) ? "image-right" : "stack";
+  const rule = (hasContent && n >= 3) ? "stack" : (!mostlyTitle && !wide) ? "image-right" : "stack";
+  // CR23: with every image aspect known, compare the two candidates and keep the
+  // one that shows the most image area (see pasteLayoutArea). The count rule
+  // above is the fallback when the estimate cannot be made.
+  if (!body.length || !Array.isArray(aspects) || aspects.length !== n) return rule;
+  const split = pasteLayoutArea(slide, aspects, "image-right", measure, naturalW), stack = pasteLayoutArea(slide, aspects, "stack", measure, naturalW);
+  if (split == null || stack == null) return rule;
+  return split > stack ? "image-right" : "stack";
+}
+
+// Split-column flex the paste handler gives a split slide it lays out itself: a
+// lone square/portrait image gives the text the larger share; a grid splits 1:1.
+function pasteSplitFlex(n, aspect) {
+  return n === 1 && aspect <= 1.2 ? [1.4, 1] : [1, 1];
+}
+
+// CR23: estimated image area (slide px^2) for `aspects` on `slide` in layout
+// "stack" (body text on top, image grid full width below) or "image-right" (body
+// text beside an image column), at the default 960x540 geometry. The image area
+// comes from imageGridPlan(), the same packing the renderer draws, so the two
+// cannot disagree. The body height comes from `measure(width)` (the paste handler
+// measures the rendered blocks); without it, from a per-block estimate that
+// covers every block type. A stacked slide whose text overflows is scaled down as
+// a whole (area x scale^2). A split slide widens its columns when it scales, so
+// its image column keeps its visual size. Null only for a custom slide padding.
+const PASTE_TEXT_METRICS = { heading: ["2xl", 1.2, 0.56], text: ["md", 1.6, 0.5], bullets: ["md", 1.6, 0.5], quote: ["xl", 1.4, 0.52] };
+function pasteBodyEstimate(body, w, gap) {
+  let total = 0;
+  for (const b of body) {
+    const m = PASTE_TEXT_METRICS[b.type];
+    if (b.type === "badge") total += 28;
+    else if (m) {
+      const px = parseFloat(BASE_SIZES[b.size] || BASE_SIZES[m[0]]) * 16, lineH = px * m[1];
+      const lines = (str, width) => String(str == null ? "" : str).split("\n").reduce((k, seg) => k + Math.max(1, Math.ceil(seg.length * px * m[2] / Math.max(40, width))), 0);
+      if (b.type === "bullets") {
+        const items = Array.isArray(b.items) ? b.items : [];
+        total += items.reduce((h, it) => h + lines(typeof it === "string" ? it : it && it.text, w - 28) * lineH, 0) + Math.max(0, items.length - 1) * (Number(b.gap) || 8);
+      } else total += lines(b.text, b.type === "quote" ? w * 0.85 : w) * lineH;
+    }
+    // Conservative, width-free estimates for every other block type.
+    else if (Array.isArray(b.rows)) total += 44 + b.rows.length * 38;
+    else if (b.type === "code") total += 36 + String(b.text || "").split("\n").length * 20;
+    else if (b.type === "chart") total += 240;
+    else if (Array.isArray(b.items)) total += 24 + b.items.length * 44;
+    else total += 90;
+    total += gap;
+  }
+  return Math.max(0, total - gap);
+}
+function pasteLayoutArea(slide, aspects, layout, measure, naturalW) {
+  if (!slide || slide.padding != null || !Array.isArray(aspects) || !aspects.length) return null;
+  if (!aspects.every((a) => typeof a === "number" && a > 0 && Number.isFinite(a))) return null;
+  const body = (slide.blocks || []).filter((b) => b && b.type !== "image" && b.type !== "spacer" && b.type !== "divider");
+  const gap = Number(slide.gap) || 12, W = 864, H = 468;
+  const textH = (w) => {
+    const m = typeof measure === "function" ? measure(w) : null;
+    return typeof m === "number" && Number.isFinite(m) && m >= 0 ? m : pasteBodyEstimate(body, w, gap);
+  };
+  const n = aspects.length;
+  // Upscale caps (natural widths, optional): a grid cell draws an image at most
+  // GRID_IMG_MAX_UPSCALE x natural size; a lone side image at most 1x.
+  const known = Array.isArray(naturalW) && naturalW.length === n;
+  const capGrid = known ? naturalW.map((w) => w * GRID_IMG_MAX_UPSCALE) : undefined;
+  // The author's imageCols pins the grid, clamped as renderImageGrid does, so the
+  // estimate packs the images as the slide renders them. A lone side image does
+  // not render as a grid, so the pin does not apply to it.
+  const pinned = slide.imageCols ? Math.min(6, Math.max(1, slide.imageCols | 0)) : 0;
+  if (layout === "stack") {
+    const head = body.length ? textH(W) + gap : 0;
+    // The renderer's one-row floor (renderImageGrid minGridH).
+    const gridH = Math.max(H - head, 72);
+    const s = Math.min(1, H / (head + gridH));
+    return imageGridPlan(aspects, W, gridH, gap, gridColsFor(n, "full"), pinned, capGrid).area * s * s;
+  }
+  const [cf, imf] = pasteSplitFlex(n, aspects[n - 1]);
+  const colW = (W - (Number(slide.splitGap) || 32)) / (cf + imf);
+  return imageGridPlan(aspects, colW * imf, H, gap, gridColsFor(n, "half"), n === 1 ? 0 : pinned, n === 1 && known ? naturalW : capGrid).area;
+}
+
+// CR23: body-height probe for pasteLayoutArea(). When a paste starts, it copies
+// (cloneNode) the rendered non-image blocks of the on-screen slide. measure(w)
+// lays the copies out at width w in a hidden box inside the slide and returns
+// their stacked height in slide px, so every block type (table, chart, code...)
+// is measured, not guessed. Null when the viewport does not show `slide`.
+function pasteBodyProbe(root, slide) {
+  const vp = root && root.querySelector ? root.querySelector("[data-testid='slide-viewport']") : null;
+  if (!vp || !slide) return null;
+  const els = Array.from(vp.querySelectorAll("[data-block-type]")).filter((el) => el.getAttribute("data-block-type") !== "image" && !el.parentElement.closest("[data-block-type]"));
+  if (els.length !== (slide.blocks || []).filter((b) => b && b.type !== "image").length) return null;
+  if (!els.length) return () => 0;
+  const host = els[0].parentElement, copies = els.map((el) => el.cloneNode(true));
+  const gap = Number(slide.gap) || 12, cache = new Map();
+  return (w) => {
+    if (cache.has(w)) return cache.get(w);
+    let h = null;
+    if (host && host.isConnected) {
+      const probe = document.createElement("div");
+      probe.setAttribute("aria-hidden", "true");
+      probe.style.cssText = `position:absolute;left:0;top:0;visibility:hidden;pointer-events:none;display:flex;flex-direction:column;gap:${gap}px;width:${Math.max(1, Math.round(w))}px`;
+      copies.forEach((c) => probe.appendChild(c));
+      host.appendChild(probe);
+      h = probe.offsetHeight;
+      probe.remove();
+    }
+    cache.set(w, h);
+    return h;
+  };
 }
 
 // Columns for a run of `n` images, by region. "full" = image-only slide or a
@@ -1918,6 +2189,235 @@ function gridColsFor(n, region) {
   n = Math.max(1, n | 0);
   if (region === "half") return n <= 1 ? 1 : 2;
   return ({ 1: 1, 2: 2, 3: 3, 4: 2, 5: 3 })[n] || 3;
+}
+
+// CR23: the image-grid packing. The renderer (renderImageGrid) and the paste
+// layout chooser (pasteLayoutArea) both use it, so they cannot disagree.
+// A plan is a list of rows; each row is { cells: [{ i, f }], gc, hw }:
+//   cell width = (boxW - gap * gc) * f     (f = share of the row width)
+//   row height = (boxH - gap * (rows - 1)) * hw / sum(hw)
+// Each image is drawn with objectFit:contain in its cell. Candidates:
+//   - uniform grids of 1..6 columns (equal cells; a short last row is centered);
+//   - for mixed aspect ratios, "justified" rows: consecutive images share one
+//     row height and get widths in proportion to their aspect (every row split).
+// The count-driven uniform grid (`fallback` columns) wins unless another plan
+// shows at least 5% more image area, so the arrangement is stable. `pinned`
+// (the author's imageCols) forces a uniform grid. Unknown aspects or box → the
+// fallback grid with area 0. aspects = width / height of each image, in order;
+// maxW (optional) = the widest each image may be drawn (the upscale cap).
+function imageGridPlan(aspects, boxW, boxH, gap, fallback, pinned, maxW) {
+  const n = Array.isArray(aspects) ? aspects.length : 0;
+  const g = Math.max(0, Number(gap) || 0);
+  const valid = n > 0 && boxW > 0 && boxH > 0 && aspects.every((a) => typeof a === "number" && a > 0 && Number.isFinite(a));
+  const uniform = (c) => {
+    const rows = [];
+    for (let s = 0; s < n; s += c) rows.push({ cells: aspects.slice(s, s + c).map((_, k) => ({ i: s + k, f: 1 / c })), gc: c - 1, hw: 1 });
+    return { rows, cols: c };
+  };
+  const areaOf = (rows) => {
+    const avail = boxH - g * (rows.length - 1), sumHw = rows.reduce((t, r) => t + r.hw, 0);
+    if (!(avail > 0 && sumHw > 0)) return 0;
+    let area = 0;
+    for (const r of rows) {
+      const h = avail * r.hw / sumHw;
+      for (const c of r.cells) {
+        const w = (boxW - g * r.gc) * c.f, a = aspects[c.i];
+        if (!(w > 0)) return 0;
+        const cap = maxW && maxW[c.i] > 0 ? maxW[c.i] : Infinity;
+        const iw = Math.min(w, h * a, cap);
+        area += iw * iw / a;
+      }
+    }
+    return area;
+  };
+  const pack = (p) => ({ ...p, area: valid ? areaOf(p.rows) : 0 });
+  if (pinned) return pack(uniform(Math.min(6, Math.max(1, pinned | 0))));
+  if (n <= 1) return pack(uniform(1));
+  const base = pack(uniform(Math.min(n, Math.max(1, fallback | 0))));
+  if (!valid) return base;
+  // Drawn width of each image in its cell (objectFit:contain, no upscale cap).
+  const fitW = (rows) => {
+    const avail = boxH - g * (rows.length - 1), sumHw = rows.reduce((t, r) => t + r.hw, 0), out = [];
+    for (const r of rows) for (const c of r.cells) out[c.i] = Math.max(0, Math.min((boxW - g * r.gc) * c.f, avail * r.hw / sumHw * aspects[c.i]));
+    return out;
+  };
+  const baseW = fitW(base.rows);
+  // Fairness for justified rows (a higher total area alone is not enough):
+  // images of the same aspect are drawn at the same size, and no image is drawn
+  // at less than half the area the count-driven uniform grid gives it. Without
+  // this, a wide banner shares a row with a photo and shrinks that photo to a
+  // sliver while an identical photo in the next row is drawn large.
+  const fair = (rows) => {
+    const w = fitW(rows);
+    for (let i = 0; i < n; i++) {
+      if (w[i] * w[i] < 0.5 * baseW[i] * baseW[i]) return false;
+      for (let j = i + 1; j < n; j++) {
+        if (Math.abs(aspects[i] - aspects[j]) <= 0.02 * Math.min(aspects[i], aspects[j]) && Math.abs(w[i] - w[j]) > 0.02 * Math.max(w[i], w[j])) return false;
+      }
+    }
+    return true;
+  };
+  let best = base;
+  const consider = (p, justified) => { const q = pack(p); if (q.area > base.area * 1.05 && q.area > best.area && (!justified || fair(p.rows))) best = q; };
+  for (let c = 1; c <= Math.min(n, 6); c++) consider(uniform(c));
+  // Justified rows only help a mixed set; equal aspects keep uniform cells.
+  if (n <= 8 && Math.max(...aspects) > Math.min(...aspects) * 1.15) {
+    for (let mask = 0; mask < (1 << (n - 1)); mask++) {
+      const rows = [];
+      let run = [0];
+      for (let i = 1; i <= n; i++) {
+        if (i === n || (mask >> (i - 1)) & 1) {
+          const S = run.reduce((t, k) => t + aspects[k], 0);
+          rows.push({ cells: run.map((k) => ({ i: k, f: aspects[k] / S })), gc: run.length - 1, hw: 1 / S });
+          run = [i];
+        } else run.push(i);
+      }
+      consider({ rows, cols: Math.max(...rows.map((r) => r.cells.length)) }, true);
+    }
+  }
+  return best;
+}
+// Column count of the chosen plan (the longest row).
+function bestImageGridCols(aspects, boxW, boxH, gap, fallback) {
+  return imageGridPlan(aspects, boxW, boxH, gap, fallback).cols;
+}
+
+// ━━━ Story images (present a slide's images one by one) ━━━━━━━━━━━━━━
+// Pure helpers; no DOM. Story state is { k, zoomed }: k = 0..N is the last image
+// visited (0 = overview grid), zoomed = that image is shown full size.
+const PASTE_MAX_IMAGES = 10;
+// Raster types accepted from an OS file drop. SVG is deliberately absent: an
+// SVG file is active markup, and the drop path only ever stores re-encoded JPEG.
+const IMAGE_DROP_MIME = new Set(["image/png", "image/jpeg", "image/gif", "image/webp", "image/avif", "image/bmp"]);
+const IMAGE_DROP_MAX_BYTES = 25 * 1024 * 1024;
+const IMAGE_DROP_MAX_FILES = 20;
+const IMAGE_MAX_PIXELS = 40e6;
+
+// Top-level image blocks that take part in story mode, in presentation order.
+// idx is in the SlideContent index space: blocks[i] -> i, L[i] -> blocks.length+i,
+// R[i] -> blocks.length+L.length+i. Grid-nested images are excluded. When
+// `presenting`, hidden blocks are excluded (they are not drawn in Present).
+function storyImageList(slide, presenting) {
+  const out = [];
+  if (!slide || typeof slide !== "object") return out;
+  const blocks = Array.isArray(slide.blocks) ? slide.blocks : [];
+  const L = Array.isArray(slide.L) ? slide.L : [];
+  const R = Array.isArray(slide.R) ? slide.R : [];
+  const add = (b, idx) => {
+    if (!b || typeof b !== "object" || b.type !== "image") return;
+    if (typeof b.src !== "string" || !b.src) return;
+    if (presenting && b.hidden) return;
+    out.push({ idx, src: b.src, alt: typeof b.alt === "string" ? b.alt : "" });
+  };
+  blocks.forEach((b, i) => add(b, i));
+  // L/R columns are drawn only in the "cols" layout; elsewhere they are not on
+  // the slide, so they must not become story steps or export pages.
+  if (slide.layout === "cols") {
+    L.forEach((b, i) => add(b, blocks.length + i));
+    R.forEach((b, i) => add(b, blocks.length + L.length + i));
+  }
+  return out;
+}
+// Story is on only for an explicit `true` and at least two images.
+function storyIsActive(slide, list) {
+  return !!slide && slide.story === true && Array.isArray(list) && list.length >= 2;
+}
+// Entry state when Present lands on a story slide: forward -> overview grid,
+// backward -> the last image visited with the grid showing (n = image count).
+function storyEntry(dir, n) {
+  return dir < 0 ? { k: n, zoomed: false } : { k: 0, zoomed: false };
+}
+// Next step. Returns the new state, or null to leave the slide.
+function storyNext(s, n) {
+  if (s.zoomed) return s.k < n ? { k: s.k + 1, zoomed: true } : { k: n, zoomed: false };
+  return s.k < n ? { k: s.k + 1, zoomed: true } : null;
+}
+// Previous step. Returns the new state, or null to leave the slide.
+function storyPrev(s, n) {
+  if (s.zoomed) return s.k > 1 ? { k: s.k - 1, zoomed: true } : { k: 0, zoomed: false };
+  return s.k >= 1 ? { k: s.k, zoomed: true } : null;
+}
+// Escape: zoom out when zoomed; otherwise null (not consumed).
+function storyEsc(s) {
+  return s.zoomed ? { k: s.k, zoomed: false } : null;
+}
+// Filter an OS file list to droppable raster images. Reads only f.type and
+// f.size (never f.name). Order is kept; the count cap applies after the
+// type/size filter. Returns { files, rejected } (rejected = count).
+function imageDropFiles(fileList) {
+  const all = fileList ? Array.prototype.slice.call(fileList) : [];
+  const files = [];
+  let rejected = 0;
+  for (const f of all) {
+    const okType = !!f && typeof f.type === "string" && IMAGE_DROP_MIME.has(f.type);
+    const okSize = okType && typeof f.size === "number" && f.size >= 0 && f.size <= IMAGE_DROP_MAX_BYTES;
+    if (okSize && files.length < IMAGE_DROP_MAX_FILES) files.push(f); else rejected++;
+  }
+  return { files, rejected };
+}
+
+// Deck-wide 1-based number of the slide at `index` of module `moduleId`, when
+// that module's slide list is `slides`: the number the on-slide badge shows
+// (visible slides only, all modules before it counted). Used by the image
+// overflow notice ("on new slide N"). `slides` can differ from the module's
+// list in `lanes` (a slide not yet inserted).
+function deckSlideNumber(lanes, moduleId, slides, index) {
+  let n = 0;
+  for (const l of (lanes || [])) {
+    for (const item of (l?.items || [])) {
+      if (!item) continue;
+      if (item.id === moduleId) {
+        return n + (slides || []).slice(0, Math.max(0, index)).filter((s) => s && !s.hidden).length + 1;
+      }
+      n += (item.slides || []).filter((s) => s && !s.hidden).length;
+    }
+  }
+  return index + 1;
+}
+
+// Bounded cache of image aspect ratios keyed by the (data:) src, filled by the
+// slide renderer via imageAspect() so bestImageGridCols() has aspects to work with.
+const IMAGE_ASPECT_CACHE = new Map();
+function rememberImageAspect(src, aspect) {
+  if (typeof src !== "string" || !(aspect > 0)) return;
+  if (IMAGE_ASPECT_CACHE.size >= 256) IMAGE_ASPECT_CACHE.delete(IMAGE_ASPECT_CACHE.keys().next().value);
+  IMAGE_ASPECT_CACHE.set(src, aspect);
+}
+
+// CR23: which split layouts the paste handler set itself. Keyed by the pasted
+// image src; the value is the slide's layout signature right after that paste.
+// A later paste re-evaluates the layout only when the slide still carries that
+// exact signature (the user did not change it). Session memory only: after a
+// reload a split is treated as the author's choice.
+const PASTE_LAYOUT_OWNED = new Map();
+const pasteLayoutSig = (s) => `${(s && s.layout) || "stack"}|${s && s.contentFlex != null ? s.contentFlex : ""}|${s && s.imageFlex != null ? s.imageFlex : ""}`;
+function rememberPasteLayout(src, slide) {
+  if (typeof src !== "string") return;
+  if (PASTE_LAYOUT_OWNED.size >= 256) PASTE_LAYOUT_OWNED.delete(PASTE_LAYOUT_OWNED.keys().next().value);
+  PASTE_LAYOUT_OWNED.set(src, pasteLayoutSig(slide));
+}
+
+// Rapid image pastes. Slides carry no id, so an async paste finds its target by
+// object identity. Each applied paste records the slide object it produced as
+// the successor of the slide it changed (or spilled over from), so a paste
+// queued behind it follows the chain to the live slide instead of being dropped.
+// An undo that restores the older object ends the chain there. WeakMap: session
+// memory only, nothing is kept for slides that are gone.
+const PASTE_SLIDE_SUCC = new WeakMap();
+// The newest member of the target's successor chain that is still in `list`, or null.
+function pasteResolveTarget(target, list) {
+  if (!target || !Array.isArray(list)) return null;
+  let best = list.includes(target) ? target : null;
+  for (let x = target, k = 0; k < 512 && (x = PASTE_SLIDE_SUCC.get(x)); k++) if (list.includes(x)) best = x;
+  return best;
+}
+// After a paste renders: link `from` to the new slide object whose last block is
+// the pasted image (the one slide in `after` that was not in `before`).
+function pasteRecordSuccessor(from, before, after, src) {
+  if (!from || typeof from !== "object" || !Array.isArray(after)) return;
+  const seen = new Set(before || []);
+  const next = after.find((s) => s && !seen.has(s) && Array.isArray(s.blocks) && s.blocks.length && s.blocks[s.blocks.length - 1].src === src);
+  if (next) PASTE_SLIDE_SUCC.set(from, next);
 }
 
 // ━━━ Status & Importance Meta ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -2079,7 +2579,7 @@ const getCss = () => `
 .vela-wide-scroll::-webkit-scrollbar{width:10px} .vela-wide-scroll::-webkit-scrollbar-thumb{background:${T.textDim};border-radius:5px}
 .concept-row{transition:all .15s;cursor:pointer} .concept-row:hover{background:${T.accentGlow}!important} .concept-row.selected{background:${T.accent}18!important;border-left-color:${T.accent}!important}
 .status-btn{cursor:pointer;transition:transform .15s} .status-btn:hover{transform:scale(1.3)}
-.slide-nav-btn{opacity:.4;transition:opacity .2s;cursor:pointer} .slide-nav-btn:hover{opacity:1}
+.slide-nav-btn{opacity:.85;transition:opacity .2s,background .2s;cursor:pointer;background:rgba(0,0,0,0.38);backdrop-filter:blur(2px);-webkit-backdrop-filter:blur(2px)} .slide-nav-btn:hover{opacity:1;background:rgba(0,0,0,0.55)} .vela-fs-toolbar{opacity:.15;transition:opacity .3s;pointer-events:none} .vela-fs-toolbar>*{pointer-events:auto} .vela-fs-toolbar:hover,.vela-fs-toolbar:focus-within{opacity:1}
 .imp-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0}
 .add-btn{transition:all .15s} .add-btn:hover{background:${T.accent}!important;color:#fff!important}
 .lane-header{transition:background .15s} .lane-header:hover{background:${T.bgCard}!important}
@@ -2181,16 +2681,16 @@ function useSwipe(ref, { onLeft, onRight, threshold = 50 } = {}) {
 }
 
 // ━━━ Shared Prompt Constants (deduped from 3 system prompts) ━━━━━━━
-const BLOCK_REFERENCE = `Slide: { blocks: [...], bg?, bgGradient?: "linear-gradient(...)", color?, accent?, align?, verticalAlign?, padding?, gap?, duration?: seconds_integer, layout?: "stack"|"image-right"|"image-left"|"cols", contentFlex?, imageFlex?, splitGap?, imageCols?: 1-6, L?: [...], R?: [...] }
-Numeric slide fields are range-checked on load: imageCols is an integer 1-6, gap/splitGap 0-200, contentFlex/imageFlex 0.1-20. imageCols pins the column count for a run of adjacent image blocks (omit for automatic).
+const BLOCK_REFERENCE = `Slide: { blocks: [...], bg?, bgGradient?: "linear-gradient(...)", color?, accent?, align?, verticalAlign?, padding?, gap?, duration?: seconds_integer, layout?: "stack"|"image-right"|"image-left"|"cols", contentFlex?, imageFlex?, splitGap?, imageCols?: 1-6, story?: true, L?: [...], R?: [...] }
+Numeric slide fields are range-checked on load: imageCols is an integer 1-6, gap/splitGap 0-200, contentFlex/imageFlex 0.1-20. imageCols pins the column count for a run of adjacent image blocks (omit for automatic). story:true = Present shows the slide's images one by one (needs 2+ images); an image caption is its tile title.
 Layout: "stack" (default) = vertical column. "image-right"/"image-left" = splits content blocks and image blocks side-by-side. "cols" = explicit two-column layout using L (left blocks) and R (right blocks) arrays. blocks renders full-width above columns (optional header). contentFlex/imageFlex control column ratio (default 1:1). splitGap controls gap between columns (default 32).
-Inline formatting: All text supports **bold**, *italic*, ***bold+italic*** using markdown syntax (also __bold__ and _italic_). Use in headings, text, bullets, callouts, etc.
+Inline formatting: All text supports **bold**, *italic*, ***bold+italic***, ~~strike~~ and ++underline++ using markdown syntax (also __bold__ and _italic_). ++ marks only a whole word or phrase (C++ and i++ stay literal). Use in headings, text, bullets, callouts, etc.
 Links: ANY block can have an optional "link" property: {type:"text", text:"Read the paper", link:"https://..."} — renders clickable. For sources/citations, ALWAYS use a descriptive text block or badge with link property instead of putting raw URLs in text. E.g. {type:"badge", text:"📎 Yao et al., ReAct (2022)", icon:"ExternalLink", link:"https://arxiv.org/abs/2210.03629"} or {type:"text", text:"Source: Snorkel AI Blog", size:"sm", link:"https://snorkel.ai/blog/..."}
 Block types:
 - heading: {type:"heading", text, size:"xs|sm|md|lg|xl|2xl|3xl|4xl", color?, weight?, align?, icon?:"Zap", iconColor?}
 - text: {type:"text", text, size?, color?, bold?, italic?, align?, maxWidth?}
 - bullets: {type:"bullets", items:["string" or {text, icon?:"CheckCircle", link?:"https://..."},...], size?, dotColor?, gap?, color?}
-- image: {type:"image", src, caption?, maxWidth?, shadow?, rounded?}
+- image: {type:"image", src, caption?, alt?, maxWidth?, shadow?, rounded?}
 - code: {type:"code", text:"code here", label?"JAVASCRIPT", size?, bg?, color?}
 - grid: {type:"grid", cols:1|2|3, gap?, items:[{blocks:[...], bg?, padding?, borderRadius?, border?, style?, align?, direction?:"row"|"column"}]}
 - callout: {type:"callout", text, title?, bg?, border?, color?, icon?:"AlertTriangle"}
@@ -2550,7 +3050,242 @@ class SlideErrorBoundary extends React.Component {
 }
 
 // ━━━ Editable Text ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// ━━━ Inline Formatting: **bold**, *italic*, ***both***, ~~strike~~ ━━━
+// ━━━ Inline Formatting: **bold**, *italic*, ***both***, ~~strike~~, ++underline++ ━━━
+// ++underline++ delimiters are STRICT (flanking), so existing text never changes:
+// "C++", "i++ and j++", "a ++ b ++ c", "x+++y" and a lone "++" stay literal.
+// An opening "++" must not follow a letter, digit or "+", and the next character
+// must be a non-space that is not "+". A closing "++" must follow a non-space that
+// is not "+", and must not precede a letter, digit or "+". A span never crosses a
+// newline (parseInline renders line by line). No regex lookbehind: older Safari
+// rejects it at parse time, which would break the whole app. Linear time: when a
+// valid opener has no closer on its line, no later opener on that line has one.
+const UL_EDGE_WORD = /[\p{L}\p{N}+]/u;
+const UL_SPACE = /\s/;
+function ulCharBefore(s, i) {
+  if (i <= 0) return "";
+  const c = s.charCodeAt(i - 1);
+  return (c >= 0xDC00 && c <= 0xDFFF && i >= 2) ? s.slice(i - 2, i) : s[i - 1];
+}
+function ulCharAt(s, i) { return i < s.length ? String.fromCodePoint(s.codePointAt(i)) : ""; }
+// First strict ++…++ span at or after `from`: [start, end) incl. delimiters, or null.
+function findUnderlineSpan(s, from) {
+  if (typeof s !== "string") return null;
+  let o = s.indexOf("++", from || 0);
+  while (o >= 0) {
+    const prev = ulCharBefore(s, o), next = ulCharAt(s, o + 2);
+    if (!UL_EDGE_WORD.test(prev) && next && next !== "+" && !UL_SPACE.test(next)) {
+      const nl = s.indexOf("\n", o);
+      const lim = nl < 0 ? s.length : nl;
+      let c = s.indexOf("++", o + 3);
+      while (c >= 0 && c + 2 <= lim) {
+        const before = ulCharBefore(s, c), after = ulCharAt(s, c + 2);
+        if (before !== "+" && !UL_SPACE.test(before) && !UL_EDGE_WORD.test(after)) return [o, c + 2];
+        c = s.indexOf("++", c + 1);
+      }
+      if (nl < 0) return null;
+      o = s.indexOf("++", nl + 1);
+      continue;
+    }
+    o = s.indexOf("++", o + 1);
+  }
+  return null;
+}
+function findUnderlineSpans(s) {
+  const spans = [];
+  let at = 0, sp;
+  while ((sp = findUnderlineSpan(s, at))) { spans.push(sp); at = sp[1]; }
+  return spans;
+}
+
+// One inline tokenizer for the slide (parseInline) and the editor HTML
+// (inlineMdToHtml), so the editor shows the same marks as the slide. Returns
+// null (no marks, no links: the line renders as is) or { working, linkTokens,
+// parts }. A part is a string or { text, bold?, italic?, strike?, underline?,
+// tok?, ulg? }: tok = id of the bold/italic/strike token it came from, ulg = id
+// of the ++…++ span it is in. The editor nests its tags from these ids, so its
+// HTML is always well formed: two separate passes of tag regexes could make a
+// pair that crosses another pair, the browser re-nests it, and a blur commit
+// then changes the deck text.
+function inlineLineParts(line) {
+  const hasLink = line.includes("[") && line.includes("](");
+  const hasFmt = line.includes("*") || line.includes("__") || line.includes("~~") || line.includes("++");
+  if (!hasLink && !hasFmt) return null;
+
+  // Pass 1: extract [label](target) link spans into sentinel placeholders
+  let working = line;
+  const linkTokens = [];
+  if (hasLink) {
+    const linkRe = /\[([^\[\]\n]+?)\]\(([^\s\)\n]+?)\)/g;
+    working = line.replace(linkRe, (raw, label, target) => {
+      const idx = linkTokens.length;
+      linkTokens.push({ label, target, raw });
+      return `\u0000LINK${idx}\u0000`;
+    });
+  }
+  if (!hasFmt) return { working, linkTokens, parts: [working] };
+
+  // Pass 2: existing bold/italic/strike tokenizer on the sentinel-bearing string,
+  // plus strict ++underline++ (findUnderlineSpan). Underline is ONE level deep and
+  // combines with the other marks: a ++…++ span's content runs through the
+  // bold/italic/strike tokenizer ("++**x**++"), and a bold/italic/strike token's
+  // text is split into underline spans ("**++x++**"). (Unlike ~~, which does not
+  // nest with the other marks in this renderer.) A line with no strict ++ pair
+  // tokenizes exactly as before.
+  const parts = [];
+  let ids = 0;
+  const re = /(\*\*\*(.+?)\*\*\*|\*\*(.+?)\*\*|\*(.+?)\*|___(.+?)___|__(.+?)__|_(.+?)_|~~(.+?)~~)/g;
+  const toPart = (m) => m[2] ? { text: m[2], bold: true, italic: true }
+    : m[3] ? { text: m[3], bold: true }
+    : m[4] ? { text: m[4], italic: true }
+    : m[5] ? { text: m[5], bold: true, italic: true }
+    : m[6] ? { text: m[6], bold: true }
+    : m[7] ? { text: m[7], italic: true }
+    : m[8] ? { text: m[8], strike: true } : null;
+  const splitUl = (p, out) => {
+    let at = 0;
+    for (const [a, b] of findUnderlineSpans(p.text)) {
+      if (a > at) out.push({ ...p, text: p.text.slice(at, a) });
+      out.push({ ...p, text: p.text.slice(a + 2, b - 2), underline: true });
+      at = b;
+    }
+    if (at === 0) out.push(p);
+    else if (at < p.text.length) out.push({ ...p, text: p.text.slice(at) });
+  };
+  // ul=false for underline content: depth stays one level.
+  const tokenize = (str, ul, out) => {
+    let last = 0, u = null, uDone = !ul;
+    for (;;) {
+      if (!uDone && (!u || u[0] < last)) { u = findUnderlineSpan(str, last); if (!u) uDone = true; }
+      re.lastIndex = last; // the recursive call below reuses `re`
+      const m = re.exec(str);
+      if (u && !uDone && (!m || u[0] < m.index)) {
+        if (u[0] > last) out.push(str.slice(last, u[0]));
+        const inner = [], ulg = ++ids;
+        tokenize(str.slice(u[0] + 2, u[1] - 2), false, inner);
+        for (const q of inner) out.push(typeof q === "string" ? { text: q, underline: true, ulg } : { ...q, underline: true, ulg });
+        last = u[1];
+        continue;
+      }
+      if (!m) break;
+      if (m.index > last) out.push(str.slice(last, m.index));
+      const p = toPart(m);
+      if (p) { p.tok = ++ids; if (ul) splitUl(p, out); else out.push(p); }
+      last = m.index + m[0].length;
+    }
+    if (last < str.length) out.push(str.slice(last));
+  };
+  tokenize(working, working.includes("++"), parts);
+  return { working, linkTokens, parts };
+}
+
+// Markdown inline -> HTML for the contentEditable editor. Escape FIRST, then add
+// only code-generated tags (no attributes): deck text can never become live
+// markup here (a deck "<u ...>" string stays literal text). The tokens come
+// from the escaped string; an entity starts with "&" and ends with ";", which
+// no mark uses and which flank "++" like the raw "&", "<" and ">", so the marks
+// are the same as parseInline finds in the raw text. Links stay literal text.
+function inlineMdToHtml(t) {
+  if (!t) return "";
+  const h = t.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  return h.split("\n").map((line) => {
+    const lp = inlineLineParts(line);
+    if (!lp) return line;
+    const lit = (x) => x.replace(/\u0000LINK(\d+)\u0000/g, (m, i) => (lp.linkTokens[i] ? lp.linkTokens[i].raw : m));
+    let out = "", ulg = 0, tok = 0, tokClose = "";
+    const endTok = () => { out += tokClose; tok = 0; tokClose = ""; };
+    const endUl = () => { endTok(); if (ulg) out += "</u>"; ulg = 0; };
+    for (const p of lp.parts) {
+      if (typeof p === "string") { endUl(); out += lit(p); continue; }
+      if ((p.ulg || 0) !== ulg) { endUl(); if (p.ulg) { out += "<u>"; ulg = p.ulg; } }
+      if ((p.tok || 0) !== tok) {
+        endTok();
+        if (p.tok) {
+          tok = p.tok;
+          out += (p.bold ? "<strong>" : "") + (p.italic ? "<em>" : "") + (p.strike ? "<s>" : "");
+          tokClose = (p.strike ? "</s>" : "") + (p.italic ? "</em>" : "") + (p.bold ? "</strong>" : "");
+        }
+      }
+      out += p.underline && !p.ulg ? "<u>" + lit(p.text) + "</u>" : lit(p.text);
+    }
+    endUl();
+    return out;
+  }).join("<br>");
+}
+
+// contentEditable HTML -> markdown inline. Only real U elements become ++…++
+// (never a styled span). An underline that cannot round-trip under the strict
+// rules (mid-word, or one that would pair with literal "++" text) is dropped,
+// not saved as stray "++" characters; the text itself is always kept.
+const UL_OPEN = { ul: 1 }, UL_CLOSE = { ul: 2 };
+function inlineHtmlToMd(root) {
+  const segs = [];
+  const walk = (el) => {
+    let r = "";
+    const emit = (x) => { if (x) { segs.push(x); r += x; } };
+    for (const n of el.childNodes) {
+      if (n.nodeType === 3) { emit(n.textContent); }
+      else if (n.nodeName === "BR") { emit("\n"); }
+      else if (n.nodeName === "STRONG" || n.nodeName === "B") { emit("**"); r += walk(n); emit("**"); }
+      else if (n.nodeName === "EM" || n.nodeName === "I") { emit("*"); r += walk(n); emit("*"); }
+      else if (n.nodeName === "S" || n.nodeName === "DEL" || n.nodeName === "STRIKE") { emit("~~"); r += walk(n); emit("~~"); }
+      else if (n.nodeName === "U") { segs.push(UL_OPEN); r += walk(n); segs.push(UL_CLOSE); }
+      else if (n.nodeName === "DIV" || n.nodeName === "P") {
+        if (r.length > 0 && !r.endsWith("\n")) emit("\n");
+        r += walk(n);
+      }
+      else { r += walk(n); }
+    }
+    return r;
+  };
+  walk(root);
+  // Plain text + outermost underline ranges (nested U inside U is redundant).
+  let S = "";
+  const raw = [];
+  let depth = 0, start = 0;
+  for (const x of segs) {
+    if (x === UL_OPEN) { if (depth++ === 0) start = S.length; }
+    else if (x === UL_CLOSE) { if (--depth === 0) raw.push([start, S.length]); }
+    else S += x;
+  }
+  if (!raw.length) return S;
+  // Split at newlines, move edge whitespace outside, merge touching ranges.
+  const live = [];
+  for (const [a0, b0] of raw) {
+    let a = a0;
+    while (a < b0) {
+      const nl = S.indexOf("\n", a);
+      let b = (nl < 0 || nl >= b0) ? b0 : nl;
+      const next = b < b0 ? b + 1 : b0;
+      let x = a;
+      while (x < b && UL_SPACE.test(S[x])) x++;
+      while (b > x && UL_SPACE.test(S[b - 1])) b--;
+      if (x < b) {
+        const last = live[live.length - 1];
+        if (last && last[1] === x) last[1] = b; else live.push([x, b]);
+      }
+      a = next;
+    }
+  }
+  // Keep only ranges that the renderer will parse back as exactly that span.
+  let keep = live;
+  for (;;) {
+    let out = "", at = 0;
+    const pos = [];
+    for (const [a, b] of keep) {
+      out += S.slice(at, a);
+      const o = out.length;
+      out += "++" + S.slice(a, b) + "++";
+      pos.push(o + ":" + out.length);
+      at = b;
+    }
+    out += S.slice(at);
+    const found = new Set(findUnderlineSpans(out).map(([a, b]) => a + ":" + b));
+    const next = keep.filter((_, i) => found.has(pos[i]));
+    if (next.length === keep.length) return out;
+    keep = next;
+  }
+}
+
 // ctx (optional): { glossary?, keyPrefix? } — when provided, also parses markdown
 // links [label](https://…) → sanitized <a>, and [label](#term) → <GlossaryLink>.
 // All existing call sites omit ctx and behavior is identical to before.
@@ -2594,43 +3329,11 @@ function parseInline(text, ctx) {
 
   const parseLine = (line, lineKey) => {
     // Fast path: no link, no formatting → return untouched
-    const hasLink = line.includes("[") && line.includes("](");
-    const hasFmt = line.includes("*") || line.includes("__") || line.includes("~~");
-    if (!hasLink && !hasFmt) return line;
+    const lp = inlineLineParts(line);
+    if (!lp) return line;
 
-    // Pass 1: extract [label](target) link spans into sentinel placeholders
-    let working = line;
-    const linkTokens = [];
-    if (hasLink) {
-      const linkRe = /\[([^\[\]\n]+?)\]\(([^\s\)\n]+?)\)/g;
-      working = line.replace(linkRe, (_, label, target) => {
-        const idx = linkTokens.length;
-        linkTokens.push({ label, target });
-        return `\u0000LINK${idx}\u0000`;
-      });
-    }
-
-    // Pass 2: existing bold/italic/strike tokenizer on the sentinel-bearing string
-    if (!hasFmt && linkTokens.length === 0) return working;
-    const parts = [];
-    if (hasFmt) {
-      const re = /(\*\*\*(.+?)\*\*\*|\*\*(.+?)\*\*|\*(.+?)\*|___(.+?)___|__(.+?)__|_(.+?)_|~~(.+?)~~)/g;
-      let last = 0, m;
-      while ((m = re.exec(working)) !== null) {
-        if (m.index > last) parts.push(working.slice(last, m.index));
-        if (m[2]) parts.push({ text: m[2], bold: true, italic: true });
-        else if (m[3]) parts.push({ text: m[3], bold: true });
-        else if (m[4]) parts.push({ text: m[4], italic: true });
-        else if (m[5]) parts.push({ text: m[5], bold: true, italic: true });
-        else if (m[6]) parts.push({ text: m[6], bold: true });
-        else if (m[7]) parts.push({ text: m[7], italic: true });
-        else if (m[8]) parts.push({ text: m[8], strike: true });
-        last = m.index + m[0].length;
-      }
-      if (last < working.length) parts.push(working.slice(last));
-    } else {
-      parts.push(working);
-    }
+    // Pass 1 + 2 (shared with the editor HTML): inlineLineParts.
+    const { working, linkTokens, parts } = lp;
 
     // Pass 3: rehydrate link sentinels inside both plain runs and styled spans
     if (parts.length === 1 && typeof parts[0] === "string" && linkTokens.length === 0) return working;
@@ -2645,7 +3348,7 @@ function parseInline(text, ctx) {
       } else {
         const children = spliceSentinels(p.text, linkTokens, `${keyPrefix}-${lineKey}-s${i}`);
         out.push(
-          <span key={`${keyPrefix}-${lineKey}-s${i}`} style={{ fontWeight: p.bold ? 700 : undefined, fontStyle: p.italic ? "italic" : undefined, textDecoration: p.strike ? "line-through" : undefined }}>
+          <span key={`${keyPrefix}-${lineKey}-s${i}`} data-vela-u={p.underline ? "1" : undefined} style={{ fontWeight: p.bold ? 700 : undefined, fontStyle: p.italic ? "italic" : undefined, textDecoration: p.strike ? (p.underline ? "line-through underline" : "line-through") : (p.underline ? "underline" : undefined) }}>
             {children.length === 1 ? children[0] : children}
           </span>
         );
@@ -2732,46 +3435,24 @@ function GlossaryLink({ label, term, entry }) {
   );
 }
 
-function EditableText({ text, onSave, editable, style, multiline, className, prefix, suffix }) {
-  const [editing, setEditing] = useState(false);
+// Faint editor-only text shown in an empty inline-editable text (CR26).
+const EDIT_PLACEHOLDER = "Text";
+
+// controlled: show only the saved `text` prop after a commit (no optimistic local
+// copy), for callers whose onSave normalizes the value (checklist status label).
+// autoEdit: start in edit mode on mount (the image "+ Add title" chip); default off.
+// onEditEnd: called after an edit ends (commit or cancel), whatever the value.
+function EditableText({ text, onSave, editable, style, multiline, className, prefix, suffix, controlled, autoEdit, onEditEnd, oneLine }) {
+  const [editing, setEditing] = useState(() => !!autoEdit && !!editable && !!onSave);
   const [hovered, setHovered] = useState(false);
   const [localText, setLocalText] = useState(text);
   const ref = useRef(null);
 
   useEffect(() => { setLocalText(text); }, [text]);
 
-  // Convert markdown inline to HTML for WYSIWYG editing
-  const mdToHtml = (t) => {
-    if (!t) return "";
-    return t
-      .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
-      .replace(/\*\*\*(.+?)\*\*\*/g, "<strong><em>$1</em></strong>")
-      .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
-      .replace(/\*(.+?)\*/g, "<em>$1</em>")
-      .replace(/___(.+?)___/g, "<strong><em>$1</em></strong>")
-      .replace(/__(.+?)__/g, "<strong>$1</strong>")
-      .replace(/_(.+?)_/g, "<em>$1</em>")
-      .replace(/~~(.+?)~~/g, "<s>$1</s>")
-      .replace(/\n/g, "<br>");
-  };
-
-  // Convert contentEditable HTML back to markdown
-  const htmlToMd = (el) => {
-    let r = "";
-    for (const n of el.childNodes) {
-      if (n.nodeType === 3) { r += n.textContent; }
-      else if (n.nodeName === "BR") { r += "\n"; }
-      else if (n.nodeName === "STRONG" || n.nodeName === "B") { r += "**" + htmlToMd(n) + "**"; }
-      else if (n.nodeName === "EM" || n.nodeName === "I") { r += "*" + htmlToMd(n) + "*"; }
-      else if (n.nodeName === "S" || n.nodeName === "DEL" || n.nodeName === "STRIKE") { r += "~~" + htmlToMd(n) + "~~"; }
-      else if (n.nodeName === "DIV" || n.nodeName === "P") {
-        if (r.length > 0 && !r.endsWith("\n")) r += "\n";
-        r += htmlToMd(n);
-      }
-      else { r += htmlToMd(n); }
-    }
-    return r;
-  };
+  // Markdown inline <-> HTML for WYSIWYG editing (top-level, shared + testable).
+  const mdToHtml = inlineMdToHtml;
+  const htmlToMd = inlineHtmlToMd;
 
   useEffect(() => {
     if (!editing || !ref.current) return;
@@ -2781,50 +3462,167 @@ function EditableText({ text, onSave, editable, style, multiline, className, pre
     try { const s = window.getSelection(); s.selectAllChildren(el); s.collapseToEnd(); } catch (_) {}
   }, [editing]);
 
-  const baseStyle = { ...style, whiteSpace: "pre-line" };
+  // oneLine (story grid caption row): the static text stays on one line with an
+  // ellipsis; the edit field below may wrap and grow.
+  const baseStyle = oneLine ? { ...style, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } : { ...style, whiteSpace: "pre-line" };
 
   if (!editable || !onSave) return <div className={className} style={baseStyle}>{prefix}{parseInline(text)}{suffix}</div>;
 
   const commit = () => {
     const el = ref.current;
-    if (!el) { setEditing(false); setHovered(false); return; }
+    if (!el) { setEditing(false); setHovered(false); onEditEnd?.(); return; }
     const v = htmlToMd(el).trim();
-    if (v !== text) { setLocalText(v); onSave(v); }
+    if (v !== text) { if (!controlled) setLocalText(v); onSave(v); }
     setEditing(false);
     setHovered(false);
+    onEditEnd?.();
   };
-  const cancel = () => { setEditing(false); setHovered(false); };
+  const cancel = () => { setEditing(false); setHovered(false); onEditEnd?.(); };
   const begin = (e) => { e.stopPropagation(); e.preventDefault(); setEditing(true); };
 
   const onKey = (e) => {
     e.stopPropagation();
+    // An IME composition owns Enter and Esc (confirm or drop a candidate).
+    if (e.nativeEvent?.isComposing || e.keyCode === 229) return;
     if (e.key === "Escape") cancel();
     if (e.key === "Enter" && !multiline && !e.shiftKey) { e.preventDefault(); commit(); }
     if ((e.ctrlKey || e.metaKey) && e.key === "b") { e.preventDefault(); document.execCommand("bold"); }
     if ((e.ctrlKey || e.metaKey) && e.key === "i") { e.preventDefault(); document.execCommand("italic"); }
+    // Explicit like b/i: same result in every browser (Firefox maps Ctrl+U to view-source).
+    if ((e.ctrlKey || e.metaKey) && e.key === "u") { e.preventDefault(); document.execCommand("underline"); }
+  };
+  // Paste plain text only. The browser's default rich paste puts clipboard HTML
+  // (for example a copied web image with a remote src) into the live editable
+  // DOM until commit; commit keeps only text and inline marks anyway.
+  const onPaste = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const t = e.clipboardData?.getData("text/plain") || "";
+    if (!t) return;
+    if (document.execCommand("insertText", false, t)) return;
+    const s = window.getSelection();
+    if (!s || !s.rangeCount || !ref.current?.contains(s.anchorNode)) return;
+    const r = s.getRangeAt(0); r.deleteContents();
+    const n = document.createTextNode(t); r.insertNode(n); r.setStartAfter(n); r.collapse(true);
+    s.removeAllRanges(); s.addRange(r);
   };
 
   if (editing) return (
     <div key="editing" ref={ref} contentEditable suppressContentEditableWarning
-      onBlur={commit} onKeyDown={onKey}
+      onBlur={commit} onKeyDown={onKey} onPaste={onPaste}
       onClick={(e) => e.stopPropagation()}
       onMouseDown={(e) => e.stopPropagation()}
       className={className}
-      style={{ ...baseStyle, outline: `2px solid ${T.accent}`, outlineOffset: 2, borderRadius: 2, cursor: "text", minHeight: "1em", whiteSpace: "pre-wrap" }}
+      style={{ ...baseStyle, outline: `2px solid ${T.accent}`, outlineOffset: 2, borderRadius: 2, cursor: "text", minHeight: "1em", minWidth: "2em", whiteSpace: "pre-wrap", ...(oneLine ? { overflow: "visible", textOverflow: "clip", height: "auto" } : {}) }}
     />
   );
 
+  // CR26: an empty text keeps a clickable target (min size + a faint editor-only
+  // placeholder), so a cleared text can be edited again. The placeholder sits at
+  // the left and the right padding is room for the item's hover toolbar
+  // (top-right, ~80px), so the toolbar never covers it. Present/export render
+  // with editable=false and never see the placeholder.
+  const empty = !String(localText || "").trim();
   return (
     <div key="display" className={className}
       onClick={begin}
       onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}
       style={{ ...baseStyle, cursor: "pointer", borderRadius: 2,
+        ...(empty ? { minWidth: "2em", minHeight: "1em", paddingRight: 100, textAlign: "left" } : {}),
         outline: hovered ? `1px dashed ${T.accent}60` : "1px dashed transparent",
         outlineOffset: 2, transition: "outline 0.15s ease" }}
-    >{prefix}{parseInline(localText)}{suffix}</div>
+    >{prefix}{empty ? <EditPlaceholder /> : parseInline(localText)}{suffix}</div>
   );
 }
 
+
+// CR26: the editor-only placeholder keeps its box (same size and hit area) but
+// stays invisible unless the holding block is hovered or has focus. Listeners sit
+// on the closest block wrapper, so the layout never changes.
+function EditPlaceholder({ svg }) {
+  const ref = useRef(null);
+  const [on, setOn] = useState(false);
+  useEffect(() => {
+    const host = ref.current?.closest?.("[data-block-type]");
+    if (!host) { setOn(true); return; }
+    const over = () => setOn(true);
+    const out = (e) => { if (!e.relatedTarget || !host.contains(e.relatedTarget)) setOn(host.contains(document.activeElement)); };
+    const fin = () => setOn(true);
+    const fout = (e) => { if (!e.relatedTarget || !host.contains(e.relatedTarget)) setOn(false); };
+    host.addEventListener("mouseover", over); host.addEventListener("mouseout", out);
+    host.addEventListener("focusin", fin); host.addEventListener("focusout", fout);
+    return () => { host.removeEventListener("mouseover", over); host.removeEventListener("mouseout", out); host.removeEventListener("focusin", fin); host.removeEventListener("focusout", fout); };
+  }, []);
+  const o = on ? 0.35 : 0;
+  return svg
+    ? <tspan ref={ref} data-vela-placeholder="" opacity={o} fontStyle="italic">{EDIT_PLACEHOLDER}</tspan>
+    : <span ref={ref} data-vela-placeholder="" style={{ opacity: o, fontStyle: "italic", transition: "opacity 0.15s ease" }}>{EDIT_PLACEHOLDER}</span>;
+}
+
+// CR26: inline edit for an SVG <text> label (cycle, funnel, flow loop). SVG text
+// cannot be contentEditable, so a click opens an HTML input in a <foreignObject>
+// over the text. The click stops here, so ZoomWrap does not zoom. Enter or blur
+// commits through the same onSave -> onChange path as EditableText; Escape
+// cancels. Read-only (present/export) renders the plain <text>.
+function SvgEditText({ text, editable, onSave, suffix, ...textProps }) {
+  const [box, setBox] = useState(null);
+  const ref = useRef(null);
+  const inRef = useRef(null);
+  const doneRef = useRef(false);
+  useEffect(() => {
+    if (!box || !inRef.current) return;
+    // preventScroll: focus must not scroll the slide (no layout jump on open).
+    try { inRef.current.focus({ preventScroll: true }); } catch (_) { inRef.current.focus(); }
+    try { inRef.current.select(); } catch (_) {}
+  }, [box]);
+  const val = text == null ? "" : String(text);
+  if (!editable || !onSave) return <text {...textProps}>{val}{suffix}</text>;
+  const fs = parseFloat(textProps.fontSize) || 12;
+  const begin = (e) => {
+    e.stopPropagation(); e.preventDefault();
+    const el = ref.current; const m = el?.ownerSVGElement?.getScreenCTM?.();
+    if (!el || !m) return;
+    const r = el.getBoundingClientRect(); const inv = m.inverse();
+    const a = new DOMPoint(r.left, r.top).matrixTransform(inv);
+    const b = new DOMPoint(r.right, r.bottom).matrixTransform(inv);
+    // Size the overlay to the text box (long side = width, short side = line
+    // height), so it does not cover the adjacent labels.
+    const dx = Math.abs(b.x - a.x), dy = Math.abs(b.y - a.y);
+    const w = Math.max(dx, dy, fs * 4) + fs;
+    const h = Math.max(Math.min(dx, dy), fs * 1.2) + 2;
+    doneRef.current = false;
+    setBox({ x: (a.x + b.x) / 2 - w / 2, y: (a.y + b.y) / 2 - h / 2, w, h, v: val });
+  };
+  const finish = (save) => {
+    if (doneRef.current) return;
+    doneRef.current = true;
+    const v = sanitizeString(inRef.current?.value || "").trim();
+    setBox(null);
+    if (save && v !== val) onSave(v);
+  };
+  const empty = !val.trim();
+  const stop = (e) => e.stopPropagation();
+  return <>
+    <text ref={ref} data-svg-edit="" {...textProps} onClick={begin}
+      style={{ ...(textProps.style || {}), cursor: "pointer", visibility: box ? "hidden" : undefined }}>
+      {empty ? <EditPlaceholder svg /> : val}{suffix}
+    </text>
+    {box && <foreignObject x={box.x} y={box.y} width={box.w} height={box.h} style={{ overflow: "visible" }}>
+      <input ref={inRef} data-testid="svg-text-edit" defaultValue={box.v}
+        onClick={stop} onMouseDown={stop} onBlur={() => finish(true)}
+        onKeyDown={(e) => {
+          e.stopPropagation();
+          if (e.nativeEvent?.isComposing || e.keyCode === 229) return; // IME composition owns Enter/Esc
+          if (e.key === "Enter") { e.preventDefault(); finish(true); }
+          else if (e.key === "Escape") { e.preventDefault(); finish(false); }
+        }}
+        style={{ width: "100%", height: "100%", boxSizing: "border-box", margin: 0, padding: `0 ${fs * 0.3}px`,
+          fontSize: fs, fontWeight: textProps.fontWeight, fontFamily: textProps.fontFamily,
+          textAlign: "center", color: T.text, background: T.bgInput, border: "none",
+          outline: `2px solid ${T.accent}`, borderRadius: 2 }} />
+    </foreignObject>}
+  </>;
+}
 
 // ━━━ Block Helpers ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 const stg = (base, offset = 0) => `stg-${Math.min(base + offset, 7)}`;
@@ -3038,13 +3836,88 @@ function IconBubble({ icon, size = 20, color, bg, shape, strokeWidth = 1.5 }) {
   return <div style={{ width: d, height: d, borderRadius: shape === "square" ? 8 : "50%", background: cssColor(bg), display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>{el}</div>;
 }
 
+// ━━━ Link Badge — one placement rule for every link badge (CR17) ━━━━━━━━━━━━━
+// A badge pinned to the wrapper's top-right corner lands on the last letters of
+// a short label (the wrapper hugs the text) or far to the right of it (a wide
+// cell or a longer second line). LinkBadge instead measures where the FIRST text
+// element of its wrapper (the item's label / the block's text) ends and sits just
+// after that point, centred on that line. Chrome is skipped: absolutely
+// positioned descendants and SVG are not treated as label text. With no
+// measurable text it falls back to the caller's corner anchor.
+function linkBadgeTextEnd(wrap, self, label) {
+  const skip = (node) => {
+    for (let p = node.parentElement; p && p !== wrap; p = p.parentElement) {
+      if (p === self || p.namespaceURI === "http://www.w3.org/2000/svg") return true;
+      const cs = getComputedStyle(p);
+      if (cs.position === "absolute" || cs.position === "fixed" || cs.display === "none") return true;
+    }
+    return false;
+  };
+  const walker = document.createTreeWalker(wrap, NodeFilter.SHOW_TEXT, {
+    acceptNode: (n) => (n.nodeValue.trim() && !skip(n)) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT,
+  });
+  const hostOf = (n) => {
+    let h = n.parentElement;
+    while (h && h !== wrap && getComputedStyle(h).display.startsWith("inline")) h = h.parentElement;
+    return h;
+  };
+  // Prefer the element that shows the link label (an item title, not a step
+  // number or a date above it); else the first text element.
+  const norm = (t) => String(t || "").replace(/[*_~`]/g, "").replace(/\s+/g, " ").trim();
+  const want = norm(label);
+  let host = null;
+  for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+    const h = hostOf(n);
+    if (!h) continue;
+    if (!host) host = h;
+    if (!want) break;
+    if (norm(h.textContent) === want) { host = h; break; }
+  }
+  if (!host) return null;
+  const range = document.createRange();
+  range.selectNodeContents(host);
+  const rects = Array.from(range.getClientRects()).filter((r) => r.width > 0.5 && r.height > 0.5);
+  return rects.length ? rects[rects.length - 1] : null;
+}
+function LinkBadge({ fallback, style, label, gap = 4, children, ...rest }) {
+  const ref = useRef(null);
+  const [pos, setPos] = useState(null);
+  const measure = React.useCallback(() => {
+    const self = ref.current;
+    const wrap = self?.parentElement;
+    if (!self || !wrap) return;
+    try {
+      const end = linkBadgeTextEnd(wrap, self, label);
+      const wr = wrap.getBoundingClientRect();
+      const scale = wrap.offsetWidth > 0 ? wr.width / wrap.offsetWidth : 1;
+      const next = end ? {
+        left: Math.round(((end.right - wr.left) / scale + gap) * 10) / 10,
+        top: Math.round((((end.top - wr.top) + end.height / 2) / scale - self.offsetHeight / 2) * 10) / 10,
+      } : null;
+      setPos((prev) => (prev?.left === next?.left && prev?.top === next?.top) ? prev : next);
+    } catch (_) {}
+  }, [gap, label]);
+  React.useLayoutEffect(() => { measure(); });
+  useEffect(() => {
+    const wrap = ref.current?.parentElement;
+    if (!wrap || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(() => measure());
+    ro.observe(wrap);
+    try { document.fonts?.ready?.then(() => measure()); } catch (_) {}
+    return () => ro.disconnect();
+  }, [measure]);
+  return <div ref={ref} data-link-badge="true" data-link-badge-placed={pos ? "text-end" : "corner"} {...rest}
+    style={{ ...style, position: "absolute", ...(pos ? { top: pos.top, left: pos.left } : fallback) }}>{children}</div>;
+}
+
 // ━━━ Per-Item Chrome — hover toolbar (🔗 link + ✕ delete) for one item of a multi-item block ━━
 // In edit mode, hovering an item shows a small cluster to attach/edit a link or delete the item.
 // Out of edit mode, a linked item becomes clickable (and feeds PDF export via data-pdf-link).
 // Pass onDelete/onSetLink to enable each action; omit one to hide that button.
 //
 // Overlap handling: the toolbar anchors INSIDE the item's top-right corner so it never
-// pokes into a neighbouring item or past the slide edge. Hovering an item also notifies
+// pokes into a neighbouring item or past the slide edge. If that corner covers text,
+// placeItemCluster moves it to a free spot just outside the item. Hovering an item also notifies
 // ItemHoverContext, which the block lets read to hide its own (block-level) toolbar — so
 // the item toolbar and the block toolbar are never shown stacked on the same corner.
 const ItemHoverContext = React.createContext(null);
@@ -3052,6 +3925,39 @@ const itemChromeBtn = (bg, border, color) => ({ width: 18, height: 18, borderRad
 // Reorder arrow — a full-size round button (same footprint as the link/delete
 // chrome) so it's an easy click target. Dimmed + non-interactive at a boundary.
 const reorderArrowBtn = (enabled) => ({ ...itemChromeBtn(T.bgPanel, T.border, enabled ? T.text : T.border), fontSize: 10, fontWeight: 700, cursor: enabled ? "pointer" : "default", opacity: enabled ? 1 : 0.4 });
+
+// The hover cluster must never cover text: a click on short text must start the
+// inline edit, not Move/Delete/Link. Try the anchor corner first, then spots
+// just outside the item (right, top, left, bottom; touching it, so the hover
+// stays on). Take the first spot that is inside the slide and covers no text of
+// the slide; else the first that covers none of this item's own text. Returns a
+// local {left, top} or null (keep the anchor).
+function placeItemCluster(wrap, cluster, a) {
+  const W = wrap.offsetWidth, H = wrap.offsetHeight, cw = cluster.offsetWidth, ch = cluster.offsetHeight;
+  if (!W || !cw) return null;
+  const wr = wrap.getBoundingClientRect();
+  const k = wr.width / W || 1;
+  const num = (v) => typeof v === "number" ? v : null;
+  const al = num(a.left), ar = num(a.right), at = num(a.top);
+  const spots = [
+    { left: al != null ? al : W - cw - (ar || 0), top: at != null ? at : 2 },
+    { left: W, top: 0 }, { left: W - cw, top: -ch }, { left: -cw, top: 0 }, { left: W - cw, top: H },
+  ];
+  const root = wrap.closest("[data-vela-slide-content]") || wrap.closest("[data-block-type]") || wrap.parentElement;
+  const rr = root.getBoundingClientRect();
+  const own = [], all = [];
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, { acceptNode: (n) => (n.nodeValue.trim() && !cluster.contains(n)) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT });
+  for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+    const range = document.createRange(); range.selectNodeContents(n);
+    for (const r of range.getClientRects()) if (r.width > 0.5 && r.height > 0.5) { all.push(r); if (wrap.contains(n)) own.push(r); }
+  }
+  const box = (s) => ({ l: wr.left + s.left * k, t: wr.top + s.top * k, r: wr.left + (s.left + cw) * k, b: wr.top + (s.top + ch) * k });
+  const hits = (b, rects) => rects.some((r) => b.l < r.right - 0.5 && b.r > r.left + 0.5 && b.t < r.bottom - 0.5 && b.b > r.top + 0.5);
+  const inside = (b) => b.l >= rr.left - 0.5 && b.r <= rr.right + 0.5 && b.t >= rr.top - 0.5 && b.b <= rr.bottom + 0.5;
+  const pick = spots.find((s) => { const b = box(s); return inside(b) && !hits(b, all); })
+    || spots.find((s) => { const b = box(s); return inside(b) && !hits(b, own); });
+  return !pick || pick === spots[0] ? null : pick;
+}
 
 // noLinkBadge: keep link click-through + PDF export but render no link UI (badge/popup/button)
 // — used by grid, where the inner block already owns the link-editing chrome.
@@ -3073,8 +3979,17 @@ function ItemChrome({ editable, presenting, onDelete, link, onSetLink, children,
   // stays focused instead of the neighbour now under the cursor. The pin clears on
   // the next mouse move, handing control back to plain hover.
   const clusterVisible = reorder && reorder.anyPinned ? reorder.pinned : hovered;
+  const wrapRef = useRef(null);
+  const clusterRef = useRef(null);
+  const [clusterAt, setClusterAt] = useState(null);
+  const clusterShown = clusterVisible && editMode && (showLinkUI || deletable || reorder);
+  React.useLayoutEffect(() => {
+    let next = null;
+    if (clusterShown && wrapRef.current && clusterRef.current) { try { next = placeItemCluster(wrapRef.current, clusterRef.current, a); } catch (_) {} }
+    setClusterAt((prev) => (prev?.left === next?.left && prev?.top === next?.top) ? prev : next);
+  });
   return (
-    <div className={className} style={{ position: "relative", ...(clickable ? { cursor: "pointer" } : {}), ...wrapStyle }}
+    <div ref={wrapRef} className={className} style={{ position: "relative", ...(clickable ? { cursor: "pointer" } : {}), ...wrapStyle }}
       title={link ? linkPreview(link, linkLabel) : undefined}
       onMouseMove={reorder && reorder.anyPinned ? () => reorder.clearPin?.() : undefined}
       data-pdf-link={link || undefined}
@@ -3082,11 +3997,11 @@ function ItemChrome({ editable, presenting, onDelete, link, onSetLink, children,
       onMouseEnter={enter} onMouseLeave={leave}>
       {children}
       {/* Idle link badge — edit mode, cluster not shown */}
-      {link && showLinkUI && !clusterVisible && editMode && <div onClick={(e) => { e.stopPropagation(); setEditingLink(true); }} style={{ position: "absolute", ...ba, width: 14, height: 14, borderRadius: "50%", background: T.accent + "80", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 7, zIndex: 5, cursor: "pointer" }} title={link}>🔗</div>}
+      {link && showLinkUI && !clusterVisible && editMode && <LinkBadge fallback={ba} label={linkLabel} onClick={(e) => { e.stopPropagation(); setEditingLink(true); }} style={{ width: 14, height: 14, borderRadius: "50%", background: T.accent + "80", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 7, zIndex: 5, cursor: "pointer" }} title={link}>🔗</LinkBadge>}
       {/* Idle link badge — presenter */}
-      {link && presenting && !noLinkBadge && <div onClick={(e) => { e.stopPropagation(); openExternalLink(link); }} style={{ position: "absolute", ...ba, padding: "2px 5px", borderRadius: 4, background: T.accent, fontSize: 9, color: "#fff", zIndex: 12, cursor: "pointer", opacity: hovered ? 1 : 0.3, transition: "opacity 0.2s", boxShadow: "0 2px 6px rgba(0,0,0,0.4)" }}>🔗</div>}
+      {link && presenting && !noLinkBadge && <LinkBadge fallback={ba} label={linkLabel} onClick={(e) => { e.stopPropagation(); openExternalLink(link); }} style={{ padding: "2px 5px", borderRadius: 4, background: T.accent, fontSize: 9, color: "#fff", zIndex: 12, cursor: "pointer", opacity: hovered ? 1 : 0.3, transition: "opacity 0.2s", boxShadow: "0 2px 6px rgba(0,0,0,0.4)" }}>🔗</LinkBadge>}
       {/* Hover cluster — edit mode (or pinned after a reorder move) */}
-      {clusterVisible && editMode && (showLinkUI || deletable || reorder) && <div style={{ position: "absolute", ...a, display: "flex", alignItems: "center", gap: 3, zIndex: 11 }}>
+      {clusterShown && <div ref={clusterRef} data-item-cluster="" style={{ position: "absolute", ...(clusterAt || a), display: "flex", alignItems: "center", gap: 3, zIndex: 11 }}>
         {reorder && <button onClick={(e) => { e.stopPropagation(); reorder.onUp?.(); }} disabled={!reorder.onUp} style={reorderArrowBtn(!!reorder.onUp)} title="Move up">▲</button>}
         {reorder && <button onClick={(e) => { e.stopPropagation(); reorder.onDown?.(); }} disabled={!reorder.onDown} style={reorderArrowBtn(!!reorder.onDown)} title="Move down">▼</button>}
         {showLinkUI && <button onClick={(e) => { e.stopPropagation(); setEditingLink(!editingLink); }} style={itemChromeBtn(link ? T.accent : T.bgPanel, link ? T.accent : T.border, link ? "#fff" : T.textDim)} title={link ? `Link: ${link}` : "Add link"}>🔗</button>}
@@ -3095,7 +4010,7 @@ function ItemChrome({ editable, presenting, onDelete, link, onSetLink, children,
       {/* Link editor popup */}
       {editingLink && editMode && showLinkUI && <div onClick={(e) => e.stopPropagation()} style={{ position: "absolute", top: -30, right: 0, zIndex: 12, display: "flex", gap: 4, alignItems: "center", background: T.bgPanel, border: `1px solid ${T.border}`, borderRadius: 6, padding: "3px 6px", boxShadow: "0 4px 12px rgba(0,0,0,0.5)" }}>
         <span style={{ fontSize: 9, color: T.textDim }}>🔗</span>
-        <input autoFocus defaultValue={link || ""} placeholder="https://..." onKeyDown={(e) => { e.stopPropagation(); if (e.key === "Enter") { onSetLink(e.target.value.trim() || undefined); setEditingLink(false); } if (e.key === "Escape") setEditingLink(false); }} onBlur={(e) => { onSetLink(e.target.value.trim() || undefined); setEditingLink(false); }} style={{ width: 200, padding: "2px 6px", fontSize: 10, fontFamily: FONT.mono, background: T.bg, color: T.text, border: `1px solid ${T.border}`, borderRadius: 4, outline: "none" }} />
+        <input autoFocus defaultValue={link || ""} placeholder="https://..." onKeyDown={(e) => { e.stopPropagation(); if (e.key === "Enter") { onSetLink(linkFromInput(e.target.value)); setEditingLink(false); } if (e.key === "Escape") setEditingLink(false); }} onBlur={(e) => { onSetLink(linkFromInput(e.target.value)); setEditingLink(false); }} style={{ width: 200, padding: "2px 6px", fontSize: 10, fontFamily: FONT.mono, background: T.bg, color: T.text, border: `1px solid ${T.border}`, borderRadius: 4, outline: "none" }} />
         {link && <button onClick={() => { onSetLink(undefined); setEditingLink(false); }} style={{ background: "none", border: "none", color: T.red, fontSize: 10, cursor: "pointer", padding: 0 }}>✕</button>}
       </div>}
     </div>
@@ -3178,9 +4093,9 @@ function GridCellBlock({ block, staggerIdx, slideTheme, editable, onChange, slid
       <RenderBlock block={block} staggerIdx={staggerIdx} slideTheme={slideTheme} editable={link ? false : editMode} slideAlign={slideAlign} fontScale={fontScale} presenting={presenting}
         onChange={onChange} />
       {/* Presenter mode: persistent link pill */}
-      {link && presenting && <div onClick={(e) => { e.stopPropagation(); openExternalLink(link); }} style={{ position: "absolute", top: -8, right: -8, padding: "1px 6px", borderRadius: 4, background: T.accent, fontSize: 9, fontFamily: FONT.mono, color: "#fff", fontWeight: 600, zIndex: 12, cursor: "pointer", opacity: hovered ? 1 : 0.3, transition: "opacity 0.2s", boxShadow: "0 2px 6px rgba(0,0,0,0.4)" }}>🔗</div>}
+      {link && presenting && <LinkBadge fallback={{ top: -8, right: -8 }} label={block.text || block.value || block.title} onClick={(e) => { e.stopPropagation(); openExternalLink(link); }} style={{ padding: "1px 6px", borderRadius: 4, background: T.accent, fontSize: 9, fontFamily: FONT.mono, color: "#fff", fontWeight: 600, zIndex: 12, cursor: "pointer", opacity: hovered ? 1 : 0.3, transition: "opacity 0.2s", boxShadow: "0 2px 6px rgba(0,0,0,0.4)" }}>🔗</LinkBadge>}
       {/* Link badge (not hovered, edit mode) */}
-      {link && !hovered && editMode && <div style={{ position: "absolute", top: -8, right: -8, width: 14, height: 14, borderRadius: "50%", background: T.accent + "80", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 7, zIndex: 5, cursor: "pointer" }} title={link} onClick={(e) => { e.stopPropagation(); setEditingLink(true); }}>🔗</div>}
+      {link && !hovered && editMode && <LinkBadge fallback={{ top: -8, right: -8 }} label={block.text || block.value || block.title} style={{ width: 14, height: 14, borderRadius: "50%", background: T.accent + "80", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 7, zIndex: 5, cursor: "pointer" }} title={link} onClick={(e) => { e.stopPropagation(); setEditingLink(true); }}>🔗</LinkBadge>}
       {/* Hover chrome (edit mode) */}
       {hovered && editMode && <div style={{ position: "absolute", top: -10, right: -10, display: "flex", gap: 3, zIndex: 11 }}>
         <button onClick={(e) => { e.stopPropagation(); setEditingLink(!editingLink); }} style={{ width: 18, height: 18, borderRadius: "50%", background: link ? T.accent : T.bgPanel, border: `1px solid ${link ? T.accent : T.border}`, color: link ? "#fff" : T.textDim, fontSize: 9, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", lineHeight: 1, padding: 0, boxShadow: "0 2px 6px rgba(0,0,0,0.4)" }} title={link ? `Link: ${link}` : "Add link"}>🔗</button>
@@ -3188,25 +4103,80 @@ function GridCellBlock({ block, staggerIdx, slideTheme, editable, onChange, slid
       {/* Link editor popup */}
       {editingLink && editMode && <div onClick={(e) => e.stopPropagation()} style={{ position: "absolute", top: -30, left: 0, zIndex: 12, display: "flex", gap: 4, alignItems: "center", background: T.bgPanel, border: `1px solid ${T.border}`, borderRadius: 6, padding: "3px 6px", boxShadow: "0 4px 12px rgba(0,0,0,0.5)" }}>
         <span style={{ fontSize: 9, color: T.textDim }}>🔗</span>
-        <input autoFocus defaultValue={link || ""} placeholder="https://..." onKeyDown={(e) => { e.stopPropagation(); if (e.key === "Enter") { setLink(e.target.value.trim()); setEditingLink(false); } if (e.key === "Escape") setEditingLink(false); }} onBlur={(e) => { setLink(e.target.value.trim()); setEditingLink(false); }} style={{ width: 200, padding: "2px 6px", fontSize: 10, fontFamily: FONT.mono, background: T.bg, color: T.text, border: `1px solid ${T.border}`, borderRadius: 4, outline: "none" }} />
+        <input autoFocus defaultValue={link || ""} placeholder="https://..." onKeyDown={(e) => { e.stopPropagation(); if (e.key === "Enter") { setLink(linkFromInput(e.target.value)); setEditingLink(false); } if (e.key === "Escape") setEditingLink(false); }} onBlur={(e) => { setLink(linkFromInput(e.target.value)); setEditingLink(false); }} style={{ width: 200, padding: "2px 6px", fontSize: 10, fontFamily: FONT.mono, background: T.bg, color: T.text, border: `1px solid ${T.border}`, borderRadius: 4, outline: "none" }} />
         {link && <button onClick={() => { setLink(undefined); setEditingLink(false); }} style={{ background: "none", border: "none", color: T.red, fontSize: 10, cursor: "pointer", padding: 0 }}>✕</button>}
       </div>}
     </div>
   );
 }
 
+// ━━━ Grid-cell image (capped upscale) ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// A grid cell fills its track, so a small icon or logo would otherwise stretch
+// to the whole free area. Cap the drawn box at GRID_IMG_MAX_UPSCALE x the natural
+// pixel size (read on load, cached by src) and center it in the cell. Until the
+// size is known the image stays hidden, so a huge first frame never shows.
+// Images without an intrinsic size (naturalWidth 0) or that fail to load are
+// not capped.
+const GRID_IMG_MAX_UPSCALE = 2;
+const IMAGE_NATURAL_SIZE = new Map();
+function GridCellImage({ src, alt, style }) {
+  const [, setTick] = useState(0);
+  const imgRef = useRef(null);
+  const size = IMAGE_NATURAL_SIZE.get(src);
+  const remember = (w, h) => {
+    if (!IMAGE_NATURAL_SIZE.has(src) && IMAGE_NATURAL_SIZE.size >= 256) IMAGE_NATURAL_SIZE.delete(IMAGE_NATURAL_SIZE.keys().next().value);
+    IMAGE_NATURAL_SIZE.set(src, { w, h });
+    setTick((t) => t + 1);
+  };
+  // The cache is bounded, so it can evict the entry of an image that is still
+  // on screen. That <img> has already loaded and onLoad does not fire again, so
+  // a cache miss would hide it for good. Measure it again here, before paint.
+  useLayoutEffect(() => {
+    const el = imgRef.current;
+    if (!IMAGE_NATURAL_SIZE.has(src) && el && el.complete && el.getAttribute("src") === src) remember(el.naturalWidth || 0, el.naturalHeight || 0);
+  });
+  const capped = size && size.w > 0 && size.h > 0;
+  return <img ref={imgRef} src={src} alt={alt} data-grid-cap={capped ? GRID_IMG_MAX_UPSCALE : undefined}
+    onLoad={(e) => remember(e.currentTarget.naturalWidth || 0, e.currentTarget.naturalHeight || 0)}
+    onError={() => remember(0, 0)}
+    style={{ ...style, margin: "auto", maxWidth: capped ? size.w * GRID_IMG_MAX_UPSCALE : undefined, maxHeight: capped ? size.h * GRID_IMG_MAX_UPSCALE : undefined, visibility: size ? undefined : "hidden" }} />;
+}
+
 // ━━━ Zoomable Block Wrapper ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// App-owned record of the open modal dialogs and zoom overlays. Esc and the
+// fullscreen-exit handler decide from this, never from a page-wide marker
+// query: deck SVG markup is in the same document (and a zoom clones it onto
+// <body>), so a marker attribute is not proof that app chrome is open (UI
+// integrity — a deck must not change what Esc does).
+const VELA_OPEN_CHROME = { modals: new Set(), zooms: new Set(), panels: new Set() };
+
 function ZoomWrap({ children, enabled, link, fill }) {
   const [zoomed, setZoomed] = useState(false);
   const [hovered, setHovered] = useState(false);
   const sourceRef = useRef(null);
-  const cloneRef = useRef(null);
 
+  // The overlay is plain DOM on <body> (or on the fullscreen element, the only
+  // subtree the browser shows in fullscreen). Rendered inside the slide, it was
+  // trapped by the canvas transform: position:fixed then fills the scaled slide,
+  // not the window, so a large image zoomed to the same size or smaller.
   useEffect(() => {
-    if (!zoomed || !sourceRef.current || !cloneRef.current) return;
+    if (!zoomed || !sourceRef.current) return;
     const el = sourceRef.current;
-    const container = cloneRef.current;
-    container.innerHTML = "";
+    const host = document.fullscreenElement || document.body;
+    const overlay = document.createElement("div");
+    overlay.setAttribute("data-vela-zoom", "");
+    overlay.tabIndex = 0;
+    overlay.style.cssText = "position:fixed;inset:0;z-index:999999;background:#060a14;cursor:zoom-out;outline:none";
+    const hint = document.createElement("div");
+    hint.textContent = "ESC or click to close";
+    hint.style.cssText = "position:absolute;top:12px;right:16px;color:#64748b;font-size:11px;font-family:monospace;z-index:10";
+    const container = document.createElement("div");
+    // Keep the inherited text color and font, which the clone loses outside the slide.
+    const cs = getComputedStyle(el);
+    container.style.cssText = "position:absolute;top:40px;left:40px;right:40px;bottom:40px;cursor:default";
+    container.style.color = cs.color;
+    container.style.fontFamily = cs.fontFamily;
+    overlay.append(hint, container);
     // Find the SVG or IMG and render it full-viewport (skip the zoom badge icon)
     const svg = Array.from(el.querySelectorAll("svg[viewBox]")).find(s => !s.closest("[data-zoom-badge]"));
     const img = el.querySelector("img[src]");
@@ -3226,7 +4196,41 @@ function ZoomWrap({ children, enabled, link, fill }) {
       clone.style.cssText = "transform:scale(2);transform-origin:center center;position:absolute;top:50%;left:50%;translate:-50% -50%";
       container.appendChild(clone);
     }
+    const close = () => setZoomed(false);
+    overlay.addEventListener("click", close);
+    container.addEventListener("click", (e) => e.stopPropagation());
+    // Esc closes only the zoom: stop it here so the window-level slide handler
+    // does not also leave Present mode. Arrow and page keys step to the previous
+    // or next zoomable block on the same slide, never to another slide. Past the
+    // first or last zoomable block on the slide, they close the zoom.
+    const step = { ArrowRight: 1, ArrowDown: 1, PageDown: 1, ArrowLeft: -1, ArrowUp: -1, PageUp: -1 };
+    overlay.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); close(); return; }
+      const dir = step[e.key];
+      if (!dir) return;
+      e.preventDefault(); e.stopPropagation();
+      const slide = el.closest("[data-vela-slide-content]");
+      const list = slide ? Array.from(slide.querySelectorAll("[data-vela-zoomable]")).filter((z) => z.getBoundingClientRect().width > 0) : [];
+      const next = list[list.indexOf(el) + dir];
+      close();
+      if (next && list.includes(el)) next.dispatchEvent(new Event("vela-zoom-open"));
+    });
+    // SlidePanel asks an open zoom to close when the browser leaves fullscreen on Esc.
+    window.addEventListener("vela-close-zoom", close);
+    host.appendChild(overlay);
+    VELA_OPEN_CHROME.zooms.add(overlay);
+    overlay.focus();
+    return () => { window.removeEventListener("vela-close-zoom", close); VELA_OPEN_CHROME.zooms.delete(overlay); overlay.remove(); };
   }, [zoomed]);
+
+  // Arrow keys in another block's zoom open this block's zoom.
+  useEffect(() => {
+    const el = sourceRef.current;
+    if (!enabled || !el) return;
+    const open = () => setZoomed(true);
+    el.addEventListener("vela-zoom-open", open);
+    return () => el.removeEventListener("vela-zoom-open", open);
+  }, [enabled]);
 
   if (!enabled) return children;
 
@@ -3238,7 +4242,7 @@ function ZoomWrap({ children, enabled, link, fill }) {
   const triggerZoom = (e) => { e.stopPropagation(); setZoomed(true); };
 
   return <>
-    <div ref={sourceRef} style={{ position: "relative", cursor: hasLink ? "pointer" : "zoom-in", ...(fill ? { display: "flex", flexDirection: "column", flex: 1, minHeight: 0, minWidth: 0, width: "100%" } : {}) }}
+    <div ref={sourceRef} data-vela-zoomable="" style={{ position: "relative", cursor: hasLink ? "pointer" : "zoom-in", ...(fill ? { display: "flex", flexDirection: "column", flex: 1, minHeight: 0, minWidth: 0, width: "100%" } : {}) }}
       onClick={hasLink ? undefined : triggerZoom}
       onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}>
       {children}
@@ -3246,14 +4250,6 @@ function ZoomWrap({ children, enabled, link, fill }) {
         {getIcon("Maximize2", { size: 10, color: "#e2e8f0" })} zoom
       </div>
     </div>
-    {zoomed && <div
-      onClick={() => setZoomed(false)}
-      onKeyDown={(e) => { if (e.key === "Escape") setZoomed(false); }}
-      tabIndex={0} ref={(el) => el?.focus()}
-      style={{ position: "fixed", inset: 0, zIndex: 999999, background: "#060a14", cursor: "zoom-out" }}>
-      <div style={{ position: "absolute", top: 12, right: 16, color: "#64748b", fontSize: 11, fontFamily: "monospace", zIndex: 10 }}>ESC or click to close</div>
-      <div ref={cloneRef} onClick={(e) => e.stopPropagation()} style={{ position: "absolute", top: 40, left: 40, right: 40, bottom: 40, cursor: "default" }} />
-    </div>}
   </>;
 }
 
@@ -3327,6 +4323,10 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
   // the comparison/matrix cases read pinKey/setPinKey directly for their columns.
   const [pinKey, setPinKey] = useState(null);
   const _pin = { key: pinKey, set: setPinKey };
+  // Image "+ Add title" chip (editor only): mounted only while the image is
+  // hovered or a new caption is being typed, so a plain render adds no DOM.
+  const [chipHover, setChipHover] = useState(false);
+  const [chipAdding, setChipAdding] = useState(false);
   switch (block.type) {
 
     case "heading": {
@@ -3366,9 +4366,23 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
         minHeight: 0,
         overflow: "hidden",
       } : null;
-      return <ZoomWrap enabled={!!block.src && !block._solo} link={block.link} fill={!!block._gridCell}><div className={cls} style={{ display: "flex", flexDirection: "column", alignItems: block.align === "left" ? "flex-start" : block.align === "right" ? "flex-end" : "center", ...(block._solo ? { flex: 1, width: "100%", justifyContent: "center" } : {}), ...(block._gridCell ? { flex: 1, minHeight: 0, minWidth: 0, width: "100%", justifyContent: "center", position: "relative" } : {}), ...block.style }}>
+      // Story flags are set by SlideContent after sanitization (never deck keys):
+      // _storyN = 1-based story number (caption prefix + data-story-idx),
+      // _storyNav = a tile click jumps to the story image (no ZoomWrap zoom),
+      // _captionChip = this surface may offer the editor "+ Add title" chip.
+      const storyN = Number.isInteger(block._storyN) && block._storyN > 0 ? block._storyN : undefined;
+      const showChip = !!block._captionChip && canEdit && !!block.src && !block.caption && !block._storyNav;
+      // _storyRow = this cell is in a story-active grid: every cell reserves one
+      // uniform caption row (one line, ellipsis), also without a caption, so the
+      // tiles of a row keep equal image sizes. Without the flag: unchanged.
+      const storyRow = !!block._gridCell && !!block._storyRow;
+      const captionStyle = { fontFamily: FONT.body, fontSize: SIZES.sm, color: st.textDim, marginTop: 8, flexShrink: 0, ...(storyRow ? { lineHeight: 1.4, height: "1.4em", maxWidth: "100%" } : {}) };
+      const captionAdding = !block.caption && chipAdding && canEdit;
+      return <ZoomWrap enabled={!!block.src && !block._solo && !block._storyNav} link={block.link} fill={!!block._gridCell}><div className={cls} data-story-idx={storyN}
+        onMouseEnter={block._captionChip ? () => setChipHover(true) : undefined} onMouseLeave={block._captionChip ? () => setChipHover(false) : undefined}
+        style={{ display: "flex", flexDirection: "column", alignItems: block.align === "left" ? "flex-start" : block.align === "right" ? "flex-end" : "center", ...(block._solo ? { flex: 1, width: "100%", justifyContent: "center" } : {}), ...(block._gridCell ? { flex: 1, minHeight: 0, minWidth: 0, width: "100%", justifyContent: "center", position: "relative" } : {}), ...(block._storyNav && block.src ? { cursor: "zoom-in" } : {}), ...block.style }}>
         {block._gridCell ? <div data-image-grid-media="" style={gridMediaStyle}>
-          {block.src ? <img src={block.src} alt={block.alt || ""} style={
+          {block.src ? <GridCellImage src={block.src} alt={block.alt || ""} style={
           // Absolutely fill the grid cell so the row height is driven ONLY by the
           // grid track (minmax(0,1fr)), never by the image's intrinsic height. A
           // portrait/tall image therefore letterboxes (objectFit:contain) into the
@@ -3381,7 +4395,14 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
           ? { width: "100%", height: "100%", objectFit: block.fit || "contain", borderRadius: 0 }
           : { maxWidth: block.maxWidth || "100%", maxHeight: block.maxHeight ?? "100%", borderRadius: block.rounded ?? 8, objectFit: block.fit || "contain", boxShadow: block.shadow ? "0 8px 32px rgba(0,0,0,0.3)" : "none" }
         } /> : <div style={{ padding: 32, color: st.textDim, fontFamily: FONT.mono, fontSize: 11 }}>Paste image (Ctrl+V)</div>}
-        {block.caption && <EditableText text={block.caption} editable={textEditable} onSave={(v) => onChange?.({ caption: v })} style={{ fontFamily: FONT.body, fontSize: SIZES.sm, color: st.textDim, marginTop: 8, flexShrink: 0 }} />}
+        {block.caption && <EditableText text={block.caption} editable={textEditable} onSave={(v) => onChange?.({ caption: v })} prefix={storyN ? `${storyN} · ` : undefined} style={captionStyle} oneLine={storyRow} />}
+        {captionAdding && <EditableText text="" autoEdit editable={textEditable} onSave={(v) => { if (v) onChange?.({ caption: v }); }} onEditEnd={() => { setChipAdding(false); setChipHover(false); }} style={captionStyle} oneLine={storyRow} />}
+        {storyRow && !block.caption && !captionAdding && <div aria-hidden="true" data-story-caption-row="" style={captionStyle} />}
+        {showChip && chipHover && !chipAdding && <div data-no-pdf="" data-testid="caption-chip" role="button" tabIndex={0}
+          onClick={(e) => { e.stopPropagation(); e.preventDefault(); setChipAdding(true); }}
+          onMouseDown={(e) => e.stopPropagation()}
+          onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.stopPropagation(); e.preventDefault(); setChipAdding(true); } }}
+          style={{ position: "absolute", left: "50%", bottom: 8, transform: "translateX(-50%)", zIndex: 6, padding: "2px 8px", borderRadius: 10, background: "rgba(15,23,42,0.78)", color: "#e2e8f0", fontFamily: FONT.mono, fontSize: 10, whiteSpace: "nowrap", cursor: "pointer", boxShadow: "0 2px 6px rgba(0,0,0,0.35)" }}>+ Add title</div>}
       </div></ZoomWrap>;
     }
 
@@ -3542,7 +4563,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
                 <div style={{ width: 22, height: 22, borderRadius: "50%", border: `2px dashed ${gc}`, display: "flex", alignItems: "center", justifyContent: "center" }}>
                   {getIcon(block.gateIcon || "UserCheck", { size: 10, color: gc })}
                 </div>
-                {block.gateLabel && <span style={{ position: "absolute", top: 24, fontSize: 7, color: gc, fontWeight: 600, lineHeight: 1, whiteSpace: "nowrap" }}>{block.gateLabel}</span>}
+                {block.gateLabel && <div style={{ position: "absolute", top: 24, width: "max-content", fontSize: 7, color: gc, fontWeight: 600, lineHeight: 1, whiteSpace: "nowrap" }}><EditableText text={block.gateLabel} editable={textEditable} onSave={(v) => onChange?.({ gateLabel: v || undefined })} /></div>}
               </div>}
               {renderArrowSvg()}
             </div>
@@ -3561,7 +4582,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
             <line x1={`${x2}%`} y1="4" x2={`${x2}%`} y2="20" stroke={loopCol} strokeWidth="1.5" strokeDasharray={loopDash} strokeLinecap="round" />
             <line x1={`${x2}%`} y1="20" x2={`${x1}%`} y2="20" stroke={loopCol} strokeWidth="1.5" strokeDasharray={loopDash} strokeLinecap="round" />
             <line x1={`${x1}%`} y1="20" x2={`${x1}%`} y2="4" stroke={loopCol} strokeWidth="1.5" strokeDasharray={loopDash} strokeLinecap="round" markerEnd={`url(#loopArr-${staggerIdx})`} />
-            {block.loopLabel && <text x="50%" y="32" textAnchor="middle" fill={loopCol} fontSize="10" fontFamily="monospace" style={{ fontStyle: "italic" }}>{block.loopLabel}</text>}
+            {(block.loopLabel || textEditable) && <SvgEditText text={block.loopLabel} editable={textEditable} onSave={(v) => onChange?.({ loopLabel: v })} x="50%" y="32" textAnchor="middle" fill={loopCol} fontSize="10" fontFamily="monospace" style={{ fontStyle: "italic" }} />}
           </>; })()}
         </svg>}
         {block.loop && isVert && <svg style={{ position: "absolute", top: 0, bottom: 0, right: 0, width: 36, height: "100%", overflow: "visible" }}>
@@ -3570,7 +4591,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
             <line x1="4" y1={`${y2}%`} x2="20" y2={`${y2}%`} stroke={loopCol} strokeWidth="1.5" strokeDasharray={loopDash} strokeLinecap="round" />
             <line x1="20" y1={`${y2}%`} x2="20" y2={`${y1}%`} stroke={loopCol} strokeWidth="1.5" strokeDasharray={loopDash} strokeLinecap="round" />
             <line x1="20" y1={`${y1}%`} x2="4" y2={`${y1}%`} stroke={loopCol} strokeWidth="1.5" strokeDasharray={loopDash} strokeLinecap="round" markerEnd={`url(#loopArrV-${staggerIdx})`} />
-            {block.loopLabel && <text x="28" y="50%" textAnchor="middle" fill={loopCol} fontSize="10" fontFamily="monospace" style={{ fontStyle: "italic" }} transform={`rotate(90, 28, 50%)`} dominantBaseline="middle">{block.loopLabel}</text>}
+            {(block.loopLabel || textEditable) && <SvgEditText text={block.loopLabel} editable={textEditable} onSave={(v) => onChange?.({ loopLabel: v })} x="28" y="50%" textAnchor="middle" fill={loopCol} fontSize="10" fontFamily="monospace" style={{ fontStyle: "italic" }} transform={`rotate(90, 28, 50%)`} dominantBaseline="middle" />}
           </>; })()}
         </svg>}
       </div></ZoomWrap>
@@ -3613,10 +4634,10 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: -6 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
               <EditableIcon editable={editable && !presenting} value={block.leftIcon} size={14} onPick={(name) => onChange?.({ leftIcon: name || undefined })}>{block.leftIcon ? getIcon(block.leftIcon, { size: 14, color: labelColor }) : null}</EditableIcon>
-              {block.leftLabel && <span style={{ fontSize: 11, fontWeight: 600, color: labelColor }}>{block.leftLabel}</span>}
+              {block.leftLabel && <EditableText text={block.leftLabel} editable={textEditable} onSave={(v) => onChange?.({ leftLabel: v || undefined })} style={{ fontSize: 11, fontWeight: 600, color: labelColor }} />}
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-              {block.rightLabel && <span style={{ fontSize: 11, fontWeight: 600, color: labelColor }}>{block.rightLabel}</span>}
+              {block.rightLabel && <EditableText text={block.rightLabel} editable={textEditable} onSave={(v) => onChange?.({ rightLabel: v || undefined })} style={{ fontSize: 11, fontWeight: 600, color: labelColor }} />}
               <EditableIcon editable={editable && !presenting} value={block.rightIcon} size={14} onPick={(name) => onChange?.({ rightIcon: name || undefined })}>{block.rightIcon ? getIcon(block.rightIcon, { size: 14, color: labelColor }) : null}</EditableIcon>
             </div>
           </div>
@@ -3641,9 +4662,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
         })}
         {canEdit && hasItems && <AddItem label="Add bar" accent={st.accent} onAdd={() => addItemAt(block, onChange, newItemFor(block,"progress"))} />}
         {block.annotation && (
-          <div style={{ textAlign: "center", marginTop: -4, fontSize: 11, fontStyle: "italic", color: block.annotationColor || "#94a3b8" }}>
-            {block.annotation}
-          </div>
+          <EditableText text={block.annotation} editable={textEditable} onSave={(v) => onChange?.({ annotation: v || undefined })} style={{ textAlign: "center", marginTop: -4, fontSize: 11, fontStyle: "italic", color: block.annotationColor || "#94a3b8" }} />
         )}
       </div>;
     }
@@ -3784,6 +4803,8 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
         [pts[pi], pts[t]] = [pts[t], pts[pi]];
         return { ...col, items: pts };
       }) });
+      const setColField = (side, patch) => { const cols = [...items]; while (cols.length < 2) cols.push({}); cols[side] = { ...cols[side], ...patch }; onChange?.({ items: cols }); };
+      const setPointText = (side, pi, v) => onChange?.({ items: items.map((col, k) => k !== side ? col : { ...col, items: (col.items || []).map((p, j) => j !== pi ? p : (typeof p === "string" ? v : { ...p, text: v })) }) });
       const pointReorder = (side, pts, pi) => (onChange && (pts || []).length > 1)
         ? reorderCtl(pts.length, pi, (dir) => movePoint(side, pi, dir), (k) => `c${side}_${k}`, _pin) : undefined;
       return <div className={cls} style={{ display: "flex", gap: 0, flex: 1, alignItems: "stretch", ...block.style }}>
@@ -3793,7 +4814,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
               <EditableIcon editable={editable && !presenting} value={left.icon} size={18} onPick={onChange ? (name) => onChange({ items: items.map((c, k) => k === 0 ? { ...c, icon: name || undefined } : c) }) : undefined}>
                 {left.icon ? <IconBubble icon={left.icon} size={18} color={leftColor} bg={`${leftColor}15`} /> : null}
               </EditableIcon>
-              <span style={{ fontFamily: FONT.display, fontSize: SIZES[block.titleSize || "md"], fontWeight: 700, color: `${leftColor}cc` }}>{left.title || "A"}</span>
+              <EditableText text={left.title || "A"} editable={textEditable} onSave={(v) => setColField(0, { title: v })} style={{ fontFamily: FONT.display, fontSize: SIZES[block.titleSize || "md"], fontWeight: 700, color: `${leftColor}cc` }} />
             </div>
             {(left.items || []).map((pt, pi) => (
               <ItemChrome key={pi} editable={editable} presenting={presenting}
@@ -3803,14 +4824,14 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
                 onSetLink={onChange ? (url) => linkPoint(0, pi, url) : undefined}
                 onDelete={onChange ? () => deletePoint(0, pi) : undefined}>
                 <span style={{ width: 6, height: 6, borderRadius: "50%", background: leftColor, flexShrink: 0, marginTop: 7 }} />
-                <span>{typeof pt === "string" ? pt : pt.text || ""}</span>
+                <EditableText text={typeof pt === "string" ? pt : pt.text || ""} editable={textEditable} onSave={(v) => setPointText(0, pi, v)} />
               </ItemChrome>
             ))}
             {canEdit && <AddItem variant="chip" label="Add point" accent={leftColor} onAdd={() => addPoint(0)} />}
           </div>
         </div>
         {block.hideDivider ? null : <div style={{ display: "flex", alignItems: "center", justifyContent: "center", zIndex: 2, margin: "0 -18px" }}>
-          <div style={{ width: 36, height: 36, borderRadius: "50%", background: st.bg || "#1e293b", border: `2px solid ${st.border || "#475569"}`, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: FONT.mono, fontSize: 11, fontWeight: 700, color: st.muted }}>{dividerLabel}</div>
+          <div style={{ width: 36, height: 36, borderRadius: "50%", background: st.bg || "#1e293b", border: `2px solid ${st.border || "#475569"}`, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: FONT.mono, fontSize: 11, fontWeight: 700, color: st.muted }}><EditableText text={dividerLabel} editable={textEditable} onSave={(v) => onChange?.({ dividerLabel: v || undefined })} /></div>
         </div>}
         <div style={{ flex: 1, background: `${rightColor}08`, border: `1px solid ${rightColor}30`, borderRadius: "0 12px 12px 0", padding: "20px 22px", display: "flex", flexDirection: "column", alignItems: "center" }}>
           <div style={{ display: "flex", flexDirection: "column", gap: 10, maxWidth: "100%" }}>
@@ -3818,7 +4839,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
               <EditableIcon editable={editable && !presenting} value={right.icon} size={18} onPick={onChange ? (name) => onChange({ items: items.map((c, k) => k === 1 ? { ...c, icon: name || undefined } : c) }) : undefined}>
                 {right.icon ? <IconBubble icon={right.icon} size={18} color={rightColor} bg={`${rightColor}15`} /> : null}
               </EditableIcon>
-              <span style={{ fontFamily: FONT.display, fontSize: SIZES[block.titleSize || "md"], fontWeight: 700, color: `${rightColor}cc` }}>{right.title || "B"}</span>
+              <EditableText text={right.title || "B"} editable={textEditable} onSave={(v) => setColField(1, { title: v })} style={{ fontFamily: FONT.display, fontSize: SIZES[block.titleSize || "md"], fontWeight: 700, color: `${rightColor}cc` }} />
             </div>
             {(right.items || []).map((pt, pi) => (
               <ItemChrome key={pi} editable={editable} presenting={presenting}
@@ -3828,7 +4849,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
                 onSetLink={onChange ? (url) => linkPoint(1, pi, url) : undefined}
                 onDelete={onChange ? () => deletePoint(1, pi) : undefined}>
                 <span style={{ width: 6, height: 6, borderRadius: "50%", background: rightColor, flexShrink: 0, marginTop: 7 }} />
-                <span>{typeof pt === "string" ? pt : pt.text || ""}</span>
+                <EditableText text={typeof pt === "string" ? pt : pt.text || ""} editable={textEditable} onSave={(v) => setPointText(1, pi, v)} />
               </ItemChrome>
             ))}
             {canEdit && <AddItem variant="chip" label="Add point" accent={rightColor} onAdd={() => addPoint(1)} />}
@@ -3856,12 +4877,12 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
               <polygon points={`${x1},${y} ${x2},${y} ${x4},${y + stageH} ${x3},${y + stageH}`}
                 fill={`${col}${isHighlight ? "22" : "18"}`} stroke={`${col}80`} strokeWidth={isHighlight ? 2 : 1.5}
                 strokeDasharray={isHighlight ? "8,4" : "none"} />
-              <text x="350" y={y + stageH * 0.38} textAnchor="middle" fill={`${col}dd`}
-                fontSize="14" fontWeight="600" fontFamily="Inter, sans-serif">{item.label || ""}{isHighlight ? " \u26A0" : ""}</text>
-              {item.value && <text x="350" y={y + stageH * 0.72} textAnchor="middle" fill={col}
-                fontSize="20" fontWeight="800" fontFamily="Inter, sans-serif">{item.value}</text>}
-              {item.drop && <text x={x4 + 16} y={y + stageH * 0.55} textAnchor="start" fill={isHighlight ? col : st.muted}
-                fontSize="12" fontWeight={isHighlight ? 700 : 400} fontFamily="Inter, sans-serif">{item.drop}</text>}
+              <SvgEditText text={item.label} editable={textEditable} onSave={(v) => patchItemAt(block, onChange, i, { label: v })} suffix={isHighlight ? " \u26A0" : ""} x="350" y={y + stageH * 0.38} textAnchor="middle" fill={`${col}dd`}
+                fontSize="14" fontWeight="600" fontFamily="Inter, sans-serif" />
+              {(item.value || textEditable) && <SvgEditText text={item.value} editable={textEditable} onSave={(v) => patchItemAt(block, onChange, i, { value: v })} x="350" y={y + stageH * 0.72} textAnchor="middle" fill={col}
+                fontSize="20" fontWeight="800" fontFamily="Inter, sans-serif" />}
+              {(item.drop || textEditable) && <SvgEditText text={item.drop} editable={textEditable} onSave={(v) => patchItemAt(block, onChange, i, { drop: v })} x={x4 + 16} y={y + stageH * 0.55} textAnchor="start" fill={isHighlight ? col : st.muted}
+                fontSize="12" fontWeight={isHighlight ? 700 : 400} fontFamily="Inter, sans-serif" />}
             </g>;
           })}
         </svg>
@@ -3886,9 +4907,9 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
               </marker>;
             })}
           </defs>
-          {block.centerLabel && <>
-            <text x={cx} y={cy - 8} textAnchor="middle" fill={st.border || "#475569"} fontSize="16" fontWeight="700" fontFamily="Inter, sans-serif" letterSpacing="3">{block.centerLabel}</text>
-            {block.centerSub && <text x={cx} y={cy + 14} textAnchor="middle" fill={st.muted} fontSize="13" fontFamily="Inter, sans-serif">{block.centerSub}</text>}
+          {(block.centerLabel || textEditable) && <>
+            <SvgEditText text={block.centerLabel} editable={textEditable} onSave={(v) => onChange?.({ centerLabel: v })} x={cx} y={cy - 8} textAnchor="middle" fill={st.border || "#475569"} fontSize="16" fontWeight="700" fontFamily="Inter, sans-serif" letterSpacing="3" />
+            {(block.centerSub || textEditable) && <SvgEditText text={block.centerSub} editable={textEditable} onSave={(v) => onChange?.({ centerSub: v })} x={cx} y={cy + 14} textAnchor="middle" fill={st.muted} fontSize="13" fontFamily="Inter, sans-serif" />}
           </>}
           {items.map((item, i) => {
             const angle = (2 * Math.PI * i / n) - Math.PI / 2;
@@ -3912,8 +4933,8 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
                 markerEnd={`url(#cyc-arr-${staggerIdx}-${i})`} />
               <circle cx={nx} cy={ny} r={nodeR} fill={`${col}15`} stroke={col} strokeWidth="2.5" />
               {item.icon && <text x={nx} y={ny - 6} textAnchor="middle" fontSize="18" fontFamily="Inter, sans-serif">{item.icon}</text>}
-              <text x={nx} y={ny + (item.icon ? 14 : 5)} textAnchor="middle" fill={`${col}dd`}
-                fontSize="12" fontWeight="700" fontFamily="Inter, sans-serif">{item.label || ""}</text>
+              <SvgEditText text={item.label} editable={textEditable} onSave={(v) => patchItemAt(block, onChange, i, { label: v })} x={nx} y={ny + (item.icon ? 14 : 5)} textAnchor="middle" fill={`${col}dd`}
+                fontSize="12" fontWeight="700" fontFamily="Inter, sans-serif" />
             </g>;
           })}
         </svg>
@@ -3941,8 +4962,8 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
                   {getIcon(item.icon, { size: 20, color: col, strokeWidth: 2 })}
                 </div> : null}
               </EditableIcon>}
-              <div style={{ fontFamily: FONT.display, fontSize: SIZES[block.size || (block.compact ? "2xl" : "3xl")], fontWeight: 800, color: col, lineHeight: 1 }}>{item.value || ""}</div>
-              {item.label && <div style={{ fontFamily: FONT.mono, fontSize: SIZES.xs, fontWeight: 600, letterSpacing: "0.1em", textTransform: "uppercase", color: st.muted }}>{item.label}</div>}
+              <EditableText text={String(item.value || "")} editable={textEditable} onSave={(v) => patchItemAt(block, onChange, i, { value: v })} style={{ fontFamily: FONT.display, fontSize: SIZES[block.size || (block.compact ? "2xl" : "3xl")], fontWeight: 800, color: col, lineHeight: 1 }} />
+              {item.label && <ItemText block={block} onChange={onChange} editable={textEditable} idx={i} prop="label" style={{ fontFamily: FONT.mono, fontSize: SIZES.xs, fontWeight: 600, letterSpacing: "0.1em", textTransform: "uppercase", color: st.muted }} />}
             </ItemChrome>
           </React.Fragment>;
         })}
@@ -3984,12 +5005,15 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
         [pts[pi], pts[t]] = [pts[t], pts[pi]];
         return { ...qq, items: pts };
       }) });
+      const setQField = (qi, patch) => onChange?.({ [qKey]: [0, 1, 2, 3].map((k) => k === qi ? { ...(quadrants[k] || {}), ...patch } : (quadrants[k] || {})) });
+      const setQPointText = (qi, pi, v) => onChange?.({ [qKey]: quadrants.map((qq, k) => k !== qi ? qq : { ...qq, items: (qq.items || []).map((p, j) => j !== pi ? p : (typeof p === "string" ? v : { ...p, text: v })) }) });
+      const axisText = (key, text, style) => <EditableText text={text} editable={textEditable} onSave={(v) => onChange?.({ [key]: v || undefined })} style={style} />;
       const qPointReorder = (qi, pts, pi) => (onChange && (pts || []).length > 1)
         ? reorderCtl(pts.length, pi, (dir) => moveQPoint(qi, pi, dir), (k) => `q${qi}_${k}`, _pin) : undefined;
-      const renderRow = (indices, radii, yLabel) => (
+      const renderRow = (indices, radii, yLabel, yKey) => (
         <div style={{ display: "flex", gap: 0, alignItems: "stretch" }}>
           {hasY && <div style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 24, flexShrink: 0 }}>
-            {yLabel && <span style={yLabelStyle}>{yLabel}</span>}
+            {yLabel && <div style={{ ...yLabelStyle, width: "max-content", flexShrink: 0 }}>{axisText(yKey, yLabel)}</div>}
           </div>}
           <div style={{ display: "flex", gap: 6, flex: 1 }}>
             {indices.map((qi) => {
@@ -4000,7 +5024,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
                   <EditableIcon editable={editable && !presenting} value={qd.icon} size={16} onPick={onChange ? (name) => onChange({ [qKey]: quadrants.map((qq, k) => k === qi ? { ...qq, icon: name || undefined } : qq) }) : undefined}>
                     {qd.icon ? <span style={{ display: "flex" }}>{getIcon(qd.icon, { size: 16, color: qc, strokeWidth: 2 })}</span> : null}
                   </EditableIcon>
-                  <span style={{ fontFamily: FONT.display, fontSize: SIZES.sm, fontWeight: 700, color: `${qc}cc` }}>{qd.title || ""}</span>
+                  <EditableText text={qd.title || ""} editable={textEditable} onSave={(v) => setQField(qi, { title: v })} style={{ fontFamily: FONT.display, fontSize: SIZES.sm, fontWeight: 700, color: `${qc}cc` }} />
                 </div>
                 {(qd.items || []).map((pt, pi) => (
                   <ItemChrome key={pi} editable={editable} presenting={presenting}
@@ -4009,7 +5033,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
                     reorder={qPointReorder(qi, qd.items, pi)}
                     onSetLink={onChange ? (url) => linkQPoint(qi, pi, url) : undefined}
                     onDelete={onChange ? () => deleteQPoint(qi, pi) : undefined}>
-                    <span style={{ color: qc }}>•</span> {typeof pt === "string" ? pt : pt.text || ""}
+                    <span style={{ color: qc }}>•</span> <EditableText text={typeof pt === "string" ? pt : pt.text || ""} editable={textEditable} onSave={(v) => setQPointText(qi, pi, v)} />
                   </ItemChrome>
                 ))}
                 {canEdit && <AddItem variant="chip" label="Add point" accent={qc} style={{ marginTop: 4 }} onAdd={() => addQPoint(qi)} />}
@@ -4020,12 +5044,12 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
       );
       return <div className={cls} style={{ flex: 1, display: "flex", flexDirection: "column", justifyContent: "center", width: "100%", ...block.style }}>
           {(xLeft || xRight) && <div style={{ display: "flex", justifyContent: "space-around", marginBottom: 8, paddingLeft: hasY ? 24 : 0, padding: "0 20px" }}>
-            <span style={{ fontFamily: FONT.mono, fontSize: SIZES.xs, fontWeight: 600, color: st.muted, letterSpacing: "0.08em" }}>{xLeft}</span>
-            <span style={{ fontFamily: FONT.mono, fontSize: SIZES.xs, fontWeight: 600, color: st.muted, letterSpacing: "0.08em" }}>{xRight}</span>
+            {axisText("xLeft", xLeft, { fontFamily: FONT.mono, fontSize: SIZES.xs, fontWeight: 600, color: st.muted, letterSpacing: "0.08em" })}
+            {axisText("xRight", xRight, { fontFamily: FONT.mono, fontSize: SIZES.xs, fontWeight: 600, color: st.muted, letterSpacing: "0.08em" })}
           </div>}
-          {renderRow([0, 1], ["10px 4px 4px 4px", "4px 10px 4px 4px"], yTop)}
+          {renderRow([0, 1], ["10px 4px 4px 4px", "4px 10px 4px 4px"], yTop, "yTop")}
           <div style={{ height: 6 }} />
-          {renderRow([2, 3], ["4px 4px 4px 10px", "4px 4px 10px 4px"], yBottom)}
+          {renderRow([2, 3], ["4px 4px 4px 10px", "4px 4px 10px 4px"], yBottom, "yBottom")}
       </div>;
     }
 
@@ -4037,6 +5061,9 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
         pending: { bg: "transparent", icon: null, label: "PENDING", textColor: st.muted },
         blocked: { bg: `#ef444425`, icon: "X", label: "BLOCKED", textColor: "#fca5a5" },
       };
+      // A plain-string item is edited as { text }: only the edited item changes
+      // form (patchItemAt would spread the string), so untouched decks keep theirs.
+      const patchCheck = (i, patch) => patchItemAt({ ...block, items: items.map((it, j) => j === i && typeof it === "string" ? { text: it } : it) }, onChange, i, patch);
       return <div className={cls} style={{ display: "flex", flexDirection: "column", gap: 6, width: "100%", ...block.style }}>
         {items.map((item, i) => {
           const status = item.status || "pending";
@@ -4052,8 +5079,19 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
               {status === "partial" && <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, height: "50%", background: "#f59e0b" }} />}
               {cfg.icon && <span style={{ display: "flex", zIndex: 1 }}>{getIcon(cfg.icon, { size: 12, color: status === "done" ? "#fff" : "#ef4444", strokeWidth: 3 })}</span>}
             </div>
-            <span style={{ fontFamily: FONT.body, fontSize: SIZES[block.size || "sm"], color: cfg.textColor, flex: 1 }}>{typeof item === "string" ? item : item.text || ""}</span>
-            {block.showLabels !== false && <span style={{ marginLeft: "auto", fontFamily: FONT.mono, fontSize: SIZES.xs, fontWeight: 600, color: labelColor }}>{cfg.label}</span>}
+            {typeof item === "string"
+              ? <EditableText text={item} editable={textEditable} onSave={(v) => patchCheck(i, { text: v })} style={{ fontFamily: FONT.body, fontSize: SIZES[block.size || "sm"], color: cfg.textColor, flex: 1 }} />
+              : <ItemText block={block} onChange={onChange} editable={textEditable} idx={i} prop="text" style={{ fontFamily: FONT.body, fontSize: SIZES[block.size || "sm"], color: cfg.textColor, flex: 1 }} />}
+            {block.showLabels !== false && (
+              <EditableText text={item.label || cfg.label} editable={textEditable} onSave={(v) => {
+                  // A typed status name (key or default label) switches the status;
+                  // any other text is a custom label; empty text restores the default.
+                  // Case, "_", "-" and runs of spaces do not matter ("in_progress").
+                  const norm = (t) => String(t).trim().toLowerCase().replace(/[\s_-]+/g, " ");
+                  const key = norm(v);
+                  const hit = Object.keys(statusConfig).find((k) => k === key || norm(statusConfig[k].label) === key);
+                  patchCheck(i, hit ? { status: hit, label: undefined } : { label: v || undefined });
+                }} controlled style={{ marginLeft: "auto", fontFamily: FONT.mono, fontSize: SIZES.xs, fontWeight: 600, color: labelColor, textTransform: "uppercase" }} />)}
           </ItemChrome>;
         })}
         {canEdit && <AddItem label="Add item" accent={st.accent} onAdd={() => addItemAt(block, onChange, newItemFor(block,"checklist"))} />}
@@ -4091,14 +5129,19 @@ function BrandingOverlay({ branding, index, total, displayIndex, displayTotal, s
   // it stays scrubber-only like every other text-color field. (v13.27)
   const footerBg = isDefaultFooter && isLight ? "rgba(0,0,0,0.06)" : (cssColor(b.footerBg) || "rgba(0,0,0,0.35)");
   const footerColor = isDefaultColor && isLight ? "#475569" : (b.footerColor || "#94a3b8");
+  // Accent height 0 is a real user choice ("no top line"): a falsy `|| 4`
+  // fallback turned it back into 4px. Use 4 only when the value is missing,
+  // and draw no bar at all when the height is 0 or less.
+  const accentH = Number.isFinite(b.accentHeight) ? Math.max(0, b.accentHeight) : 4;
+  const showAccent = !!b.accentBar && accentH > 0;
   return <>
-    {b.accentBar && <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: b.accentHeight || 4, background: cssColor(b.accentColor) || T.accent, zIndex: 5 }} />}
+    {showAccent && <div data-branding-accent="true" style={{ position: "absolute", top: 0, left: 0, right: 0, height: accentH, background: cssColor(b.accentColor) || T.accent, zIndex: 5 }} />}
     {b.logo && (() => {
       const pos = b.logoPosition || "top-left";
       const sz = b.logoSize || 56;
       const isTop = pos.startsWith("top");
       const isLeft = pos.endsWith("left");
-      const vOffset = isTop ? (b.accentBar ? (b.accentHeight || 4) + 8 : 10) : 36;
+      const vOffset = isTop ? (showAccent ? accentH + 8 : 10) : 36;
       const style = { position: "absolute", height: sz, objectFit: "contain", zIndex: 1, opacity: 0.9 };
       if (isTop) style.top = vOffset; else style.bottom = vOffset;
       if (isLeft) style.left = 16; else style.right = 16;
@@ -4134,6 +5177,132 @@ function BrandingOverlay({ branding, index, total, displayIndex, displayTotal, s
 // which regime it is in; an outward offset is only safe when a padding gutter
 // is guaranteed to exist.
 //
+// ━━━ Story zoom layer (story images in Present) ━━━━━━━━━━━━━━━━━━━
+// Shows story image k (1-based) over the slide while story.zoomed, with an
+// index rail of thumbnails on the right. It renders nothing when not zoomed
+// (after the zoom-out animation), so a slide without story keeps its DOM.
+// Every <img> uses the src of the slide's own (already sanitized) image block,
+// as a React attribute; the accent reaches CSS only through cssColor().
+const STORY_RAIL_W = 64;
+const STORY_THUMB_H = 36;
+function storyPrefersReducedMotion() {
+  try { return !!window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches; } catch (_) { return false; }
+}
+// Box (center + size) of an image with aspect a (w/h) drawn objectFit:contain in rect r.
+function storyContainBox(r, a) {
+  const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+  if (!(a > 0) || !(r.width > 0) || !(r.height > 0)) return { cx, cy, w: r.width, h: r.height };
+  const w = Math.min(r.width, r.height * a);
+  return { cx, cy, w, h: w / a };
+}
+function StoryZoomLayer({ items, story, animate, onJump, onZoomOut, hostRef, pad, accent }) {
+  const n = items.length;
+  const zoomed = !!story && story.zoomed === true && Number.isInteger(story.k) && story.k >= 1 && story.k <= n;
+  const kNow = zoomed ? story.k : 0;
+  // Derived state from the previous render: on zoom-out, image k stays on
+  // screen for its shrink animation (closingK), then the effect unmounts it.
+  const [trackK, setTrackK] = useState(kNow);
+  const [closingK, setClosingK] = useState(0);
+  if (trackK !== kNow) {
+    setTrackK(kNow);
+    setClosingK(!kNow && trackK && animate && !storyPrefersReducedMotion() ? trackK : 0);
+  }
+  const displayK = kNow || closingK;
+  const boxRef = useRef(null);
+  const imgRef = useRef(null);
+  const railRef = useRef(null);
+  const lastKRef = useRef(0);
+
+  // Transform that puts the zoomed image box over story tile k (null: no tile).
+  const tileTransform = (k) => {
+    const host = hostRef.current, box = boxRef.current;
+    if (!host || !box) return null;
+    const tile = host.querySelector(`[data-story-idx="${k | 0}"]`);
+    const tileImg = tile && tile.querySelector("img");
+    if (!tileImg) return null;
+    const tr = tileImg.getBoundingClientRect();
+    const scale = host.offsetWidth > 0 ? host.getBoundingClientRect().width / host.offsetWidth : 1;
+    if (!(tr.width > 0) || !(scale > 0)) return null;
+    const nat = imgRef.current && imgRef.current.naturalWidth > 0 ? imgRef.current : tileImg;
+    const a = nat.naturalWidth > 0 && nat.naturalHeight > 0 ? nat.naturalWidth / nat.naturalHeight : 0;
+    const from = storyContainBox(tr, a), to = storyContainBox(box.getBoundingClientRect(), a);
+    if (!(to.w > 0)) return null;
+    return `translate(${(from.cx - to.cx) / scale}px, ${(from.cy - to.cy) / scale}px) scale(${from.w / to.w})`;
+  };
+
+  useLayoutEffect(() => {
+    const prevK = lastKRef.current;
+    lastKRef.current = kNow;
+    const box = boxRef.current, rail = railRef.current, img = imgRef.current;
+    if (!box) return;
+    const motion = !!animate && !storyPrefersReducedMotion();
+    if (kNow && !prevK) {
+      // Zoom in: fly from the tile to the zoomed box; the rail fades in.
+      box.style.transition = "none"; box.style.transform = ""; box.style.opacity = "";
+      if (rail) { rail.style.transition = "none"; rail.style.opacity = motion ? "0" : ""; }
+      if (!motion) return;
+      const from = tileTransform(kNow);
+      if (from) box.style.transform = from; else box.style.opacity = "0";
+      void box.offsetWidth;
+      box.style.transition = "transform 350ms ease-out, opacity 350ms ease-out";
+      box.style.transform = ""; box.style.opacity = "";
+      if (rail) { void rail.offsetWidth; rail.style.transition = "opacity 150ms ease-out"; rail.style.opacity = ""; }
+      return;
+    }
+    if (kNow && prevK && kNow !== prevK) {
+      // Image to image: the new image slides in from the side it comes from.
+      if (!motion || !img) return;
+      const dir = kNow > prevK ? 1 : -1;
+      img.style.transition = "none"; img.style.transform = `translateX(${dir * 30}%)`; img.style.opacity = "0";
+      void img.offsetWidth;
+      img.style.transition = "transform 250ms ease-out, opacity 250ms ease-out";
+      img.style.transform = ""; img.style.opacity = "";
+      return;
+    }
+    if (!kNow && closingK) {
+      // Zoom out: shrink back into the tile, then unmount.
+      const to = tileTransform(closingK);
+      let done = false;
+      const finish = () => { if (done) return; done = true; setClosingK(0); };
+      const onEnd = (e) => { if (e.target === box) finish(); };
+      box.style.transition = "transform 300ms ease-in-out, opacity 300ms ease-in-out";
+      if (to) box.style.transform = to; else box.style.opacity = "0";
+      if (rail) { rail.style.transition = "opacity 150ms ease-out"; rail.style.opacity = "0"; }
+      box.addEventListener("transitionend", onEnd);
+      const t = setTimeout(finish, 360);
+      return () => { clearTimeout(t); box.removeEventListener("transitionend", onEnd); };
+    }
+  }, [kNow, closingK]);
+
+  if (!displayK) return null;
+  const item = items[displayK - 1];
+  if (!item) return null;
+  const live = zoomed;
+  return (
+    <div data-story-layer="" role="group" aria-label={`Image ${displayK} of ${n}`} onClick={live && onZoomOut ? (e) => { e.stopPropagation(); onZoomOut(); } : undefined}
+      style={{ position: "absolute", inset: 0, padding: pad, boxSizing: "border-box", zIndex: 4, display: "flex", flexDirection: "row", gap: 8, cursor: live && onZoomOut ? "zoom-out" : "default", pointerEvents: live ? "auto" : "none" }}>
+      <div ref={boxRef} data-story-image="" style={{ flex: 1, minWidth: 0, minHeight: 0, position: "relative" }}>
+        <img key={displayK} ref={imgRef} src={item.src} alt={item.alt || `Image ${displayK} of ${n}`} draggable={false} style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "contain", display: "block" }} />
+        {/* Screen readers hear the step; no visual change (clipped 1px box). */}
+        <span aria-live="polite" style={{ position: "absolute", width: 1, height: 1, overflow: "hidden", clip: "rect(0 0 0 0)", whiteSpace: "nowrap" }}>{`Image ${displayK} of ${n}`}</span>
+      </div>
+      <div ref={railRef} data-story-rail="" style={{ width: STORY_RAIL_W + 6, flexShrink: 0, padding: 3, boxSizing: "border-box", display: "flex", flexDirection: "column", justifyContent: "center", gap: 6, minHeight: 0, overflow: "hidden" }}>
+        {items.map((it, j) => {
+          const cur = j + 1 === displayK;
+          const ts = { width: STORY_RAIL_W, height: STORY_THUMB_H, flex: `0 1 ${STORY_THUMB_H}px`, minHeight: 12, padding: 0, margin: 0, border: "none", borderRadius: 4, overflow: "hidden", boxSizing: "border-box", background: "rgba(127,127,127,0.16)", opacity: cur ? 1 : 0.55, outline: cur ? `2px solid ${accent}` : "none", outlineOffset: 1, cursor: onJump ? "pointer" : "default", display: "block" };
+          const thumb = <img src={it.src} alt="" draggable={false} style={{ width: "100%", height: "100%", objectFit: "contain", display: "block", pointerEvents: "none" }} />;
+          // Thumbs are buttons only when the surface can jump (Present). A mouse
+          // click must not focus the button: Space would then press it again.
+          return onJump
+            ? <button key={j} type="button" aria-label={`Image ${j + 1}`} aria-current={cur ? "true" : undefined}
+                onMouseDown={(e) => e.preventDefault()} onClick={(e) => { e.stopPropagation(); onJump(j + 1); }} style={ts}>{thumb}</button>
+            : <div key={j} aria-current={cur ? "true" : undefined} style={ts}>{thumb}</div>;
+        })}
+      </div>
+    </div>
+  );
+}
+
 // ━━━ Slide Content ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // ━━━ Inline Comment Card (review mode) ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 function InlineCommentCard({ comment, itemId, slideIndex, dispatch }) {
@@ -4152,7 +5321,7 @@ function InlineCommentCard({ comment, itemId, slideIndex, dispatch }) {
   );
 }
 
-function SlideContent({ slide, index, total, branding, editable, onEdit, presenting, onBlockEdit, blockEditing, fontScale = 1, reviewMode, itemId, dispatch: externalDispatch, displayIndex, displayTotal }) {
+function SlideContent({ slide, index, total, branding, editable, onEdit, presenting, onBlockEdit, blockEditing, fontScale = 1, reviewMode, itemId, dispatch: externalDispatch, displayIndex, displayTotal, story, storyAnimate, onStoryJump, onStoryZoomOut, presentSurface }) {
   const st = { text: slide.color || T.text, muted: slide.mutedColor || T.textMuted, textDim: T.textDim, accent: slide.accent || T.accent, border: T.border, codeBg: T.codeBg };
   // Hidden elements (CR: hide any element). In presentation they are removed
   // entirely — no render, no layout — so a slide can carry a title that only
@@ -4163,7 +5332,11 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
   const align = slide.align || "left";
   const layout = slide.layout || "stack";
   const isCols = layout === "cols" && (Array.isArray(slide.L) || Array.isArray(slide.R));
-  const isSplit = layout === "image-right" || layout === "image-left";
+  // CR22: a split needs content beside the image. A slide can keep image-left/right
+  // with no body (a blank slide inherits the previous slide's layout), and then a
+  // pasted image sat in one half next to an empty half. Without content, stack.
+  const isSplit = (layout === "image-right" || layout === "image-left")
+    && blocks.some((b) => b && b.type !== "image" && b.type !== "spacer" && b.type !== "divider");
   const colsL = isCols ? _vis(slide.L) : [];
   const colsR = isCols ? _vis(slide.R) : [];
   const isMediaOnlyColumn = (column) =>
@@ -4173,6 +5346,24 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
   const colsRMediaOnly = isMediaOnlyColumn(colsR);
   const hasMediaOnlyColumn = colsLMediaOnly || colsRMediaOnly;
   const hasDirectColumnImage = colsL.some((b) => b?.type === "image") || colsR.some((b) => b?.type === "image");
+  // Story images. storyImageList indexes the raw slide arrays; this render
+  // drops hidden blocks when presenting, so map each raw index to the index
+  // renderBlockWithComments sees. A present surface (also with presentEdit)
+  // uses the Present list, so the numbers match what SlidePanel steps through.
+  const storyList = slide.story === true ? storyImageList(slide, true) : [];
+  const storyActive = storyIsActive(slide, storyList);
+  const storyNumOf = new Map();
+  if (storyActive) {
+    const rB = Array.isArray(slide.blocks) ? slide.blocks : [], rL = Array.isArray(slide.L) ? slide.L : [], rR = Array.isArray(slide.R) ? slide.R : [];
+    const visBefore = (arr, j) => { if (!presenting) return j; let c = 0; for (let q = 0; q < j; q++) if (!(arr[q] && arr[q].hidden)) c++; return c; };
+    storyList.forEach((it, pos) => {
+      const r = it.idx < rB.length ? visBefore(rB, it.idx)
+        : it.idx < rB.length + rL.length ? blocks.length + visBefore(rL, it.idx - rB.length)
+        : blocks.length + colsL.length + visBefore(rR, it.idx - rB.length - rL.length);
+      if (!storyNumOf.has(r)) storyNumOf.set(r, pos + 1);
+    });
+  }
+  const storyZoomed = storyActive && !!story && story.zoomed === true && Number.isInteger(story.k) && story.k >= 1 && story.k <= storyList.length;
   // Deck values must not reach CSS directly. Unknown values use the normal
   // layout default instead of becoming an invalid justifyContent value.
   const verticalAlignToJustify = (value) => {
@@ -4223,13 +5414,66 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
   const [fitJustify, setFitJustify] = useState(requestedJustify);
   const [splitImgMaxH, setSplitImgMaxH] = useState(null); // px cap so a side image conforms to the content column's height
   const [colsImageFit, setColsImageFit] = useState(null);
+  // CR23: measured image-grid boxes (keyed by the run's first block index) and a
+  // tick that re-renders when image aspect ratios arrive in IMAGE_ASPECT_CACHE.
+  const [gridBoxes, setGridBoxes] = useState({});
+  const [, setAspectTick] = useState(0);
   const [hoveredBlock, setHoveredBlock] = useState(null);
+  // Editor tile drag reorder: { key, idxs, from, order, rects, snap } while a
+  // drag runs (order[q] = position in idxs of the block shown in slot q).
+  const [tileDrag, setTileDrag] = useState(null);
+  const [hoverCell, setHoverCell] = useState(null);
+  const tileDragRef = useRef(null);
+  tileDragRef.current = tileDrag;
+  const tileDragLatest = useRef(null);
+  tileDragLatest.current = { slide, onEdit };
   const [itemHovered, setItemHovered] = useState(false); // an inner item's chrome is hovered → hide block toolbar
   const [editingLink, setEditingLink] = useState(null);
   const [editingBlockIdx, setEditingBlockIdx] = useState(null);
   const [blockPrompt, setBlockPrompt] = useState("");
   const [commentingBlockIdx, setCommentingBlockIdx] = useState(null);
   const [commentText, setCommentText] = useState("");
+  // CR15: per-block "no room above" flags for the hover toolbar (bar) and its
+  // popups (pop). A block flush with a clipping edge (full-bleed image, first
+  // block under small padding) would have its outside-top chrome cut off, so
+  // that chrome is drawn inside the block's top edge instead.
+  const [chromeFlip, setChromeFlip] = useState({});
+  const measureChromeRoom = (el, i) => {
+    try {
+      const r = el.getBoundingClientRect();
+      const scale = el.offsetHeight > 0 ? r.height / el.offsetHeight : 1;
+      // The slide surface top is an edge too: chrome drawn above it overlaps the
+      // slide frame, or is cut off where the frame clips (fullscreen, fill modes).
+      let clipTop = Math.max(0, outerRef.current ? outerRef.current.getBoundingClientRect().top : 0);
+      for (let p = el.parentElement; p && p !== document.body; p = p.parentElement) {
+        const cs = getComputedStyle(p);
+        if (cs.overflowY !== "visible" || cs.overflowX !== "visible") clipTop = Math.max(clipTop, p.getBoundingClientRect().top);
+      }
+      const s = scale || 1;
+      const room = (r.top - clipTop) / s;
+      const next = { bar: room < 8, pop: room < 35.5, shift: 0 }; // toolbar sits 8px above, popups 32-36px above
+      // The editor overlay chrome (reviewed toggle, comment count, before/after
+      // bar — marked data-editor-overlay in part-slidepanel.jsx) paints above the
+      // slide. A toolbar under it cannot be clicked, so move the toolbar (and its
+      // popups) left until it is clear of every overlay it would touch. The real
+      // overlays sit outside the slide content; skip any match inside it (that is
+      // deck content, which must not move the app's toolbar).
+      const fx = el.closest("[data-testid='slide-fx-wrapper']");
+      const overlays = fx && fx.parentElement ? Array.from(fx.parentElement.querySelectorAll("[data-editor-overlay]")).filter((o) => !o.closest("[data-vela-slide-content]")).map((o) => o.getBoundingClientRect()).filter((q) => q.width > 0) : [];
+      if (overlays.length) {
+        const n = 3 + (onBlockEdit ? 1 : 0) + (externalDispatch ? 1 : 0);
+        const barW = n * 18 + (n - 1) * 3, edge = next.bar ? 6 : -8;
+        const barTop = r.top + (next.bar ? 6 : -8) * s, barBottom = barTop + 18 * s;
+        for (let pass = 0; pass <= overlays.length; pass++) {
+          const barRight = r.right - (edge + next.shift) * s, barLeft = barRight - barW * s;
+          const hit = overlays.find((q) => q.left < barRight + 2 && q.right > barLeft - 2 && q.top < barBottom + 2 && q.bottom > barTop - 2);
+          if (!hit) break;
+          next.shift = Math.max(next.shift + 1, Math.ceil((r.right - hit.left + 4) / s - edge));
+        }
+      }
+      setChromeFlip((prev) => (prev[i]?.bar === next.bar && prev[i]?.pop === next.pop && prev[i]?.shift === next.shift) ? prev : { ...prev, [i]: next });
+    } catch (_) {}
+  };
 
   // Close popup when blockEditing finishes
   const prevEditing = useRef(blockEditing);
@@ -4238,16 +5482,70 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
     prevEditing.current = blockEditing;
   }, [blockEditing]);
 
+  // Block indices run through blocks, then the cols L column, then R (see
+  // renderColumnBlocks offsets). Map an index to the array that holds it, so an
+  // edit to a column block (text, link, hide, delete, AI edit) changes L/R, not nothing.
+  const blockSlot = (idx) => idx < blocks.length ? ["blocks", blocks, idx]
+    : idx < blocks.length + colsL.length ? ["L", colsL, idx - blocks.length]
+    : ["R", colsR, idx - blocks.length - colsL.length];
+
   const handleBlockChange = useCallback((blockIdx, blockPatch) => {
     if (!onEdit) return;
-    const newBlocks = blocks.map((b, i) => i === blockIdx ? { ...b, ...blockPatch } : b);
-    onEdit({ blocks: newBlocks });
-  }, [onEdit, blocks]);
+    const [key, arr, j] = blockSlot(blockIdx);
+    onEdit({ [key]: arr.map((b, i) => i === j ? { ...b, ...blockPatch } : b) });
+  }, [onEdit, blocks, colsL, colsR]);
+
+  // Window listeners for a running tile drag: move = live reflow, up = one
+  // onEdit({blocks}) (one undo step), Esc / cancel / blur = no change.
+  const tileDragOn = tileDrag ? tileDrag.key : null;
+  useEffect(() => {
+    if (tileDragOn == null) return;
+    const move = (e) => {
+      const d = tileDragRef.current; if (!d) return;
+      const t = d.rects.findIndex((r) => e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom);
+      const cur = d.order.indexOf(d.from);
+      if (t < 0 || t === cur) return;
+      const order = d.order.slice(); order.splice(cur, 1); order.splice(t, 0, d.from);
+      setTileDrag({ ...d, order });
+    };
+    const cancel = () => setTileDrag(null);
+    const up = () => {
+      const d = tileDragRef.current;
+      setTileDrag(null);
+      const { slide: s, onEdit: edit } = tileDragLatest.current || {};
+      if (!d || !edit || !s || d.order.every((p, q) => p === q)) return;
+      // Fail closed if the slide changed during the drag.
+      const arr = s.blocks;
+      if (arr !== d.snap || !Array.isArray(arr) || d.idxs.some((i) => !arr[i] || arr[i].type !== "image")) return;
+      const next = arr.slice();
+      d.idxs.forEach((slotIdx, q) => { next[slotIdx] = arr[d.idxs[d.order[q]]]; });
+      edit({ blocks: next });
+    };
+    const key = (e) => { if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); cancel(); } };
+    const block = (e) => e.preventDefault();
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+    window.addEventListener("pointercancel", cancel);
+    window.addEventListener("blur", cancel);
+    window.addEventListener("keydown", key, true);
+    document.addEventListener("selectstart", block);
+    document.addEventListener("dragstart", block);
+    return () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      window.removeEventListener("pointercancel", cancel);
+      window.removeEventListener("blur", cancel);
+      window.removeEventListener("keydown", key, true);
+      document.removeEventListener("selectstart", block);
+      document.removeEventListener("dragstart", block);
+    };
+  }, [tileDragOn]);
 
   const handleBlockRemove = useCallback((blockIdx) => {
     if (!onEdit) return;
-    onEdit({ blocks: blocks.filter((_, i) => i !== blockIdx) });
-  }, [onEdit, blocks]);
+    const [key, arr, j] = blockSlot(blockIdx);
+    onEdit({ [key]: arr.filter((_, i) => i !== j) });
+  }, [onEdit, blocks, colsL, colsR]);
 
   useLayoutEffect(() => {
     const SCALE_FLOOR = 0.35;
@@ -4267,6 +5565,11 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
       inner.style.height = scaled && (isSplit || isCols)
         ? `${100 / scale}%`
         : (isSplit || (isCols && hasDirectColumnImage) ? "100%" : "auto");
+      // Unscaled, the inner box fills the slide (the same flex:1 the render gives
+      // it). Set it here too: a render still scaled from an earlier state has no
+      // flex yet, and then a flex-sized image grid would measure at its floor.
+      // (The shorthand resets flex-shrink, so it goes first.)
+      inner.style.flex = scaled ? "" : "1";
       inner.style.flexShrink = scaled && (isSplit || isCols) ? "0" : "";
       void inner.offsetHeight;
     };
@@ -4479,8 +5782,22 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
       // cap is computed only after the reciprocal final height is active.
       const contentEl = isSplit ? inner.querySelector("[data-split-content]") : null;
       const contentH = contentEl ? contentEl.scrollHeight : 0;
-      const ih = isSplit ? contentH : inner.scrollHeight;
+      // CR25: a stack with an image grid fills the slide exactly (the grid takes
+      // the free height). Measure its layout boxes, not scrollHeight: a block's
+      // entrance-animation offset would read as overflow and shrink the slide,
+      // and a shrunk slide collapses the grid to its floor.
+      const stackKids = isSplit ? [] : Array.from(inner.children);
+      const ih = isSplit ? contentH
+        : stackKids.some((c) => c.hasAttribute("data-image-grid-key"))
+          ? Math.max(0, ...stackKids.map((c) => c.offsetTop + c.offsetHeight))
+          : inner.scrollHeight;
       const finalScale = ih > availH && ih > 0 ? Math.max(availH / ih, SCALE_FLOOR) : 1;
+      // CR23: record each image grid's free box at the natural (unscaled) size.
+      // The box is flex-driven (it does not depend on the grid's column count),
+      // so it is a stable input for bestImageGridCols().
+      const boxes = {};
+      inner.querySelectorAll("[data-image-grid-key]").forEach((g) => { boxes[g.getAttribute("data-image-grid-key")] = [g.clientWidth, g.clientHeight]; });
+      setGridBoxes((prev) => JSON.stringify(prev) === JSON.stringify(boxes) ? prev : boxes);
       applyGeometry(inner, finalScale);
       let splitCap = null;
       if (isSplit && contentEl) {
@@ -4547,6 +5864,25 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
     };
   }, [layoutGeneration, requestedJustify]);
 
+  // CR23: learn the aspect ratio of each image once (cached by src), so a run of
+  // images can pick the column count that shows them largest. The cache is
+  // bounded, so it can evict the aspect of an image that is still on screen.
+  // Check on every render (no deps) and measure a missing src again, so an
+  // eviction never silently changes the grid of a slide on screen (HI3, the
+  // same class as GridCellImage's natural-size re-measure). aspectLoadsRef
+  // keeps one decode per src in flight.
+  const aspectLoadsRef = useRef(new Set());
+  const aspectLiveRef = useRef(true);
+  useEffect(() => { aspectLiveRef.current = true; return () => { aspectLiveRef.current = false; }; }, []);
+  useEffect(() => {
+    const loads = aspectLoadsRef.current;
+    const pending = new Set(blocks.filter((b) => b && b.type === "image" && typeof b.src === "string" && b.src && !IMAGE_ASPECT_CACHE.has(b.src) && !loads.has(b.src)).map((b) => b.src));
+    pending.forEach((src) => {
+      loads.add(src);
+      imageAspect(src).then((a) => { loads.delete(src); rememberImageAspect(src, a); if (aspectLiveRef.current) setAspectTick((t) => t + 1); });
+    });
+  });
+
   if (!blocks.length && !(slide.layout === "cols" && (Array.isArray(slide.L) || Array.isArray(slide.R)))) return null;
 
   // ━━━ Layout: split image blocks for side-by-side layouts ━━━━━━━━━━
@@ -4563,11 +5899,11 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
       title={b.link ? linkPreview(b.link, b.text || b.value || b.title) : undefined}
       data-pdf-link={b.link || undefined}
       onClick={b.link ? (e) => { e.stopPropagation(); openExternalLink(b.link); } : undefined}
-      onMouseEnter={() => setHoveredBlock(i)} onMouseLeave={() => { setHoveredBlock(null); setItemHovered(false); }}>
+      onMouseEnter={(e) => { setHoveredBlock(i); measureChromeRoom(e.currentTarget, i); }} onMouseLeave={() => { setHoveredBlock(null); setItemHovered(false); }}>
       {b.hidden && !presenting && <div style={{ position: "absolute", top: -6, left: -6, zIndex: 11, fontSize: 9, fontFamily: FONT.mono, fontWeight: 700, background: st.accent, color: "#fff", borderRadius: 4, padding: "0 4px", lineHeight: "14px", pointerEvents: "none" }} title="Hidden in presentation">🙈 hidden</div>}
       {editingBlockIdx === i && !presenting && <div style={{ position: "absolute", inset: -3, border: `2px solid ${st.accent}`, borderRadius: 6, pointerEvents: "none", zIndex: 10, boxShadow: `0 0 12px ${st.accent}40` }} />}
       {hoveredBlock === i && editingBlockIdx !== i && !presenting && <div style={{ position: "absolute", inset: -2, border: `1.5px dashed ${T.red}60`, borderRadius: 4, pointerEvents: "none", zIndex: 10 }} />}
-      {hoveredBlock === i && !itemHovered && !presenting && <div style={{ position: "absolute", top: -8, right: -8, display: "flex", gap: 3, zIndex: 11 }}>
+      {hoveredBlock === i && !itemHovered && !presenting && <div data-testid="block-hover-toolbar" data-chrome-inside={chromeFlip[i]?.bar ? "true" : undefined} style={{ position: "absolute", ...(chromeFlip[i]?.bar ? { top: 6, right: 6 + (chromeFlip[i]?.shift || 0) } : { top: -8, right: -8 + (chromeFlip[i]?.shift || 0) }), display: "flex", gap: 3, zIndex: 11 }}>
         {onBlockEdit && <button onClick={(e) => { e.stopPropagation(); setEditingBlockIdx(editingBlockIdx === i ? null : i); setBlockPrompt(""); setEditingLink(null); }} style={{ width: 18, height: 18, borderRadius: "50%", background: editingBlockIdx === i ? st.accent : T.bgPanel, border: `1px solid ${editingBlockIdx === i ? st.accent : T.border}`, color: editingBlockIdx === i ? "#fff" : T.textDim, fontSize: 9, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", lineHeight: 1, padding: 0, boxShadow: "0 2px 6px rgba(0,0,0,0.4)" }} title="Edit this block with AI">🎯</button>}
         <button onClick={(e) => { e.stopPropagation(); setEditingLink(editingLink === i ? null : i); setEditingBlockIdx(null); setCommentingBlockIdx(null); }} style={{ width: 18, height: 18, borderRadius: "50%", background: b.link ? T.accent : T.bgPanel, border: `1px solid ${b.link ? T.accent : T.border}`, color: b.link ? "#fff" : T.textDim, fontSize: 9, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", lineHeight: 1, padding: 0, boxShadow: "0 2px 6px rgba(0,0,0,0.4)" }} title={b.link ? `Link: ${b.link}` : "Add link"}>🔗</button>
         {externalDispatch && <button onClick={(e) => { e.stopPropagation(); setCommentingBlockIdx(commentingBlockIdx === i ? null : i); setCommentText(""); setEditingBlockIdx(null); setEditingLink(null); }} style={{ width: 18, height: 18, borderRadius: "50%", background: commentingBlockIdx === i ? T.amber : T.bgPanel, border: `1px solid ${commentingBlockIdx === i ? T.amber : T.border}`, color: commentingBlockIdx === i ? "#fff" : T.textDim, fontSize: 9, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", lineHeight: 1, padding: 0, boxShadow: "0 2px 6px rgba(0,0,0,0.4)" }} title="Add comment">💬</button>}
@@ -4575,25 +5911,25 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
         <button onClick={(e) => { e.stopPropagation(); handleBlockRemove(i); }} style={{ width: 18, height: 18, borderRadius: "50%", background: T.red, border: "none", color: "#fff", fontSize: 10, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", lineHeight: 1, padding: 0, boxShadow: "0 2px 6px rgba(0,0,0,0.4)" }}>✕</button>
       </div>}
       {/* Block edit popup */}
-      {editingBlockIdx === i && !presenting && <div onClick={(e) => e.stopPropagation()} style={{ position: "absolute", top: -36, right: 0, zIndex: 12, display: "flex", gap: 4, alignItems: "center", background: "rgba(10,15,28,0.95)", border: `1px solid ${st.accent}50`, borderRadius: 8, padding: "4px 8px", boxShadow: `0 4px 16px rgba(0,0,0,0.6), 0 0 0 1px ${st.accent}20`, backdropFilter: "blur(12px)" }}>
+      {editingBlockIdx === i && !presenting && <div data-testid="block-ai-popup" onClick={(e) => e.stopPropagation()} style={{ position: "absolute", top: (chromeFlip[i]?.pop ? (chromeFlip[i]?.bar ? 30 : 14) : -36), right: chromeFlip[i]?.shift || 0, zIndex: 12, display: "flex", gap: 4, alignItems: "center", background: "rgba(10,15,28,0.95)", border: `1px solid ${st.accent}50`, borderRadius: 8, padding: "4px 8px", boxShadow: `0 4px 16px rgba(0,0,0,0.6), 0 0 0 1px ${st.accent}20`, backdropFilter: "blur(12px)" }}>
         <span style={{ fontSize: 9, color: st.accent, flexShrink: 0 }}>🎯</span>
         <input autoFocus value={blockPrompt} onChange={(e) => setBlockPrompt(e.target.value)}
-          onKeyDown={(e) => { e.stopPropagation(); if (e.key === "Enter" && blockPrompt.trim() && !blockEditing) { e.preventDefault(); onBlockEdit(i, blockPrompt.trim()); } if (e.key === "Escape") { setEditingBlockIdx(null); setBlockPrompt(""); } }}
+          onKeyDown={(e) => { e.stopPropagation(); if (e.key === "Enter" && blockPrompt.trim() && !blockEditing) { e.preventDefault(); onBlockEdit(i, blockPrompt.trim(), blockSlot(i)); } if (e.key === "Escape") { setEditingBlockIdx(null); setBlockPrompt(""); } }}
           disabled={blockEditing}
           placeholder="What to change..."
           style={{ width: 220, padding: "3px 6px", fontSize: 10, fontFamily: FONT.body, background: "rgba(255,255,255,0.06)", color: "#fff", border: `1px solid rgba(255,255,255,0.1)`, borderRadius: 4, outline: "none" }} />
         {blockEditing
           ? <span style={{ fontSize: 11, animation: "spin 1.5s linear infinite", display: "inline-block", flexShrink: 0 }}>✨</span>
-          : <button onClick={() => { if (blockPrompt.trim()) onBlockEdit(i, blockPrompt.trim()); }} disabled={!blockPrompt.trim()} style={{ padding: "2px 8px", fontSize: 9, fontFamily: FONT.mono, fontWeight: 700, background: blockPrompt.trim() ? st.accent : "rgba(255,255,255,0.1)", color: "#fff", border: "none", borderRadius: 4, cursor: blockPrompt.trim() ? "pointer" : "default", opacity: blockPrompt.trim() ? 1 : 0.4, flexShrink: 0 }}>Go</button>}
+          : <button onClick={() => { if (blockPrompt.trim()) onBlockEdit(i, blockPrompt.trim(), blockSlot(i)); }} disabled={!blockPrompt.trim()} style={{ padding: "2px 8px", fontSize: 9, fontFamily: FONT.mono, fontWeight: 700, background: blockPrompt.trim() ? st.accent : "rgba(255,255,255,0.1)", color: "#fff", border: "none", borderRadius: 4, cursor: blockPrompt.trim() ? "pointer" : "default", opacity: blockPrompt.trim() ? 1 : 0.4, flexShrink: 0 }}>Go</button>}
         <button onClick={() => { setEditingBlockIdx(null); setBlockPrompt(""); }} style={{ background: "none", border: "none", color: "rgba(255,255,255,0.4)", cursor: "pointer", fontSize: 10, padding: 0, flexShrink: 0 }}>✕</button>
       </div>}
-      {editingLink === i && !presenting && <div onClick={(e) => e.stopPropagation()} style={{ position: "absolute", top: -32, right: 0, zIndex: 12, display: "flex", gap: 4, alignItems: "center", background: T.bgPanel, border: `1px solid ${T.border}`, borderRadius: 6, padding: "3px 6px", boxShadow: "0 4px 12px rgba(0,0,0,0.5)" }}>
+      {editingLink === i && !presenting && <div data-testid="block-link-popup" onClick={(e) => e.stopPropagation()} style={{ position: "absolute", top: (chromeFlip[i]?.pop ? (chromeFlip[i]?.bar ? 30 : 14) : -32), right: chromeFlip[i]?.shift || 0, zIndex: 12, display: "flex", gap: 4, alignItems: "center", background: T.bgPanel, border: `1px solid ${T.border}`, borderRadius: 6, padding: "3px 6px", boxShadow: "0 4px 12px rgba(0,0,0,0.5)" }}>
         <span style={{ fontSize: 9, color: T.textDim }}>🔗</span>
-        <input autoFocus defaultValue={b.link || ""} placeholder="https://..." onKeyDown={(e) => { e.stopPropagation(); if (e.key === "Enter") { const url = e.target.value.trim(); handleBlockChange(i, { link: url || undefined }); setEditingLink(null); } if (e.key === "Escape") setEditingLink(null); }} onBlur={(e) => { const url = e.target.value.trim(); handleBlockChange(i, { link: url || undefined }); setEditingLink(null); }} style={{ width: 200, padding: "2px 6px", fontSize: 10, fontFamily: FONT.mono, background: T.bg, color: T.text, border: `1px solid ${T.border}`, borderRadius: 4, outline: "none" }} />
+        <input autoFocus defaultValue={b.link || ""} placeholder="https://..." onKeyDown={(e) => { e.stopPropagation(); if (e.key === "Enter") { handleBlockChange(i, { link: linkFromInput(e.target.value) }); setEditingLink(null); } if (e.key === "Escape") setEditingLink(null); }} onBlur={(e) => { handleBlockChange(i, { link: linkFromInput(e.target.value) }); setEditingLink(null); }} style={{ width: 200, padding: "2px 6px", fontSize: 10, fontFamily: FONT.mono, background: T.bg, color: T.text, border: `1px solid ${T.border}`, borderRadius: 4, outline: "none" }} />
         {b.link && <button onClick={() => { handleBlockChange(i, { link: undefined }); setEditingLink(null); }} style={{ background: "none", border: "none", color: T.red, fontSize: 10, cursor: "pointer", padding: 0 }}>✕</button>}
       </div>}
       {/* Block comment popup */}
-      {commentingBlockIdx === i && !presenting && externalDispatch && <div onClick={(e) => e.stopPropagation()} style={{ position: "absolute", top: -36, right: 0, zIndex: 12, display: "flex", gap: 4, alignItems: "center", background: "rgba(10,15,28,0.95)", border: `1px solid ${T.amber}50`, borderRadius: 8, padding: "4px 8px", boxShadow: `0 4px 16px rgba(0,0,0,0.6), 0 0 0 1px ${T.amber}20`, backdropFilter: "blur(12px)" }}>
+      {commentingBlockIdx === i && !presenting && externalDispatch && <div data-testid="block-comment-popup" onClick={(e) => e.stopPropagation()} style={{ position: "absolute", top: (chromeFlip[i]?.pop ? (chromeFlip[i]?.bar ? 30 : 14) : -36), right: chromeFlip[i]?.shift || 0, zIndex: 12, display: "flex", gap: 4, alignItems: "center", background: "rgba(10,15,28,0.95)", border: `1px solid ${T.amber}50`, borderRadius: 8, padding: "4px 8px", boxShadow: `0 4px 16px rgba(0,0,0,0.6), 0 0 0 1px ${T.amber}20`, backdropFilter: "blur(12px)" }}>
         <span style={{ fontSize: 9, flexShrink: 0 }}>💬</span>
         <input autoFocus value={commentText} onChange={(e) => setCommentText(e.target.value)}
           onKeyDown={(e) => { e.stopPropagation(); if (e.key === "Enter" && commentText.trim()) { e.preventDefault(); externalDispatch({ type: "ADD_COMMENT", itemId, slideIndex: index, text: commentText.trim(), blockIndex: i }); setCommentText(""); setCommentingBlockIdx(null); } if (e.key === "Escape") { setCommentingBlockIdx(null); setCommentText(""); } }}
@@ -4604,8 +5940,8 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
       </div>}
       {/* Comment count badge (edit mode, not review) */}
       {!reviewMode && !presenting && hoveredBlock !== i && externalDispatch && (() => { const cc = slideComments.filter((c) => c.blockIndex === i && c.status === "open"); return cc.length > 0 ? <div style={{ position: "absolute", top: -2, left: -2, minWidth: 14, height: 14, borderRadius: 7, background: T.amber, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 7, fontFamily: FONT.mono, fontWeight: 700, color: "#fff", padding: "0 3px", zIndex: 5, boxShadow: "0 2px 4px rgba(0,0,0,0.3)" }} title={`${cc.length} comment${cc.length > 1 ? "s" : ""}`}>💬{cc.length > 1 ? cc.length : ""}</div> : null; })()}
-      {b.link && hoveredBlock !== i && !presenting && <div onClick={(e) => { e.stopPropagation(); openExternalLink(b.link); }} style={{ position: "absolute", top: -2, right: -2, width: 14, height: 14, borderRadius: "50%", background: T.accent + "80", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 7, zIndex: 5, cursor: "pointer" }} title={b.link}>🔗</div>}
-      {b.link && presenting && <div style={{ position: "absolute", top: -2, right: -2, padding: "2px 5px", borderRadius: 4, background: T.accent, fontSize: 9, color: "#fff", zIndex: 12, pointerEvents: "none", opacity: hoveredBlock === i ? 1 : 0.3, transition: "opacity 0.2s", boxShadow: "0 2px 6px rgba(0,0,0,0.4)" }}>🔗</div>}
+      {b.link && hoveredBlock !== i && !presenting && <LinkBadge fallback={{ top: -2, right: -2 }} label={b.text || b.value || b.title} onClick={(e) => { e.stopPropagation(); openExternalLink(b.link); }} style={{ width: 14, height: 14, borderRadius: "50%", background: T.accent + "80", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 7, zIndex: 5, cursor: "pointer" }} title={b.link}>🔗</LinkBadge>}
+      {b.link && presenting && <LinkBadge fallback={{ top: -2, right: -2 }} label={b.text || b.value || b.title} style={{ padding: "2px 5px", borderRadius: 4, background: T.accent, fontSize: 9, color: "#fff", zIndex: 12, pointerEvents: "none", opacity: hoveredBlock === i ? 1 : 0.3, transition: "opacity 0.2s", boxShadow: "0 2px 6px rgba(0,0,0,0.4)" }}>🔗</LinkBadge>}
       <RenderBlock block={b} staggerIdx={i + 1} slideTheme={st} editable={b.link ? false : editable} slideAlign={align} fontScale={fontScale} presenting={presenting}
         onChange={onEdit ? (patch) => handleBlockChange(i, patch) : undefined} />
     </div>
@@ -4626,8 +5962,31 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
   };
 
   // Render a block followed by its inline comments
-  const renderBlockWithComments = (b, i) => {
-    const block = renderBlockItem(b, i);
+  const renderBlockWithComments = (b0, i) => {
+    // Story / caption-chip flags go on top-level image blocks only, after
+    // sanitization (renderer-private "_" keys). Without story and outside the
+    // editor no flag is set, so the render is unchanged.
+    let b = b0, jump = 0;
+    if (b0 && b0.type === "image") {
+      const sn = storyActive ? storyNumOf.get(i) : undefined;
+      const nav = !!(sn && onStoryJump && b0.src && !b0.link);
+      const chip = !!(editable && onEdit && !presenting && !presentSurface);
+      if (sn || nav || chip) b = { ...b0, ...(sn ? { _storyN: sn } : {}), ...(nav ? { _storyNav: true } : {}), ...(chip ? { _captionChip: true } : {}) };
+      if (nav) jump = sn;
+    }
+    let block = renderBlockItem(b, i);
+    if (jump) {
+      // A click on the tile image (not on its caption or editor chrome) jumps
+      // to that story image. Capture phase, so ZoomWrap-style handlers below
+      // never see it. Adds a handler only, no DOM attribute.
+      block = React.cloneElement(block, { onClickCapture: (e) => {
+        const t = e.target;
+        if (!t || typeof t.closest !== "function" || !t.closest("[data-image-grid-media], img")) return;
+        if (t.closest("button, [contenteditable='true'], [data-testid='caption-chip']")) return;
+        e.stopPropagation(); e.preventDefault();
+        onStoryJump(jump);
+      } });
+    }
     const comments = renderInlineComments(i);
     if (!comments) return [block];
     return [block, ...comments];
@@ -4651,24 +6010,63 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
     // Belt-and-braces: ingress already clamps imageCols to an integer 1..6
     // (SLIDE_NUMERIC_BOUNDS), but this value drives a CSS grid track count, so
     // re-clamp at the sink for any slide object that reached here unsanitized.
-    const cols = slide.imageCols ? Math.min(6, Math.max(1, slide.imageCols | 0)) : gridColsFor(runLen, region);
-    const rows = Math.ceil(runLen / cols);
-    const lastRowCount = runLen - (rows - 1) * cols;
-    const incomplete = lastRowCount < cols;
     const gap = slide.gap || 12;
+    const gridKey = String(idxs[0]);
+    const box = alignWithinColumn ? null : gridBoxes[gridKey];
+    // CR23: the packing comes from imageGridPlan() — the same function the paste
+    // layout chooser uses — so what paste predicts is what renders. Each cell is
+    // placed absolutely from the plan (row height = its share hw, cell width = its
+    // share f of the row width after gaps; a short row is centered). The cells
+    // stay flat siblings keyed by block, so a new plan moves them, never remounts.
+    // Editor tile drag: while a drag runs, slot q shows block idxs[order[q]], so
+    // the plan reflows live. DOM order stays idxs (cells only move), so a drag
+    // never re-inserts nodes. Without a drag, seq === idxs (render unchanged).
+    const drag = tileDrag && tileDrag.key === gridKey && tileDrag.idxs.length === runLen && tileDrag.idxs.every((v, q) => v === idxs[q]) ? tileDrag : null;
+    const seq = drag ? drag.order.map((p) => idxs[p]) : idxs;
+    const canReorder = !!(editable && onEdit && !presenting && !presentSurface && runLen >= 2 && !isSoloImage);
+    // A story-active grid gives every cell one uniform caption row (_storyRow),
+    // so tiles with and without a caption align. Other grids: no flag, unchanged.
+    const storyRow = storyActive && runLen >= 2 && idxs.some((bi) => storyNumOf.has(bi));
+    const maxW = seq.map((bi) => { const z = IMAGE_NATURAL_SIZE.get(blocks[bi].src); return z && z.w > 0 ? z.w * GRID_IMG_MAX_UPSCALE : 0; });
+    const plan = imageGridPlan(seq.map((bi) => IMAGE_ASPECT_CACHE.get(blocks[bi].src)), box?.[0], box?.[1], gap, gridColsFor(runLen, region), slide.imageCols ? Math.min(6, Math.max(1, slide.imageCols | 0)) : 0, maxW);
+    const rows = plan.rows.length;
+    const hwSum = plan.rows.reduce((t, r) => t + r.hw, 0) || 1, gapsH = gap * (rows - 1);
+    const len = (pct, px) => `calc(${pct * 100}% + ${px}px)`;
+    const cellPos = [];
+    let cumH = 0;
+    plan.rows.forEach((row, r) => {
+      const h = row.hw / hwSum, sumF = row.cells.reduce((t, c) => t + c.f, 0), rowGaps = gap * row.gc;
+      let cumF = 0;
+      // A short row also has fewer gaps than rowGaps reserves: split the unused
+      // gaps (gc - (cells - 1)) evenly on both sides, so the row centers exactly.
+      const spare = gap * (row.gc - (row.cells.length - 1)) / 2;
+      row.cells.forEach((c, k) => {
+        cellPos[c.i] = {
+          top: len(cumH, gap * r - cumH * gapsH), height: len(h, -h * gapsH),
+          left: len((1 - sumF) / 2 + cumF, gap * k + spare - rowGaps * ((1 - sumF) / 2 + cumF)), width: len(c.f, -c.f * rowGaps),
+        };
+        cumF += c.f;
+      });
+      cumH += h;
+    });
+    // CR25: a full-width run yields height to the other blocks (flex basis 0), but
+    // it keeps a small floor so the fit measurement still reserves room for it
+    // and it never collapses to nothing. The floor is one row, not one per plan
+    // row: the plan is made for the box it gets, so a per-row floor fed back into
+    // the box and made the text scale down instead of the images (HI2).
+    // pasteLayoutArea uses the same floor.
+    const minGridH = region === "full" ? 72 : 0;
     // Grid images are absolute-fill cells, so they have no intrinsic grid
     // height. Use one balanced 140px row per grid row only when the author
     // requests alignment. The default path still fills all available height.
     const gridHeight = alignWithinColumn ? Math.min(splitImgMaxH || rows * 140, rows * 140) : null;
     return (
-      <div key={`__imgrid-${idxs[0]}`} data-testid="image-grid" data-image-grid={region} data-image-count={runLen}
-        style={{ display: "grid", gridTemplateColumns: `repeat(${cols * 2}, minmax(0, 1fr))`, gridAutoRows: "minmax(0, 1fr)", gap, flex: gridHeight == null ? 1 : "0 0 auto", height: gridHeight == null ? undefined : gridHeight, maxHeight: "100%", minHeight: 0, minWidth: 0, width: "100%", alignItems: "stretch" }}>
-        {idxs.map((bi, k) => {
-          const firstOfLastRow = k === (rows - 1) * cols;
-          const gridColumn = (incomplete && firstOfLastRow)
-            ? `${cols - lastRowCount + 1} / span 2`
-            : "span 2";
-          const rendered = renderBlockWithComments({ ...blocks[bi], _gridCell: true }, bi);
+      <div key={`__imgrid-${idxs[0]}`} data-testid="image-grid" data-image-grid={region} data-image-count={runLen} data-image-grid-key={gridKey} data-image-cols={plan.cols} data-image-rows={rows}
+        style={{ position: "relative", flex: gridHeight == null ? "1 1 0" : "0 0 auto", height: gridHeight == null ? undefined : gridHeight, maxHeight: "100%", minHeight: minGridH, minWidth: 0, width: "100%" }}>
+        {idxs.map((bi, p) => {
+          const k = drag ? drag.order.indexOf(p) : p;
+          // A solo image fills the slide: keep its _solo flag, so it is not click-to-zoom.
+          const rendered = renderBlockWithComments({ ...blocks[bi], _gridCell: true, ...(storyRow ? { _storyRow: true } : {}), ...(isSoloImage ? { _solo: true } : {}), ...(isSoloImage && blocks[bi].rounded == null ? { rounded: 0 } : {}) }, bi);
           const [blockEl, ...rest] = rendered;
           // Make the block wrapper fill its cell height so the image (height:100%)
           // and objectFit:contain letterbox uniformly across mixed aspect ratios.
@@ -4676,8 +6074,21 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
             style: { ...(blockEl.props.style || {}), display: "flex", flexDirection: "column", flex: 1, minHeight: 0, minWidth: 0, width: "100%" },
           });
           return (
-            <div key={`__imgcell-${bi}`} data-testid="image-grid-cell" style={{ gridColumn, display: "flex", flexDirection: "column", minWidth: 0, minHeight: 0 }}>
+            <div key={`__imgcell-${bi}`} data-testid="image-grid-cell"
+              onMouseEnter={canReorder ? () => setHoverCell(bi) : undefined} onMouseLeave={canReorder ? () => setHoverCell((h) => (h === bi ? null : h)) : undefined}
+              style={{ position: "absolute", ...cellPos[k], display: "flex", flexDirection: "column", minWidth: 0, minHeight: 0, ...(drag ? { transition: "top 0.18s ease, left 0.18s ease, width 0.18s ease, height 0.18s ease" } : {}), ...(drag && drag.from === p ? { zIndex: 3, opacity: 0.8 } : {}) }}>
               {filled}{rest}
+              {canReorder && (drag ? drag.from === p : hoverCell === bi) && <div data-no-pdf="" data-testid="tile-drag-handle" title="Drag to reorder"
+                onPointerDown={(e) => {
+                  if (e.button !== 0) return;
+                  e.preventDefault(); e.stopPropagation();
+                  const grid = e.currentTarget.closest('[data-testid="image-grid"]');
+                  const cells = grid ? Array.from(grid.children).filter((c) => c.getAttribute("data-testid") === "image-grid-cell") : [];
+                  if (cells.length !== runLen) return;
+                  setTileDrag({ key: gridKey, idxs: idxs.slice(), from: p, order: idxs.map((_, q) => q), rects: cells.map((c) => c.getBoundingClientRect()), snap: slide.blocks });
+                }}
+                onClick={(e) => e.stopPropagation()} onMouseDown={(e) => e.stopPropagation()}
+                style={{ position: "absolute", top: 6, left: "50%", transform: "translateX(-50%)", zIndex: 12, width: 24, height: 18, borderRadius: 4, background: "rgba(15,23,42,0.78)", color: "#e2e8f0", fontSize: 13, lineHeight: "18px", textAlign: "center", cursor: drag ? "grabbing" : "grab", touchAction: "none", userSelect: "none", boxShadow: "0 2px 6px rgba(0,0,0,0.35)" }}>⠿</div>}
             </div>
           );
         })}
@@ -4694,7 +6105,10 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
       if (blocks[i].type === "image") {
         let j = i;
         while (j < blocks.length && blocks[j].type === "image") j++;
-        if (j - i >= 2) {
+        // CR24/CR25: a lone stacked image also takes the grid path (unless the
+        // author pinned its width), so it fills the free height below/above the
+        // text and shrinks, instead of pushing the other blocks off the slide.
+        if (j - i >= 2 || blocks[i].maxWidth == null) {
           const idxs = [];
           for (let k = i; k < j; k++) idxs.push(k);
           out.push(renderImageGrid(idxs, "full"));
@@ -4764,18 +6178,23 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
         : <div key="__images" data-split-image style={{ flex: slide.imageFlex || 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: splitImageJustify, gap: slide.gap || 12, minWidth: 0, height: "100%" }}>{imageIdxs.flatMap((i) => renderBlockWithComments(splitImgMaxH != null && blocks[i].maxHeight == null ? { ...blocks[i], maxHeight: splitImgMaxH } : blocks[i], i))}</div>;
       return imageOnRight ? [contentCol, imageCol] : [imageCol, contentCol];
     }
+    // CR24: a solo image goes through the one-image grid path (absolute fill of a
+    // flex-sized cell), or it keeps its natural height and a wide image sits at
+    // the top of an otherwise empty slide. It stays full-bleed (pad 0, square).
+    if (isSoloImage && blocks[0].maxWidth == null) return [renderImageGrid([0], "full")];
     if (isSoloImage) return renderBlockWithComments({ ...blocks[0], _solo: true }, 0);
     return renderStackWithImageGrids();
   };
 
   return (
     <SlideErrorBoundary>
-      <div ref={outerRef} style={{ height: "100%", padding: pad, position: "relative", overflow: "visible", boxSizing: "border-box", display: "flex", flexDirection: "column", ...bgStyle }}>
-        <div ref={innerRef} style={{ position: "relative", zIndex: 2, display: "flex", flexDirection: isSplit ? "row" : "column", justifyContent: isSplit ? "stretch" : fitJustify, alignItems: isSplit ? "stretch" : (align === "center" ? "center" : "stretch"), textAlign: align, gap: isSplit ? (slide.splitGap || 32) : (slide.gap || 12), transform: fitScale < 1 ? `scale(${fitScale})` : "none", transformOrigin: "top left", width: fitScale < 1 ? `${100 / fitScale}%` : "100%", height: fitScale < 1 ? `${100 / fitScale}%` : "100%", maxWidth: fitScale < 1 ? `${100 / fitScale}%` : "100%", flex: fitScale < 1 ? undefined : 1, flexShrink: fitScale < 1 && (isSplit || isCols) ? 0 : undefined, boxSizing: "border-box" }}>
+      <div ref={outerRef} data-vela-slide-content="" style={{ height: "100%", padding: pad, position: "relative", overflow: "visible", boxSizing: "border-box", display: "flex", flexDirection: "column", ...bgStyle }}>
+        <div ref={innerRef} style={{ position: "relative", zIndex: 2, display: "flex", flexDirection: isSplit ? "row" : "column", justifyContent: isSplit ? "stretch" : fitJustify, alignItems: isSplit ? "stretch" : (align === "center" ? "center" : "stretch"), textAlign: align, gap: isSplit ? (slide.splitGap || 32) : (slide.gap || 12), transform: fitScale < 1 ? `scale(${fitScale})` : "none", transformOrigin: "top left", width: fitScale < 1 ? `${100 / fitScale}%` : "100%", height: fitScale < 1 ? `${100 / fitScale}%` : "100%", maxWidth: fitScale < 1 ? `${100 / fitScale}%` : "100%", flex: fitScale < 1 ? undefined : 1, flexShrink: fitScale < 1 && (isSplit || isCols) ? 0 : undefined, boxSizing: "border-box", ...(storyZoomed ? { visibility: "hidden" } : {}) }}>
           <ItemHoverContext.Provider value={setItemHovered}>
             {renderBlocks()}
           </ItemHoverContext.Provider>
         </div>
+        {storyActive && story && <StoryZoomLayer key={story.key} items={storyList} story={story} animate={!!storyAnimate} onJump={onStoryJump} onZoomOut={onStoryZoomOut} hostRef={outerRef} pad={pad} accent={cssColor(slide.accent) || T.accent} />}
         {/* Slide-level comments (no blockIndex) — top-right */}
         {reviewMode && externalDispatch && (() => {
           const unanchored = slideComments.filter((c) => c.blockIndex == null);
@@ -4951,7 +6370,8 @@ function innerReducer(state, a) {
     // sanitizeSlide). The STARTUP_PATCH.slides path dispatches raw deck JSON here, making
     // those zero-click. Sanitize the merged slide through the canonical sanitizeSlide (a
     // fresh object — no shared-ref mutation), matching the LOAD_LANES backstop.
-    case "UPDATE_SLIDE": _dirtyMods.add(a.id); return mapItems((i) => i.id === a.id ? { ...i, slides: i.slides.map((s, idx) => { if (idx !== a.index) return s; const p = a.patch || {}; const updated = a.merge ? { ...s, ...p } : { title: s.title, duration: s.duration, ...p }; if (s.timeLock && !a.merge && !("timeLock" in p)) { updated.timeLock = true; updated.duration = s.duration; } return sanitizeSlide(updated) || s; }) } : i);
+    // A replace (merge:false, e.g. an AI rewrite of the blocks) keeps story mode unless the patch sets `story`.
+    case "UPDATE_SLIDE": _dirtyMods.add(a.id); return mapItems((i) => i.id === a.id ? { ...i, slides: i.slides.map((s, idx) => { if (idx !== a.index) return s; const p = a.patch || {}; const updated = a.merge ? { ...s, ...p } : { title: s.title, duration: s.duration, ...p }; if (s.timeLock && !a.merge && !("timeLock" in p)) { updated.timeLock = true; updated.duration = s.duration; } if (s.story === true && !a.merge && !("story" in p)) updated.story = true; return sanitizeSlide(updated) || s; }) } : i);
     case "REMOVE_SLIDE": _dirtyMods.add(a.id); return mapItems((i) => i.id === a.id ? { ...i, slides: i.slides.filter((_, idx) => idx !== a.index) } : i);
     // Multi-slide delete as a SINGLE history-producing reduce (PowerPoint parity:
     // one gesture = one Ctrl+Z). Removes all `indices` from one module at once.
@@ -4960,10 +6380,14 @@ function innerReducer(state, a) {
     // at `index`, order preserved. Single-slide paste can route through this too.
     case "INSERT_SLIDES": { _dirtyMods.add(a.id); const add = (Array.isArray(a.slides) ? a.slides : []).map(sanitizeSlide).filter(Boolean); if (!add.length) return state; return mapItems((i) => { if (i.id !== a.id) return i; const ns = [...i.slides]; ns.splice(a.index, 0, ...add); return { ...i, slides: ns }; }); }
     case "TOGGLE_SLIDE_HIDDEN": _dirtyMods.add(a.id); return mapItems((i) => i.id === a.id ? { ...i, slides: i.slides.map((s, idx) => idx === a.index ? (s.hidden ? (() => { const c = { ...s }; delete c.hidden; return c; })() : { ...s, hidden: true }) : s) } : i);
+    // CR07: editor review mark. Undoable like hidden; the review-cycle toggle itself is SlidePanel view state.
+    case "TOGGLE_SLIDE_REVIEWED": _dirtyMods.add(a.id); return mapItems((i) => i.id === a.id ? { ...i, slides: i.slides.map((s, idx) => idx === a.index ? (s.reviewed ? (() => { const c = { ...s }; delete c.reviewed; return c; })() : { ...s, reviewed: true }) : s) } : i);
     case "DUPLICATE_SLIDE": _dirtyMods.add(a.id); return mapItems((i) => { if (i.id !== a.id || !i.slides[a.index]) return i; const dup = JSON.parse(JSON.stringify(i.slides[a.index])); const ns = [...i.slides]; ns.splice(a.index + 1, 0, dup); return { ...i, slides: ns }; });
     case "MOVE_SLIDE": _dirtyMods.add(a.id); return mapItems((i) => { if (i.id !== a.id) return i; const ns = [...i.slides]; const t = a.from + a.dir; if (t < 0 || t >= ns.length) return i; [ns[a.from], ns[t]] = [ns[t], ns[a.from]]; return { ...i, slides: ns }; });
     case "REORDER_SLIDE": _dirtyMods.add(a.id); return mapItems((i) => { if (i.id !== a.id) return i; const ns = [...i.slides]; const [moved] = ns.splice(a.from, 1); ns.splice(a.to, 0, moved); return { ...i, slides: ns }; });
-    case "MOVE_SLIDE_TO_MODULE": { let slide = null; _dirtyMods.add(a.fromId); _dirtyMods.add(a.toId); return { ...state, lanes: state.lanes.map((l) => ({ ...l, items: l.items.map((i) => { if (i.id === a.fromId) { slide = i.slides[a.index]; return { ...i, slides: i.slides.filter((_, idx) => idx !== a.index) }; } return i; }).map((i) => { if (i.id === a.toId && slide) { if (a.toIndex != null) { const _ns = [...i.slides]; _ns.splice(a.toIndex, 0, slide); return { ...i, slides: _ns }; } return { ...i, slides: [...i.slides, slide] }; } return i; }) })), selectedId: a.toId, slideIndex: a.toIndex != null ? a.toIndex : (() => { for (const l of state.lanes) { const it = l.items.find((i) => i.id === a.toId); if (it) return it.slides?.length || 0; } return 0; })() }; }
+    // Remove from ALL lanes first, then insert: a one-pass map lost the slide when
+    // the target section sat in an earlier lane than the source (CR21).
+    case "MOVE_SLIDE_TO_MODULE": { let slide = null; _dirtyMods.add(a.fromId); _dirtyMods.add(a.toId); return { ...state, lanes: state.lanes.map((l) => ({ ...l, items: l.items.map((i) => { if (i.id === a.fromId) { slide = i.slides[a.index]; return { ...i, slides: i.slides.filter((_, idx) => idx !== a.index) }; } return i; }) })).map((l) => ({ ...l, items: l.items.map((i) => { if (i.id === a.toId && slide) { if (a.toIndex != null) { const _ns = [...i.slides]; _ns.splice(a.toIndex, 0, slide); return { ...i, slides: _ns }; } return { ...i, slides: [...i.slides, slide] }; } return i; }) })), selectedId: a.toId, slideIndex: a.toIndex != null ? a.toIndex : (() => { for (const l of state.lanes) { const it = l.items.find((i) => i.id === a.toId); if (it) return it.slides?.length || 0; } return 0; })() }; }
     // Multi-slide move to another module as a SINGLE reduce (one undo). Gathers the
     // slides at `indices` (ascending, order preserved) from fromId, drops them all,
     // then inserts them into toId at `toIndex` (or appends). Undo reverses the whole
@@ -4977,7 +6401,7 @@ function innerReducer(state, a) {
       return { ...state, lanes: state.lanes.map((l) => ({ ...l, items: l.items.map((i) => {
         if (i.id === a.fromId) { movedSlides = idxs.map((ix) => i.slides[ix]).filter(Boolean); return { ...i, slides: i.slides.filter((_, ix) => !drop.has(ix)) }; }
         return i;
-      }).map((i) => {
+      }) })).map((l) => ({ ...l, items: l.items.map((i) => {
         if (i.id === a.toId && movedSlides.length) {
           if (a.toIndex != null) { const _ns = [...i.slides]; _ns.splice(a.toIndex, 0, ...movedSlides); return { ...i, slides: _ns }; }
           return { ...i, slides: [...i.slides, ...movedSlides] };
@@ -5973,7 +7397,7 @@ const CANVAS_RULES = `## CANVAS
 The slide renders at 960×540px (16:9). Content MUST fit within this space. Use padding "36px 48px" as baseline. Do NOT overfill — fewer blocks with better spacing beats cramming content.`;
 
 function buildDesignCtx(branding, guidelines) {
-  const brandingCtx = branding?.enabled ? `\nBranding overlay active: accent bar (top, ${branding.accentHeight || 4}px), footer bar (bottom, 28px). Leave extra padding. Match accent: ${branding.accentColor}.` : "";
+  const brandingCtx = branding?.enabled ? `\nBranding overlay active: accent bar (top, ${branding.accentHeight ?? 4}px), footer bar (bottom, 28px). Leave extra padding. Match accent: ${branding.accentColor}.` : "";
   const guidelinesCtx = guidelines?.trim() ? `\n\n## MANDATORY SLIDE GUIDELINES\nThe user has set these rules for ALL slides. Follow them strictly:\n${guidelines.trim()}\n---` : "";
   const guidelinesReminder = guidelines?.trim() ? `\n\n## ⚠️ SLIDE RULES REMINDER\n${guidelines.trim()}\nApply these rules. The screenshot may show a different style — follow these rules instead.` : "";
   return { brandingCtx, guidelinesCtx, guidelinesReminder };
@@ -6069,9 +7493,10 @@ ${DESIGN_PROMPT_FOOTER}`;
   return result;
 }
 
-async function blockEditSlide(slideJson, blockIndex, userPrompt, conceptTitle, slideNum, totalSlides, branding, guidelines) {
+// key: the slide array that holds the block — "blocks", or "L"/"R" for a cols slide.
+async function blockEditSlide(slideJson, blockIndex, userPrompt, conceptTitle, slideNum, totalSlides, branding, guidelines, key = "blocks") {
   const { brandingCtx, guidelinesCtx } = buildDesignCtx(branding, guidelines);
-  const block = slideJson.blocks[blockIndex];
+  const block = slideJson[key][blockIndex];
   const blockDesc = block.type + (block.text ? `: "${block.text.slice(0, 60)}"` : block.title ? `: "${block.title.slice(0, 60)}"` : block.label ? `: "${block.label.slice(0, 60)}"` : "");
   const sysPrompt = `You are Vera, an expert slide block editor.
 
@@ -6079,7 +7504,7 @@ async function blockEditSlide(slideJson, blockIndex, userPrompt, conceptTitle, s
 Edit ONE block in a slide. Return ONLY that block's JSON — NOT the full slide.
 
 ## TARGET BLOCK
-Index ${blockIndex}, type "${block.type}" — ${blockDesc}
+${key === "blocks" ? "Index" : `Column "${key}" index`} ${blockIndex}, type "${block.type}" — ${blockDesc}
 
 ## CRITICAL RULES
 - Return ONLY the modified block object as JSON. Example: {"type":"heading","text":"New Title","size":"2xl"}
@@ -6098,10 +7523,11 @@ ${ICON_LIST}`;
   if (!result) throw new Error("Failed to parse block edit response");
 
   // Safeguard: if AI returned a full slide (has "blocks" array), extract the target block
-  if (result.blocks && Array.isArray(result.blocks) && !result.type) {
+  const fromSlide = !result.type && [result[key], result.blocks].find(Array.isArray);
+  if (fromSlide) {
     console.warn("blockEditSlide: AI returned full slide, extracting block", blockIndex);
-    const extracted = result.blocks[blockIndex];
-    if (extracted) result = extracted; else result = result.blocks[0];
+    const extracted = fromSlide[blockIndex];
+    if (extracted) result = extracted; else result = fromSlide[0];
   }
 
   // Handle single block or array of blocks (for split operations)
@@ -6707,7 +8133,7 @@ function computeSlideLayoutStats(slideEl) {
 }
 
 // ━━━ Virtual Slide ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-function VirtualSlide({ slide, index, total, innerRef, branding, editable, onEdit, mode = "fit-width", onBlockEdit, blockEditing, fontScale, virtualW, virtualH, bordered, reviewMode, itemId, dispatch: externalDispatch, displayIndex, displayTotal, forceEdit }) {
+function VirtualSlide({ slide, index, total, innerRef, branding, editable, onEdit, mode = "fit-width", onBlockEdit, blockEditing, fontScale, virtualW, virtualH, bordered, reviewMode, itemId, dispatch: externalDispatch, displayIndex, displayTotal, forceEdit, story, storyAnimate, onStoryJump, onStoryZoomOut }) {
   const outerRef = useRef(null);
   const isFill = mode === "fill";
 
@@ -6768,6 +8194,10 @@ function VirtualSlide({ slide, index, total, innerRef, branding, editable, onEdi
   const bg = cssColor(slide?.bg) || cssGradient(slide?.bgGradient) || T.slideBg;
   const isFullscreen = mode === "fit-viewport" || isFill;
   const aspectRatio = `${vw}/${vh}`;
+  // The Present surface (fullscreen, not the editor's bordered viewport). It
+  // stays a present surface with presentEdit on, so editor-only chrome such as
+  // the caption chip and tile drag never shows there.
+  const presentSurface = isFullscreen && !bordered;
 
   return (
     <div ref={outerRef} style={isFullscreen
@@ -6780,7 +8210,8 @@ function VirtualSlide({ slide, index, total, innerRef, branding, editable, onEdi
         transform: isFullscreen ? `translate(${offset.x}px, ${offset.y}px) scale(${scale})` : `scale(${scale})`,
         transformOrigin: "top left", background: bg, position: "absolute", top: 0, left: 0,
       }}>
-        {slide && <SlideContent key={`${index}-${vw}-${vh}`} slide={slide} index={index} total={total} branding={branding} editable={editable} onEdit={onEdit} presenting={((mode === "fit-viewport" || isFill) && !bordered) && !forceEdit} onBlockEdit={onBlockEdit} blockEditing={blockEditing} fontScale={fontScale} reviewMode={reviewMode} itemId={itemId} dispatch={externalDispatch} displayIndex={displayIndex} displayTotal={displayTotal} />}
+        {slide && <SlideContent key={`${index}-${vw}-${vh}`} slide={slide} index={index} total={total} branding={branding} editable={editable} onEdit={onEdit} presenting={((mode === "fit-viewport" || isFill) && !bordered) && !forceEdit} onBlockEdit={onBlockEdit} blockEditing={blockEditing} fontScale={fontScale} reviewMode={reviewMode} itemId={itemId} dispatch={externalDispatch} displayIndex={displayIndex} displayTotal={displayTotal}
+          story={story} storyAnimate={storyAnimate === undefined ? presentSurface : !!storyAnimate} onStoryJump={onStoryJump} onStoryZoomOut={onStoryZoomOut} presentSurface={presentSurface} />}
       </div>
     </div>
   );
@@ -6805,7 +8236,7 @@ function ScopeSelector({ icon, scope, setScope, concept, slideIndex, slides, cur
     </div>
   );
 }
-function BrandingPanel({ branding, guidelines, dispatch, isMobile }) {
+function BrandingPanel({ branding, guidelines, dispatch, isMobile, docked, onClose }) {
   const b = branding || defaultBranding;
   const [guidelinesOpen, setGuidelinesOpen] = useState(!!guidelines?.trim());
   const set = (patch) => {
@@ -6831,19 +8262,25 @@ function BrandingPanel({ branding, guidelines, dispatch, isMobile }) {
   const inp = (extra = {}) => ({ flex: 1, padding: "3px 6px", fontSize: 10, fontFamily: FONT.body, background: T.bgInput, border: `1px solid ${T.border}`, borderRadius: 3, color: T.text, outline: "none", minWidth: 0, ...extra });
 
   return (
-    <div data-testid="branding-panel" style={{ padding: "8px 12px", borderBottom: `1px solid ${T.border}`, background: T.accent + "08" }}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+    // docked: right-side properties pane (CR09) — fixed width, full editor
+    // height, own scroll, sticky header with a close control. Undocked (mobile)
+    // keeps the original full-width strip above the canvas.
+    <div data-testid="branding-panel" data-docked={docked ? "right" : undefined} style={docked
+      ? { width: 300, flexShrink: 0, height: "100%", overflowY: "auto", boxSizing: "border-box", padding: "0 14px 12px", borderLeft: `1px solid ${T.border}`, background: T.bgPanel }
+      : { padding: "8px 12px", borderBottom: `1px solid ${T.border}`, background: T.accent + "08" }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 8, ...(docked ? { position: "sticky", top: 0, zIndex: 1, background: T.bgPanel, padding: "10px 0 8px", borderBottom: `1px solid ${T.border}` } : {}) }}>
         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
           <span style={{ fontSize: 13 }}>🎨</span>
           <span style={{ fontFamily: FONT.mono, fontSize: 10, fontWeight: 700, color: T.accent }}>BRANDING</span>
         </div>
-        <span style={{ fontFamily: FONT.mono, fontSize: 9, color: b.enabled ? T.accent : T.textDim }}>{b.enabled ? "● Active" : "○ Set values to activate"}</span>
+        <span style={{ fontFamily: FONT.mono, fontSize: 9, color: b.enabled ? T.accent : T.textDim, marginLeft: docked ? "auto" : undefined }}>{b.enabled ? "● Active" : "○ Set values to activate"}</span>
+        {onClose && <button data-testid="branding-panel-close" onClick={onClose} title="Close branding" aria-label="Close branding" style={{ background: "none", border: "none", color: T.textDim, cursor: "pointer", fontSize: 13, padding: "0 2px", lineHeight: 1 }}>✕</button>}
       </div>
         <div style={row}>
           <span style={lbl}>Header</span>
           <input type="color" value={b.accentColor || "#3B82F6"} onChange={(e) => set({ accentColor: e.target.value })} style={{ width: 22, height: 18, border: "none", padding: 0, cursor: "pointer", background: "transparent" }} />
-          <input type="range" min="0" max="8" value={b.accentHeight || 4} onChange={(e) => set({ accentHeight: parseInt(e.target.value) })} style={{ width: 50 }} />
-          <span style={{ fontFamily: FONT.mono, fontSize: 9, color: T.textDim }}>{b.accentHeight}px</span>
+          <input data-testid="branding-accent-height" type="range" min="0" max="8" value={b.accentHeight ?? 4} onChange={(e) => set({ accentHeight: parseInt(e.target.value) })} style={{ width: 50 }} />
+          <span style={{ fontFamily: FONT.mono, fontSize: 9, color: T.textDim }}>{b.accentHeight ?? 4}px</span>
         </div>
         <div style={row}>
           <span style={lbl}>Logo</span>
@@ -6977,6 +8414,16 @@ function PresenterTOC({ slides, slideIndex, onJump, lanes, currentConceptId, dis
   const scheduleClose = () => { clearClose(); if (!pinned) closeTimer.current = setTimeout(() => setOpen(false), 400); };
 
   useEffect(() => { if (open && searchRef.current) setTimeout(() => searchRef.current?.focus(), 100); }, [open]);
+  // While open, register for SlidePanel's Esc order (VELA_OPEN_CHROME in
+  // part-blocks.jsx): Esc closes this panel first and Present stays.
+  useEffect(() => {
+    if (!open) return;
+    const t = {};
+    const close = () => { setOpen(false); setPinned(false); };
+    VELA_OPEN_CHROME.panels.add(t);
+    window.addEventListener("vela-close-panel", close);
+    return () => { VELA_OPEN_CHROME.panels.delete(t); window.removeEventListener("vela-close-panel", close); };
+  }, [open]);
   useEffect(() => {
     if (!open) {
       setSearch("");
@@ -7190,7 +8637,7 @@ function _ensureGalleryShimmer() {
   style.textContent = `@keyframes velaGalleryShimmer{0%{background-position:-200% 0}100%{background-position:200% 0}}`;
   document.head.appendChild(style);
 }
-function GalleryThumb({ slide, slideIdx, total, branding }) {
+function GalleryThumb({ slide, slideIdx, total, branding, story }) {
   const [loaded, setLoaded] = useState(false);
   useEffect(() => {
     _ensureGalleryShimmer();
@@ -7202,7 +8649,7 @@ function GalleryThumb({ slide, slideIdx, total, branding }) {
     : "linear-gradient(90deg, rgba(0,0,0,0.03) 25%, rgba(0,0,0,0.07) 50%, rgba(0,0,0,0.03) 75%)";
   return (
     <div style={{ width: "100%", aspectRatio: "16/9", position: "relative", overflow: "hidden" }}>
-      <VirtualSlide slide={slide} index={slideIdx} total={total} branding={branding} editable={false} mode="fit-width" bordered />
+      <VirtualSlide slide={slide} index={slideIdx} total={total} branding={branding} editable={false} mode="fit-width" bordered story={story} storyAnimate={false} />
       {!loaded && (
         <div style={{ position: "absolute", inset: 0, zIndex: 2, background: cssColor(slide?.bg) || T.slideBg, display: "flex", alignItems: "center", justifyContent: "center", borderRadius: 6, transition: "opacity 0.3s ease" }}>
           <div style={{ width: "60%", height: 6, borderRadius: 3, backgroundImage: shimmerBg, backgroundSize: "200% 100%", animation: "velaGalleryShimmer 1.4s ease-in-out infinite" }} />
@@ -7263,13 +8710,19 @@ function fmtElapsed(totalSeconds) {
   const r = s % 60;
   return `${m}:${String(r).padStart(2, "0")}`;
 }
-function PresenterView({ current, next, index, total, duration, elapsed, branding, onClose }) {
+function PresenterView({ current, next, index, total, duration, elapsed, branding, onClose, currentStory, nextStory }) {
   const notes = (current?.notes || "").trim();
+  // Story slide: the NEXT step can still be on this slide (nextStory set), so
+  // NEXT then shows the current slide at that step, labelled "image k/N" or
+  // "overview". Without nextStory, NEXT is the next slide as before.
+  const nextInSlide = !!(nextStory && current);
+  const nextStoryN = nextInSlide ? storyImageList(current, true).length : 0;
+  const nextStoryLabel = nextInSlide ? (nextStory.zoomed ? `image ${nextStory.k}/${nextStoryN}` : "overview") : "";
   const studyNotes = (current?.studyNotes?.text || "").trim();
   return (
     <div data-testid="presenter-view" onClick={(e) => e.stopPropagation()} style={{ position: "fixed", inset: 0, zIndex: 10000, background: "#0a0d14", color: "#e2e8f0", display: "flex", flexDirection: "column", overflow: "hidden" }}>
       <div style={{ padding: "10px 20px", display: "flex", alignItems: "center", gap: 14, borderBottom: "1px solid rgba(255,255,255,0.1)", flexShrink: 0 }}>
-        <span style={{ fontSize: 16 }}>🖥️</span>
+        <span style={{ fontSize: 16 }}>🗒️</span>
         <span style={{ fontFamily: FONT.mono, fontSize: 13, fontWeight: 700, color: "#60a5fa", letterSpacing: "0.05em" }}>PRESENTER VIEW</span>
         <span data-testid="presenter-timer" style={{ fontFamily: FONT.mono, fontSize: 15, fontWeight: 700, color: "#fff", background: "rgba(255,255,255,0.08)", padding: "3px 12px", borderRadius: 6 }}>⏱ {fmtElapsed(elapsed)}</span>
         <span style={{ fontFamily: FONT.mono, fontSize: 12, color: "#94a3b8" }}>Slide {index + 1} / {total}</span>
@@ -7281,7 +8734,7 @@ function PresenterView({ current, next, index, total, duration, elapsed, brandin
         <div style={{ flex: 2, display: "flex", flexDirection: "column", gap: 10, minWidth: 0 }}>
           <div style={{ fontFamily: FONT.mono, fontSize: 10, color: "#64748b", letterSpacing: "0.05em" }}>NOW</div>
           <div style={{ flex: 1, minHeight: 0, borderRadius: 10, overflow: "hidden", border: "2px solid #3b82f6", boxShadow: "0 0 24px rgba(59,130,246,0.25)", display: "flex", alignItems: "center" }}>
-            {current ? <GalleryThumb slide={current} slideIdx={index} total={total} branding={branding} /> : <div style={{ width: "100%", padding: 40, textAlign: "center", color: "#64748b" }}>No slide</div>}
+            {current ? <GalleryThumb slide={current} slideIdx={index} total={total} branding={branding} story={currentStory} /> : <div style={{ width: "100%", padding: 40, textAlign: "center", color: "#64748b" }}>No slide</div>}
           </div>
           <div data-testid="presenter-notes" style={{ flexShrink: 0, maxHeight: "38%", overflowY: "auto", background: "rgba(255,255,255,0.05)", borderRadius: 8, padding: 14 }}>
             <div style={{ fontFamily: FONT.mono, fontSize: 10, color: "#64748b", letterSpacing: "0.05em", marginBottom: 6 }}>📝 SPEAKER NOTES</div>
@@ -7293,9 +8746,11 @@ function PresenterView({ current, next, index, total, duration, elapsed, brandin
           </div>
         </div>
         <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 8, minWidth: 180, maxWidth: 320 }}>
-          <div style={{ fontFamily: FONT.mono, fontSize: 10, color: "#64748b", letterSpacing: "0.05em" }}>NEXT ▸</div>
+          <div style={{ fontFamily: FONT.mono, fontSize: 10, color: "#64748b", letterSpacing: "0.05em" }}>NEXT ▸{nextInSlide && <span data-testid="presenter-next-story"> {nextStoryLabel}</span>}</div>
           <div data-testid="presenter-next" style={{ borderRadius: 8, overflow: "hidden", border: "1px solid rgba(255,255,255,0.15)", opacity: 0.85 }}>
-            {next ? <GalleryThumb slide={next} slideIdx={index + 1} total={total} branding={branding} /> : <div style={{ aspectRatio: "16/9", display: "flex", alignItems: "center", justifyContent: "center", color: "#64748b", fontFamily: FONT.mono, fontSize: 13, background: "rgba(255,255,255,0.03)", borderRadius: 8 }}>End</div>}
+            {/* One key for both NEXT thumbs: no remount (shimmer) when the story ends. */}
+            {nextInSlide ? <GalleryThumb key="next" slide={current} slideIdx={index} total={total} branding={branding} story={nextStory} />
+              : next ? <GalleryThumb key="next" slide={next} slideIdx={index + 1} total={total} branding={branding} /> : <div style={{ aspectRatio: "16/9", display: "flex", alignItems: "center", justifyContent: "center", color: "#64748b", fontFamily: FONT.mono, fontSize: 13, background: "rgba(255,255,255,0.03)", borderRadius: 8 }}>End</div>}
           </div>
         </div>
       </div>
@@ -7304,7 +8759,7 @@ function PresenterView({ current, next, index, total, duration, elapsed, brandin
 }
 
 const GALLERY_MODULE_COLORS = ["#60a5fa","#a78bfa","#f472b6","#34d399","#f59e0b","#38bdf8","#fb7185","#818cf8","#2dd4bf","#e879f9","#fbbf24","#67e8f9"];
-function GalleryView({ lanes, currentConceptId, slideIndex, dispatch, onClose, branding }) {
+function GalleryView({ lanes, currentConceptId, slideIndex, dispatch, onClose, branding, headerExtra }) {
   const gridRef = useRef(null);
   const activeRef = useRef(null);
   const ZOOM_SIZES = [140, 180, 224, 300, 400, 560, 800];
@@ -7453,6 +8908,7 @@ function GalleryView({ lanes, currentConceptId, slideIndex, dispatch, onClose, b
         <span style={{ fontFamily: FONT.mono, fontSize: 14, fontWeight: 700, color: T.accent, letterSpacing: "0.05em" }}>GALLERY</span>
         <span style={{ fontFamily: FONT.mono, fontSize: 13, color: T.textMuted }}>{allSlides.filter((s) => !s.isTitleCard).length} slides</span>
         <span style={{ marginLeft: "auto", fontFamily: FONT.mono, fontSize: 13, color: T.textDim }}>+/− zoom · drag to reorder · G or ESC to close</span>
+        {headerExtra}
         <button data-testid="gallery-close" onClick={onClose} style={{ background: "none", border: "none", color: T.textMuted, cursor: "pointer", fontSize: 18, padding: 4 }}>✕</button>
       </div>
       <div ref={gridRef} onClick={(e) => e.stopPropagation()} onWheel={(e) => e.stopPropagation()} style={{ flex: 1, overflowY: "auto", padding: "20px 32px", userSelect: dragActive ? "none" : "auto" }}>
@@ -7491,12 +8947,15 @@ function GalleryView({ lanes, currentConceptId, slideIndex, dispatch, onClose, b
                 <div style={{ borderRadius: "0 0 8px 8px", border: cardBorder, borderTop: "none", boxShadow: cardShadow, background: T.bgCard, overflow: "hidden" }}
                   onMouseEnter={(e) => { if (!isCurrent && !dragSrc) { e.currentTarget.style.borderColor = T.borderLight; } }}
                   onMouseLeave={(e) => { if (!isCurrent) { e.currentTarget.style.borderColor = T.border; } }}>
-                  <GalleryThumb slide={s.slide} slideIdx={s.slideIdx} total={realSlideTotal} branding={branding} />
+                  {/* CR04: a hidden slide's thumbnail is dimmed, as the TOC strikes it through. */}
+                  <div data-hidden-overlay={s.slide?.hidden ? "1" : undefined} style={{ opacity: s.slide?.hidden ? 0.45 : 1 }}><GalleryThumb slide={s.slide} slideIdx={s.slideIdx} total={realSlideTotal} branding={branding} /></div>
                   <div style={{ padding: "6px 10px", background: isCurrent ? T.accent + "15" : T.isDark ? "rgba(255,255,255,0.04)" : "rgba(0,0,0,0.03)", display: "flex", alignItems: "center", gap: 6 }}>
                     <span title={s.isTitleCard ? "Section title card" : undefined} style={{ fontFamily: FONT.mono, fontSize: 10, color: isCurrent ? T.accent : T.textDim, fontWeight: 700 }}>{s.isTitleCard ? "🎬" : s.slideIdx + 1}</span>
                     {(() => { const oc = (s.slide.comments || []).filter((c) => c.status === "open").length; return oc > 0 ? <span style={{ width: 8, height: 8, borderRadius: 4, background: T.amber, flexShrink: 0 }} title={`${oc} comment${oc > 1 ? "s" : ""}`} /> : null; })()}
                     {s.slide?.studyNotes?.text ? <span title="Has offline study notes" data-study-marker style={{ fontSize: 11, lineHeight: 1, flexShrink: 0, filter: `drop-shadow(0 0 2px ${T.accent}80)` }}>🎓</span> : null}
                     <span style={{ fontSize: 13, color: isCurrent ? T.text : T.textMuted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1, fontFamily: FONT.body }}>{getSlideTitle(s.slide, s.slideIdx)}</span>
+                    {/* CR04: hide/unhide beside delete — same TOGGLE_SLIDE_HIDDEN as the TOC eye. */}
+                    {!s.isTitleCard && <button data-testid="gallery-hide-toggle" data-hidden={s.slide?.hidden ? "1" : "0"} onClick={(e) => { e.stopPropagation(); dispatch({ type: "TOGGLE_SLIDE_HIDDEN", id: s.itemId, index: s.slideIdx }); }} title={s.slide?.hidden ? "Hidden — click to show (excluded from presentation & counts)" : "Hide slide (excludes it from presentation & counts)"} style={{ background: "none", border: "none", cursor: "pointer", padding: "2px 4px", fontSize: 12, lineHeight: 1, borderRadius: 3, opacity: s.slide?.hidden ? 0.9 : 0.4, transition: "opacity 0.15s" }} onMouseEnter={(e) => { e.currentTarget.style.opacity = "1"; }} onMouseLeave={(e) => { e.currentTarget.style.opacity = s.slide?.hidden ? "0.9" : "0.4"; }}>{s.slide?.hidden ? "🙈" : "👁"}</button>}
                     {!s.isTitleCard && <button onClick={(e) => { e.stopPropagation(); dispatch({ type: "REMOVE_SLIDE", id: s.itemId, index: s.slideIdx }); }} title="Delete slide" style={{ background: "none", border: "none", cursor: "pointer", padding: "2px 4px", fontSize: 13, color: T.textDim, borderRadius: 3, opacity: 0.4, transition: "opacity 0.15s, color 0.15s" }} onMouseEnter={(e) => { e.currentTarget.style.opacity = "1"; e.currentTarget.style.color = "#ef4444"; }} onMouseLeave={(e) => { e.currentTarget.style.opacity = "0.4"; e.currentTarget.style.color = T.textDim; }}>✕</button>}
                   </div>
                 </div>
@@ -7957,12 +9416,107 @@ function SectionPicker({ mods, onPick, autoFocus = true, emptyLabel = "No other 
 }
 // © 2025-present Rui Quintino. Vela Slides — licensed under ELv2. See LICENSE.
 // ━━━ Slide Panel — editor slide view, fullscreen/presenter nav, per-slide AI actions ━━━
+// CR13: the one editor | presenter | gallery switch. The top bar (App), the
+// gallery header and the fullscreen top-right controls all render this with
+// SlidePanel's viewMode/setView, so the view state has one source of truth.
+// Glyphs are emoji-presentation (U+FE0F where the code point needs it): a
+// text-presentation glyph draws monochrome in the inherited colour and can
+// vanish on a dark chip (CR10). Editor uses the memo glyph, not a pen: the
+// dark-blue pen emoji is unreadable on the accent-filled active segment.
+const VIEW_SWITCH_SEGMENTS = [["editor", "\u{1F4DD}", "Editor"], ["presenter", "\u{1F5A5}\uFE0F", "Presenter"], ["gallery", "\u{1F5C2}\uFE0F", "Gallery"]];
+// Compact segments keep their label in the DOM at zero width (the top bar
+// measures it to decide when full labels fit); a full segment is 2px wider on
+// each side. VIEW_SWITCH_LABEL_EXTRA is that padding growth for the whole switch.
+const VIEW_SWITCH_PAD = { compact: 7, full: 9 };
+const VIEW_SWITCH_LABEL_EXTRA = VIEW_SWITCH_SEGMENTS.length * 2 * (VIEW_SWITCH_PAD.full - VIEW_SWITCH_PAD.compact);
+function ViewSwitch({ mode, onSet, disabled, compact, onDark, testid = "view-switch", style }) {
+  const idle = onDark ? "#fff" : T.textDim;
+  return <div data-testid={testid} role="group" aria-label="View" onClick={(e) => e.stopPropagation()} style={{ display: "flex", alignItems: "center", border: `1px solid ${onDark ? "rgba(255,255,255,0.3)" : T.border}`, borderRadius: 6, overflow: "hidden", flexShrink: 0, background: onDark ? "rgba(0,0,0,0.55)" : undefined, ...style }}>
+    {VIEW_SWITCH_SEGMENTS.map(([m, icon, label]) => {
+      const on = mode === m;
+      return <button key={m} data-testid={`${testid}-${m}`} onClick={() => onSet?.(m)} disabled={disabled} title={label} aria-label={label} aria-pressed={on}
+        style={{ display: "flex", alignItems: "center", gap: 4, padding: `4px ${compact ? VIEW_SWITCH_PAD.compact : VIEW_SWITCH_PAD.full}px`, background: on ? T.accent : "transparent", color: on ? "#fff" : idle, border: "none", cursor: disabled ? "default" : "pointer", opacity: disabled ? 0.4 : 1, fontFamily: FONT.mono, fontSize: 12, fontWeight: 700, whiteSpace: "nowrap" }}>
+        <span aria-hidden="true" style={{ fontSize: onDark ? 15 : undefined }}>{icon}</span>{compact ? <span data-vs-label="" aria-hidden="true" style={{ display: "inline-block", width: 0, overflow: "hidden", marginLeft: -4, verticalAlign: "top" }}>{label}</span> : <span>{label}</span>}
+      </button>;
+    })}
+  </div>;
+}
+
+// True when a drag carries only image files (any image/* type, an SVG too).
+// Such a drag is an image drop, never a deck load. Only IMAGE_DROP_MIME types
+// are added: imageDropFiles() counts the others as not added.
+// Reads item kind/type only (a file name is not exposed during a drag).
+function dragHasOnlyImageFiles(dt) {
+  if (!dt || !dt.types || !Array.prototype.includes.call(dt.types, "Files")) return false;
+  const items = dt.items ? Array.prototype.slice.call(dt.items) : [];
+  return items.length > 0 && items.every((it) => !!it && it.kind === "file" && typeof it.type === "string" && it.type.startsWith("image/"));
+}
+
+// Slide toolbar auto-compact: the toolbar stays on one row. When the buttons do
+// not fit, the rightmost labels are hidden (icon only) one by one until the row
+// fits. Measures once with all labels shown (per `key`), then recomputes from the
+// cached widths on resize, so it cannot oscillate. Returns the hidden-label count;
+// labels + 1 means icon-only fits only with compact padding; labels + 2 means even
+// that does not fit (e.g. a phone): the row wraps as before.
+// Compact step (all labels hidden, the row still does not fit): icon buttons use
+// this horizontal padding and the row this gap, before the row wraps.
+const TB_COMPACT_PAD_X = 6, TB_COMPACT_GAP = 1;
+function useToolbarCompact(ref, key) {
+  const [hide, setHide] = useState(0);
+  const m = useRef(null);
+  const stale = useRef(null);
+  const fit = useCallback(() => {
+    const el = ref.current, c = m.current;
+    if (!el || !c) return;
+    const cs = getComputedStyle(el);
+    let over = c.full - (el.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight)), n = 0;
+    while (over > 0.5 && n < c.labels.length) { over -= c.labels[c.labels.length - 1 - n]; n++; }
+    if (over > 0.5) { n++; if (over - c.compact > 0.5) n++; } // labels + 1: compact icons; labels + 2: wrap
+    c.n = n;
+    setHide(n);
+  }, [ref]);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el || !el.children.length) { m.current = null; return; }
+    const c = m.current;
+    // Cached widths went stale (the committed row overflows): measure again, once per measurement.
+    if (c && c.key === key && c.n === hide && hide <= c.labels.length + 1 && !c.retried && el.scrollWidth > el.clientWidth + 0.5) { m.current = null; stale.current = key; }
+    if (!m.current || m.current.key !== key) {
+      if (hide !== 0) { m.current = null; setHide(0); return; } // show all labels first, then measure
+      const first = el.children[0].getBoundingClientRect(), last = el.children[el.children.length - 1].getBoundingClientRect();
+      const gap = parseFloat(getComputedStyle(el).columnGap) || 0;
+      const compact = Array.from(el.children).reduce((s, ch) => { if (ch.tagName !== "BUTTON") return s; const bs = getComputedStyle(ch); return s + parseFloat(bs.paddingLeft) + parseFloat(bs.paddingRight) - 2 * TB_COMPACT_PAD_X; }, 0) + (el.children.length - 1) * (gap - TB_COMPACT_GAP); // width the compact step saves
+      m.current = { key, full: last.right - first.left, compact, retried: stale.current === key, labels: Array.from(el.querySelectorAll("button > span"), (sp) => sp.getBoundingClientRect().width + (parseFloat(getComputedStyle(sp.parentElement).columnGap) || 0)) }; // label width + icon gap
+      stale.current = null;
+    }
+    fit();
+  }, [ref, key, hide, fit]);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(() => fit());
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [ref, key, fit]);
+  return hide;
+}
+
 function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, branding, guidelines, isMobile, fontScale, actionsRef, onRibbonUpdate }) {
   const deckEpochRef = useRef(state._deckEpoch);
   deckEpochRef.current = state._deckEpoch;
   const slides = concept.slides || [];
   const slidesRef = useRef(slides);
   slidesRef.current = slides;
+  // Image paste: the view the paste sees now, the queue that keeps pastes in
+  // order, and a stand-in target per empty module (see handlePaste).
+  const pasteLiveRef = useRef(null);
+  pasteLiveRef.current = { moduleId: concept.id, index: slideIndex };
+  const pasteQueueRef = useRef(Promise.resolve());
+  const emptyPasteKeyRef = useRef(new Map());
+  // A queued paste reads the live lanes through lanesRef, which stops updating
+  // when this panel unmounts: drop the paste then, never write from a stale list.
+  const pasteMountedRef = useRef(true);
+  useEffect(() => { pasteMountedRef.current = true; return () => { pasteMountedRef.current = false; }; }, []);
   const aiOk = useAIAvailable();
 
   // Virtual title card for presentation mode
@@ -7973,6 +9527,87 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
     return buildTitleCardSlide(concept, lane, branding);
   }, [concept.presentCard, concept.id, concept.title, concept.slides, lanes, branding]);
   const presSlides = useMemo(() => fullscreen && titleCard ? [titleCard, ...slides] : slides, [fullscreen, titleCard, slides]);
+
+  // ── Story mode: present a slide's images one by one ──
+  // Only in Present (never the editor, never student mode) and only on a slide
+  // with story:true and >= 2 images. Every other slide gets story undefined, so
+  // its render and navigation stay exactly as before. State is { k, zoomed }
+  // (see storyNext/storyPrev), stored with the key of the slide it belongs to.
+  const storySlide = presSlides[slideIndex];
+  const storyList = useMemo(() => storyImageList(storySlide, true), [storySlide]);
+  const storyN = storyList.length;
+  const storyOn = fullscreen && state?.veraMode !== "student" && storyIsActive(storySlide, storyList);
+  // Slide identity for the story key, so a different slide at the same
+  // position (reorder, insert, delete) starts fresh. An edit makes a new object
+  // for the same slide: a new object takes the id of the object it replaced at
+  // that index (that object left the list). Undo/redo bring back an object that
+  // already has the id. Objects that only moved keep their own id.
+  const storyIdsRef = useRef({ ids: new WeakMap(), next: 1, prev: [], concept: null });
+  const storySlideId = useMemo(() => {
+    const r = storyIdsRef.current, cur = presSlides || [];
+    // Inherit ids only within one module: a module switch is not an edit.
+    if (r.concept !== concept.id) { r.prev = []; r.concept = concept.id; }
+    const inList = new Set(cur);
+    cur.forEach((s, i) => {
+      if (!s || typeof s !== "object" || r.ids.has(s)) return;
+      const old = r.prev[i];
+      r.ids.set(s, old && !inList.has(old) && r.ids.has(old) ? r.ids.get(old) : r.next++);
+    });
+    r.prev = cur;
+    return (storySlide && typeof storySlide === "object" && r.ids.get(storySlide)) || 0;
+  }, [presSlides, storySlide, concept.id]);
+  const storyKey = `${state._deckEpoch}|${concept.id}|${slideIndex}|${storySlideId}|${fullscreen ? 1 : 0}`;
+  // -1 only while a back step (arrow, wheel, swipe) is about to land: a story
+  // slide reached that way opens on its last image. Every other entry is forward.
+  const storyEnterDirRef = useRef(1);
+  // A back step with the Overview open still enters the next slide forward.
+  const storyEnterBack = () => { storyEnterDirRef.current = showGalleryRef.current ? 1 : -1; };
+  const storyLiveRef = useRef(null); // latest state, also before React re-renders
+  const [storyRaw, setStoryRaw] = useState(null);
+  if (storyOn && !(storyRaw && storyRaw.key === storyKey)) {
+    // New slide: set the entry state during render, so the first painted frame
+    // of the slide already has it (no flash of the previous slide's state).
+    const entry = { key: storyKey, ...storyEntry(storyEnterDirRef.current < 0 ? -1 : 1, storyN) };
+    storyLiveRef.current = entry;
+    setStoryRaw(entry);
+  } else if (!storyOn && storyRaw) {
+    // Left the story slide (or Present): forget its state, so a later visit
+    // with the same key (Present entered again) starts from its entry state.
+    storyLiveRef.current = null;
+    setStoryRaw(null);
+  }
+  useEffect(() => { storyEnterDirRef.current = 1; }, [storyKey]);
+  const storyCur = storyOn && storyRaw && storyRaw.key === storyKey ? storyRaw : null;
+  const story = useMemo(() => storyCur ? { k: Math.min(storyCur.k, storyN), zoomed: storyCur.zoomed, key: storyCur.key } : undefined, [storyCur, storyN]);
+  const storyLive = () => {
+    const s = storyLiveRef.current;
+    return storyOn && s && s.key === storyKey ? { k: Math.min(s.k, storyN), zoomed: s.zoomed } : null;
+  };
+  const storySet = (k, zoomed) => { const s = { key: storyKey, k, zoomed }; storyLiveRef.current = s; setStoryRaw(s); };
+  // Refs so the long-lived key/wheel/swipe/fullscreen listeners see this render.
+  // Each returns true when it consumed the input.
+  const storyStepRef = useRef(null);
+  storyStepRef.current = (dir) => {
+    if (showGalleryRef.current) return false; // the Overview navigates like a plain slide
+    const s = storyLive();
+    if (!s) return false;
+    const nx = dir > 0 ? storyNext(s, storyN) : storyPrev(s, storyN);
+    if (!nx) return false;
+    storySet(nx.k, nx.zoomed);
+    return true;
+  };
+  const storyEscRef = useRef(null);
+  storyEscRef.current = () => {
+    const s = storyLive();
+    const nx = s ? storyEsc(s) : null;
+    if (!nx) return false;
+    storySet(nx.k, nx.zoomed);
+    return true;
+  };
+  const storyJumpRef = useRef(null);
+  storyJumpRef.current = (k) => { if (storyLive() && Number.isInteger(k) && k >= 1 && k <= storyN) storySet(k, true); };
+  const onStoryJump = useCallback((k) => storyJumpRef.current(k), []);
+  const onStoryZoomOut = useCallback(() => { storyEscRef.current(); }, []);
 
   // Global slide index/total across all modules (for the on-slide page-number
   // badge). Counts only VISIBLE slides so it agrees with the header pill and the
@@ -8152,6 +9787,9 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
   const [quickEditing, setQuickEditing] = useState(false);
   const [quickEditImage, setQuickEditImage] = useState(null); // { base64, preview }
   const [showGallery, setShowGallery] = useState(false);
+  // CR07: editor-only review cycle — arrow keys skip slides marked `reviewed`.
+  // Distinct from state.reviewMode (comments review), which owns that name.
+  const [reviewCycle, setReviewCycle] = useState(false);
   const showGalleryRef = useRef(false);
   const setGallery = (v) => { const val = typeof v === "function" ? v(showGalleryRef.current) : v; showGalleryRef.current = val; setShowGallery(val); };
   // ── Presenter view (CR-08) — single-screen speaker dashboard: current +
@@ -8294,6 +9932,15 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
   const [editingDuration, setEditingDuration] = useState(false);
   const navToastTimer = useRef(null);
 
+  // CR13: live view for every ViewSwitch. An open gallery wins over fullscreen,
+  // so the gallery opened from Present shows "Gallery" as the active segment.
+  const viewMode = showGallery ? "gallery" : (fullscreen ? "presenter" : "editor");
+  const setView = (mode) => {
+    if (mode === "editor") { setGallery(false); if (fullscreen) { stopAll(); dispatch({ type: "SET_FULLSCREEN", value: false }); } }
+    else if (mode === "gallery") { setGallery(true); }
+    else if (mode === "presenter") { setGallery(false); if (!fullscreen) { stopAll(); dispatch({ type: "SET_FULLSCREEN", value: true }); } }
+  };
+
   // Expose slide panel state + actions to app ribbon via ref
   useEffect(() => {
     if (!actionsRef) return;
@@ -8306,11 +9953,15 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       toggleBatchEdit: () => improving ? stopAll() : setShowImproveInput((v) => !v),
       toggleTiming: () => estimating ? stopEstimate() : setShowTimingScope((v) => !v),
       setPreviewRatio,
+      // editor: true shows the editor notice (the plain toast renders only in Present).
+      showToast: (msg, editor) => showNavToast(msg, null, editor),
       present: () => { stopAll(); dispatch({ type: "SET_FULLSCREEN", value: true }); },
       getLayoutStats: () => computeSlideLayoutStats(slideRef.current),
+      // CR13: view state read by the top-bar view switcher (editor|presenter|gallery).
+      viewMode, setView,
     };
     onRibbonUpdate?.();
-  }, [slides.length, moduleTime, previewRatio, showBranding, showTimingScope, estimating, showImproveInput, improving]);
+  }, [slides.length, moduleTime, previewRatio, showBranding, showTimingScope, estimating, showImproveInput, improving, fullscreen, showGallery]);
 
   // Build flat ordered list of modules across all lanes
   const flatModules = useCallback(() => {
@@ -8327,9 +9978,10 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
     return list;
   }, [lanes]);
 
-  const showNavToast = useCallback((module, section) => {
+  // editor: also show the toast in the editor view (the paste notice), not only in Present.
+  const showNavToast = useCallback((module, section, editor) => {
     clearTimeout(navToastTimer.current);
-    setNavToast({ module, section, phase: "in" });
+    setNavToast({ module, section, editor: !!editor, phase: "in" });
     navToastTimer.current = setTimeout(() => {
       setNavToast((t) => t ? { ...t, phase: "out" } : null);
       navToastTimer.current = setTimeout(() => setNavToast(null), 300);
@@ -8341,6 +9993,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
   // Touch swipe for mobile slide navigation (crosses module boundaries like keyboard)
   useSwipe(containerRef, {
     onLeft: useCallback(() => {
+      if (storyStepRef.current(1)) return;
       const navSlides = fullscreen ? presSlides : slides;
       if (navSlides.length > 0 && slideIndex < navSlides.length - 1) {
         dispatch({ type: "SET_SLIDE_INDEX", index: slideIndex + 1 });
@@ -8357,13 +10010,16 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       }
     }, [slideIndex, slides.length, presSlides.length, fullscreen, dispatch, concept.id, flatModules, showNavToast]),
     onRight: useCallback(() => {
+      if (storyStepRef.current(-1)) return;
       if (slideIndex > 0) {
+        storyEnterBack();
         dispatch({ type: "SET_SLIDE_INDEX", index: slideIndex - 1 });
       } else {
         const mods = flatModules();
         const curIdx = mods.findIndex((m) => m.id === concept.id);
         if (curIdx >= 0 && curIdx - 1 >= 0) {
           const prev = mods[curIdx - 1];
+          storyEnterBack();
           dispatch({ type: "SELECT", id: prev.id });
           const prevPresOffset = prev.presentCard && fullscreen ? 1 : 0;
           dispatch({ type: "SET_SLIDE_INDEX", index: Math.max(0, (prev.slideCount || 1) - 1 + prevPresOffset) });
@@ -8384,8 +10040,139 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       .filter((k) => SAFE_SLIDE_KEYS.has(k))
   );
   const looksLikeSlide = (obj) => obj && typeof obj === "object" && !Array.isArray(obj) && Object.keys(obj).some((k) => SLIDE_KEYS.has(k));
+  // ── Image intake: clipboard paste and OS file drop share one pipeline ──
+  // Strict re-encode: an image that cannot be decoded, or is over the pixel cap,
+  // resolves null and is skipped (never stored as the original bytes).
+  const compressImageStrict = (dataUrl) => compressImage(dataUrl, IMG_SETTINGS.maxWidth, IMG_SETTINGS.quality, { strict: true });
+  // One paste or one drop. Counts what happened to its images for one notice.
+  const newImageBatch = (kind) => ({ kind, epoch: deckEpochRef.current, here: 0, spill: 0, spillNum: 0, spilled: false, failed: 0, dropped: 0, rejected: 0 });
+  // Queue one image (getData() resolves the re-encoded data URL, or null).
+  const enqueueImage = useCallback((getData, batch) => {
+    // Capture the target now. The image work below is async: the user can
+    // undo, delete or edit slides, or paste again, before it ends. Pastes
+    // apply one at a time, in paste order (pasteQueueRef). Each one finds its
+    // target again just before its dispatch: the same slide object, or the
+    // slide an earlier queued paste made from it (pasteResolveTarget). It then
+    // builds the change from that CURRENT slide. If the target is gone, or the
+    // user changed it, the paste is dropped. Never write back a stale copy.
+    // HI8: the target is found in its own module's live slide list (lanesRef),
+    // so a paste still lands on its target when the user switches to another
+    // module before it applies, as it does for a slide switch.
+    const moduleId = concept.id, epoch = deckEpochRef.current, empty = !slides.length;
+    let target = empty ? null : slides[slideIndex];
+    if (empty) { const keys = emptyPasteKeyRef.current; target = keys.get(moduleId) || {}; keys.set(moduleId, target); }
+    else emptyPasteKeyRef.current.delete(moduleId);
+    const bodyProbe = empty ? null : pasteBodyProbe(containerRef.current, target);
+    const modSlides = () => { const it = findItem(lanesRef.current || [], moduleId); return it && Array.isArray(it.slides) ? it.slides : null; };
+    const live = () => deckEpochRef.current === epoch && pasteMountedRef.current && !!modSlides();
+    const onScreen = () => pasteLiveRef.current.moduleId === moduleId;
+    // Wait until a dispatch below has rendered, then link the new slide object.
+    const settle = async (from, before, src) => {
+      for (let k = 0; k < 60 && modSlides() === before; k++) await new Promise((r) => setTimeout(r, 16));
+      if (live()) pasteRecordSuccessor(from, before, modSlides(), src);
+    };
+    const apply = async () => {
+      const raw = await getData();
+      if (deckEpochRef.current !== epoch) return;
+      // The reducer keeps an image src only in this canonical form (the same
+      // chain sanitizeBlock runs). Use that same value here: an empty result
+      // (undecodable type, canvas too large, read error) must not add an empty
+      // image block, and a src the reducer changes would break the successor
+      // link for the rest of the burst.
+      let compressed = raw ? sanitizeImageDataUri(sanitizeUrl(raw, ["data:"])) : "";
+      // HI4: an allowed MIME type with bytes that do not decode passes the
+      // data-URI check (compressImage returns its input on a decode error
+      // without opts.strict). Decode the result here: an image with no size is
+      // not added.
+      if (compressed) { const z = await imageNaturalSize(compressed); if (!(z.w > 0 && z.h > 0)) compressed = ""; }
+      if (!compressed) { batch.failed++; return; }
+      if (!live()) { batch.dropped++; return; }
+      // Empty module → brand-new full-bleed solo-image slide (additive). Later
+      // pastes of the same burst go onto that slide.
+      if (empty && !pasteResolveTarget(target, modSlides())) {
+        const before = modSlides();
+        dispatch({ type: "ADD_SLIDE", id: moduleId, slide: { blocks: [{ type: "image", src: compressed }] } });
+        batch.here++;
+        await settle(target, before, compressed); return;
+      }
+      let cur = null, sizes = null;
+      for (let tries = 0; tries < 4 && !cur; tries++) {
+        const c = live() ? pasteResolveTarget(target, modSlides()) : null;
+        if (!c) { batch.dropped++; return; }
+        // Natural sizes give the aspects and the upscale caps for the layout choice.
+        sizes = await Promise.all([...(c.blocks || []).filter((b) => b.type === "image").map((b) => b.src), compressed].map((src) => imageNaturalSize(src)));
+        // Resolve again, in the same task as the dispatch below; start over if it moved on.
+        if (live() && pasteResolveTarget(target, modSlides()) === c) cur = c;
+      }
+      if (!cur) { batch.dropped++; return; }
+      const aspects = sizes.map((z) => (z.w > 0 && z.h > 0 ? z.w / z.h : 1)), aspect = aspects[aspects.length - 1];
+      rememberImageAspect(compressed, aspect);
+      const before = modSlides(), at = before.indexOf(cur);
+      const curImgBlocks = (cur.blocks || []).filter((b) => b.type === "image");
+      const curImgs = curImgBlocks.length;
+      // Overflow cap: at most PASTE_MAX_IMAGES images per slide. One more spills onto a
+      // new image-only slide inserted after this one (same story setting) rather
+      // than over-packing the grid.
+      if (curImgs >= PASTE_MAX_IMAGES) {
+        dispatch({ type: "INSERT_SLIDES", id: moduleId, index: at + 1, slides: [{ blocks: [{ type: "image", src: compressed }], ...(cur.story === true ? { story: true } : {}) }] });
+        if (onScreen()) dispatch({ type: "SET_SLIDE_INDEX", index: at + 1 });
+        batch.spill++; batch.spilled = true;
+        // The deck-wide number, as the slide badge shows it (not the index in this module).
+        if (!batch.spillNum) batch.spillNum = deckSlideNumber(lanesRef.current, moduleId, before, at + 1);
+        await settle(cur, before, compressed); return;
+      }
+      const patch = { blocks: [...(cur.blocks || []), { type: "image", src: compressed }] };
+      const n = curImgs + 1; // image count after this paste
+      // The body height is measured on screen. Measure again while the slide is
+      // on screen (an earlier paste of the burst can have changed its layout).
+      const probe = (onScreen() && pasteLiveRef.current.index === at && pasteBodyProbe(containerRef.current, cur)) || bodyProbe;
+      // Layout-aware paste: place the image beside existing body content rather
+      // than always stacking it below. pasteImageLayout() respects an explicit
+      // author layout and otherwise keeps the layout (stack or image-right) that
+      // shows the most image area, from the body height measured on screen.
+      // CR23: a split that an earlier paste set (the slide still carries the exact
+      // layout signature that paste left) is re-evaluated for the new image count
+      // and aspects. A split the author set is kept.
+      const pasteOwned = !!cur.layout && cur.layout !== "stack" && curImgBlocks.some((b) => PASTE_LAYOUT_OWNED.get(b.src) === pasteLayoutSig(cur));
+      const basis = pasteOwned ? { ...cur, layout: undefined, contentFlex: undefined, imageFlex: undefined } : cur;
+      const layout = pasteImageLayout(basis, aspect, n, aspects, probe, sizes.map((z) => z.w));
+      if (pasteOwned && layout === "stack") { patch.layout = undefined; patch.contentFlex = undefined; patch.imageFlex = undefined; }
+      else if (layout !== "stack" && (pasteOwned || layout !== cur.layout)) {
+        patch.layout = layout;
+        // Balance the split. A single square/portrait side image is tall; at the
+        // default 1:1 split it squeezes the body text into a half-width column
+        // where it wraps past the slide height and gets auto-scaled smaller — give
+        // the content column the larger share. Two or more images grid inside their
+        // half, so an even 1:1 split gives that grid the room it needs. Only when
+        // the author hasn't pinned a ratio.
+        if (basis.contentFlex == null && basis.imageFlex == null) {
+          [patch.contentFlex, patch.imageFlex] = pasteSplitFlex(n, aspect);
+        }
+        rememberPasteLayout(compressed, { ...cur, ...patch });
+      }
+      if (batch.spilled) batch.spill++; else batch.here++;
+      dispatch({ type: "UPDATE_SLIDE", id: moduleId, index: at, patch, merge: true });
+      await settle(cur, before, compressed);
+    };
+    // Log a fault (never swallow it silently); the catch keeps the queue alive.
+    pasteQueueRef.current = pasteQueueRef.current.then(apply).catch((err) => { console.warn("Vela: image paste failed", err); });
+  }, [concept.id, slideIndex, slides, dispatch]);
+  // Runs after the batch's images in the same queue. The notice has counts only
+  // (never a file name). A plain paste or drop that fits says nothing, as before.
+  const finishImageBatch = useCallback((batch) => {
+    pasteQueueRef.current = pasteQueueRef.current.then(() => {
+      if (deckEpochRef.current !== batch.epoch) return;
+      const lost = batch.failed + batch.rejected + (batch.kind === "drop" ? batch.dropped : 0);
+      let msg = null;
+      if (batch.spill > 0) msg = `Added ${batch.here} here · ${batch.spill} on new slide ${batch.spillNum}` + (lost > 0 ? ` · ${lost} not added` : "");
+      else if (lost > 0 && batch.kind === "paste") msg = "This image could not be pasted";
+      else if (lost > 0) msg = batch.here > 0 ? `Added ${batch.here} · ${lost} not added` : `${lost} image${lost === 1 ? "" : "s"} not added`;
+      if (msg) showNavToast(msg, null, true);
+    });
+  }, [showNavToast]);
+
   const handlePaste = useCallback((e) => {
-    const tag = e.target?.tagName?.toLowerCase(); if (tag === "textarea" || tag === "input") return;
+    const tag = e.target?.tagName?.toLowerCase(); if (tag === "textarea" || tag === "input" || e.target?.isContentEditable) return;
     const items = e.clipboardData?.items; if (!items) return;
     // Check for text/plain first — try to detect slide JSON
     const textItem = Array.from(items).find((i) => i.type === "text/plain");
@@ -8398,69 +10185,101 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
           const incoming = Array.isArray(parsed) ? parsed : [parsed];
           const validSlides = incoming.filter(looksLikeSlide).map((s) => sanitizeSlide(s)).filter(Boolean);
           if (validSlides.length === 0) return;
-          // Insert after current slide
-          const newSlides = [...slides];
+          // Insert after current slide. getAsString is async: insert into the live
+          // list (INSERT_SLIDES), never write back the captured slide list.
           const insertAt = slides.length === 0 ? 0 : slideIndex + 1;
-          newSlides.splice(insertAt, 0, ...validSlides);
-          dispatch({ type: "SET_SLIDES", id: concept.id, slides: newSlides });
+          dispatch({ type: "INSERT_SLIDES", id: concept.id, index: insertAt, slides: validSlides });
           dispatch({ type: "SET_SLIDE_INDEX", index: insertAt });
         } catch { /* not valid JSON, ignore */ }
       });
       // Don't return here — if it's not JSON, let image paste proceed
     }
+    // HI6: one paste event can carry several images. Queue every one, in order,
+    // as one batch (one notice for the event).
+    let batch = null;
     for (const item of items) {
       if (item.type.startsWith("image/")) {
         e.preventDefault(); const blob = item.getAsFile(); const reader = new FileReader();
-        reader.onload = async () => {
-          const compressed = await compressSlideImage(reader.result);
-          // Empty module → brand-new full-bleed solo-image slide.
-          if (slides.length === 0) { dispatch({ type: "ADD_SLIDE", id: concept.id, slide: { blocks: [{ type: "image", src: compressed }] } }); return; }
-          const cur = slides[slideIndex] || {};
-          const curImgs = (cur.blocks || []).filter((b) => b.type === "image").length;
-          // Overflow cap: at most 5 images per slide. A 6th image spills onto a new
-          // image-only slide inserted after this one rather than over-packing the grid.
-          if (curImgs >= 5) {
-            const newSlides = [...slides];
-            const insertAt = slideIndex + 1;
-            newSlides.splice(insertAt, 0, { blocks: [{ type: "image", src: compressed }] });
-            dispatch({ type: "SET_SLIDES", id: concept.id, slides: newSlides });
-            dispatch({ type: "SET_SLIDE_INDEX", index: insertAt });
-            return;
-          }
-          const patch = { blocks: [...(cur.blocks || []), { type: "image", src: compressed }] };
-          const n = curImgs + 1; // image count after this paste
-          // Layout-aware paste: place the image beside existing body content rather
-          // than always stacking it below. pasteImageLayout() respects an explicit
-          // author layout, keeps mostly-title/image-only slides and wide images stacked
-          // (the renderer auto-grids a run of >=2 images), promotes heavy text + >=3
-          // images to a full-width header + full-width image grid, and otherwise returns
-          // "image-right" so the image column grids beside the content.
-          const aspect = await imageAspect(compressed);
-          const layout = pasteImageLayout(cur, aspect, n);
-          if (layout !== "stack" && layout !== cur.layout) {
-            patch.layout = layout;
-            // Balance the split. A single square/portrait side image is tall; at the
-            // default 1:1 split it squeezes the body text into a half-width column
-            // where it wraps past the slide height and gets auto-scaled smaller — give
-            // the content column the larger share. Two or more images grid inside their
-            // half, so an even 1:1 split gives that grid the room it needs. Only when
-            // the author hasn't pinned a ratio.
-            if (cur.contentFlex == null && cur.imageFlex == null) {
-              if (n === 1 && aspect <= 1.2) { patch.contentFlex = 1.4; patch.imageFlex = 1; }
-              else if (n >= 2) { patch.contentFlex = 1; patch.imageFlex = 1; }
-            }
-          }
-          dispatch({ type: "UPDATE_SLIDE", id: concept.id, index: slideIndex, patch, merge: true });
-        };
-        reader.readAsDataURL(blob); break;
+        const data = new Promise((res) => { reader.onload = () => res(compressImageStrict(reader.result)); reader.onerror = () => res(null); });
+        reader.readAsDataURL(blob);
+        if (!batch) batch = newImageBatch("paste");
+        enqueueImage(() => data, batch);
       }
     }
-  }, [concept.id, slideIndex, slides, dispatch]);
+    if (batch) finishImageBatch(batch);
+  }, [concept.id, slideIndex, slides, dispatch, enqueueImage, finishImageBatch]);
 
   useEffect(() => { const el = containerRef.current; if (el) { el.addEventListener("paste", handlePaste); return () => el.removeEventListener("paste", handlePaste); } }, [handlePaste]);
+
+  // ── OS file drop: image files dropped on the editor slide panel ──
+  // Only a drag of image files is taken here; anything else (a deck
+  // file) bubbles to the app shell, which loads decks. Never stopPropagation:
+  // the shell's drop handler must run to clear its overlay; it sees
+  // isDefaultPrevented() and does not load the files as a deck.
+  const [imageDragRect, setImageDragRect] = useState(null);
+  const imageDragTimer = useRef(null);
+  useEffect(() => () => clearTimeout(imageDragTimer.current), []);
+  const handleImageDragOver = useCallback((e) => {
+    if (!dragHasOnlyImageFiles(e.dataTransfer)) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "copy";
+    const el = containerRef.current;
+    setImageDragRect((r) => r || (el ? el.getBoundingClientRect() : null));
+    // dragover repeats while the pointer stays; a stop (cancelled drag) clears it.
+    clearTimeout(imageDragTimer.current);
+    imageDragTimer.current = setTimeout(() => setImageDragRect(null), 400);
+  }, []);
+  const handleImageDragLeave = useCallback((e) => {
+    if (e.currentTarget.contains(e.relatedTarget)) return;
+    clearTimeout(imageDragTimer.current);
+    setImageDragRect(null);
+  }, []);
+  const handleImageDrop = useCallback((e) => {
+    clearTimeout(imageDragTimer.current);
+    setImageDragRect(null);
+    const list = e.dataTransfer?.files;
+    if (!list || !list.length) return;
+    // Only a drop of image files is ours. A drop with any other file (a deck
+    // file, also mixed with images) falls through to the shell, which loads the
+    // deck, as its "Drop deck to load" overlay said (dragover was not taken).
+    const all = Array.prototype.slice.call(list);
+    if (!all.every((f) => f && typeof f.type === "string" && f.type.startsWith("image/"))) return;
+    // Type, size and count caps run before any file is read (imageDropFiles).
+    const { files, rejected } = imageDropFiles(list);
+    if (!files.length) {
+      // Nothing usable (an SVG, an oversize file): still ours and reported.
+      e.preventDefault();
+      showNavToast(`${all.length} image${all.length === 1 ? "" : "s"} not added`, null, true);
+      return;
+    }
+    e.preventDefault();
+    const batch = newImageBatch("drop");
+    batch.rejected = rejected;
+    // Read one file at a time, in drop order, as a data URL (no object URLs).
+    const read = (file) => () => new Promise((res) => {
+      const r = new FileReader();
+      r.onload = () => res(typeof r.result === "string" ? compressImageStrict(r.result) : null);
+      r.onerror = () => res(null);
+      try { r.readAsDataURL(file); } catch { res(null); }
+    });
+    for (const f of files) enqueueImage(read(f), batch);
+    finishImageBatch(batch);
+  }, [enqueueImage, finishImageBatch, showNavToast]);
   useEffect(() => {
     const handler = (e) => {
       if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA" || e.target.isContentEditable) return;
+      // An open zoom owns Esc and the step keys, also when focus is not on its
+      // overlay (for example after Tab). Esc closes only the zoom. A step key goes
+      // to the overlay's own handler, so the slide behind the zoom never moves.
+      if (VELA_OPEN_CHROME.zooms.size > 0) {
+        if (e.key === "Escape") { e.preventDefault(); window.dispatchEvent(new Event("vela-close-zoom")); return; }
+        if (["ArrowRight", "ArrowDown", "ArrowLeft", "ArrowUp", "PageDown", "PageUp", " "].includes(e.key)) {
+          e.preventDefault();
+          const overlay = [...VELA_OPEN_CHROME.zooms].pop();
+          if (e.key !== " " && overlay && e.target !== overlay) { overlay.focus(); overlay.dispatchEvent(new KeyboardEvent("keydown", { key: e.key, bubbles: true, cancelable: true })); }
+          return;
+        }
+      }
       // CR2: the TOC left rail is a roving-tabindex ARIA tree. While one of its
       // treeitems holds DOM focus, arrow/space keys are its own disclosure/navigation
       // keys (expand/collapse/move-focus/select) — never global slide-advance. The
@@ -8491,7 +10310,28 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       // (editor nav keeps reaching them so they can be edited/unhidden).
       const nextVisible = (from) => { for (let i = from + 1; i < navSlides.length; i++) if (!fullscreen || !navSlides[i].hidden) return i; return -1; };
       const prevVisible = (from) => { for (let i = from - 1; i >= 0; i--) if (!fullscreen || !navSlides[i].hidden) return i; return -1; };
-      if (e.key === "ArrowRight" || e.key === "ArrowDown" || e.key === " ") {
+      // CR07: editor review cycle — step through unreviewed slides across modules.
+      // The current slide stays in the order (even if reviewed) only to anchor the step.
+      const reviewNav = !fullscreen && reviewCycle;
+      if (reviewNav && ["ArrowRight", "ArrowDown", " ", "ArrowLeft", "ArrowUp"].includes(e.key)) {
+        e.preventDefault();
+        stopAlternatives();
+        const dir = (e.key === "ArrowLeft" || e.key === "ArrowUp") ? -1 : 1;
+        const order = [];
+        // A collapsed lane is skipped, except the current module: without the
+        // anchor, findIndex is -1 and the step jumps to the start of the deck.
+        for (const lane of (lanes || [])) {
+          for (const item of lane.items) if (!lane.collapsed || item.id === concept.id) (item.slides || []).forEach((sl, i) => { if (!sl.reviewed || (item.id === concept.id && i === slideIndex)) order.push({ id: item.id, i, title: item.title }); });
+        }
+        const t = order[order.findIndex((o) => o.id === concept.id && o.i === slideIndex) + dir];
+        if (t) {
+          if (t.id !== concept.id) { dispatch({ type: "SELECT", id: t.id }); showNavToast(t.title, null); }
+          dispatch({ type: "SET_SLIDE_INDEX", index: t.i });
+        }
+      }
+      // Story slide in Present: arrow/space keys step through its images first.
+      if (!reviewNav && ["ArrowRight", "ArrowDown", " ", "ArrowLeft", "ArrowUp"].includes(e.key) && storyStepRef.current((e.key === "ArrowLeft" || e.key === "ArrowUp") ? -1 : 1)) { e.preventDefault(); stopAlternatives(); return; }
+      if (!reviewNav && (e.key === "ArrowRight" || e.key === "ArrowDown" || e.key === " ")) {
         e.preventDefault();
         stopAlternatives(); // keep a running Improve alive across navigation
         const ni = navSlides.length > 0 ? nextVisible(slideIndex) : -1;
@@ -8513,17 +10353,19 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
           }
         }
       }
-      if (e.key === "ArrowLeft" || e.key === "ArrowUp") {
+      if (!reviewNav && (e.key === "ArrowLeft" || e.key === "ArrowUp")) {
         e.preventDefault();
         stopAlternatives(); // keep a running Improve alive across navigation
         const pi = navSlides.length > 0 ? prevVisible(slideIndex) : -1;
         if (pi >= 0) {
+          storyEnterBack();
           dispatch({ type: "SET_SLIDE_INDEX", index: pi });
         } else {
           let ti = curIdx - 1;
           if (fullscreen) while (ti >= 0 && !mods[ti].presentCard && mods[ti].lastVisible < 0) ti--;
           if (ti >= 0) {
             const prev = mods[ti];
+            storyEnterBack();
             dispatch({ type: "SELECT", id: prev.id });
             const prevPresOffset = prev.presentCard ? 1 : 0;
             // Fullscreen: last VISIBLE content slide (+ title-card offset), or the
@@ -8538,7 +10380,6 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
         }
       }
 
-      // Esc closes popovers in fullscreen, but doesn't exit fullscreen (use F)
       // Font scale: +/- in fullscreen (0 resets)
       if (fullscreen && !showGalleryRef.current && (e.key === "+" || e.key === "=")) { e.preventDefault(); { const v = Math.min(fontScale + 0.1, 2.0); dispatch({ type: "SET_FONT_SCALE", value: Math.round(v*10)/10 }); showNavToast("FONT " + Math.round(v * 100) + "%"); }; }
       if (fullscreen && !showGalleryRef.current && e.key === "-") { e.preventDefault(); { const v = Math.max(fontScale - 0.1, 0.5); dispatch({ type: "SET_FONT_SCALE", value: Math.round(v*10)/10 }); showNavToast("FONT " + Math.round(v * 100) + "%"); }; }
@@ -8568,8 +10409,16 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       if (fullscreen && e.key === "E" && e.shiftKey && !e.metaKey && !e.ctrlKey && !["INPUT", "TEXTAREA"].includes(document.activeElement?.tagName)) {
         e.preventDefault(); setPresentEdit((v) => { showNavToast(v ? "Edit mode OFF" : "Edit mode ON"); return !v; });
       }
+      // An open Present TOC panel closes first; Present stays.
+      if (e.key === "Escape" && fullscreen && VELA_OPEN_CHROME.panels.size > 0) { e.preventDefault(); window.dispatchEvent(new Event("vela-close-panel")); return; }
       if (e.key === "Escape" && showGalleryRef.current) { e.preventDefault(); setGallery(false); return; }
       if (e.key === "Escape" && showPresenterViewRef.current) { e.preventDefault(); setPresenterView(false); return; }
+      // Esc leaves Present mode. Browser fullscreen normally does this itself, but in a
+      // sandboxed iframe (Claude.ai artifact) requestFullscreen fails, so the key lands here.
+      // An open modal takes Esc first (it closes on the same keydown).
+      // A story slide zoomed on an image: Esc zooms out to the grid first and Present stays.
+      if (e.key === "Escape" && fullscreen && VELA_OPEN_CHROME.modals.size === 0 && storyEscRef.current()) { e.preventDefault(); return; }
+      if (e.key === "Escape" && fullscreen && VELA_OPEN_CHROME.modals.size === 0) { e.preventDefault(); stopAlternatives(); dispatch({ type: "SET_FULLSCREEN", value: false }); return; }
       // Ctrl+C → copy ALL selected slides (multi-select) to system clipboard,
       // in slide order. Falls back to the active slide when nothing is multi-selected.
       if ((e.ctrlKey || e.metaKey) && e.key === "c" && slidesRef.current.length > 0 && !["INPUT", "TEXTAREA"].includes(document.activeElement?.tagName) && !window.getSelection()?.toString()) {
@@ -8604,7 +10453,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       if (e.key === "I" && e.shiftKey && !e.metaKey && !e.ctrlKey && slides.length > 0 && !improving && !altLoading && aiOk) { e.preventDefault(); runImproveRef.current?.(null, "slide"); }
     };
     window.addEventListener("keydown", handler); return () => window.removeEventListener("keydown", handler);
-  }, [slideIndex, slides, presSlides, fullscreen, dispatch, concept.id, flatModules, showNavToast, stopAll, altLoading, alternatives, altOriginal, fontScale, state.selectedSlideIndices]);
+  }, [slideIndex, slides, presSlides, fullscreen, dispatch, concept.id, flatModules, showNavToast, stopAll, altLoading, alternatives, altOriginal, fontScale, state.selectedSlideIndices, reviewCycle, lanes]);
 
   // ── Browser back button → exit fullscreen instead of leaving the page ──
   useEffect(() => {
@@ -8633,10 +10482,16 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       el.requestFullscreen?.().catch(() => {});
     }
     // Listen for browser-level fullscreen exit (e.g. user presses Esc at browser level)
+    // The browser eats that Esc, so the keydown handler never sees it. Apply the same
+    // layering here: a zoom, gallery or presenter view closes first and Present stays.
     const onFsChange = () => {
-      if (!document.fullscreenElement && fullscreen) {
-        dispatch({ type: "SET_FULLSCREEN", value: false });
-      }
+      if (document.fullscreenElement || !fullscreen) return;
+      if (VELA_OPEN_CHROME.zooms.size > 0) { window.dispatchEvent(new Event("vela-close-zoom")); return; }
+      if (VELA_OPEN_CHROME.panels.size > 0) { window.dispatchEvent(new Event("vela-close-panel")); return; }
+      if (showGalleryRef.current) { setGallery(false); return; }
+      if (showPresenterViewRef.current) { setPresenterView(false); return; }
+      if (storyEscRef.current()) return;
+      dispatch({ type: "SET_FULLSCREEN", value: false });
     };
     document.addEventListener("fullscreenchange", onFsChange);
     return () => document.removeEventListener("fullscreenchange", onFsChange);
@@ -8660,6 +10515,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       if (Math.abs(scrollAccum.current) >= SCROLL_THRESHOLD) {
         const dir = scrollAccum.current > 0 ? 1 : -1;
         scrollAccum.current = 0;
+        if (storyStepRef.current(dir)) return; // one story step per notch
         const navSlides = fullscreen ? presSlides : slides;
         if (dir > 0) {
           // Scroll down → next slide or cross to next module
@@ -8679,12 +10535,14 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
         } else {
           // Scroll up → prev slide or cross to prev module
           if (navSlides.length > 0 && slideIndex > 0) {
+            storyEnterBack();
             dispatch({ type: "SET_SLIDE_INDEX", index: slideIndex - 1 });
           } else {
             const mods = flatModules();
             const curIdx = mods.findIndex((m) => m.id === concept.id);
             if (curIdx >= 0 && curIdx - 1 >= 0) {
               const prev = mods[curIdx - 1];
+              storyEnterBack();
               dispatch({ type: "SELECT", id: prev.id });
               const prevPresOffset = prev.presentCard && fullscreen ? 1 : 0;
               dispatch({ type: "SET_SLIDE_INDEX", index: Math.max(0, (prev.slideCount || 1) - 1 + prevPresOffset) });
@@ -8737,8 +10595,12 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
   };
 
   // ── Block-Targeted Edit (single block, prompt-based) ──
-  const runBlockEdit = async (blockIndex, prompt) => {
-    if (!prompt || blockEditing || !slides[slideIndex]?.blocks?.[blockIndex]) return;
+  // slot = [key, array, index] from SlideContent's blockSlot: a cols slide
+  // numbers its L/R column blocks after `blocks`, so the edit goes to that array.
+  const runBlockEdit = async (blockIndex, prompt, slot) => {
+    const key = slot && (slot[0] === "L" || slot[0] === "R") ? slot[0] : "blocks";
+    const j = key === "blocks" ? blockIndex : slot[2];
+    if (!prompt || blockEditing || !slides[slideIndex]?.[key]?.[j]) return;
     const operationEpoch = state._deckEpoch;
     const operationOwner = claimOperation("blockEdit");
     const operationIsCurrent = () => ownsOperation("blockEdit", operationOwner, operationEpoch);
@@ -8746,18 +10608,18 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
     dispatch({ type: "SET_AI_WORK", value: { itemId: concept.id, slideIdx: slideIndex } }); // CR5
     try {
       const newBlocks = await blockEditSlide(
-        slides[slideIndex], blockIndex, prompt,
-        concept.title, slideIndex + 1, slides.length, branding, guidelines
+        slides[slideIndex], j, prompt,
+        concept.title, slideIndex + 1, slides.length, branding, guidelines, key
       );
       if (!operationIsCurrent()) return;
       if (newBlocks && newBlocks.length > 0) {
-        const curBlocks = [...(slides[slideIndex].blocks || [])];
-        curBlocks.splice(blockIndex, 1, ...newBlocks);
+        const curBlocks = [...(slides[slideIndex][key] || [])];
+        curBlocks.splice(j, 1, ...newBlocks);
         const ts = new Date().toLocaleString("en-GB", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
-        const logEntry = `[🎯 ${ts}] block[${blockIndex}] "${prompt}"`;
+        const logEntry = `[🎯 ${ts}] ${key === "blocks" ? "block" : key}[${j}] "${prompt}"`;
         const existing = slides[slideIndex]?.notes?.trim() || "";
         setRevealKey(`be-${Date.now()}`);
-        dispatch({ type: "UPDATE_SLIDE", id: concept.id, index: slideIndex, patch: { blocks: curBlocks, notes: existing ? `${existing}\n${logEntry}` : logEntry }, merge: true });
+        dispatch({ type: "UPDATE_SLIDE", id: concept.id, index: slideIndex, patch: { [key]: curBlocks, notes: existing ? `${existing}\n${logEntry}` : logEntry }, merge: true });
       }
     } catch (e) {
       console.error("Block edit failed:", e);
@@ -8998,6 +10860,21 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
   }, [concept.id, slideIndex]);
 
   const isStudent = state?.veraMode === "student";
+  // Editor toolbar: the story toggle shows only on a slide with >= 2 images.
+  // The Present list (hidden images left out): the toggle shows only when Present can step a story.
+  const editStoryImages = fullscreen ? 0 : storyImageList(slides[slideIndex], true).length;
+  const editStoryOn = slides[slideIndex]?.story === true;
+  // Slide toolbar labels, left to right; auto-compact hides them from the right.
+  const tbRef = useRef(null);
+  const [tbFontGen, setTbFontGen] = useState(0);
+  useEffect(() => { let live = true; document.fonts?.ready?.then(() => { if (live) setTbFontGen((g) => g + 1); }); return () => { live = false; }; }, []);
+  const tbKeys = ["ai", "improve", "variants", "new", "dup", "move", "delete", "review", ...(editStoryImages >= 2 ? ["story"] : []), ...(editStoryImages >= 2 && editStoryOn ? ["preview"] : []), "overview"];
+  const tbHide = useToolbarCompact(tbRef, `${fullscreen}|${slides.length > 0}|${isMobile}|${tbKeys.join()}|${!!improving}|${!!altLoading}|${tbFontGen}`);
+  const tbShow = (k) => !isMobile && tbKeys.indexOf(k) < tbKeys.length - tbHide;
+  const tbAria = (k, label) => (isMobile || tbShow(k)) ? undefined : label;
+  const tbCompact = !isMobile && tbHide === tbKeys.length + 1;
+  const tbWrap = tbHide > (isMobile ? 0 : tbKeys.length + 1);
+  const tbPad = tbCompact ? `5px ${TB_COMPACT_PAD_X}px` : "5px 12px";
 
   // Hidden offscreen host used to measure a slide's layout without disturbing the
   // visible view, so Improve can run in the background across navigation.
@@ -9017,7 +10894,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
             .slide-transition-fade (part-imports.jsx). Independent of the per-block
             .stg-N stagger reveal inside SlideContent, which keeps working as-is. */}
         <div key={slideIndex} className="slide-transition-fade" style={{ position: "relative", width: "100%", height: "100%" }}>
-          <FullscreenSlide key={`deck-${state._deckEpoch}`} slide={presSlides[slideIndex]} index={slideIndex} total={presSlides.length} innerRef={slideRef} branding={presSlides[slideIndex]?._virtual ? null : branding} editable={!isStudent && !presSlides[slideIndex]?._virtual} onEdit={isStudent || presSlides[slideIndex]?._virtual ? undefined : handleSlideEdit} onBlockEdit={isStudent || presSlides[slideIndex]?._virtual ? undefined : runBlockEdit} blockEditing={isStudent ? null : blockEditing} fontScale={fontScale} mode="fill" forceEdit={presentEdit && !isStudent} displayIndex={globalSlideIndex - presOffset} displayTotal={globalSlideTotal} />
+          <FullscreenSlide key={`deck-${state._deckEpoch}`} slide={presSlides[slideIndex]} index={slideIndex} total={presSlides.length} innerRef={slideRef} branding={presSlides[slideIndex]?._virtual ? null : branding} editable={!isStudent && !presSlides[slideIndex]?._virtual} onEdit={isStudent || presSlides[slideIndex]?._virtual ? undefined : handleSlideEdit} onBlockEdit={isStudent || presSlides[slideIndex]?._virtual ? undefined : runBlockEdit} blockEditing={isStudent ? null : blockEditing} fontScale={fontScale} mode="fill" forceEdit={presentEdit && !isStudent} displayIndex={globalSlideIndex - presOffset} displayTotal={globalSlideTotal} story={story} onStoryJump={story ? onStoryJump : undefined} onStoryZoomOut={story ? onStoryZoomOut : undefined} />
         </div>
         {!isMobile && <PresenterTOC slides={presSlides} slideIndex={slideIndex} onJump={(i) => dispatch({ type: "SET_SLIDE_INDEX", index: i })} lanes={lanes} currentConceptId={concept.id} dispatch={dispatch} />}
                 {fontScale !== 1 && <div style={{ position: "absolute", top: 12, right: 16, fontFamily: FONT.mono, fontSize: 13, fontWeight: 700, color: T.accent, background: T.bgPanel + "e0", padding: "3px 10px", borderRadius: 4, border: `1px solid ${T.accent}40`, zIndex: 20, letterSpacing: "0.05em", pointerEvents: "none" }}>FONT {Math.round(fontScale * 100)}%</div>}
@@ -9031,20 +10908,27 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
           </div>
           <div style={{ fontFamily: FONT.mono, fontSize: 10, color: "rgba(255,255,255,0.5)" }}>{improving.current}/{improving.total}</div>
         </div>}
+        {/* Present toolbar: one group, kept faint so it does not distract the
+            audience. Pointing at any button shows the whole group. The group
+            itself takes no clicks, so the slide under it stays clickable. */}
+        <div className={isMobile ? undefined : "vela-fs-toolbar"} style={{ position: "absolute", top: 0, right: 0, width: "100%", height: 0 }}>
         <div className="slide-nav-btn" onClick={() => dispatch({ type: "SET_FULLSCREEN", value: false })} style={{ position: "absolute", top: isMobile ? 8 : 16, right: isMobile ? 8 : 16, padding: isMobile ? 12 : 8 }}><Minimize2 size={isMobile ? 22 : 18} color="#fff" /></div>
-        {!isMobile && <div data-testid="student-toggle" className="slide-nav-btn" onClick={() => dispatch({ type: "SET_VERA_MODE", mode: isStudent ? "editor" : "student" })} title={isStudent ? "Exit student mode" : "Student mode — Vera teaches"} style={{ position: "absolute", top: 16, right: 52, padding: 8, background: isStudent ? T.accent + "30" : "transparent", borderRadius: 6 }}><span style={{ fontSize: 16 }}>🎓</span></div>}
-        {!isMobile && <div data-testid="gallery-toggle" className="slide-nav-btn" onClick={() => setGallery((v) => !v)} title="Gallery view (G)" style={{ position: "absolute", top: 16, right: 88, padding: 8, background: showGallery ? T.accent + "30" : "transparent", borderRadius: 6 }}><span style={{ fontSize: 16 }}>🗂</span></div>}
-        {!isMobile && <div data-testid="presenter-toggle" className="slide-nav-btn" onClick={() => setPresenterView((v) => !v)} title={showPresenterView ? "Exit presenter view (S)" : "Presenter view — notes, next slide, timer (S)"} style={{ position: "absolute", top: 16, right: 124, padding: 8, background: showPresenterView ? T.accent + "30" : "transparent", borderRadius: 6 }}><span style={{ fontSize: 16 }}>🖥️</span></div>}
+        {!isMobile && <div data-testid="student-toggle" className="slide-nav-btn" onClick={() => dispatch({ type: "SET_VERA_MODE", mode: isStudent ? "editor" : "student" })} title={isStudent ? "Exit student mode" : "Student mode — Vera teaches"} style={{ position: "absolute", top: 16, right: 52, padding: 8, background: isStudent ? T.accent + "30" : undefined, borderRadius: 6 }}><span style={{ fontSize: 16, color: "#fff" }}>🎓</span></div>}
+        {/* Gallery is reached through the view switch (fs-view-switch), so it has no separate icon here. */}
+        {!isMobile && <div data-testid="presenter-toggle" className="slide-nav-btn" onClick={() => setPresenterView((v) => !v)} title={showPresenterView ? "Exit presenter view (S)" : "Presenter view — notes, next slide, timer (S)"} style={{ position: "absolute", top: 16, right: 88, padding: 8, background: showPresenterView ? T.accent + "30" : undefined, borderRadius: 6 }}><span style={{ fontSize: 16, color: "#fff" }}>{"\u{1F5D2}\uFE0F"}</span></div>}
         {/* Present Edit toggle (Shift+E): restore inline click-to-edit while
             presenting. Uses the Lucide pencil (SVG), NOT the ✏ emoji, so the
             CR-03 "no edit chrome" test still passes when edit mode is off.
             Hidden in student mode, where editing is disabled by design. */}
-        {!isMobile && !isStudent && <div data-testid="present-edit-toggle" className="slide-nav-btn" onClick={() => setPresentEdit((v) => !v)} title={presentEdit ? "Editing on — click text/icons to edit (Shift+E)" : "Edit mode — click text/icons to edit while presenting (Shift+E)"} style={{ position: "absolute", top: 16, right: 160, padding: 8, background: presentEdit ? T.accent + "30" : "transparent", borderRadius: 6 }}>{getIcon("edit", { size: 18, color: "#fff" })}</div>}
+        {!isMobile && !isStudent && <div data-testid="present-edit-toggle" className="slide-nav-btn" onClick={() => setPresentEdit((v) => !v)} title={presentEdit ? "Editing on — click text/icons to edit (Shift+E)" : "Edit mode — click text/icons to edit while presenting (Shift+E)"} style={{ position: "absolute", top: 16, right: 124, padding: 8, background: presentEdit ? T.accent + "30" : undefined, borderRadius: 6 }}>{getIcon("edit", { size: 18, color: "#fff" })}</div>}
+        {/* CR13: the same view switch as the top bar, left of the icon row. */}
+        {!isMobile && <ViewSwitch testid="fs-view-switch" mode={viewMode} onSet={setView} compact onDark style={{ position: "absolute", top: 16, right: VELA_LOCAL_MODE ? 164 : 200 }} />}
         {/* Browser fullscreen toggle removed — Vela fullscreen (F key / minimize button) is sufficient */}
         {!isMobile && !VELA_LOCAL_MODE && <>
-          <div className="slide-nav-btn" onClick={() => setShowCinemaTip((v) => !v)} title="Cinema mode — fullscreen in browser" style={{ position: "absolute", top: 16, right: 196, padding: 8 }}><VelaIcon size={18} /></div>
-          {showCinemaTip && <CinemaTip onClose={() => setShowCinemaTip(false)} />}
+          <div className="slide-nav-btn" onClick={() => setShowCinemaTip((v) => !v)} title="Cinema mode — fullscreen in browser" style={{ position: "absolute", top: 16, right: 160, padding: 8 }}><VelaIcon size={18} /></div>
         </>}
+        </div>
+        {!isMobile && !VELA_LOCAL_MODE && showCinemaTip && <CinemaTip onClose={() => setShowCinemaTip(false)} />}
         {navToast && <div className={navToast.phase === "in" ? "nav-toast-in" : "nav-toast-out"} style={{ position: "absolute", bottom: 20, left: 0, right: 0, display: "flex", justifyContent: "center", zIndex: 20, pointerEvents: "none" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 20px", borderRadius: 8, background: "rgba(0,0,0,0.78)", backdropFilter: "blur(8px)", border: `1px solid ${T.accent}30` }}>
             {navToast.section && <span style={{ fontFamily: FONT.mono, fontSize: 10, color: T.accent, fontWeight: 600, letterSpacing: "0.05em", textTransform: "uppercase" }}>{navToast.section}</span>}
@@ -9061,22 +10945,31 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       </div>
       </div>
       {isStudent && <StudentPanel state={state} dispatch={dispatch} lanes={lanes} selectedId={concept.id} slideIndex={slideIndex} />}
-      {showGallery && <GalleryView lanes={lanes} currentConceptId={concept.id} slideIndex={slideIndex} dispatch={dispatch} onClose={() => setGallery(false)} branding={branding} />}
+      {showGallery && <GalleryView lanes={lanes} currentConceptId={concept.id} slideIndex={slideIndex} dispatch={dispatch} onClose={() => setGallery(false)} branding={branding} headerExtra={<ViewSwitch testid="gallery-view-switch" mode={viewMode} onSet={setView} />} />}
       {showPresenterView && (() => {
         let nextIdx = -1;
         for (let i = slideIndex + 1; i < presSlides.length; i++) if (!presSlides[i].hidden) { nextIdx = i; break; }
-        return <PresenterView current={presSlides[slideIndex]} next={nextIdx >= 0 ? presSlides[nextIdx] : null} index={globalSlideIndex - presOffset} total={globalSlideTotal} duration={presSlides[slideIndex]?.duration || 0} elapsed={presentElapsed} branding={branding} onClose={() => setPresenterView(false)} />;
+        // NEXT on a story slide is its next step; after the last step, the next slide.
+        const nextStory = story ? storyNext(story, storyN) : null;
+        return <PresenterView current={presSlides[slideIndex]} next={nextStory ? presSlides[slideIndex] : nextIdx >= 0 ? presSlides[nextIdx] : null} currentStory={story} nextStory={nextStory || undefined} index={globalSlideIndex - presOffset} total={globalSlideTotal} duration={presSlides[slideIndex]?.duration || 0} elapsed={presentElapsed} branding={branding} onClose={() => setPresenterView(false)} />;
       })()}
     </div>
   );
 
   return (
-    <div ref={containerRef} tabIndex={0} className="fade-in" style={{ flex: 1, display: "flex", flexDirection: "column", background: T.bg, borderLeft: isMobile ? "none" : `1px solid ${T.border}`, outline: "none", minWidth: 0 }}>
+    <div ref={containerRef} tabIndex={0} className="fade-in" onDragOver={handleImageDragOver} onDragLeave={handleImageDragLeave} onDrop={handleImageDrop} style={{ flex: 1, display: "flex", flexDirection: "column", background: T.bg, borderLeft: isMobile ? "none" : `1px solid ${T.border}`, outline: "none", minWidth: 0 }}>
       {measureHarness}
+      {imageDragRect && <div data-testid="image-drop-overlay" style={{ position: "fixed", left: imageDragRect.left, top: imageDragRect.top, width: imageDragRect.width, height: imageDragRect.height, zIndex: 99999, background: "rgba(59,130,246,0.12)", border: `2px dashed ${T.accent}`, boxSizing: "border-box", display: "flex", alignItems: "center", justifyContent: "center", pointerEvents: "none" }}>
+        <span style={{ background: T.bgPanel, borderRadius: 12, padding: "16px 28px", fontFamily: FONT.display, fontSize: 18, fontWeight: 700, color: T.text, boxShadow: "0 20px 60px rgba(0,0,0,0.4)" }}>Drop images to add to this slide</span>
+      </div>}
+      {/* The toast in the editor view: only notices raised for it (image paste). */}
+      {navToast?.editor && <div data-testid="paste-notice" role="status" className={navToast.phase === "in" ? "nav-toast-in" : "nav-toast-out"} style={{ position: "fixed", bottom: 24, left: 0, right: 0, display: "flex", justifyContent: "center", zIndex: 1000, pointerEvents: "none" }}>
+        <div style={{ padding: "8px 20px", borderRadius: 8, background: "rgba(0,0,0,0.78)", backdropFilter: "blur(8px)", border: `1px solid ${T.accent}30`, fontFamily: FONT.display, fontSize: 14, color: "#fff", fontWeight: 600 }}>{navToast.module}</div>
+      </div>}
 
 
       {/* ── TOP PANELS — deck-level dialogs from top bar ──── */}
-      {showBranding && <div style={{ flexShrink: 0 }}><BrandingPanel branding={branding} guidelines={guidelines} dispatch={dispatch} isMobile={isMobile} /></div>}
+      {showBranding && isMobile && <div style={{ flexShrink: 0 }}><BrandingPanel branding={branding} guidelines={guidelines} dispatch={dispatch} isMobile={isMobile} onClose={() => setShowBranding(false)} /></div>}
       {showImproveInput && <div data-testid="batch-edit-panel" style={{ flexShrink: 0, borderBottom: `1px solid ${T.border}`, background: T.accent + "08", padding: "8px 12px" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
           <span style={{ fontFamily: FONT.mono, fontSize: 10, fontWeight: 700, color: T.accent, letterSpacing: "0.05em" }}>🔄 BATCH EDIT</span>
@@ -9095,8 +10988,10 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
         </div>}
       </div>}
 
+      {/* ── MAIN ROW — preview column + right-docked branding pane (CR09) ── */}
+      <div data-testid="editor-main-row" style={{ flex: 1, display: "flex", flexDirection: "row", minHeight: 0, overflow: "hidden" }}>
       {/* ── MAIN PREVIEW ───────────────────────────────────── */}
-      <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+      <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minWidth: 0 }}>
         {slides.length === 0 ? (
           <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 12 }}>
             <div style={{ fontSize: 32, opacity: 0.15 }}>🎬</div>
@@ -9129,7 +11024,12 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
                   {!fullscreen && !state.commentsPanelOpen && !showCommentPopover && (() => {
                     const sc = (slides[slideIndex]?.comments || []).filter((c) => c.status === "open");
                     if (sc.length === 0) return null;
-                    return <div onClick={(e) => { e.stopPropagation(); dispatch({ type: "SET_COMMENTS_PANEL", open: true }); dispatch({ type: "SET_REVIEW_MODE", value: true }); }} style={{ position: "absolute", top: 8, right: 8, zIndex: 10, minWidth: 22, height: 22, borderRadius: 11, background: T.amber, color: "#fff", fontFamily: FONT.mono, fontSize: 10, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", padding: "0 6px", cursor: "pointer", boxShadow: "0 2px 8px rgba(0,0,0,0.3)" }} title={`${sc.length} open comment${sc.length > 1 ? "s" : ""}`}>{sc.length}</div>;
+                    return <div data-editor-overlay="comments" onClick={(e) => { e.stopPropagation(); dispatch({ type: "SET_COMMENTS_PANEL", open: true }); dispatch({ type: "SET_REVIEW_MODE", value: true }); }} style={{ position: "absolute", top: 8, right: 8, zIndex: 10, minWidth: 22, height: 22, borderRadius: 11, background: T.amber, color: "#fff", fontFamily: FONT.mono, fontSize: 10, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", padding: "0 6px", cursor: "pointer", boxShadow: "0 2px 8px rgba(0,0,0,0.3)" }} title={`${sc.length} open comment${sc.length > 1 ? "s" : ""}`}>{sc.length}</div>;
+                  })()}
+                  {/* CR07: reviewed checkmark (editor only; an overlay, so exports never render it) */}
+                  {!fullscreen && slides[slideIndex] && (() => {
+                    const rv = !!slides[slideIndex].reviewed;
+                    return <button data-testid="reviewed-toggle" data-editor-overlay="reviewed" data-reviewed={rv ? "1" : "0"} aria-pressed={rv} onClick={(e) => { e.stopPropagation(); dispatch({ type: "TOGGLE_SLIDE_REVIEWED", id: concept.id, index: slideIndex }); }} title={rv ? "Reviewed — click to mark not reviewed" : "Mark slide reviewed"} style={{ position: "absolute", top: 8, right: 44, zIndex: 10, width: 24, height: 24, borderRadius: 12, border: `1.5px solid ${rv ? T.green : "rgba(255,255,255,0.7)"}`, background: rv ? T.green : "rgba(0,0,0,0.35)", color: "#fff", fontSize: 13, fontWeight: 700, lineHeight: 1, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", padding: 0, opacity: rv ? 1 : 0.75, boxShadow: "0 2px 8px rgba(0,0,0,0.3)" }}>✓</button>;
                   })()}
                   {/* Study notes badge (top-left) — pure indicator in editor mode */}
                   {!fullscreen && slides[slideIndex]?.studyNotes?.text && (
@@ -9152,7 +11052,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
                 </div>
                 <div style={{ fontFamily: FONT.mono, fontSize: 9, color: "rgba(255,255,255,0.5)" }}>{improving.current}/{improving.total}</div>
               </div>}
-              {!improving && beforeSlides && <div style={{ position: "absolute", top: 8, right: 8, display: "flex", gap: 4, zIndex: 10 }}>
+              {!improving && beforeSlides && <div data-editor-overlay="before-after" style={{ position: "absolute", top: 8, right: 8, display: "flex", gap: 4, zIndex: 10 }}>
                 <button onClick={() => setShowBefore((v) => !v)} style={S.btn({ background: showBefore ? T.amber + "30" : "rgba(0,0,0,0.5)", color: showBefore ? T.amber : "#fff", border: `1px solid ${showBefore ? T.amber : "rgba(255,255,255,0.2)"}`, fontSize: 9, padding: "2px 8px" })}>{showBefore ? "◀ Before" : "After ▶"}</button>
                 <button onClick={() => setBeforeSlides(null)} style={S.btn({ background: "rgba(0,0,0,0.5)", color: "rgba(255,255,255,0.6)", border: "1px solid rgba(255,255,255,0.15)", fontSize: 9, padding: "2px 6px" })}>✕</button>
               </div>}
@@ -9270,17 +11170,20 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
         </div>}
 
         {/* ── SLIDE TOOLBAR — centered strip between preview & notes ── */}
-        {slides.length > 0 && <div data-testid="slide-toolbar" style={{ flexShrink: 0, borderTop: `1px solid ${T.border}`, background: T.bgPanel, padding: "4px 12px", display: "flex", justifyContent: "center", alignItems: "center", gap: 3 }}>
-          <button data-testid="quick-edit-open" onClick={() => { if (aiOk) setShowQuickEdit((v) => !v); }} disabled={!aiOk} title={aiOk ? "AI Edit slide (E)" : VELA_AI_UNAVAILABLE_MSG} style={S.btn({ padding: "5px 12px", fontSize: 14, color: !aiOk ? T.textDim + "60" : showQuickEdit ? T.accent : T.textDim, background: showQuickEdit ? T.accent + "20" : "transparent", borderRadius: 4, display: "flex", alignItems: "center", gap: 5, cursor: aiOk ? "pointer" : "not-allowed" })}>⚡{!isMobile && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>AI Edit</span>}</button>
-          <button onClick={() => improving ? stopAll() : runImproveRef.current?.(null, "slide")} disabled={!aiOk || slides.length === 0 || altLoading} title={aiOk ? "Auto-improve this slide (⇧I)" : VELA_AI_UNAVAILABLE_MSG} style={S.btn({ padding: "5px 12px", fontSize: 14, color: !aiOk ? T.textDim + "60" : improving ? T.red : T.textDim, background: improving ? T.accent + "20" : "transparent", borderRadius: 4, display: "flex", alignItems: "center", gap: 5, opacity: !aiOk || slides.length === 0 ? 0.35 : 1, cursor: aiOk ? "pointer" : "not-allowed" })}>{improving ? "⏹" : "✨"}{!isMobile && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>{improving ? "Stop" : "Improve"}</span>}</button>
-          <button onClick={() => altLoading ? stopAlternatives() : runAlternatives()} disabled={!aiOk || slides.length === 0 || improving} title={aiOk ? "Generate design variants — click a tile to apply, ↩ Original to revert, Esc to close" : VELA_AI_UNAVAILABLE_MSG} style={S.btn({ padding: "5px 12px", fontSize: 14, color: !aiOk ? T.textDim + "60" : altLoading ? T.red : (alternatives ? T.accent : T.textDim), background: altLoading || alternatives ? T.accent + "20" : "transparent", borderRadius: 4, display: "flex", alignItems: "center", gap: 5, opacity: !aiOk || slides.length === 0 ? 0.35 : 1, cursor: aiOk ? "pointer" : "not-allowed" })}>{altLoading ? "⏹" : "🎲"}{!isMobile && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>{altLoading ? "Stop" : "Variants"}</span>}</button>
+        {slides.length > 0 && <div ref={tbRef} data-testid="slide-toolbar" style={{ flexShrink: 0, borderTop: `1px solid ${T.border}`, background: T.bgPanel, padding: "4px 12px", display: "flex", flexWrap: tbWrap ? "wrap" : "nowrap", whiteSpace: tbWrap ? undefined : "nowrap", justifyContent: "center", alignItems: "center", gap: tbCompact ? TB_COMPACT_GAP : 3 }}>
+          <button data-testid="quick-edit-open" onClick={() => { if (aiOk) setShowQuickEdit((v) => !v); }} disabled={!aiOk} aria-label={tbAria("ai", "AI Edit")} title={aiOk ? "AI Edit slide (E)" : VELA_AI_UNAVAILABLE_MSG} style={S.btn({ padding: tbPad, fontSize: 14, color: !aiOk ? T.textDim + "60" : showQuickEdit ? T.accent : T.textDim, background: showQuickEdit ? T.accent + "20" : "transparent", borderRadius: 4, display: "flex", alignItems: "center", gap: 5, cursor: aiOk ? "pointer" : "not-allowed" })}>⚡{tbShow("ai") && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>AI Edit</span>}</button>
+          <button onClick={() => improving ? stopAll() : runImproveRef.current?.(null, "slide")} disabled={!aiOk || slides.length === 0 || altLoading} aria-label={tbAria("improve", improving ? "Stop" : "Improve")} title={aiOk ? "Auto-improve this slide (⇧I)" : VELA_AI_UNAVAILABLE_MSG} style={S.btn({ padding: tbPad, fontSize: 14, color: !aiOk ? T.textDim + "60" : improving ? T.red : T.textDim, background: improving ? T.accent + "20" : "transparent", borderRadius: 4, display: "flex", alignItems: "center", gap: 5, opacity: !aiOk || slides.length === 0 ? 0.35 : 1, cursor: aiOk ? "pointer" : "not-allowed" })}>{improving ? "⏹" : "✨"}{tbShow("improve") && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>{improving ? "Stop" : "Improve"}</span>}</button>
+          <button onClick={() => altLoading ? stopAlternatives() : runAlternatives()} disabled={!aiOk || slides.length === 0 || improving} aria-label={tbAria("variants", altLoading ? "Stop" : "Variants")} title={aiOk ? "Generate design variants — click a tile to apply, ↩ Original to revert, Esc to close" : VELA_AI_UNAVAILABLE_MSG} style={S.btn({ padding: tbPad, fontSize: 14, color: !aiOk ? T.textDim + "60" : altLoading ? T.red : (alternatives ? T.accent : T.textDim), background: altLoading || alternatives ? T.accent + "20" : "transparent", borderRadius: 4, display: "flex", alignItems: "center", gap: 5, opacity: !aiOk || slides.length === 0 ? 0.35 : 1, cursor: aiOk ? "pointer" : "not-allowed" })}>{altLoading ? "⏹" : "🎲"}{tbShow("variants") && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>{altLoading ? "Stop" : "Variants"}</span>}</button>
           <div style={{ width: 1, height: 22, background: T.border + "60" }} />
-          <button onClick={() => { setShowNewSlide((v) => !v); setShowQuickEdit(false); }} title="New slide (N)" style={S.btn({ padding: "5px 12px", fontSize: 14, color: showNewSlide ? T.green : T.textDim, background: showNewSlide ? T.green + "20" : "transparent", borderRadius: 4, display: "flex", alignItems: "center", gap: 5 })}>+{!isMobile && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>New</span>}</button>
-          <button onClick={() => { dispatch({ type: "DUPLICATE_SLIDE", id: concept.id, index: slideIndex }); dispatch({ type: "SET_SLIDE_INDEX", index: slideIndex + 1 }); }} title="Duplicate slide" style={S.btn({ padding: "5px 12px", fontSize: 14, color: T.textDim, borderRadius: 4, display: "flex", alignItems: "center", gap: 5 })}>📋{!isMobile && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>Duplicate</span>}</button>
-          <button ref={moveRef} onClick={() => setShowMoveToModule((v) => !v)} title="Move to module" style={S.btn({ padding: "5px 12px", fontSize: 14, color: showMoveToModule ? T.accent : T.textDim, background: showMoveToModule ? T.accent + "20" : "transparent", borderRadius: 4, display: "flex", alignItems: "center", gap: 5 })}>📦{!isMobile && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>Move</span>}</button>
-          <button onClick={() => { dispatch({ type: "REMOVE_SLIDE", id: concept.id, index: slideIndex }); dispatch({ type: "SET_SLIDE_INDEX", index: Math.max(0, slideIndex - 1) }); }} title="Delete slide (Del)" style={S.btn({ padding: "5px 12px", fontSize: 14, color: T.red + "90", borderRadius: 4, display: "flex", alignItems: "center", gap: 5 })}>🗑{!isMobile && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>Delete</span>}</button>
+          <button onClick={() => { setShowNewSlide((v) => !v); setShowQuickEdit(false); }} aria-label={tbAria("new", "New")} title="New slide (N)" style={S.btn({ padding: tbPad, fontSize: 14, color: showNewSlide ? T.green : T.textDim, background: showNewSlide ? T.green + "20" : "transparent", borderRadius: 4, display: "flex", alignItems: "center", gap: 5 })}>+{tbShow("new") && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>New</span>}</button>
+          <button onClick={() => { dispatch({ type: "DUPLICATE_SLIDE", id: concept.id, index: slideIndex }); dispatch({ type: "SET_SLIDE_INDEX", index: slideIndex + 1 }); }} aria-label={tbAria("dup", "Duplicate")} title="Duplicate slide" style={S.btn({ padding: tbPad, fontSize: 14, color: T.textDim, borderRadius: 4, display: "flex", alignItems: "center", gap: 5 })}>📋{tbShow("dup") && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>Duplicate</span>}</button>
+          <button ref={moveRef} onClick={() => setShowMoveToModule((v) => !v)} aria-label={tbAria("move", "Move")} title="Move to module" style={S.btn({ padding: tbPad, fontSize: 14, color: showMoveToModule ? T.accent : T.textDim, background: showMoveToModule ? T.accent + "20" : "transparent", borderRadius: 4, display: "flex", alignItems: "center", gap: 5 })}>📦{tbShow("move") && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>Move</span>}</button>
+          <button onClick={() => { dispatch({ type: "REMOVE_SLIDE", id: concept.id, index: slideIndex }); dispatch({ type: "SET_SLIDE_INDEX", index: Math.max(0, slideIndex - 1) }); }} aria-label={tbAria("delete", "Delete")} title="Delete slide (Del)" style={S.btn({ padding: tbPad, fontSize: 14, color: T.red + "90", borderRadius: 4, display: "flex", alignItems: "center", gap: 5 })}>🗑{tbShow("delete") && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>Delete</span>}</button>
+          <button data-testid="review-cycle-toggle" aria-pressed={reviewCycle} onClick={() => setReviewCycle((v) => !v)} aria-label={tbAria("review", "Review cycle")} title={reviewCycle ? "Review cycle on — arrow keys skip reviewed slides" : "Review cycle — arrow keys skip reviewed slides"} style={S.btn({ padding: tbPad, fontSize: 14, color: reviewCycle ? T.green : T.textDim, background: reviewCycle ? T.green + "20" : "transparent", borderRadius: 4, display: "flex", alignItems: "center", gap: 5 })}>✓{tbShow("review") && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>Review cycle</span>}</button>
+          {editStoryImages >= 2 && <button data-testid="story-toggle" aria-pressed={editStoryOn} onClick={() => handleSlideEdit({ story: editStoryOn ? undefined : true })} aria-label={tbAria("story", "Story")} title={editStoryOn ? "Story on — Present shows the images one by one" : "Story — present the images one by one"} style={S.btn({ padding: tbPad, fontSize: 14, color: editStoryOn ? T.accent : T.textDim, background: editStoryOn ? T.accent + "20" : "transparent", borderRadius: 4, display: "flex", alignItems: "center", gap: 5 })}>🎞{tbShow("story") && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>Story</span>}</button>}
+          {editStoryImages >= 2 && editStoryOn && <button data-testid="story-preview" onClick={() => { stopAll(); dispatch({ type: "SET_FULLSCREEN", value: true }); }} title="Preview story — present from this slide" aria-label="Preview story" style={S.btn({ padding: tbPad, fontSize: 14, color: T.textDim, background: "transparent", borderRadius: 4, display: "flex", alignItems: "center", gap: 5 })}>▶{tbShow("preview") && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>Preview</span>}</button>}
           <div style={{ width: 1, height: 22, background: T.border + "60" }} />
-          <button data-testid="editor-gallery-toggle" onClick={() => setGallery((v) => !v)} title="Overview — all slides (G)" style={S.btn({ padding: "5px 12px", fontSize: 14, color: showGallery ? T.accent : T.textDim, background: showGallery ? T.accent + "20" : "transparent", borderRadius: 4, display: "flex", alignItems: "center", gap: 5 })}>🗂{!isMobile && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>Overview</span>}</button>
+          <button data-testid="editor-gallery-toggle" onClick={() => setGallery((v) => !v)} aria-label={tbAria("overview", "Overview")} title="Overview — all slides (G)" style={S.btn({ padding: tbPad, fontSize: 14, color: showGallery ? T.accent : T.textDim, background: showGallery ? T.accent + "20" : "transparent", borderRadius: 4, display: "flex", alignItems: "center", gap: 5 })}>🗂{tbShow("overview") && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>Overview</span>}</button>
         </div>}
 
         {/* ── NOTES BAR ──────────────────────────────────────── */}
@@ -9308,7 +11211,9 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
         {/* Move-to-module popover */}
         {showMoveToModule && (() => { const allMods = []; for (const l of lanes) for (const it of l.items) if (it.id !== concept.id) allMods.push({ id: it.id, title: it.title, lane: l.title }); const rect = moveRef.current?.getBoundingClientRect(); const popH = Math.min(300, allMods.length * 32 + 72); const flipUp = rect && (rect.bottom + popH + 8 > window.innerHeight); const top = rect ? (flipUp ? Math.max(8, rect.top - popH - 4) : rect.bottom + 4) : 40; const left = rect ? Math.max(8, Math.min(rect.left, window.innerWidth - 220)) : 8; return <><div onClick={() => setShowMoveToModule(false)} style={{ position: "fixed", inset: 0, zIndex: 9998 }} /><div data-testid="move-picker" style={{ position: "fixed", top, left, background: T.bgPanel, border: `1px solid ${T.border}`, borderRadius: 8, padding: 4, zIndex: 9999, boxShadow: "0 4px 20px rgba(0,0,0,0.5)" }}><SectionPicker mods={allMods} emptyLabel="No other modules" onPick={(toId, e) => { dispatch({ type: "MOVE_SLIDE_TO_MODULE", fromId: concept.id, toId, index: slideIndex }); if (e && (e.ctrlKey || e.metaKey)) { const remaining = slides.length - 1; if (slideIndex < remaining) { dispatch({ type: "SELECT", id: concept.id, slideIndex }); } else { const flat = []; for (const l of lanes) for (const it of l.items) flat.push(it); const pos = flat.findIndex((it) => it.id === concept.id); const nextMod = pos >= 0 ? flat[pos + 1] : null; if (nextMod) dispatch({ type: "SELECT", id: nextMod.id, slideIndex: 0 }); else if (remaining > 0) dispatch({ type: "SELECT", id: concept.id, slideIndex: remaining - 1 }); } } setShowMoveToModule(false); }} /></div></>; })()}
       </div>
-      {showGallery && <GalleryView lanes={lanes} currentConceptId={concept.id} slideIndex={slideIndex} dispatch={dispatch} onClose={() => setGallery(false)} branding={branding} />}
+      {showBranding && !isMobile && <BrandingPanel docked branding={branding} guidelines={guidelines} dispatch={dispatch} isMobile={isMobile} onClose={() => setShowBranding(false)} />}
+      </div>
+      {showGallery && <GalleryView lanes={lanes} currentConceptId={concept.id} slideIndex={slideIndex} dispatch={dispatch} onClose={() => setGallery(false)} branding={branding} headerExtra={<ViewSwitch testid="gallery-view-switch" mode={viewMode} onSet={setView} />} />}
     </div>
   );
 }
@@ -9322,6 +11227,75 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
 let _velaDrag = null; // { kind: "slide", fromItemId, slideIndex } | { kind: "section", itemId, laneId }
 const _setDrag = (p) => { _velaDrag = p; };
 const _clearDrag = () => { _velaDrag = null; };
+
+// ━━━ TOC drag auto-scroll ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Native drag does not scroll the TOC pane near its edges, so a dragged slide or
+// section could not reach sections outside the view. While a TOC drag is active,
+// a pointer in the edge zone of the scroll container scrolls it. The speed grows
+// nearer the edge. The container is the nearest scrollable ancestor of the tree,
+// or the page when no ancestor scrolls.
+const TOC_AUTOSCROLL_ZONE = 56; // px from the visible top / bottom edge
+const TOC_AUTOSCROLL_MAX = 22; // px per animation frame at the edge
+// Signed speed (px/frame) for pointer y and visible bounds [top, bottom]; < 0 = up.
+// A pointer just outside the bounds (within one zone) scrolls at full speed.
+function tocAutoScrollSpeed(y, top, bottom, zone = TOC_AUTOSCROLL_ZONE, max = TOC_AUTOSCROLL_MAX) {
+  if (!Number.isFinite(y) || !(bottom > top)) return 0;
+  const z = Math.max(8, Math.min(zone, (bottom - top) / 4));
+  if (y < top - z || y > bottom + z) return 0;
+  if (y < top + z) return -Math.ceil(max * Math.min(1, (top + z - y) / z));
+  if (y > bottom - z) return Math.ceil(max * Math.min(1, (y - (bottom - z)) / z));
+  return 0;
+}
+function tocScrollParent(el) {
+  for (let p = el && el.parentElement; p && p !== document.body && p !== document.documentElement; p = p.parentElement) {
+    const oy = getComputedStyle(p).overflowY;
+    if ((oy === "auto" || oy === "scroll") && p.scrollHeight > p.clientHeight + 1) return p;
+  }
+  return document.scrollingElement || document.documentElement;
+}
+// Attaches the auto-scroll to the tree element in treeRef for the life of the list.
+// Stops on drop, on dragend (includes Escape cancel), when the pointer leaves the
+// zone or the window, when no dragover arrives for a short time, and at the ends.
+function useTocDragAutoScroll(treeRef) {
+  useEffect(() => {
+    let raf = 0, speed = 0, scroller = null, last = 0;
+    const stop = () => { speed = 0; scroller = null; if (raf) { cancelAnimationFrame(raf); raf = 0; } };
+    const tick = () => {
+      raf = 0;
+      if (!_velaDrag || !scroller || !speed || performance.now() - last > 600) { stop(); return; }
+      const before = scroller.scrollTop;
+      scroller.scrollTop = before + speed;
+      if (scroller.scrollTop === before) { stop(); return; } // at the end
+      raf = requestAnimationFrame(tick);
+    };
+    const onOver = (e) => {
+      if (!_velaDrag || !treeRef.current) { if (speed || raf) stop(); return; }
+      if (!scroller) scroller = tocScrollParent(treeRef.current);
+      const page = scroller === document.scrollingElement || scroller === document.documentElement;
+      const r = page ? { left: 0, right: window.innerWidth, top: 0, bottom: window.innerHeight } : scroller.getBoundingClientRect();
+      const inX = e.clientX >= r.left && e.clientX <= r.right;
+      speed = inX ? tocAutoScrollSpeed(e.clientY, Math.max(0, r.top), Math.min(window.innerHeight, r.bottom)) : 0;
+      last = performance.now();
+      if (speed && !raf) raf = requestAnimationFrame(tick);
+    };
+    const onLeave = (e) => { if (!e.relatedTarget) speed = 0; }; // pointer left the window
+    document.addEventListener("dragover", onOver, true);
+    document.addEventListener("dragleave", onLeave, true);
+    // The source row can unmount mid-drag (its dragend then never reaches React),
+    // so clear the shared drag state here for any drag end or drop. Defer it:
+    // this capture listener runs before the React drop handlers read _velaDrag.
+    const end = () => { stop(); setTimeout(_clearDrag, 0); };
+    document.addEventListener("drop", end, true);
+    document.addEventListener("dragend", end, true);
+    return () => {
+      document.removeEventListener("dragover", onOver, true);
+      document.removeEventListener("dragleave", onLeave, true);
+      document.removeEventListener("drop", end, true);
+      document.removeEventListener("dragend", end, true);
+      stop();
+    };
+  }, []);
+}
 
 // ━━━ Reusable right-click context menu ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Positioned at the cursor, clamped to the viewport, and closes on outside-click
@@ -9799,6 +11773,12 @@ function SlideListWithAdder({ item, selected, slideIndex, selectedSlideIndices, 
               style={{ flexShrink: 0, marginLeft: 4, fontSize: 11, lineHeight: 1, cursor: "pointer", opacity: s.hidden ? 0.9 : 0.28, transition: "opacity .15s" }}
               onMouseEnter={(e) => e.currentTarget.style.opacity = 1} onMouseLeave={(e) => e.currentTarget.style.opacity = s.hidden ? 0.9 : 0.28}
             >{s.hidden ? "🙈" : "👁"}</span>
+            {/* CR14: inline delete for this one slide (undoable REMOVE_SLIDE), like the section-row ×. */}
+            <span data-testid="toc-slide-delete" onClick={(e) => { e.stopPropagation(); dispatch({ type: "REMOVE_SLIDE", id: item.id, index: si }); if (selected) dispatch({ type: "SET_SLIDE_SELECTION", indices: [], index: si < slideIndex ? slideIndex - 1 : si === slideIndex ? Math.max(0, si - 1) : slideIndex }); }}
+              title="Delete slide"
+              style={{ flexShrink: 0, marginLeft: 4, fontSize: 12, lineHeight: 1, color: T.textDim, cursor: "pointer", padding: "0 2px", opacity: 0.3, transition: "opacity .15s" }}
+              onMouseEnter={(e) => e.currentTarget.style.opacity = 1} onMouseLeave={(e) => e.currentTarget.style.opacity = 0.3}
+            >×</span>
           </div>
           <AddMenu item={item} insertIndex={si + 1} dispatch={dispatch} guidelines={guidelines} variant="row" laneId={laneId} deckEpoch={deckEpoch} />
         </React.Fragment>;
@@ -10057,6 +12037,8 @@ function ModuleList({ lanes, selectedId, slideIndex, selectedSlideIndices, colla
   const collapsedSet = React.useMemo(() => new Set(Array.isArray(collapsedSections) ? collapsedSections : []), [collapsedSections]);
   const allIds = allItems.map((i) => i.id);
   const toggleCollapse = (id, all) => dispatch({ type: "TOGGLE_SECTION_COLLAPSE", id, all, ids: allIds });
+  const treeRef = useRef(null);
+  useTocDragAutoScroll(treeRef);
 
   // ── Roving-tabindex tree focus (WAI-ARIA disclosure pattern) ──
   // A single tab stop for the whole rail; arrow keys move DOM focus between the
@@ -10104,7 +12086,7 @@ function ModuleList({ lanes, selectedId, slideIndex, selectedSlideIndices, colla
   const handleDrop = (e) => { if (!_velaDrag || _velaDrag.kind !== "section" || !laneId) return; e.preventDefault(); dispatch({ type: "DRAG_REORDER", id: _velaDrag.itemId, targetLaneId: laneId, beforeId: null, afterId: null }); };
 
   return (
-    <div role="tree" aria-label="Slide outline" data-testid="toc-tree" onDragOver={(e) => { if (_velaDrag && _velaDrag.kind === "section") { e.preventDefault(); e.dataTransfer.dropEffect = "move"; } }} onDrop={handleDrop}>
+    <div ref={treeRef} role="tree" aria-label="Slide outline" data-testid="toc-tree" onDragOver={(e) => { if (_velaDrag && _velaDrag.kind === "section") { e.preventDefault(); e.dataTransfer.dropEffect = "move"; } }} onDrop={handleDrop}>
       {(() => { let offset = 0; let timeOffset = 0; return allItems.map((item, idx) => {
         const itemLaneId = lanes.find((l) => l.items.some((i) => i.id === item.id))?.id || laneId;
         const slideOffset = offset;
@@ -10587,6 +12569,54 @@ function JsonClipboardModal({ mode, setMode, state, dispatch }) {
 // ━━━ Vela Battery Test ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Auto-runs on mount, shows toast notification, copy details button
 
+// ── tideline CR23: seeded image-placement stress matrix ──
+// Shared by the unit battery below and the "tideline-CR22-CR25 image placement"
+// UI suite (part-uitest2.jsx). Each case = a slide body + 1-5 image aspects.
+const TL_STRESS_ASPECTS = [4, 16 / 9, 4 / 3, 1, 3 / 4, 9 / 16];
+const TL_STRESS_BODIES = (() => {
+  const h = { type: "heading", text: "Stress heading" };
+  return {
+    none: [],
+    heading: [h],
+    htc: [h, { type: "text", text: "Short body text that explains the pictures." }, { type: "text", text: "Credit: Example Author, 16 Jun 2025", size: "sm" }],
+    bullets8: [h, { type: "bullets", items: Array.from({ length: 8 }, (_, i) => `Bullet point ${i + 1} with a few words`) }],
+    table: [h, { type: "table", headers: ["Item", "Q1", "Q2", "Q3"], rows: Array.from({ length: 5 }, (_, r) => [`Row ${r + 1}`, `${r}1`, `${r}2`, `${r}3`]) }],
+    chart: [h, { type: "progress", items: Array.from({ length: 5 }, (_, i) => ({ label: `Metric ${i + 1}`, value: 20 + i * 15 })) }],
+  };
+})();
+function tidelineStressCases(count = 66, seed = 23) {
+  let s = seed >>> 0;
+  const rnd = () => { s = (Math.imul(s, 1664525) + 1013904223) >>> 0; return s / 4294967296; };
+  const bodies = Object.keys(TL_STRESS_BODIES), out = [];
+  for (let k = 0; k < count; k++) {
+    const n = 1 + (Math.floor(k / bodies.length) % 5);
+    out.push({ body: bodies[k % bodies.length], aspects: Array.from({ length: n }, () => TL_STRESS_ASPECTS[Math.floor(rnd() * TL_STRESS_ASPECTS.length)]) });
+  }
+  return out;
+}
+// Model-level check: for each case the chosen layout's image area (estimate) is
+// >= 85% of the other layout's, and the grid plan's area is >= 85% of the best
+// uniform grid in the same box. Returns the minimum ratio seen.
+function tidelineStressUnit() {
+  let min = Infinity;
+  const cases = tidelineStressCases();
+  for (const c of cases) {
+    const n = c.aspects.length, slide = { blocks: TL_STRESS_BODIES[c.body] };
+    if (slide.blocks.length) {
+      const pick = pasteImageLayout(slide, c.aspects[n - 1], n, c.aspects);
+      const split = pasteLayoutArea(slide, c.aspects, "image-right"), stack = pasteLayoutArea(slide, c.aspects, "stack");
+      min = Math.min(min, (pick === "stack" ? stack : split) / Math.max(split, stack));
+    }
+    for (const [w, h] of [[864, 468], [864, 360], [416, 468]]) {
+      const plan = imageGridPlan(c.aspects, w, h, 12, gridColsFor(n, "full"));
+      let eq = 0;
+      for (let k = 1; k <= n; k++) eq = Math.max(eq, imageGridPlan(c.aspects, w, h, 12, 1, k).area);
+      min = Math.min(min, plan.area / eq);
+    }
+  }
+  return { cases: cases.length, min };
+}
+
 const VELA_TESTS = [
   // ── Config & Utilities ──
   { name: "VELA_VERSION defined", fn: () => typeof VELA_VERSION === "string" && VELA_VERSION.length > 0 },
@@ -10630,6 +12660,41 @@ const VELA_TESTS = [
   { name: "gridColsFor full: N=4 makes 2 rows (2x2)", fn: () => Math.ceil(4 / gridColsFor(4, "full")) === 2 },
   { name: "gridColsFor full: N=5 makes 2 rows (3 then 2)", fn: () => Math.ceil(5 / gridColsFor(5, "full")) === 2 },
   { name: "gridColsFor full: N=2 stays one row", fn: () => Math.ceil(2 / gridColsFor(2, "full")) === 1 },
+  // ── tideline CR23: aspect-aware grid columns (bestImageGridCols) ──
+  { name: "bestImageGridCols: 3 tall images stay one row", fn: () => bestImageGridCols([0.5625, 0.5625, 0.5625], 864, 418, 12, 3) === 3 },
+  { name: "bestImageGridCols: 3 wide images leave one row", fn: () => bestImageGridCols([3, 3, 3], 864, 418, 12, 3) < 3 },
+  { name: "bestImageGridCols: 2 wide images stack in a tall box", fn: () => bestImageGridCols([3, 3], 864, 468, 12, 2) === 1 },
+  { name: "imageGridPlan CR23: 4 mixed images beat the uniform 2x2", fn: () => imageGridPlan([3, 1.78, 1, 0.5625], 864, 468, 12, 2).area >= imageGridPlan([3, 1.78, 1, 0.5625], 864, 468, 12, 2, 2).area },
+  { name: "imageGridPlan CR23: tall+wide gets aspect-sized cells (not equal halves)", fn: () => {
+    const p = imageGridPlan([1 / 3, 16 / 9], 864, 468, 12, 2), eq = imageGridPlan([1 / 3, 16 / 9], 864, 468, 12, 2, 2);
+    return p.rows.length === 1 && p.rows[0].cells[1].f > 0.7 && p.area > eq.area * 1.6;
+  } },
+  { name: "imageGridPlan CR23: equal aspects keep uniform cells", fn: () => imageGridPlan([1.78, 1.78, 1.78, 1.78, 1.78], 864, 400, 12, 3).rows.every((r) => r.cells.every((c) => Math.abs(c.f - 1 / 3) < 1e-9 || Math.abs(c.f - 1 / 2) < 1e-9 || c.f === 1)) },
+  { name: "imageGridPlan HI1: same-aspect images get the same size; none below half its uniform-grid area", fn: () => {
+    const drawn = (a, W, H, fb) => {
+      const p = imageGridPlan(a, W, H, 12, fb), out = [], avail = H - 12 * (p.rows.length - 1), sum = p.rows.reduce((t, r) => t + r.hw, 0);
+      for (const r of p.rows) for (const c of r.cells) out[c.i] = Math.min((W - 12 * r.gc) * c.f, avail * r.hw / sum * a[c.i]);
+      return out;
+    };
+    const same = (w) => Math.min(...w) >= 0.98 * Math.max(...w);
+    const f = drawn([6, 4 / 3, 4 / 3, 4 / 3, 4 / 3], 864, 468, 3), c = drawn([8, 4 / 3, 4 / 3], 416, 468, 2), x = drawn([20, 4 / 3, 0.75], 416, 468, 2);
+    const xBase = imageGridPlan([20, 4 / 3, 0.75], 416, 468, 12, 2, 2);
+    return same(f.slice(1)) && same(c.slice(1)) && x[1] >= 202 * Math.SQRT1_2 && x[2] >= 171 * Math.SQRT1_2 && xBase.cols === 2;
+  }},
+  { name: "imageGridPlan CR23: pinned imageCols forces a uniform grid", fn: () => { const p = imageGridPlan([4, 0.5], 864, 468, 12, 2, 3); return p.cols === 3 && p.rows[0].cells.every((c) => c.f === 1 / 3); } },
+  { name: "imageGridPlan CR23: no box → count default, area 0", fn: () => { const p = imageGridPlan([1, 2, 3], 0, 0, 12, 3); return p.cols === 3 && p.area === 0; } },
+  { name: "pasteLayoutArea: honors the author's imageCols like the renderer", fn: () => {
+    const a = [1, 1, 1], pin = imageGridPlan(a, 864, 468, 12, 3, 1).area;
+    const stack = pasteLayoutArea({ blocks: [], imageCols: 1 }, a, "stack");
+    const split = pasteLayoutArea({ blocks: [{ type: "heading", text: "H" }], imageCols: 1 }, a, "image-right");
+    const colW = (864 - 32) / 2, splitPin = imageGridPlan(a, colW, 468, 12, 2, 1).area;
+    return Math.abs(stack - pin) < 1e-6 && Math.abs(split - splitPin) < 1e-6 && pasteLayoutArea({ blocks: [] }, a, "stack") > stack;
+  } },
+  { name: "bestImageGridCols: unknown aspect → count default", fn: () => bestImageGridCols([3, undefined, 3], 864, 418, 12, 3) === 3 },
+  { name: "bestImageGridCols: no box → count default", fn: () => bestImageGridCols([3, 3, 3], 0, 0, 12, 3) === 3 },
+  { name: "bestImageGridCols: bad aspect values → count default", fn: () => bestImageGridCols([3, NaN, -1], 864, 418, 12, 3) === 3 && bestImageGridCols([3, "3", 3], 864, 418, 12, 3) === 3 },
+  { name: "bestImageGridCols: one image → 1", fn: () => bestImageGridCols([3], 864, 418, 12, 1) === 1 },
+  { name: "bestImageGridCols: result is always 1..n", fn: () => [[1, 1], [2, 0.5, 4, 1, 1]].every((a) => { const c = bestImageGridCols(a, 864, 418, 12, 3); return c >= 1 && c <= a.length; }) },
 
   // pasteImageLayout with image-count n: heavy text + >=3 images → full-width header (stack)
   { name: "pasteImageLayout: image-only slice N=2 stacks (auto-grids)", fn: () => pasteImageLayout({ blocks: [] }, 1, 2) === "stack" },
@@ -10638,6 +12703,27 @@ const VELA_TESTS = [
   { name: "pasteImageLayout: content + 5 images → stack (header + grid below)", fn: () => pasteImageLayout({ blocks: [{ type: "heading", text: "H" }, { type: "bullets", items: ["a"] }] }, 1, 5) === "stack" },
   { name: "pasteImageLayout: explicit image-left preserved even with 3 images", fn: () => pasteImageLayout({ layout: "image-left", blocks: [{ type: "bullets", items: ["a"] }] }, 1, 3) === "image-left" },
   { name: "pasteImageLayout: title-only + 3 images still stacks", fn: () => pasteImageLayout({ blocks: [{ type: "heading", text: "Hi" }] }, 1, 3) === "stack" },
+  // CR23: with known aspects the layout with the larger estimated image area wins.
+  { name: "pasteImageLayout CR23: heading+text+credit + 2 or 3 squares → stack", fn: () => {
+    const s = { blocks: [{ type: "heading", text: "Heading here" }, { type: "text", text: "Body text paragraph line that should stay visible on the slide." }, { type: "text", text: "Credit", size: "xs" }] };
+    return pasteImageLayout(s, 1, 2, [1, 1]) === "stack" && pasteImageLayout(s, 1, 3, [1, 1, 1]) === "stack" && pasteLayoutArea(s, [1, 1, 1], "stack") > pasteLayoutArea(s, [1, 1, 1], "image-right");
+  } },
+  { name: "pasteImageLayout CR23: long bullets + 2 tall images → image-right", fn: () => {
+    const s = { blocks: [{ type: "heading", text: "H" }, { type: "bullets", items: Array.from({ length: 8 }, (_, i) => `Bullet number ${i} with some words to fill a line of text`) }] };
+    return pasteImageLayout(s, 0.5625, 2, [0.5625, 0.5625]) === "image-right";
+  } },
+  { name: "pasteImageLayout CR23: every block type gets an area estimate", fn: () => ["table", "progress", "code", "flow", "metric"].every((t) => pasteLayoutArea({ blocks: [{ type: "heading", text: "H" }, { type: t, rows: [["a"]], items: [] }] }, [1], "stack") > 0) },
+  { name: "pasteImageLayout CR23: table + 16:9 uses the split column (D1)", fn: () => {
+    const s = { blocks: TL_STRESS_BODIES.table.concat([{ type: "text", text: "Credit", size: "sm" }]) };
+    return pasteImageLayout(s, 16 / 9, 1, [16 / 9], () => 229 + 12 + 43) === "image-right";
+  } },
+  { name: "pasteImageLayout CR23: measured body height overrides the estimate", fn: () => {
+    const s = { blocks: [{ type: "heading", text: "H" }, { type: "table", rows: [] }] };
+    return pasteLayoutArea(s, [1, 1], "stack", () => 400) < pasteLayoutArea(s, [1, 1], "stack", () => 40);
+  } },
+  { name: "pasteImageLayout CR23: 8 bullets + 4x 16:9 stays split (D2)", fn: () => pasteImageLayout(TL_STRESS_BODIES.bullets8 && { blocks: TL_STRESS_BODIES.bullets8 }, 16 / 9, 4, [16 / 9, 16 / 9, 16 / 9, 16 / 9], () => 380) === "image-right" },
+  { name: "tideline CR23 stress matrix (unit): >= 60 seeded cases, chosen >= 85% of best", fn: () => { const r = tidelineStressUnit(); return r.cases >= 60 && r.min >= 0.85; } },
+  { name: "pasteImageLayout CR23: explicit split kept with aspects", fn: () => pasteImageLayout({ layout: "image-left", blocks: [{ type: "text", text: "a" }, { type: "text", text: "b" }, { type: "text", text: "c" }] }, 1, 3, [1, 1, 1]) === "image-left" },
 
   // ── Editing UX Batch (v12.75): imageAspect ──
   { name: "imageAspect is function", fn: () => typeof imageAspect === "function" },
@@ -10749,6 +12835,9 @@ const VELA_TESTS = [
   { name: "imageCols: huge value clamps to 6", fn: () => sanitizeSlide({ duration: 10, blocks: [], imageCols: 2147483647 }).imageCols === 6 },
   { name: "imageCols: '3; x' dropped", fn: () => sanitizeSlide({ duration: 10, blocks: [], imageCols: "3; x" }).imageCols === undefined },
   { name: "imageCols: 0 clamps to 1", fn: () => sanitizeSlide({ duration: 10, blocks: [], imageCols: 0 }).imageCols === 1 },
+  { name: "story: true survives sanitizeSlide", fn: () => sanitizeSlide({ duration: 10, blocks: [], story: true }).story === true },
+  { name: "story: non-boolean values dropped", fn: () => ["true", 1, {}, [], null].every((v) => sanitizeSlide({ duration: 10, blocks: [], story: v }).story === undefined) },
+  { name: "story: renderer-private _story* keys dropped", fn: () => { const s = sanitizeSlide({ duration: 10, blocks: [], _storyIdx: 1, _storyNav: true, _storyPage: true }); return s._storyIdx === undefined && s._storyNav === undefined && s._storyPage === undefined; } },
   { name: "gap clamps to the 0..200 range", fn: () => sanitizeSlide({ duration: 10, blocks: [], gap: 1e9 }).gap === 200 },
   { name: "contentFlex garbage dropped", fn: () => sanitizeSlide({ duration: 10, blocks: [], contentFlex: "wide" }).contentFlex === undefined },
   { name: "grid nesting is depth-capped", fn: () => {
@@ -13457,7 +15546,7 @@ uiSuite("SVG Sanitizer (XSS)", [
     // A <style> is document-global (not SVG-scoped) — dropped outright, not filtered.
     // The shape element survives so geometry still renders; only the class CSS is gone.
     const out = sanitizeSvgMarkup('<style>.node{fill:#3b82f6;stroke:#888}.edge{stroke-width:2}</style><rect class="node"/>');
-    return !/<style[\s>]/i.test(out) && !/#3b82f6/.test(out) && /<rect[^>]*class="node"/i.test(out);
+    return !/<style[\s>]/i.test(out) && !/#3b82f6/.test(out) && /<rect/i.test(out);
   }},
   { name: "SVG url(#fragment) paint refs preserved via presentation attrs (<style> dropped)", fn: async () => {
     // Paint-server refs belong on presentation attributes, which remain allowed+validated.
@@ -13850,8 +15939,8 @@ uiSuite("Gallery View", [
     _key("f");
     await _waitFor(() => !_$("header"));
   }},
-  { name: "🗂 gallery button visible", fn: async () => {
-    await _waitFor(() => _$("[data-testid='gallery-toggle']"), 2000);
+  { name: "Gallery reachable from the fullscreen view switch", fn: async () => {
+    await _waitFor(() => _$("[data-testid='fs-view-switch-gallery']"), 2000);
   }},
   { name: "G key opens gallery", fn: async () => {
     document.activeElement?.blur(); await _wait(100);
@@ -13997,8 +16086,13 @@ uiSuite("Presenter View", [
     _key("f");
     await _waitFor(() => !_$("header"), 2000);
   }},
-  { name: "🖥️ presenter-view button visible in Present mode", fn: async () => {
+  { name: "🗒️ presenter-view button visible in Present mode", fn: async () => {
     await _waitFor(() => _$("[data-testid='presenter-toggle']"), 2000);
+  }},
+  { name: "Present toolbar has no duplicate gallery icon or 🖥️ glyph", fn: async () => {
+    if (_$("[data-testid='gallery-toggle']")) throw new Error("separate gallery icon still shown next to the view switch");
+    const pt = _$("[data-testid='presenter-toggle']");
+    if (/🖥/.test(pt.textContent || "")) throw new Error("presenter-view toggle reuses the 🖥️ Present glyph");
   }},
   { name: "S key opens presenter view: current + Next + notes + timer", fn: async () => {
     document.activeElement?.blur(); await _wait(100);
@@ -14030,9 +16124,66 @@ uiSuite("Presenter View", [
     _click(btn);
     await _waitFor(() => !_$("[data-testid='presenter-view']"), 2000);
   }},
-  { name: "Exit fullscreen after presenter-view tests", fn: async () => {
+  { name: "Esc closes presenter view first, then exits Present mode", fn: async () => {
+    document.activeElement?.blur(); await _wait(100);
+    _key("s");
+    await _waitFor(() => _$("[data-testid='presenter-view']"), 2000);
+    _key("Escape");
+    await _waitFor(() => !_$("[data-testid='presenter-view']"), 2000);
+    await _wait(150);
+    if (_$("header")) throw new Error("first Esc exited Present mode; it must only close presenter view");
+    _key("Escape");
+    await _waitFor(() => _$("header"), 2000);
+  }},
+]);
+
+uiSuite("Present Esc closes image zoom only", [
+  { name: "Esc on a zoomed block closes the zoom and stays in Present mode", fn: async () => {
+    document.activeElement?.blur(); await _wait(100);
     _key("f");
-    await _waitFor(() => _$("header"));
+    await _waitFor(() => !_$("header"), 2000);
+    const zoomable = () => _$$("div").find((d) => d.style.cursor === "zoom-in" && d.getBoundingClientRect().width > 0);
+    for (let i = 0; i < 30 && !zoomable(); i++) { _key("ArrowRight"); await _wait(250); }
+    const src = zoomable();
+    if (!src) throw new Error("no zoomable block found in the demo deck");
+    _click(src);
+    const zoomed = () => document.body.textContent.includes("ESC or click to close");
+    await _waitFor(zoomed, 2000);
+    // The overlay must fill the window, not the scaled slide canvas.
+    const r = _$("[data-vela-zoom]").getBoundingClientRect();
+    if (Math.abs(r.width - window.innerWidth) > 2 || Math.abs(r.height - window.innerHeight) > 2)
+      throw new Error(`zoom overlay is ${Math.round(r.width)}x${Math.round(r.height)}, window is ${window.innerWidth}x${window.innerHeight}`);
+    // Arrow keys stay on this slide: they step to another zoomable block, or
+    // close the zoom past the last one (no wrap to the first).
+    const before = _slidePos();
+    const list = Array.from(src.closest("[data-vela-slide-content]").querySelectorAll("[data-vela-zoomable]"));
+    const isLast = list.indexOf(src) === list.length - 1;
+    _key("ArrowRight");
+    await _wait(300);
+    if (_slidePos() !== before) throw new Error("ArrowRight in zoom changed the slide");
+    if (isLast && zoomed()) throw new Error("ArrowRight in zoom on the last zoomable block did not close the zoom");
+    if (!isLast && !zoomed()) throw new Error("ArrowRight in zoom did not step to the next zoomable block");
+    if (!zoomed()) { _click(src); await _waitFor(zoomed, 2000); }
+    _key("Escape");
+    await _waitFor(() => !zoomed(), 2000);
+    await _wait(200);
+    if (_$("header")) throw new Error("Esc on the zoom overlay also exited Present mode");
+    // Browser-fullscreen path: the browser eats Esc and only fires fullscreenchange.
+    const fsExit = () => document.dispatchEvent(new Event("fullscreenchange"));
+    _click(zoomable());
+    await _waitFor(zoomed, 2000);
+    fsExit();
+    await _waitFor(() => !zoomed(), 2000).catch(() => { throw new Error("browser fullscreen exit did not close the zoom"); });
+    await _wait(200);
+    if (_$("header")) throw new Error("browser fullscreen exit with a zoom open also exited Present mode");
+    document.activeElement?.blur(); _key("s");
+    await _waitFor(() => _$("[data-testid='presenter-view']"), 2000);
+    fsExit();
+    await _waitFor(() => !_$("[data-testid='presenter-view']"), 2000);
+    await _wait(200);
+    if (_$("header")) throw new Error("browser fullscreen exit with presenter view open also exited Present mode");
+    fsExit();
+    await _waitFor(() => _$("header"), 2000);
   }},
 ]);
 
@@ -15359,6 +17510,2807 @@ uiSuite("Product Tour", [
     }
   }},
 ], { setup: _productTourSetup });
+
+// ── meridian CR04 / CR14 / CR07 (sprint "meridian") ──────────────────
+const _m1RowTitles = () => _tocRows().map((r) => (Array.from(r.querySelectorAll("span")).find((x) => x.style.textOverflow === "ellipsis")?.textContent || "").trim());
+const _m1Undo = async () => { document.activeElement?.blur?.(); await _wait(80); _key("z", { ctrlKey: true }); await _wait(250); };
+const _m1ClickRow = async (i) => { const r = _tocRows()[i]; if (!r) throw new Error("no TOC row " + i); _click(r); await _waitFor(() => _tocRows()[i]?.getAttribute("aria-selected") === "true", 800).catch(() => {}); await _wait(150); document.activeElement?.blur?.(); };
+
+uiSuite("meridian-CR04 Gallery hide toggle", [
+  { name: "gallery card shows a hide toggle beside delete; click hides, click again unhides", fn: async () => {
+    const btn = _$("[data-testid='editor-gallery-toggle']");
+    if (!btn) throw new Error("editor-gallery-toggle missing");
+    _click(btn);
+    await _waitFor(() => _$("[data-testid='gallery-slide']"), 5000);
+    const card = () => _$$("[data-testid='gallery-slide']")[0];
+    const tog = () => card()?.querySelector("[data-testid='gallery-hide-toggle']");
+    if (!tog()) throw new Error("gallery-hide-toggle missing on the card");
+    const del = Array.from(card().querySelectorAll("button")).find((b) => b.title === "Delete slide");
+    if (!del || tog().nextElementSibling !== del) throw new Error("hide toggle is not next to the delete button");
+    if (tog().getAttribute("data-hidden") !== "0") throw new Error("first slide already hidden");
+    const rowHidden = () => (_tocRows()[0]?.textContent || "").includes("🙈");
+    _click(tog());
+    await _waitFor(() => tog()?.getAttribute("data-hidden") === "1", 1500);
+    if (!card().querySelector("[data-hidden-overlay]")) throw new Error("hidden card thumbnail not dimmed");
+    if (!rowHidden()) throw new Error("TOC row does not show the slide as hidden (not the same effect)");
+    _click(tog());
+    await _waitFor(() => tog()?.getAttribute("data-hidden") === "0", 1500);
+    if (card().querySelector("[data-hidden-overlay]") || rowHidden()) throw new Error("unhide did not restore the slide");
+    _click(_$("[data-testid='editor-gallery-toggle']"));
+    await _waitFor(() => !_$("[data-testid='gallery-slide']"), 3000).catch(() => {});
+  }},
+], { setup: _editorSetup });
+
+uiSuite("meridian-CR14 TOC slide delete", [
+  { name: "each slide row has a delete icon", fn: async () => {
+    const rows = _tocRows();
+    if (rows.length < 2) throw new Error("need >=2 slide rows, got " + rows.length);
+    if (!rows.every((r) => r.querySelector("[data-testid='toc-slide-delete']"))) throw new Error("a slide row has no toc-slide-delete icon");
+  }},
+  { name: "click deletes that slide only; undo restores it", fn: async () => {
+    const before = _m1RowTitles();
+    _click(_tocRows()[1].querySelector("[data-testid='toc-slide-delete']"));
+    await _waitFor(() => _tocRows().length === before.length - 1, 1500);
+    const want = before.filter((_, i) => i !== 1).join("|");
+    if (_m1RowTitles().join("|") !== want) throw new Error("wrong slide removed: " + _m1RowTitles().join("|"));
+    await _m1Undo();
+    await _waitFor(() => _tocRows().length === before.length, 1500);
+    if (_m1RowTitles().join("|") !== before.join("|")) throw new Error("undo did not restore the slide list");
+  }},
+], { setup: _editorSetup });
+
+uiSuite("meridian-CR07 Review cycle", [
+  { name: "reviewed checkmark and review-cycle toggle render in the editor", fn: async () => {
+    await _waitFor(() => _$("[data-testid='reviewed-toggle']") && _$("[data-testid='review-cycle-toggle']"), 2000);
+  }},
+  { name: "cycle on: arrows skip a reviewed slide; cycle off: arrows visit it again", fn: async () => {
+    if (_tocRows().length < 3) throw new Error("need >=3 slide rows");
+    const rt = () => _$("[data-testid='reviewed-toggle']");
+    const cyc = () => _$("[data-testid='review-cycle-toggle']");
+    const selIdx = () => _tocRows().findIndex((r) => r.getAttribute("aria-selected") === "true");
+    try {
+      await _m1ClickRow(1);
+      if (rt().getAttribute("data-reviewed") !== "0") throw new Error("slide 2 already reviewed");
+      _click(rt());
+      await _waitFor(() => rt()?.getAttribute("data-reviewed") === "1", 1500);
+      await _m1ClickRow(0);
+      _click(cyc());
+      await _waitFor(() => cyc()?.getAttribute("aria-pressed") === "true", 1500);
+      document.activeElement?.blur?.();
+      _key("ArrowRight");
+      await _waitFor(() => selIdx() === 2, 1500).catch(() => { throw new Error("ArrowRight did not skip the reviewed slide (at row " + selIdx() + ")"); });
+      _key("ArrowLeft");
+      await _waitFor(() => selIdx() === 0, 1500).catch(() => { throw new Error("ArrowLeft did not skip the reviewed slide (at row " + selIdx() + ")"); });
+      _click(cyc());
+      await _waitFor(() => cyc()?.getAttribute("aria-pressed") === "false", 1500);
+      document.activeElement?.blur?.();
+      _key("ArrowRight");
+      await _waitFor(() => selIdx() === 1, 1500).catch(() => { throw new Error("cycle off: ArrowRight did not visit slide 2 (at row " + selIdx() + ")"); });
+    } finally {
+      if (cyc()?.getAttribute("aria-pressed") === "true") _click(cyc());
+      await _m1ClickRow(1);
+      if (rt()?.getAttribute("data-reviewed") === "1") { _click(rt()); await _waitFor(() => rt()?.getAttribute("data-reviewed") === "0", 1500).catch(() => {}); }
+    }
+  }},
+], { setup: _editorSetup });
+
+// ── meridian-CR10 / meridian-CR11: fullscreen nav icons keep a visible chip
+// on any slide background (light or dark), so they do not fade into the slide. ──
+// Emoji glyphs must carry emoji presentation and a light colour: a text-style
+// glyph draws in the inherited (dark, light-theme) text colour on the dark chip.
+const _mrdIsLightTheme = () => { const h = _$("header"); const m = (h ? getComputedStyle(h).backgroundColor : "").match(/\d+/g); return !!m && (+m[0] + +m[1] + +m[2]) / 3 >= 128; };
+const _mrdCheckNavGlyphs = async () => {
+  for (const id of ["presenter-toggle", "student-toggle"]) {
+    const el = await _waitFor(() => _$(`[data-testid='${id}']`), 2000);
+    const sp = el.querySelector("span");
+    if (!sp) throw new Error(`${id}: no glyph`);
+    if (id !== "student-toggle" && !/️/.test(sp.textContent)) throw new Error(`${id}: glyph lacks emoji presentation (U+FE0F)`);
+    const c = getComputedStyle(sp).color;
+    if (c !== "rgb(255, 255, 255)") throw new Error(`${id}: glyph colour ${c} is not light`);
+    const r = el.getBoundingClientRect();
+    const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+    if (!hit || !el.contains(hit)) throw new Error(`${id}: covered by another element`);
+  }
+};
+uiSuite("meridian-CR10-CR11 Nav Icon Contrast", [
+  { name: "Enter fullscreen (Present)", fn: async () => {
+    document.activeElement?.blur(); await _wait(100);
+    _key("f");
+    await _waitFor(() => !_$("header"));
+  }},
+  { name: "gallery/presenter/edit nav buttons render with a non-transparent chip", fn: async () => {
+    const ids = ["presenter-toggle", "present-edit-toggle"];
+    for (const id of ids) {
+      const el = await _waitFor(() => _$(`[data-testid='${id}']`), 2000);
+      const bg = getComputedStyle(el).backgroundColor;
+      // A transparent/near-transparent chip means the icon has no backing plate
+      // and can vanish against a light slide (CR10/CR11's reported bug).
+      if (!bg || bg === "rgba(0, 0, 0, 0)" || bg === "transparent") {
+        throw new Error(`${id}: no backing chip (background=${bg})`);
+      }
+    }
+  }},
+  { name: "emoji nav glyphs are emoji-presentation and light in this app theme", fn: _mrdCheckNavGlyphs },
+  { name: "edit icon stays visible on toggle (on/off, CR11's 'sometimes shows')", fn: async () => {
+    const btn = await _waitFor(() => _$("[data-testid='present-edit-toggle']"), 2000);
+    const bgOff = getComputedStyle(btn).backgroundColor;
+    if (bgOff === "rgba(0, 0, 0, 0)" || bgOff === "transparent") throw new Error("edit icon has no chip while off");
+    _click(btn);
+    await _wait(120);
+    const bgOn = getComputedStyle(btn).backgroundColor;
+    if (bgOn === "rgba(0, 0, 0, 0)" || bgOn === "transparent") throw new Error("edit icon has no chip while on");
+    _click(btn); // restore
+    await _wait(120);
+  }},
+  { name: "Exit fullscreen", fn: async () => {
+    _key("f");
+    await _waitFor(() => _$("header"));
+  }},
+  { name: "emoji nav glyphs stay light in the other app theme too", fn: async () => {
+    const before = _mrdIsLightTheme();
+    document.activeElement?.blur(); await _wait(50);
+    _key("d");
+    await _waitFor(() => _mrdIsLightTheme() !== before, 2000);
+    try {
+      _key("f");
+      await _waitFor(() => !_$("header"), 2000);
+      await _mrdCheckNavGlyphs();
+    } finally {
+      if (!_$("header")) { _key("f"); await _waitFor(() => _$("header"), 2000); }
+      document.activeElement?.blur(); await _wait(50);
+      _key("d");
+      await _waitFor(() => _mrdIsLightTheme() === before, 2000);
+    }
+  }},
+]);
+
+// ── meridian-CR13: editor|presenter|gallery view switcher next to Present ──
+// One switch in three places — top bar (view-switch), gallery header
+// (gallery-view-switch) and fullscreen controls (fs-view-switch) — all driven by
+// SlidePanel's single view state. Each must be on top (elementFromPoint) where shown.
+const _mrdSeg = (where, mode) => _$(`[data-testid='${where}-${mode}']`);
+const _mrdActive = (where) => _$(`[data-testid='${where}'] button[aria-pressed='true']`)?.getAttribute("aria-label") || null;
+const _mrdOnTop = (el, label) => {
+  const r = el.getBoundingClientRect();
+  const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+  if (!hit || !el.contains(hit)) throw new Error(`${label} is covered (elementFromPoint hit ${hit?.tagName || "nothing"})`);
+};
+const _mrdSwitchTo = async (where, mode) => {
+  const btn = await _waitFor(() => _mrdSeg(where, mode), 2000);
+  _mrdOnTop(btn, `${where}-${mode}`);
+  _click(btn);
+};
+const _mrdGalleryOpen = () => !!_$("[data-testid='gallery-close']");
+uiSuite("meridian-CR13 View Switcher", [
+  { name: "View switcher renders next to Present in the editor", fn: async () => {
+    await _waitFor(() => _$("[data-testid='view-switch']") && _$("[data-testid='present-btn']"), 2000);
+  }},
+  { name: "Editor segment is the active view on load", fn: async () => {
+    const btn = await _waitFor(() => _$("[data-testid='view-switch-editor']"), 2000);
+    if (btn.getAttribute("aria-pressed") !== "true") throw new Error("editor segment not marked active");
+  }},
+  { name: "Switch glyphs use emoji presentation (no text-style glyph)", fn: async () => {
+    const g = await _waitFor(() => _mrdSeg("view-switch", "gallery"), 2000);
+    if (!/️/.test(g.textContent)) throw new Error("gallery glyph lacks U+FE0F");
+  }},
+  { name: "Deck title keeps readable width in the top bar", fn: async () => {
+    const h = await _waitFor(() => _$("header"), 2000);
+    const t = _$$("span", h).find((s) => s.title && s.title === s.textContent);
+    if (!t) throw new Error("deck title not found in header");
+    const w = t.getBoundingClientRect().width;
+    const need = Math.min(100, t.scrollWidth);
+    if (w < need) throw new Error(`deck title squeezed to ${Math.round(w)}px at ${window.innerWidth}px wide`);
+    if (h.scrollWidth > h.clientWidth + 1) throw new Error(`header overflows (${h.scrollWidth} > ${h.clientWidth})`);
+  }},
+  { name: "Top bar fits on one line at every width 1024-1920 (8px sweep)", fn: async () => {
+    // The top bar fits itself to its own measured width, so forcing the header
+    // width stands in for a window resize. Sweeps up, then down (hysteresis).
+    const h = await _waitFor(() => _$("header"), 2000);
+    const frames = () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+    const prev = h.style.width;
+    const bad = [];
+    try {
+      for (const dir of [1, -1]) {
+        for (let i = 0; i <= 112; i++) {
+          const w = dir > 0 ? 1024 + i * 8 : 1920 - i * 8;
+          h.style.width = `${w}px`;
+          for (let f = 0; f < 3; f++) await frames();
+          const btns = _$$("button", h).filter((b) => b.offsetParent && !b.closest("[role='group']"));
+          const minH = Math.min(...btns.map((b) => b.offsetHeight));
+          const wrapped = btns.filter((b) => b.offsetHeight > minH + 8).map((b) => b.title || b.textContent.trim());
+          const t = _$$("span", h).find((s) => s.title && s.title === s.textContent);
+          const vs = _$("[data-testid='view-switch']", h);
+          const hr = h.getBoundingClientRect(), vr = vs ? vs.getBoundingClientRect() : null;
+          const errs = [];
+          if (h.scrollWidth > h.clientWidth + 1) errs.push(`overflow ${h.scrollWidth}>${h.clientWidth}`);
+          if (wrapped.length) errs.push(`wrapped: ${wrapped.join(", ")}`);
+          if (!t || t.getBoundingClientRect().width < Math.min(120, t.scrollWidth) - 1) errs.push(`title ${t ? Math.round(t.getBoundingClientRect().width) : "missing"}px`);
+          if (!vr || vr.width < 60 || vr.left < hr.left || vr.right > hr.right + 1) errs.push("view switch not fully shown");
+          if (errs.length) bad.push(`${w}px: ${errs.join("; ")}`);
+        }
+      }
+    } finally {
+      h.style.width = prev;
+      await frames();
+    }
+    if (bad.length) throw new Error(`${bad.length} widths fail — ${bad.slice(0, 4).join(" | ")}`);
+  }},
+  { name: "Gallery is reachable in one click from the editor", fn: async () => {
+    await _mrdSwitchTo("view-switch", "gallery");
+    await _waitFor(_mrdGalleryOpen, 2000);
+    // The top bar re-reads the view state one render later (ribbon update).
+    await _waitFor(() => _mrdActive("view-switch") === "Gallery", 2000).catch(() => { throw new Error("gallery segment not marked active after switch"); });
+  }},
+  { name: "Gallery header shows the switch on top, Gallery active", fn: async () => {
+    await _waitFor(() => _$("[data-testid='gallery-view-switch']"), 2000);
+    if (_mrdActive("gallery-view-switch") !== "Gallery") throw new Error(`gallery switch active=${_mrdActive("gallery-view-switch")}`);
+    for (const m of ["editor", "presenter", "gallery"]) _mrdOnTop(_mrdSeg("gallery-view-switch", m), `gallery-view-switch-${m}`);
+  }},
+  { name: "Editor segment in the gallery returns to the editor", fn: async () => {
+    await _mrdSwitchTo("gallery-view-switch", "editor");
+    await _waitFor(() => !_mrdGalleryOpen() && _$("header"), 2000);
+    await _waitFor(() => _mrdActive("view-switch") === "Editor", 2000).catch(() => { throw new Error("top switch not back on Editor"); });
+  }},
+  { name: "Presenter segment in the gallery enters fullscreen Present", fn: async () => {
+    await _mrdSwitchTo("view-switch", "gallery");
+    await _waitFor(_mrdGalleryOpen, 2000);
+    await _mrdSwitchTo("gallery-view-switch", "presenter");
+    await _waitFor(() => !_mrdGalleryOpen() && !_$("header"), 2000);
+  }},
+  { name: "Fullscreen shows the switch on top, Presenter active", fn: async () => {
+    await _waitFor(() => _$("[data-testid='fs-view-switch']"), 2000);
+    if (_mrdActive("fs-view-switch") !== "Presenter") throw new Error(`fs switch active=${_mrdActive("fs-view-switch")}`);
+    for (const m of ["editor", "presenter", "gallery"]) _mrdOnTop(_mrdSeg("fs-view-switch", m), `fs-view-switch-${m}`);
+  }},
+  { name: "Gallery segment in fullscreen opens the gallery (Gallery active)", fn: async () => {
+    await _mrdSwitchTo("fs-view-switch", "gallery");
+    await _waitFor(_mrdGalleryOpen, 2000);
+    if (_mrdActive("gallery-view-switch") !== "Gallery") throw new Error("gallery switch not on Gallery");
+    await _mrdSwitchTo("gallery-view-switch", "presenter");
+    await _waitFor(() => !_mrdGalleryOpen() && _mrdActive("fs-view-switch") === "Presenter", 2000);
+  }},
+  { name: "Editor segment in fullscreen exits to the editor", fn: async () => {
+    await _mrdSwitchTo("fs-view-switch", "editor");
+    await _waitFor(() => _$("header") && _mrdActive("view-switch") === "Editor", 2000);
+  }},
+  { name: "Presenter segment enters fullscreen Present", fn: async () => {
+    const btn = await _waitFor(() => _$("[data-testid='view-switch-presenter']"), 2000);
+    _click(btn);
+    await _waitFor(() => !_$("header"), 2000);
+  }},
+  { name: "Exit fullscreen back to the editor (F key)", fn: async () => {
+    document.activeElement?.blur(); await _wait(100);
+    _key("f");
+    await _waitFor(() => _$("header"), 2000);
+  }},
+]);
+// ── Sprint meridian (C3): split image alignment, accent 0, docked branding
+// pane, toolbar room above, link badge placement ──────────────────────
+const _mrdSvg = (w, h, color) =>
+  `data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='${w}'%20height='${h}'%3E%3Crect%20width='${w}'%20height='${h}'%20fill='%23${color}'/%3E%3C/svg%3E`;
+const _mrdViewport = () => _$("[data-testid='slide-viewport']");
+const _mrdFrame = () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+const _mrdInject = async (blocks, extra, ready) => {
+  const hooks = _hooks();
+  if (typeof hooks.injectBlocks !== "function") throw new Error("injectBlocks test hook not exposed");
+  hooks.injectBlocks(blocks, { layout: undefined, verticalAlign: undefined, padding: null, ...(extra || {}) });
+  const el = await _waitFor(() => ready(_mrdViewport()), 3000);
+  await _mrdFrame();
+  return el;
+};
+const _mrdSetRange = (el, value) => {
+  Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set.call(el, String(value));
+  el.dispatchEvent(new Event("input", { bubbles: true }));
+};
+const _mrdOpenBranding = async () => {
+  if (!_$("[data-testid='branding-panel']")) _click("[data-testid='brand-toggle']");
+  return _waitFor(() => _$("[data-testid='branding-panel']"), 2000);
+};
+const _mrdCloseBranding = async () => {
+  const close = _$("[data-testid='branding-panel-close']");
+  if (close) _click(close);
+  await _waitFor(() => !_$("[data-testid='branding-panel']"), 2000).catch(() => {});
+};
+// Undo every history step a test added, so branding edits do not leak.
+const _mrdUndoTo = async (past) => {
+  const hooks = _hooks();
+  document.activeElement?.blur?.();
+  for (let i = 0; i < 20 && hooks.getHistoryCounts && hooks.getHistoryCounts().past > past; i++) {
+    _key("z", { ctrlKey: true });
+    await _wait(60);
+  }
+};
+const _mrdHover = async (el) => {
+  el.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
+  await _mrdFrame();
+};
+const _mrdUnhover = async (el) => {
+  el.dispatchEvent(new MouseEvent("mouseout", { bubbles: true, relatedTarget: document.body }));
+  await _mrdFrame();
+};
+
+uiSuite("meridian-CR03 split image alignment", [
+  { name: "CR03: image-left/right keep the image centred with the content column", fn: async () => {
+    for (const layout of ["image-left", "image-right"]) {
+      const marker = `CR03 ${layout}`;
+      const img = await _mrdInject([
+        { type: "heading", text: marker },
+        { type: "bullets", items: ["One point", "Two point", "Three point"] },
+        { type: "image", src: _mrdSvg(400, 300, "3b82f6") },
+      ], { layout }, (vp) => vp?.textContent.includes(marker) && vp.querySelector("[data-split-image] img")?.naturalWidth > 0 ? vp.querySelector("[data-split-image]") : null);
+      const con = _mrdViewport().querySelector("[data-split-content]");
+      if (getComputedStyle(img).justifyContent !== "center") throw new Error(`${layout}: image column justify is ${getComputedStyle(img).justifyContent}`);
+      if (!/center/.test(getComputedStyle(con).justifyContent)) throw new Error(`${layout}: content column justify is ${getComputedStyle(con).justifyContent}`);
+      // The side image gets a measured height cap after first paint; poll until
+      // the layout settles, then compare the two column centres.
+      let m = null;
+      const measure = () => {
+        const ir = img.querySelector("img").getBoundingClientRect();
+        const kids = Array.from(con.children).map((c) => c.getBoundingClientRect()).filter((r) => r.height > 0);
+        m = { imageMid: (ir.top + ir.bottom) / 2, contentMid: (Math.min(...kids.map((r) => r.top)) + Math.max(...kids.map((r) => r.bottom))) / 2, gapTop: ir.top - img.getBoundingClientRect().top };
+        return Math.abs(m.imageMid - m.contentMid) <= 3 && m.gapTop >= 4;
+      };
+      await _waitFor(measure, 2500).catch(() => {
+        throw new Error(`${layout}: image centre ${m.imageMid.toFixed(1)} vs content centre ${m.contentMid.toFixed(1)}, top gap ${m.gapTop.toFixed(1)}`);
+      });
+    }
+  }},
+], { setup: _selectFirstModule });
+
+uiSuite("meridian-CR08 branding accent zero", [
+  { name: "CR08: accent height 0 removes the top line; the slider keeps 0", fn: async () => {
+    const hooks = _hooks();
+    const past = hooks.getHistoryCounts?.().past ?? 0;
+    await _mrdInject([{ type: "heading", text: "CR08 accent" }], null, (vp) => vp?.textContent.includes("CR08 accent") ? vp : null);
+    try {
+      const panel = await _mrdOpenBranding();
+      const range = panel.querySelector("[data-testid='branding-accent-height']");
+      if (!range) throw new Error("accent height slider missing");
+      _mrdSetRange(range, 6);
+      const bar = await _waitFor(() => _mrdViewport().querySelector("[data-branding-accent]"), 2000).catch(() => null);
+      if (!bar) throw new Error("accent bar not drawn at 6px");
+      _mrdSetRange(range, 0);
+      await _waitFor(() => !_mrdViewport().querySelector("[data-branding-accent]"), 2000)
+        .catch(() => { throw new Error("accent bar still drawn at 0px"); });
+      const live = _$("[data-testid='branding-accent-height']");
+      if (live.value !== "0") throw new Error(`slider jumped to ${live.value} after 0`);
+      if ((live.nextElementSibling?.textContent || "").trim() !== "0px") throw new Error(`label shows ${live.nextElementSibling?.textContent}`);
+    } finally {
+      await _mrdCloseBranding();
+      await _mrdUndoTo(past);
+    }
+  }},
+], { setup: _selectFirstModule });
+
+uiSuite("meridian-CR09 branding side pane", [
+  { name: "CR09: branding opens as a right pane beside the canvas and closes", fn: async () => {
+    await _mrdCloseBranding();
+    const before = _mrdViewport().getBoundingClientRect();
+    const panel = await _mrdOpenBranding();
+    await _mrdFrame();
+    await _wait(150);
+    try {
+      if (window.innerWidth >= 768) {
+        const p = panel.getBoundingClientRect();
+        const c = _mrdViewport().getBoundingClientRect();
+        if (panel.dataset.docked !== "right") throw new Error("panel is not docked right");
+        if (p.left < c.right - 1) throw new Error(`pane left ${p.left.toFixed(0)} overlaps canvas right ${c.right.toFixed(0)}`);
+        if (Math.abs(p.top - c.top) > 60 && p.top > c.top) throw new Error("pane is not beside the canvas");
+        if (c.width >= before.width - 1) throw new Error("canvas did not resize for the pane");
+        if (getComputedStyle(panel).overflowY !== "auto") throw new Error("pane does not scroll");
+        if (document.documentElement.scrollWidth > window.innerWidth + 1) throw new Error("pane caused horizontal page scroll");
+      }
+      for (const sel of ["[data-testid='branding-accent-height']", "input[placeholder='Name / Company']", "input[placeholder='Tagline']"]) {
+        if (!panel.querySelector(sel)) throw new Error(`control missing in pane: ${sel}`);
+      }
+    } finally {
+      await _mrdCloseBranding();
+    }
+    if (_$("[data-testid='branding-panel']")) throw new Error("close control did not close the pane");
+    await _waitFor(() => Math.abs(_mrdViewport().getBoundingClientRect().width - before.width) < 1.5, 2000)
+      .catch(() => { throw new Error("canvas did not return to full width"); });
+  }},
+], { setup: _selectFirstModule });
+
+// F3: every toolbar button and every editor overlay (✓ reviewed toggle,
+// comment count) must be the top element at its own centre.
+const _mrdCr15Clear = (bar, kind) => {
+  const top = (el) => { const r = el.getBoundingClientRect(); const h = document.elementFromPoint((r.left + r.right) / 2, (r.top + r.bottom) / 2); return !!h && el.contains(h); };
+  const where = kind ? kind + ": " : "";
+  for (const b of bar.querySelectorAll("button")) if (!top(b)) throw new Error(`${where}toolbar button "${b.title || b.textContent}" is covered`);
+  for (const o of document.querySelectorAll("[data-editor-overlay]")) if (!top(o)) throw new Error(`${where}editor overlay "${o.dataset.editorOverlay}" is covered`);
+};
+uiSuite("meridian-CR15 toolbar room above", [
+  { name: "CR15: full-bleed image keeps its toolbar and popups inside the slide", fn: async () => {
+    const block = await _mrdInject([{ type: "image", src: _mrdSvg(960, 540, "f59e0b") }], null,
+      (vp) => { const b = vp?.querySelector("[data-block-type='image'] img"); return b?.naturalWidth > 0 ? vp.querySelector("[data-block-type='image']") : null; });
+    await _mrdHover(block);
+    try {
+      const bar = await _waitFor(() => _mrdViewport().querySelector("[data-testid='block-hover-toolbar']"), 1500);
+      const vp = _mrdViewport().getBoundingClientRect();
+      const inView = (el) => { const r = el.getBoundingClientRect(); return r.top >= vp.top - 0.5 && r.bottom <= vp.bottom + 0.5 && r.left >= vp.left - 0.5 && r.right <= vp.right + 0.5; };
+      if (bar.dataset.chromeInside !== "true" || !inView(bar)) throw new Error("toolbar is drawn above the slide edge");
+      const hit = (el) => { const r = el.getBoundingClientRect(); const h = document.elementFromPoint((r.left + r.right) / 2, (r.top + r.bottom) / 2); return !!h && el.contains(h); };
+      if (!hit(bar)) throw new Error("toolbar is not clickable");
+      _mrdCr15Clear(bar);
+      _click(bar.querySelector("button[title='Add link']"));
+      const pop = await _waitFor(() => _$("[data-testid='block-link-popup']"), 1500);
+      if (!inView(pop) || !hit(pop)) throw new Error("link popup is cut off or covered");
+      _key("Escape");
+      pop.querySelector("input")?.blur();
+    } finally {
+      await _mrdUnhover(block);
+    }
+  }},
+  { name: "CR15: a normal slide keeps the toolbar outside the block top edge", fn: async () => {
+    const block = await _mrdInject([{ type: "heading", text: "CR15 normal" }, { type: "text", text: "Body" }], null,
+      (vp) => vp?.textContent.includes("CR15 normal") ? vp.querySelector("[data-block-type='heading']") : null);
+    await _mrdHover(block);
+    try {
+      const bar = await _waitFor(() => _mrdViewport().querySelector("[data-testid='block-hover-toolbar']"), 1500);
+      if (bar.dataset.chromeInside) throw new Error("toolbar moved inside on a block with room above");
+      if (bar.getBoundingClientRect().top >= block.getBoundingClientRect().top) throw new Error("toolbar is not above the block");
+      _mrdCr15Clear(bar);
+    } finally {
+      await _mrdUnhover(block);
+    }
+  }},
+  { name: "F3: toolbar stays clear of the comment badge and reviewed toggle", fn: async () => {
+    const extra = { comments: [{ id: "cr15-f3", text: "F3 badge", status: "open", createdAt: Date.now() }] };
+    for (const [kind, blocks, sel] of [
+      ["full-bleed", [{ type: "image", src: _mrdSvg(960, 540, "10b981") }], "[data-block-type='image']"],
+      ["normal", [{ type: "heading", text: "CR15 F3 normal" }, { type: "text", text: "Body" }], "[data-block-type='heading']"],
+    ]) {
+      const block = await _mrdInject(blocks, extra, (vp) => (vp && _$("[data-editor-overlay='comments']") && vp.querySelector(sel)) || null);
+      await _mrdHover(block);
+      try {
+        const bar = await _waitFor(() => _mrdViewport().querySelector("[data-testid='block-hover-toolbar']"), 1500);
+        await _mrdFrame();
+        _mrdCr15Clear(bar, kind);
+      } finally {
+        await _mrdUnhover(block);
+      }
+    }
+    _hooks().injectBlocks([{ type: "text", text: "F3 done" }], { comments: [] });
+  }},
+], { setup: _selectFirstModule });
+
+uiSuite("Link box input normalization", [
+  { name: "bare domain, email and host:port get a scheme; unsafe schemes stay rejected", fn: async () => {
+    const cases = [
+      ["example.com", "https://example.com/"], ["  www.example.com/a ", "https://www.example.com/a"],
+      ["me@example.com", "mailto:me@example.com"], ["example.com:8080/x", "https://example.com:8080/x"],
+      ["https://example.org/p", "https://example.org/p"], ["", undefined], ["   ", undefined],
+      ["javascript:alert(1)", undefined], ["data:text/html,x", undefined], ["\\\\host\\share", undefined],
+    ];
+    for (const [input, want] of cases) {
+      const got = linkFromInput(input);
+      if (got !== want) throw new Error(`linkFromInput(${JSON.stringify(input)}) = ${JSON.stringify(got)}, want ${JSON.stringify(want)}`);
+    }
+  }},
+]);
+
+uiSuite("Editor TOC toggle keys", [
+  { name: "Ctrl+E and AltGr+[ toggle the TOC in the editor", fn: async () => {
+    try { document.activeElement?.blur?.(); } catch {}
+    const tocShown = () => _$$(".concept-row").length > 0;
+    if (!tocShown()) throw new Error("TOC not shown at start");
+    for (const [key, opts, label] of [["e", { ctrlKey: true }, "Ctrl+E"], ["[", { ctrlKey: true, altKey: true }, "AltGr+["]]) {
+      _key(key, opts);
+      await _waitFor(() => !tocShown(), 2000).catch(() => { throw new Error(label + " did not hide the TOC"); });
+      _key(key, opts);
+      await _waitFor(tocShown, 2000).catch(() => { throw new Error(label + " did not show the TOC again"); });
+    }
+  }},
+], { setup: _selectFirstModule });
+
+uiSuite("Cols layout block edits", [
+  { name: "a link added to a right-column block is saved on that block", fn: async () => {
+    const sel = "[data-cols-side='right'] [data-block-type='text']";
+    const el = await _mrdInject([], { layout: "cols", L: [{ type: "heading", text: "Left col" }], R: [{ type: "text", text: "Right col text" }] }, (vp) => vp && vp.querySelector(sel));
+    el.dispatchEvent(new MouseEvent("mouseover", { bubbles: true, relatedTarget: document.body }));
+    const btn = await _waitFor(() => el.querySelector("[data-testid='block-hover-toolbar'] button[title='Add link']"), 2000);
+    btn.click();
+    const inp = await _waitFor(() => el.querySelector("[data-testid='block-link-popup'] input"), 2000);
+    inp.value = "example.com/col";
+    inp.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    await _waitFor(() => { const n = _mrdViewport()?.querySelector(sel); return n && n.getAttribute("data-pdf-link") === "https://example.com/col"; }, 2000)
+      .catch(() => { throw new Error("right-column block did not keep its link"); });
+  }},
+], { setup: _selectFirstModule });
+
+uiSuite("meridian-CR17 link badge placement", [
+  { name: "CR17: link badges sit just after the label text on every item kind", fn: async () => {
+    const L = "https://example.com/x";
+    const cases = {
+      "icon-row": [{ type: "icon-row", cols: 2, items: [
+        { icon: "MessageSquare", title: "ChatGPT", text: "chatgpt.com", link: L },
+        { icon: "Box", title: "Docker Sandboxes", text: "docker.com/products/docker-sandboxes", link: L },
+        { icon: "Cpu", title: "A long wrapped title that keeps going across the column width for sure", text: "sub", link: L },
+      ] }],
+      bullets: [{ type: "bullets", items: [{ text: "Short", link: L }, { text: "A much longer bullet line that wraps onto a second visual line so the badge must follow the last word of the text", link: L }, { text: "Iconed", icon: "Star", link: L }] }],
+      grid: [{ type: "grid", cols: 2, items: [{ blocks: [{ type: "text", text: "Wide cell word", link: L }] }, { blocks: [{ type: "heading", text: "Heading in a wide cell", link: L }] }] }],
+      text: [{ type: "text", text: "Block-level link on a plain text block", link: L }],
+    };
+    for (const [name, blocks] of Object.entries(cases)) {
+      const want = blocks[0].items ? blocks[0].items.length : blocks.length;
+      const placed = (vp) => {
+        const all = vp ? Array.from(vp.querySelectorAll("[data-link-badge]")) : [];
+        return all.length === want && all.every((b) => b.dataset.linkBadgePlaced === "text-end") ? all : null;
+      };
+      await _mrdInject(blocks, null, placed).catch(() => { throw new Error(`${name}: badges not placed at the text end`); });
+      await _wait(150);
+      // Re-query: a late re-render can replace the nodes found first.
+      const badges = placed(_mrdViewport());
+      if (!badges) throw new Error(`${name}: badges lost their text-end placement`);
+      for (const b of badges) {
+        const br = b.getBoundingClientRect();
+        const rects = [];
+        const walker = document.createTreeWalker(b.parentElement, NodeFilter.SHOW_TEXT);
+        const range = document.createRange();
+        for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+          if (b.contains(n) || !n.nodeValue.trim()) continue;
+          range.selectNodeContents(n);
+          rects.push(...Array.from(range.getClientRects()));
+        }
+        if (rects.some((r) => r.left < br.right - 0.5 && r.right > br.left + 0.5 && r.top < br.bottom - 0.5 && r.bottom > br.top + 0.5)) throw new Error(`${name}: badge overlaps text`);
+        const sameLine = rects.filter((r) => r.top < br.bottom && r.bottom > br.top && r.right <= br.left + 1);
+        const gap = sameLine.length ? Math.min(...sameLine.map((r) => br.left - r.right)) : Infinity;
+        if (!(gap >= 0 && gap <= 12)) {
+          const fmt = (r) => [r.left, r.top, r.right, r.bottom].map((v) => Math.round(v)).join(",");
+          throw new Error(`${name}: badge ${fmt(br)} is ${gap}px from the text end; text ${rects.map(fmt).join(" | ")}`);
+        }
+      }
+    }
+  }},
+], { setup: _selectFirstModule });
+
+// meridian-F7 (CR13): the top-bar density level is a function of the current
+// width only. The level at a width must not depend on the widths before it.
+uiSuite("meridian-CR13 top bar level has no history", [
+  { name: "Level at each width equals the level after a fresh jump (sweep down, then up)", fn: async () => {
+    const h = await _waitFor(() => _$("header[data-hdr-level]"), 2000);
+    const frames = () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+    // Read the level from what is drawn (hidden labels sit at zero width), and
+    // check that it agrees with the header's own data-hdr-level.
+    const hiddenLabel = (sel) => _$$(sel, h).some((e) => e.style.width === "0px");
+    const drawnLevel = () => {
+      if (!hiddenLabel("[data-testid='view-switch'] [data-vs-label]")) return "4";
+      if (!hiddenLabel("[data-hdr-label='3']")) return "3";
+      if (!hiddenLabel("[data-hdr-label='2']")) return "2";
+      return _$("[data-testid='present-btn']", h)?.parentElement?.style.flexShrink === "1" ? "0" : "1";
+    };
+    const settle = async (w) => {
+      h.style.width = `${w}px`;
+      for (let f = 0; f < 3; f++) await frames();
+      const lvl = drawnLevel();
+      if (h.dataset.hdrLevel !== lvl) throw new Error(`${w}px: data-hdr-level ${h.dataset.hdrLevel} but drawn level ${lvl}`);
+      return lvl;
+    };
+    const widths = [1000];
+    for (let w = 1024; w <= 1920; w += 32) widths.push(w);
+    widths.push(1440);
+    const prev = h.style.width;
+    const bad = [];
+    try {
+      // "Fresh" reference: jump to the width from a narrow bar (the boot level is low).
+      const fresh = {};
+      for (const w of widths) { await settle(700); fresh[w] = await settle(w); }
+      for (const w of widths) { await settle(2400); const got = await settle(w); if (got !== fresh[w]) bad.push(`${w}px from wide: ${got} vs fresh ${fresh[w]}`); }
+      const down = [...widths].sort((a, b) => b - a);
+      for (const w of down) { const got = await settle(w); if (got !== fresh[w]) bad.push(`${w}px sweep down: ${got} vs fresh ${fresh[w]}`); }
+      for (const w of [...down].reverse()) { const got = await settle(w); if (got !== fresh[w]) bad.push(`${w}px sweep up: ${got} vs fresh ${fresh[w]}`); }
+      // The reported case: a narrow bar that grows must get its labels back.
+      await settle(1000);
+      const grown = await settle(1440);
+      if (grown !== fresh[1440]) bad.push(`1000->1440: ${grown} vs fresh ${fresh[1440]}`);
+      // No flapping: the level stays put over many frames at a fixed width.
+      for (const w of [1024, 1440, 1920]) {
+        const first = await settle(w);
+        for (let f = 0; f < 6; f++) { await frames(); if (h.dataset.hdrLevel !== first) { bad.push(`${w}px flaps ${first}->${h.dataset.hdrLevel}`); break; } }
+      }
+      if (fresh[1920] !== "4") bad.push(`1920px level ${fresh[1920]}, want 4`);
+    } finally {
+      h.style.width = prev;
+      await frames();
+    }
+    if (bad.length) throw new Error(`${bad.length} mismatches — ${bad.slice(0, 4).join(" | ")}`);
+  }},
+], { setup: _selectFirstModule });
+
+// meridian-F7 (CR01): the "file already holds this" signature moves only after
+// a confirmed write. A failed or rejected save must be retried by the next
+// identical flush, or the edit is lost.
+uiSuite("meridian-CR01 local save retries after a failed write", [
+  { name: "Failed save is retried; a confirmed save is not repeated", fn: async () => {
+    const hooks = _hooks();
+    if (!hooks.capturePostDemoFlushForTest || !hooks.flushDemoSaveForTest || !hooks.setGuidelinesForTest) throw new Error("save test hooks missing");
+    const originalStorage = window.storage;
+    const originalLocalSend = window.__velaSendDeckUpdate;
+    const writes = [];
+    let outcome = "fail";
+    window.storage = { ...(originalStorage || {}), set: async () => {}, delete: async () => {} };
+    window.__velaSendDeckUpdate = (payload) => {
+      writes.push(payload);
+      if (outcome === "reject") return Promise.reject(new Error("save failed (test)"));
+      return Promise.resolve(outcome === "ok");
+    };
+    const flush = () => hooks.flushDemoSaveForTest(hooks.capturePostDemoFlushForTest(), { local: true, storage: false });
+    try {
+      hooks.setGuidelinesForTest("meridian-F7 unsaved edit");
+      await _wait(50);
+      flush();
+      await _waitFor(() => writes.length === 1, 2000);
+      await _wait(30);
+      flush(); // same payload, previous write failed: must write again
+      await _waitFor(() => writes.length === 2, 2000).catch(() => { throw new Error("identical flush after a failed save was skipped"); });
+      outcome = "reject";
+      await _wait(30);
+      flush();
+      await _waitFor(() => writes.length === 3, 2000).catch(() => { throw new Error("identical flush after a failed save was skipped (2)"); });
+      await _wait(30);
+      flush(); // previous write rejected: must write again
+      await _waitFor(() => writes.length === 4, 2000).catch(() => { throw new Error("identical flush after a rejected save was skipped"); });
+      outcome = "ok";
+      await _wait(30);
+      flush();
+      await _waitFor(() => writes.length === 5, 2000).catch(() => { throw new Error("retry after failures was skipped"); });
+      await _wait(30);
+      flush(); // confirmed on disk now: nothing to write
+      await _wait(200);
+      if (writes.length !== 5) throw new Error(`confirmed payload written again (${writes.length} writes)`);
+      if (writes.some((p) => p.guidelines !== "meridian-F7 unsaved edit")) throw new Error("wrong payload sent");
+    } finally {
+      window.storage = originalStorage;
+      window.__velaSendDeckUpdate = originalLocalSend;
+      hooks.restoreStartupDeck?.();
+      await _wait(100);
+    }
+  }},
+]);
+
+// meridian-F8 (CR01): with a slow backend, the file must end equal to the
+// latest deck state after all writes settle — also when the latest state is
+// the one the file held before the in-flight write (edit, then undo).
+const _meridianF8SlowSave = async (steps, want) => {
+  const hooks = _hooks();
+  if (!hooks.capturePostDemoFlushForTest || !hooks.flushDemoSaveForTest || !hooks.setGuidelinesForTest) throw new Error("save test hooks missing");
+  const originalStorage = window.storage;
+  const originalLocalSend = window.__velaSendDeckUpdate;
+  const calls = [];
+  let pending = 0;
+  let disk = null;
+  let latency = 0;
+  window.storage = { ...(originalStorage || {}), set: async () => {}, delete: async () => {} };
+  // Stub backend: each write lands on "disk" in call order after `latency` ms.
+  window.__velaSendDeckUpdate = (payload) => {
+    calls.push(payload.guidelines);
+    pending++;
+    return new Promise((r) => setTimeout(() => { disk = payload.guidelines; pending--; r(true); }, latency));
+  };
+  const flush = () => hooks.flushDemoSaveForTest(hooks.capturePostDemoFlushForTest(), { local: true, storage: false });
+  const edit = async (g) => {
+    hooks.setGuidelinesForTest(g);
+    await _wait(50);
+    flush();
+    await _wait(30);
+  };
+  try {
+    // Baseline: a confirmed write puts "base" on disk.
+    await edit("meridian-F8 base");
+    await _waitFor(() => pending === 0 && disk === "meridian-F8 base", 2000);
+    latency = 400;
+    for (const g of steps) await edit(g); // later steps run while the first write is in flight
+    await _waitFor(() => pending === 0, 3000);
+    await _wait(100);
+    if (disk !== want) throw new Error(`disk "${disk}", want "${want}"; calls ${JSON.stringify(calls)}`);
+    // Settled and equal: one more flush of the same state writes nothing.
+    const n = calls.length;
+    flush();
+    await _wait(200);
+    if (calls.length !== n) throw new Error(`settled state written again; calls ${JSON.stringify(calls)}`);
+  } finally {
+    window.storage = originalStorage;
+    window.__velaSendDeckUpdate = originalLocalSend;
+    hooks.restoreStartupDeck?.();
+    await _wait(100);
+  }
+};
+uiSuite("meridian-CR01 local save ends at the latest state with a slow backend", [
+  { name: "Edit, then undo during the in-flight write: file ends at the original", fn: () => _meridianF8SlowSave(["meridian-F8 edit", "meridian-F8 base"], "meridian-F8 base") },
+  { name: "Edit, then edit again during the in-flight write: file ends at the last edit", fn: () => _meridianF8SlowSave(["meridian-F8 edit", "meridian-F8 edit 2"], "meridian-F8 edit 2") },
+]);
+
+// tideline-CR26: every rendered block text is inline-editable in the editor.
+// Find the click-to-edit display node for an exact text inside the slide.
+const _tlEditNode = (text) => _$$("div", _mrdViewport() || document).find((el) =>
+  el.style.cursor === "pointer" && el.textContent.trim() === text && !_$$("div", el).some((c) => c.style.cursor === "pointer"));
+// Click the text, type the new value, commit with Enter, wait for the new text.
+const _tlEdit = async (from, to, shown = to) => {
+  const node = await _waitFor(() => _tlEditNode(from), 2000).catch(() => { throw new Error(`"${from}" is not inline-editable`); });
+  _click(node);
+  const ed = await _waitFor(() => _$("[contenteditable='true']", _mrdViewport()), 1500);
+  ed.textContent = to;
+  ed.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+  await _waitFor(() => !_$("[contenteditable='true']") && _tlEditNode(shown), 2000).catch(() => { throw new Error(`"${from}" -> "${to}" did not commit`); });
+};
+uiSuite("tideline-CR26 edit every block text", [
+  { name: "CR26: checklist item text and status label edit inline, with undo and redo", fn: async () => {
+    const hooks = _hooks();
+    await _mrdInject([{ type: "checklist", items: [{ text: "Task one", status: "pending" }, { text: "Task two", status: "done" }] }], null,
+      (vp) => vp?.textContent.includes("Task one") ? vp : null);
+    const past0 = hooks.getHistoryCounts ? hooks.getHistoryCounts().past : 0;
+    try {
+      await _tlEdit("Task one", "Task edited");
+      await _tlEdit("PENDING", "blocked", "BLOCKED");
+      const blockedCol = _tlEditNode("BLOCKED")?.style.color;
+      if (!/239, 68, 68|#ef4444/i.test(blockedCol || "")) throw new Error(`typed status did not switch the status (color ${blockedCol})`);
+      await _tlEdit("DONE", "Shipped");
+      _key("z", { ctrlKey: true });
+      await _waitFor(() => _tlEditNode("DONE"), 2000).catch(() => { throw new Error("undo did not restore the label"); });
+      _key("y", { ctrlKey: true });
+      await _waitFor(() => _tlEditNode("Shipped"), 2000).catch(() => { throw new Error("redo did not restore the custom label"); });
+      await _tlEdit("Shipped", "", "DONE");
+    } finally {
+      await _mrdUndoTo(past0);
+    }
+  }},
+  { name: "CR26: comparison, matrix, number-row, progress and flow texts edit inline", fn: async () => {
+    const cases = [
+      [[{ type: "comparison", dividerLabel: "OR", items: [{ title: "Left col", items: ["Left point"] }, { title: "Right col", items: [{ text: "Right point" }] }] }],
+        [["Left col", "Left new"], ["Right col", "Right new"], ["Left point", "LP new"], ["Right point", "RP new"], ["OR", "VERSUS"]]],
+      [[{ type: "matrix", xLeft: "Low X", xRight: "High X", yTop: "High Y", yBottom: "Low Y", quadrants: [{ title: "Q one", items: ["Q point"] }, { title: "Q two" }, { title: "Q three" }, { title: "Q four" }] }],
+        [["Q one", "Q1 new"], ["Q point", "QP new"], ["Low X", "LX new"], ["High Y", "HY new"]]],
+      [[{ type: "number-row", items: [{ value: "42", label: "Answers" }, { value: "7", label: "Days" }] }],
+        [["42", "43"], ["Answers", "Replies"]]],
+      [[{ type: "progress", leftLabel: "Start", rightLabel: "End", annotation: "Note here", items: [{ label: "Bar", value: 40 }] }],
+        [["Start", "Begin"], ["End", "Finish"], ["Note here", "Note new"]]],
+      [[{ type: "flow", gateLabel: "Gate", items: [{ label: "A", gate: true }, { label: "B" }] }],
+        [["Gate", "Check"]]],
+    ];
+    for (const [blocks, edits] of cases) {
+      await _mrdInject(blocks, null, (vp) => vp?.textContent.includes(edits[0][0]) ? vp : null);
+      // Undo one step per edit (history counts stop growing at MAX_HISTORY).
+      let done = 0;
+      try {
+        for (const [from, to] of edits) { await _tlEdit(from, to); done++; }
+      } catch (e) { throw new Error(`${blocks[0].type}: ${e.message}`); }
+      finally { document.activeElement?.blur?.(); for (let k = 0; k < done; k++) { _key("z", { ctrlKey: true }); await _wait(60); } }
+      await _waitFor(() => _tlEditNode(edits[0][0]), 2000).catch(() => { throw new Error(`${blocks[0].type}: undo did not restore the text`); });
+    }
+  }},
+  { name: "CR26: a cleared text keeps a clickable target and can be typed again", fn: async () => {
+    const cases = [
+      [{ type: "checklist", items: [{ text: "Task one", status: "pending" }] }, "Task one"],
+      [{ type: "comparison", items: [{ title: "L", items: ["Left point"] }, { title: "R", items: ["Right point"] }] }, "Left point"],
+      [{ type: "matrix", quadrants: [{ title: "Q1", items: ["Q point"] }, { title: "Q2" }, { title: "Q3" }, { title: "Q4" }] }, "Q point"],
+      [{ type: "number-row", items: [{ value: "42", label: "Answers" }] }, "42"],
+      [{ type: "bullets", items: ["Bullet one", "Bullet two"] }, "Bullet one"],
+    ];
+    for (const [block, from] of cases) {
+      await _mrdInject([block], null, (vp) => vp?.textContent.includes(from) ? vp : null);
+      let done = 0;
+      try {
+        await _tlEdit(from, "", EDIT_PLACEHOLDER); done++;
+        const node = _tlEditNode(EDIT_PLACEHOLDER);
+        const r = node.getBoundingClientRect();
+        if (!(r.width > 4 && r.height > 4)) throw new Error(`empty target is ${r.width}x${r.height}`);
+        // With the pointer on it, the item's hover toolbar must not cover the placeholder.
+        const ph = _$("[data-vela-placeholder]", node);
+        ph.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
+        await _wait(80);
+        const pr = ph.getBoundingClientRect();
+        const hit = document.elementFromPoint(pr.left + pr.width / 2, pr.top + pr.height / 2);
+        if (!node.contains(hit)) throw new Error(`placeholder is covered by ${hit?.tagName} "${(hit?.textContent || "").slice(0, 20)}"`);
+        await _tlEdit(EDIT_PLACEHOLDER, "Typed again"); done++;
+      } catch (e) { throw new Error(`${block.type}: ${e.message}`); }
+      finally { document.activeElement?.blur?.(); for (let k = 0; k < done; k++) { _key("z", { ctrlKey: true }); await _wait(60); } }
+      await _waitFor(() => _tlEditNode(from), 2000).catch(() => { throw new Error(`${block.type}: undo did not restore the text`); });
+    }
+  }},
+  { name: "CR26: SVG labels (cycle, funnel, flow loop) edit inline, with undo and redo, and do not zoom", fn: async () => {
+    const svgText = (t) => _$$("text[data-svg-edit]", _mrdViewport() || document).find((el) => el.textContent.trim() === t);
+    const zoomed = () => document.body.textContent.includes("ESC or click to close");
+    const svgEdit = async (from, to, key = "Enter") => {
+      const node = await _waitFor(() => svgText(from), 2000).catch(() => { throw new Error(`"${from}" is not an editable SVG label`); });
+      _clickMod(node);
+      const inp = await _waitFor(() => _$("[data-testid='svg-text-edit']", _mrdViewport()), 1500).catch(() => { throw new Error(`"${from}": no edit input`); });
+      if (zoomed()) throw new Error(`"${from}": click opened the zoom overlay`);
+      if (document.activeElement !== inp) throw new Error(`"${from}": input has no focus`);
+      inp.value = to;
+      inp.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }));
+      const shown = key === "Escape" ? from : to;
+      await _waitFor(() => !_$("[data-testid='svg-text-edit']") && svgText(shown), 2000).catch(() => { throw new Error(`"${from}" -> "${to}" (${key}) did not show "${shown}"`); });
+    };
+    const cases = [
+      [{ type: "cycle", centerLabel: "Center L", centerSub: "Center S", items: [{ label: "CyA" }, { label: "CyB" }, { label: "CyC" }] }, [["CyA", "CyA2"], ["Center L", "CL2"], ["Center S", "CS2"]]],
+      [{ type: "funnel", items: [{ label: "FunA", value: "100", drop: "-40%" }, { label: "FunB", value: "60" }] }, [["FunA", "FunA2"], ["100", "101"], ["-40%", "-41%"]]],
+      [{ type: "flow", loop: true, loopLabel: "LoopH", items: [{ label: "A" }, { label: "B" }] }, [["LoopH", "LoopH2"]]],
+      [{ type: "flow", loop: true, direction: "vertical", loopLabel: "LoopV", items: [{ label: "A" }, { label: "B" }] }, [["LoopV", "LoopV2"]]],
+    ];
+    for (const [block, edits] of cases) {
+      await _mrdInject([block], null, (vp) => vp && svgText(edits[0][0]) ? vp : null);
+      let done = 0;
+      try {
+        await svgEdit(edits[0][0], "Cancelled", "Escape");
+        for (const [from, to] of edits) {
+          await svgEdit(from, to); done++;
+          _key("z", { ctrlKey: true });
+          await _waitFor(() => svgText(from), 2000).catch(() => { throw new Error(`undo did not restore "${from}"`); });
+          _key("y", { ctrlKey: true });
+          await _waitFor(() => svgText(to), 2000).catch(() => { throw new Error(`redo did not restore "${to}"`); });
+        }
+      } catch (e) { throw new Error(`${block.type}: ${e.message}`); }
+      finally { document.activeElement?.blur?.(); for (let k = 0; k < done; k++) { _key("z", { ctrlKey: true }); await _wait(60); } }
+      await _waitFor(() => svgText(edits[0][0]), 2000).catch(() => { throw new Error(`${block.type}: undo did not restore the text`); });
+    }
+  }},
+  { name: "CR26: a cleared optional SVG label shows a placeholder and can be typed again", fn: async () => {
+    const texts = () => _$$("text[data-svg-edit]", _mrdViewport() || document);
+    const svgText = (t) => texts().find((el) => el.textContent.trim() === t);
+    const open = async (node, what) => {
+      _clickMod(node);
+      return _waitFor(() => _$("[data-testid='svg-text-edit']", _mrdViewport()), 1500).catch(() => { throw new Error(`${what}: no edit input`); });
+    };
+    const commit = (inp, v) => { inp.value = v; inp.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true })); };
+    const cases = [
+      [{ type: "cycle", centerLabel: "CtrL", centerSub: "CtrS", items: [{ label: "CyA" }, { label: "CyB" }] }, ["CtrL", "CtrS"]],
+      [{ type: "funnel", items: [{ label: "FunA", value: "100", drop: "-40%" }] }, ["100", "-40%"]],
+      [{ type: "flow", loop: true, loopLabel: "LoopH", items: [{ label: "A" }, { label: "B" }] }, ["LoopH"]],
+      [{ type: "flow", loop: true, direction: "vertical", loopLabel: "LoopV", items: [{ label: "A" }, { label: "B" }] }, ["LoopV"]],
+    ];
+    for (const [block, labels] of cases) {
+      await _mrdInject([block], null, (vp) => vp && svgText(labels[0]) ? vp : null);
+      for (const from of labels) {
+        let done = 0;
+        try {
+          const before = new Set(texts().filter((el) => el.textContent.trim() === EDIT_PLACEHOLDER));
+          commit(await open(svgText(from), from), ""); done++;
+          const ph = await _waitFor(() => !_$("[data-testid='svg-text-edit']") && texts().find((el) => el.textContent.trim() === EDIT_PLACEHOLDER && !before.has(el)), 2000)
+            .catch(() => { throw new Error(`"${from}": cleared label shows no placeholder`); });
+          if (!_$("[data-vela-placeholder]", ph)) throw new Error(`"${from}": placeholder is not marked`);
+          const r = ph.getBoundingClientRect();
+          if (!(r.width > 4 && r.height > 4)) throw new Error(`"${from}": placeholder target is ${r.width}x${r.height}`);
+          commit(await open(ph, `"${from}" placeholder`), "Back " + from); done++;
+          await _waitFor(() => !_$("[data-testid='svg-text-edit']") && svgText("Back " + from), 2000).catch(() => { throw new Error(`"${from}": re-typed text not shown`); });
+        } catch (e) { throw new Error(`${block.type}: ${e.message}`); }
+        finally { document.activeElement?.blur?.(); for (let k = 0; k < done; k++) { _key("z", { ctrlKey: true }); await _wait(60); } }
+        await _waitFor(() => svgText(from), 2000).catch(() => { throw new Error(`${block.type}: undo did not restore "${from}"`); });
+      }
+    }
+  }},
+  { name: "CR26: empty optional SVG labels show no placeholder in Present mode", fn: async () => {
+    await _mrdInject([{ type: "cycle", items: [{ label: "PcA" }, { label: "PcB" }] }, { type: "funnel", items: [{ label: "PfA" }] }], null,
+      (vp) => vp && _$$("text[data-svg-edit]", vp).some((el) => el.textContent.trim() === "PcA") ? vp : null);
+    const n = _$$("[data-vela-placeholder]", _mrdViewport()).length;
+    if (n < 4) throw new Error(`editor shows ${n} placeholders, want >= 4 (center label, sub, value, drop)`);
+    document.activeElement?.blur(); await _wait(100);
+    _key("f");
+    try {
+      await _waitFor(() => !_$("header") && document.body.textContent.includes("PcA"), 2000);
+      await _wait(150);
+      const ph = _$$("[data-vela-placeholder]").length, ed = _$$("[data-svg-edit]").length;
+      if (ph || ed) throw new Error(`Present mode shows ${ph} placeholders and ${ed} editable SVG labels`);
+    } finally {
+      _key("f");
+      await _waitFor(() => _$("header"), 2000);
+    }
+  }},
+  { name: "CR26: opening an SVG label input does not move or cover the other labels", fn: async () => {
+    await _mrdInject([{ type: "funnel", items: [{ label: "LsA", value: "10K", drop: "-40%" }, { label: "LsB", value: "4K" }, { label: "LsC", value: "1K" }] }], null,
+      (vp) => vp && _$$("text[data-svg-edit]", vp).some((el) => el.textContent.trim() === "LsA") ? vp : null);
+    await _wait(1000); // let the entrance (stagger) animation settle before measuring
+    const texts = () => _$$("text[data-svg-edit]", _mrdViewport());
+    const others = () => texts().filter((el) => el.textContent.trim() !== "LsA");
+    const r0 = others().map((el) => el.getBoundingClientRect());
+    _clickMod(texts().find((el) => el.textContent.trim() === "LsA"));
+    const inp = await _waitFor(() => _$("[data-testid='svg-text-edit']", _mrdViewport()), 1500);
+    try {
+      await _mrdFrame();
+      const r1 = others().map((el) => el.getBoundingClientRect());
+      r0.forEach((a, i) => {
+        const b = r1[i];
+        if (Math.abs(a.left - b.left) > 1 || Math.abs(a.top - b.top) > 1) throw new Error(`label ${i} moved ${b.left - a.left},${b.top - a.top}px`);
+      });
+      const ir = inp.getBoundingClientRect();
+      const cover = r1.find((b) => ir.left < b.right - 1 && ir.right > b.left + 1 && ir.top < b.bottom - 1 && ir.bottom > b.top + 1);
+      if (cover) throw new Error("input covers an adjacent label");
+    } finally {
+      inp.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+      await _waitFor(() => !_$("[data-testid='svg-text-edit']"), 1500);
+    }
+  }},
+  { name: "CR26: typed status names ignore case, underscore and hyphen", fn: async () => {
+    const hooks = _hooks();
+    await _mrdInject([{ type: "checklist", items: [{ text: "St one", status: "pending" }, { text: "St two", status: "done" }] }], null,
+      (vp) => vp?.textContent.includes("St one") ? vp : null);
+    const past0 = hooks.getHistoryCounts ? hooks.getHistoryCounts().past : 0;
+    try {
+      await _tlEdit("PENDING", "in_progress", "IN PROGRESS");
+      await _tlEdit("DONE", "In-Progress", "IN PROGRESS");
+      // A save that normalizes to the current state shows the default label at once.
+      await _tlEdit("IN PROGRESS", "in_progress", "IN PROGRESS");
+      await _tlEdit("IN PROGRESS", "", "IN PROGRESS");
+      const cols = _$$("div", _mrdViewport()).filter((el) => el.style.cursor === "pointer" && el.textContent.trim() === "IN PROGRESS").map((el) => el.style.color);
+      if (cols.length !== 2 || !cols.every((c) => /245, 158, 11|#f59e0b/i.test(c))) throw new Error(`status not switched to in-progress (${cols})`);
+    } finally {
+      await _mrdUndoTo(past0);
+    }
+  }},
+  { name: "CR26: empty-text placeholder is invisible until its block is hovered, and keeps its size", fn: async () => {
+    await _mrdInject([{ type: "funnel", items: [{ label: "PhA", value: "10K" }, { label: "PhB", value: "4K" }] }], null,
+      (vp) => vp && _$$("text[data-svg-edit]", vp).some((el) => el.textContent.trim() === "PhA") ? vp : null);
+    await _wait(1000);
+    document.activeElement?.blur(); await _wait(100);
+    const vp = _mrdViewport();
+    const ph = _$("[data-vela-placeholder]", vp);
+    if (!ph) throw new Error("no placeholder found");
+    const host = ph.closest("[data-block-type]");
+    const op = () => parseFloat(getComputedStyle(ph).opacity);
+    await _mrdUnhover(host);
+    const r0 = ph.getBoundingClientRect();
+    if (op() !== 0) throw new Error(`placeholder opacity ${op()} without hover, want 0`);
+    await _mrdHover(host);
+    if (!(op() > 0.2)) throw new Error(`placeholder opacity ${op()} on hover, want visible`);
+    const r1 = ph.getBoundingClientRect();
+    if (Math.abs(r0.width - r1.width) > 0.5 || Math.abs(r0.height - r1.height) > 0.5 || Math.abs(r0.left - r1.left) > 0.5) throw new Error("placeholder box changed on hover");
+    if (!(r0.width > 4 && r0.height > 4)) throw new Error(`hidden placeholder target is ${r0.width}x${r0.height}`);
+    await _mrdUnhover(host);
+    if (op() !== 0) throw new Error("placeholder stays visible after hover ends");
+  }},
+  { name: "CR26: markup typed into an SVG label is stored like the same input in an HTML text", fn: async () => {
+    const typed = "<b>hi</b> sub";
+    // HTML path: the value EditableText stores for this input, as shown.
+    await _mrdInject([{ type: "checklist", items: [{ text: "Task one", status: "pending" }] }], null,
+      (vp) => vp?.textContent.includes("Task one") ? vp : null);
+    let done = 0, want;
+    try {
+      _click(await _waitFor(() => _tlEditNode("Task one"), 2000));
+      const ed = await _waitFor(() => _$("[contenteditable='true']", _mrdViewport()), 1500);
+      ed.textContent = typed;
+      ed.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+      await _waitFor(() => !_$("[contenteditable='true']"), 2000); done++;
+      want = _$$("div", _mrdViewport()).filter((el) => el.style.cursor === "pointer" && el.textContent.trim() !== "PENDING" && !_$$("div", el).some((c) => c.style.cursor === "pointer"))[0]?.textContent.trim();
+    } finally { document.activeElement?.blur?.(); for (let k = 0; k < done; k++) { _key("z", { ctrlKey: true }); await _wait(60); } }
+    if (!want || /[<>]/.test(want)) throw new Error(`HTML text kept markup: "${want}"`);
+    // SVG path: funnel value, cycle centre label, flow loop label.
+    const svgText = (t) => _$$("text[data-svg-edit]", _mrdViewport() || document).find((el) => el.textContent.trim() === t);
+    const cases = [
+      [{ type: "funnel", items: [{ label: "FunA", value: "100" }] }, "100"],
+      [{ type: "cycle", centerLabel: "CtrL", items: [{ label: "CyA" }, { label: "CyB" }] }, "CtrL"],
+      [{ type: "flow", loop: true, loopLabel: "LoopH", items: [{ label: "A" }, { label: "B" }] }, "LoopH"],
+    ];
+    for (const [block, from] of cases) {
+      await _mrdInject([block], null, (vp) => vp && svgText(from) ? vp : null);
+      let n = 0;
+      try {
+        _clickMod(svgText(from));
+        const inp = await _waitFor(() => _$("[data-testid='svg-text-edit']", _mrdViewport()), 1500);
+        inp.value = typed;
+        inp.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+        await _waitFor(() => !_$("[data-testid='svg-text-edit']") && svgText(want), 2000).catch(() => {
+          throw new Error(`typed markup shows "${_$$("text[data-svg-edit]", _mrdViewport()).map((el) => el.textContent).join("|")}", want "${want}"`);
+        }); n++;
+      } catch (e) { throw new Error(`${block.type}: ${e.message}`); }
+      finally { document.activeElement?.blur?.(); for (let k = 0; k < n; k++) { _key("z", { ctrlKey: true }); await _wait(60); } }
+    }
+  }},
+  { name: "CR26: an empty flow loop label placeholder sits where the filled label sits", fn: async () => {
+    const texts = () => _$$("text[data-svg-edit]", _mrdViewport() || document);
+    const svgText = (t) => texts().find((el) => el.textContent.trim() === t);
+    const cx = (el) => { const r = el.getBoundingClientRect(); return (r.left + r.right) / 2; };
+    const cy = (el) => { const r = el.getBoundingClientRect(); return (r.top + r.bottom) / 2; };
+    for (const [dir, lab] of [["horizontal", "LoopP"], ["vertical", "LoopQ"]]) {
+      await _mrdInject([{ type: "flow", loop: true, direction: dir, loopLabel: lab, items: [{ label: "A" }, { label: "B" }, { label: "C" }] }], null,
+        (vp) => vp && svgText(lab) ? vp : null);
+      await _wait(900); // let the entrance animation settle before measuring
+      let done = 0;
+      try {
+        const f = svgText(lab), fx = cx(f), fy = cy(f);
+        _clickMod(f);
+        const inp = await _waitFor(() => _$("[data-testid='svg-text-edit']", _mrdViewport()), 1500);
+        inp.value = "";
+        inp.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true })); done++;
+        const ph = await _waitFor(() => !_$("[data-testid='svg-text-edit']") && texts().find((el) => el.textContent.trim() === EDIT_PLACEHOLDER), 2000);
+        await _wait(200);
+        const px = cx(ph), py = cy(ph);
+        if (Math.abs(px - fx) > 4 || Math.abs(py - fy) > 4) throw new Error(`placeholder at ${px.toFixed(1)},${py.toFixed(1)}, label at ${fx.toFixed(1)},${fy.toFixed(1)}`);
+      } catch (e) { throw new Error(`${dir}: ${e.message}`); }
+      finally { document.activeElement?.blur?.(); for (let k = 0; k < done; k++) { _key("z", { ctrlKey: true }); await _wait(60); } }
+    }
+  }},
+], { setup: _selectFirstModule });
+
+// CR21: while a slide or section is dragged in the TOC, the pointer near the top /
+// bottom edge of the scroll pane scrolls it, so a drop can reach the first / last
+// section. The pane is made short here so it overflows with any deck.
+async function _tidelineTocDrag(fn) {
+  const tree = await _waitFor(() => document.querySelector('[data-testid="toc-tree"]'), 3000);
+  const pane = tree.parentElement; const old = pane.style.maxHeight;
+  pane.style.maxHeight = Math.max(90, Math.min(220, Math.floor(tree.offsetHeight / 2))) + "px";
+  try {
+    await _wait(60);
+    const sc = tocScrollParent(tree);
+    if (sc !== pane) throw new Error("TOC pane does not overflow");
+    return await fn(sc, tree);
+  } finally { pane.style.maxHeight = old; }
+}
+function _tidelineFire(dt) { return (el, type, extra) => el.dispatchEvent(new DragEvent(type, Object.assign({ bubbles: true, cancelable: true, dataTransfer: dt }, extra))); }
+// Fire dragover at (x, y) every 40ms until cond() or timeout; return cond().
+async function _tidelineHold(el, fire, x, y, cond, ms) {
+  const t0 = performance.now();
+  while (performance.now() - t0 < ms) { fire(el, "dragover", { clientX: x, clientY: y }); await _wait(40); if (cond()) return true; }
+  return cond();
+}
+const _tidelineRows = () => _$$('[data-testid="toc-slide-row"]');
+// The title span has flex:1 (the number / time spans before it change on a move).
+const _tidelineTitle = (r) => { const t = _$$("span", r).find((x) => x.style.flex && x.style.flex.startsWith("1")); return ((t || r).textContent || "").trim(); };
+
+uiSuite("tideline-CR21 TOC drag auto-scroll", [
+  { name: "Speed is 0 in the middle, grows toward each edge, and is 0 far outside", fn: async () => {
+    const v = (y) => tocAutoScrollSpeed(y, 100, 500);
+    if (v(300) !== 0) throw new Error("middle scrolls: " + v(300));
+    if (!(v(150) < 0 && v(110) < v(150) && v(101) <= v(110))) throw new Error("top zone speed: " + [v(150), v(110), v(101)]);
+    if (!(v(450) > 0 && v(490) > v(450) && v(499) >= v(490))) throw new Error("bottom zone speed: " + [v(450), v(490), v(499)]);
+    if (v(90) !== -TOC_AUTOSCROLL_MAX || v(510) !== TOC_AUTOSCROLL_MAX) throw new Error("just outside is not full speed");
+    if (v(0) !== 0 || v(700) !== 0 || tocAutoScrollSpeed(NaN, 0, 10) !== 0 || tocAutoScrollSpeed(5, 10, 10) !== 0) throw new Error("far outside / bad input scrolls");
+  }},
+  { name: "Drag near the top scrolls up to the start; drop lands in the first section", fn: () => _tidelineTocDrag(async (sc) => {
+    sc.scrollTop = sc.scrollHeight; await _wait(60);
+    const before = _tidelineRows().map(_tidelineTitle);
+    if (before.length < 3) throw new Error("need >=3 slide rows");
+    const src = _tidelineRows()[before.length - 1];
+    const r = sc.getBoundingClientRect(); const x = r.left + r.width / 2;
+    const fire = _tidelineFire(new DataTransfer());
+    fire(src, "dragstart");
+    try {
+      if (!(await _tidelineHold(sc, fire, x, r.top + 3, () => sc.scrollTop === 0, 6000))) throw new Error("did not reach the top: " + sc.scrollTop);
+      const dst = _tidelineRows()[0]; const b = dst.getBoundingClientRect();
+      if (b.bottom < r.top || b.top > r.bottom) throw new Error("first row not visible after scroll");
+      fire(dst, "dragover", { clientX: b.left + 5, clientY: b.top + 2 });
+      fire(dst, "drop", { clientX: b.left + 5, clientY: b.top + 2 });
+    } finally { fire(src, "dragend"); }
+    await _waitFor(() => _tidelineTitle(_tidelineRows()[0]) === before[before.length - 1], 2000).catch(() => { throw new Error("drop did not land first: " + _tidelineRows().slice(0, 2).map(_tidelineTitle) + " | want " + before[before.length - 1]); });
+    // Restore: drag it back below the row that is now last.
+    const f2 = _tidelineFire(new DataTransfer()); const s2 = _tidelineRows()[0]; const rows = _tidelineRows(); const d2 = rows[rows.length - 1];
+    d2.scrollIntoView({ block: "nearest" }); await _wait(40);
+    const b2 = d2.getBoundingClientRect();
+    f2(s2, "dragstart"); f2(d2, "dragover", { clientX: b2.left + 5, clientY: b2.bottom - 2 }); f2(d2, "drop", { clientX: b2.left + 5, clientY: b2.bottom - 2 }); f2(s2, "dragend");
+    await _waitFor(() => JSON.stringify(_tidelineRows().map(_tidelineTitle)) === JSON.stringify(before), 2000).catch(() => { throw new Error("restore failed: " + _tidelineRows().map(_tidelineTitle).slice(-3)); });
+  })},
+  { name: "Drag near the bottom scrolls down to the end and stops there", fn: () => _tidelineTocDrag(async (sc) => {
+    sc.scrollTop = 0; await _wait(60);
+    const src = _tidelineRows()[0]; const r = sc.getBoundingClientRect(); const x = r.left + r.width / 2;
+    const end = () => sc.scrollTop >= sc.scrollHeight - sc.clientHeight - 1;
+    const fire = _tidelineFire(new DataTransfer());
+    fire(src, "dragstart");
+    try {
+      if (!(await _tidelineHold(sc, fire, x, r.bottom - 3, end, 6000))) throw new Error("did not reach the end: " + sc.scrollTop);
+      const at = sc.scrollTop; await _wait(120);
+      if (sc.scrollTop !== at) throw new Error("scrolled past the end");
+    } finally { fire(src, "dragend"); }
+  })},
+  { name: "Scroll stops on dragend (Escape), on drop, in the middle and without a drag", fn: () => _tidelineTocDrag(async (sc) => {
+    const r = sc.getBoundingClientRect(); const x = r.left + r.width / 2;
+    const mid = Math.floor((sc.scrollHeight - sc.clientHeight) / 2);
+    const still = async () => { const a = sc.scrollTop; await _wait(150); return sc.scrollTop === a; };
+    // No drag active: an edge dragover does nothing.
+    sc.scrollTop = mid; await _wait(40);
+    const fire0 = _tidelineFire(new DataTransfer());
+    fire0(sc, "dragover", { clientX: x, clientY: r.bottom - 3 });
+    if (!(await still()) || sc.scrollTop !== mid) throw new Error("scrolled without a drag");
+    const src = _tidelineRows()[0];
+    for (const endType of ["dragend", "drop"]) {
+      sc.scrollTop = mid; await _wait(40);
+      const fire = _tidelineFire(new DataTransfer());
+      fire(src, "dragstart");
+      try {
+        fire(sc, "dragover", { clientX: x, clientY: r.bottom - 3 });
+        await _wait(80);
+        if (sc.scrollTop === mid) throw new Error("edge did not scroll");
+        fire(endType === "drop" ? document.body : src, endType);
+        if (!(await still())) throw new Error("still scrolls after " + endType);
+        // Pointer back in the middle: no scroll.
+        if (endType === "dragend") {
+          fire(src, "dragstart"); sc.scrollTop = mid; await _wait(40);
+          fire(sc, "dragover", { clientX: x, clientY: r.top + r.height / 2 });
+          if (!(await still()) || sc.scrollTop !== mid) throw new Error("middle scrolls");
+        }
+      } finally { fire(src, "dragend"); }
+    }
+  })},
+]);
+
+// ── Sprint tideline (CR22-CR25): image paste placement stress test ──────
+// Pastes 1-4 images of mixed aspect (wide 3:1, 16:9, square, tall 9:16) through
+// the real paste handler onto (a) an empty slide, (b) a heading slide and (c) a
+// heading + text + credit slide, then measures the rendered boxes.
+const _tlAspects = { wide: [900, 300, "#3b82f6"], hd: [1280, 720, "#10b981"], sq: [600, 600, "#f59e0b"], tall: [450, 800, "#ef4444"] };
+const _tlBases = {
+  a: [],
+  b: [{ type: "heading", text: "TL heading only" }],
+  c: [{ type: "heading", text: "TL heading text credit" }, { type: "text", text: "Short body text that explains the pictures." }, { type: "text", text: "Credit: Example Author, 16 Jun 2025", size: "sm" }],
+};
+const _tlPaste = async (kind) => {
+  const [w, h, color] = _tlAspects[kind];
+  const cv = document.createElement("canvas"); cv.width = w; cv.height = h;
+  const g = cv.getContext("2d"); g.fillStyle = color; g.fillRect(0, 0, w, h);
+  const blob = await new Promise((r) => cv.toBlob(r, "image/png"));
+  const dt = new DataTransfer(); dt.items.add(new File([blob], `${kind}.png`, { type: "image/png" }));
+  _mrdViewport().dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true }));
+};
+const _tlMeasure = () => {
+  const vp = _mrdViewport(); const v = vp.getBoundingClientRect(); const s = v.width / 960;
+  const outside = Array.from(vp.querySelectorAll("[data-block-type]")).filter((el) => el.dataset.blockType !== "image").map((el) => el.getBoundingClientRect())
+    .filter((r) => r.left < v.left - 1 || r.top < v.top - 1 || r.right > v.right + 1 || r.bottom > v.bottom + 1);
+  const imgs = Array.from(vp.querySelectorAll("img")).map((im) => {
+    const r = im.getBoundingClientRect(); const k = Math.min(r.width / im.naturalWidth, r.height / im.naturalHeight);
+    return { w: im.naturalWidth * k / s, h: im.naturalHeight * k / s, cx: (r.left + r.width / 2 - v.left) / s };
+  });
+  const grid = vp.querySelector("[data-testid='image-grid']");
+  return { outside: outside.length, imgs, area: imgs.reduce((a, i) => a + i.w * i.h, 0) / (960 * 540), cols: grid ? Number(grid.getAttribute("data-image-cols")) : null };
+};
+const _tlCase = async (base, kinds, extra, probe) => {
+  const past = _hooks().getHistoryCounts ? _hooks().getHistoryCounts().past : 0;
+  await _mrdInject(_tlBases[base], { layout: undefined, contentFlex: undefined, imageFlex: undefined, imageCols: undefined, ...(extra || {}) }, (vp) => vp);
+  for (let k = 0; k < kinds.length; k++) {
+    await _tlPaste(kinds[k]);
+    await _waitFor(() => Array.from(_mrdViewport().querySelectorAll("img")).filter((im) => im.complete && im.naturalWidth > 0).length >= k + 1, 4000);
+  }
+  // Let the fit pass, the aspect cache and the grid box settle.
+  await _wait(500); await _mrdFrame();
+  const m = _tlMeasure();
+  const label = `${base}:${kinds.join("+")}`;
+  if (m.outside) throw new Error(`${label}: ${m.outside} non-image block(s) outside the 960x540 canvas`);
+  if (m.imgs.length !== kinds.length) throw new Error(`${label}: ${m.imgs.length}/${kinds.length} images rendered`);
+  if (m.imgs.some((i) => !(i.h > 20 && i.w > 20))) throw new Error(`${label}: an image is collapsed (${m.imgs.map((i) => `${i.w.toFixed(0)}x${i.h.toFixed(0)}`).join(" ")})`);
+  if (probe) m.probe = await probe(m, label);
+  await _mrdUndoTo(past);
+  return m;
+};
+
+uiSuite("tideline-CR22-CR25 image placement", [
+  { name: "CR22: one image on an empty slide that kept a split layout fills the slide, not one half", fn: async () => {
+    for (const layout of ["image-right", "image-left"]) {
+      const m = await _tlCase("a", ["tall"], { layout });
+      const cx = m.imgs[0].cx;
+      if (Math.abs(cx - 480) > 24) throw new Error(`${layout}: image centre x=${cx.toFixed(0)} (expected near 480)`);
+      if (m.imgs[0].h < 500) throw new Error(`${layout}: tall image height ${m.imgs[0].h.toFixed(0)} does not fill the slide`);
+    }
+  }},
+  { name: "CR24: a wide image fills the free width (solo and under a heading)", fn: async () => {
+    for (const base of ["a", "b", "c"]) {
+      const m = await _tlCase(base, ["wide"]);
+      if (m.imgs[0].w < 800) throw new Error(`${base}: wide image is only ${m.imgs[0].w.toFixed(0)}px wide`);
+    }
+  }},
+  { name: "CR22/CR24: single images of every aspect use the free area well", fn: async () => {
+    const minArea = { a: 0.3, b: 0.18, c: 0.15 };
+    for (const base of ["a", "b", "c"]) for (const kind of ["wide", "hd", "sq", "tall"]) {
+      const m = await _tlCase(base, [kind]);
+      if (m.area < minArea[base]) throw new Error(`${base}:${kind}: image covers ${(m.area * 100).toFixed(0)}% of the slide`);
+    }
+  }},
+  { name: "CR23: three images pick their grid by aspect ratio", fn: async () => {
+    for (const base of ["a", "b"]) {
+      const tall = await _tlCase(base, ["tall", "tall", "tall"]);
+      if (tall.cols !== 3) throw new Error(`${base}: 3 tall images use ${tall.cols} columns (expected one row of 3)`);
+      const wide = await _tlCase(base, ["wide", "wide", "wide"]);
+      if (!(wide.cols < 3)) throw new Error(`${base}: 3 wide images still use ${wide.cols} columns`);
+    }
+    const c = await _tlCase("c", ["wide", "wide", "wide"]);
+    if (!(c.cols < 3)) throw new Error(`c: 3 wide images still use ${c.cols} columns`);
+  }},
+  { name: "CR25: 2-4 mixed images never push text off the slide", fn: async () => {
+    for (const base of ["a", "b", "c"]) for (const kinds of [["wide", "tall"], ["hd", "hd"], ["wide", "sq", "tall"], ["wide", "hd", "sq", "tall"]]) {
+      await _tlCase(base, kinds);
+    }
+  }},
+  { name: "CR25: a tall image between a heading and a credit line yields its height", fn: async () => {
+    const marker = "TL CR25 credit";
+    const src = _mrdSvg(338, 600, "ef4444");
+    for (const body of [[], [{ type: "text", text: "A long paragraph of body text. ".repeat(14) }]]) {
+      await _mrdInject([{ type: "heading", text: "TL CR25" }, ...body, { type: "image", src }, { type: "text", text: marker }], { layout: undefined }, (vp) => vp?.textContent.includes(marker) && vp.querySelector("img")?.naturalWidth > 0 ? vp : null);
+      await _wait(400);
+      const m = _tlMeasure();
+      if (m.outside) throw new Error(`${body.length ? "heavy" : "plain"}: ${m.outside} text block(s) outside the canvas`);
+      const credit = Array.from(_mrdViewport().querySelectorAll("[data-block-type='text']")).find((el) => el.textContent.includes(marker));
+      const vr = _mrdViewport().getBoundingClientRect(), cr = credit.getBoundingClientRect();
+      if (cr.bottom > vr.bottom - 4) throw new Error(`credit line is clipped (bottom ${(cr.bottom - vr.bottom).toFixed(1)}px past the slide)`);
+      if (m.imgs[0].h < 100) throw new Error(`image collapsed to ${m.imgs[0].h.toFixed(0)}px`);
+    }
+  }},
+  { name: "CR24/CR25: small icons and logos are never upscaled past 2x natural size", fn: async () => {
+    const png = (w, h, color) => { const cv = document.createElement("canvas"); cv.width = w; cv.height = h; const g = cv.getContext("2d"); g.fillStyle = color; g.fillRect(0, 0, w, h); return cv.toDataURL("image/png"); };
+    const icon = png(32, 32, "#3b82f6"), logo = png(64, 64, "#f59e0b"), hd = png(1280, 720, "#10b981"), wide = png(900, 300, "#ef4444");
+    const cases = [
+      ["icon alone", [{ type: "image", src: icon }], [32]],
+      ["icon under a heading", [{ type: "heading", text: "TL icon" }, { type: "image", src: icon }], [32]],
+      ["logo in a 3-image grid", [{ type: "heading", text: "TL logo" }, { type: "image", src: logo }, { type: "image", src: hd }, { type: "image", src: wide }], [64, 1280, 900]],
+    ];
+    for (const [label, blocks, naturals] of cases) {
+      const past = _hooks().getHistoryCounts ? _hooks().getHistoryCounts().past : 0;
+      await _mrdInject(blocks, { layout: undefined, imageCols: undefined }, (vp) => { const ims = Array.from(vp?.querySelectorAll("img") || []); return ims.length === naturals.length && ims.every((im) => im.complete && im.naturalWidth > 0) ? vp : null; });
+      await _wait(300); await _mrdFrame();
+      const m = _tlMeasure();
+      if (m.outside) throw new Error(`${label}: ${m.outside} block(s) outside the canvas`);
+      m.imgs.forEach((im, k) => { if (im.w > naturals[k] * 2 + 1) throw new Error(`${label}: image ${k} shown ${im.w.toFixed(0)}px wide (natural ${naturals[k]})`); });
+      if (label === "icon alone" && Math.abs(m.imgs[0].cx - 480) > 4) throw new Error(`icon alone is not centered (cx ${m.imgs[0].cx.toFixed(0)})`);
+      await _mrdUndoTo(past);
+    }
+  }},
+  { name: "CR23: sequential pastes pick the layout with the larger image area", fn: async () => {
+    // After each paste, render the same images in the other layout (split <->
+    // stacked) and measure it. The chosen layout must show at least as much
+    // image area (3% measurement tolerance) and keep all text on the slide.
+    const alt = async (m, label) => {
+      const vp = _mrdViewport();
+      const split = !!vp.querySelector("[data-split-image]");
+      const srcs = Array.from(vp.querySelectorAll("img")).map((im) => im.getAttribute("src"));
+      const n = srcs.length, last = m.imgs[n - 1];
+      const [cf, imf] = pasteSplitFlex(n, last.w / last.h);
+      await _mrdInject([..._tlBases.c, ...srcs.map((src) => ({ type: "image", src }))], split ? { layout: undefined, contentFlex: undefined, imageFlex: undefined, imageCols: undefined } : { layout: "image-right", contentFlex: cf, imageFlex: imf, imageCols: undefined },
+        (v) => (!!v?.querySelector("[data-split-image]")) !== split && Array.from(v.querySelectorAll("img")).filter((im) => im.complete && im.naturalWidth > 0).length === n ? v : null);
+      await _wait(400); await _mrdFrame();
+      const a = _tlMeasure();
+      if (m.area < a.area * 0.97) throw new Error(`${label}: ${split ? "split" : "stack"} shows ${(m.area * 100).toFixed(1)}% but ${split ? "stack" : "split"} would show ${(a.area * 100).toFixed(1)}%`);
+      return split;
+    };
+    for (const [kind, max] of [["sq", 4], ["wide", 3], ["tall", 3]]) for (let n = 1; n <= max; n++) await _tlCase("c", Array(n).fill(kind), undefined, alt);
+    // The reported case: 3 squares on heading+text+credit must not stay in a split.
+    const three = await _tlCase("c", ["sq", "sq", "sq"], undefined, async () => !!_mrdViewport().querySelector("[data-split-image]"));
+    if (three.probe) throw new Error("3 squares stayed in a side split");
+  }},
+  { name: "CR23: a split the author set stays a split on later pastes", fn: async () => {
+    const m = await _tlCase("c", ["sq", "sq", "sq"], { layout: "image-left" }, async () => !!_mrdViewport().querySelector("[data-split-image]"));
+    if (!m.probe) throw new Error("author image-left split was replaced");
+  }},
+  { name: "CR24: a large 1600x900 image alone still fills the slide width", fn: async () => {
+    const cv = document.createElement("canvas"); cv.width = 1600; cv.height = 900; cv.getContext("2d").fillRect(0, 0, 1600, 900);
+    const past = _hooks().getHistoryCounts ? _hooks().getHistoryCounts().past : 0;
+    await _mrdInject([{ type: "image", src: cv.toDataURL("image/png") }], { layout: undefined }, (vp) => vp?.querySelector("img")?.naturalWidth > 0 ? vp : null);
+    await _wait(300); await _mrdFrame();
+    const m = _tlMeasure();
+    await _mrdUndoTo(past);
+    if (m.imgs[0].w < 960 * 0.9) throw new Error(`1600x900 image is only ${m.imgs[0].w.toFixed(0)}px wide`);
+  }},
+  { name: "paste burst: 3 and 5 rapid image pastes (0/50/150 ms apart) all land in order, one undo step each", fn: async () => {
+    const counts = () => _hooks().getHistoryCounts().past;
+    for (const n of [3, 5]) for (const gap of [0, 50, 150]) {
+      const label = `${n} pastes ${gap}ms apart`, mark = `TL-BURST-${n}-${gap}`;
+      const past = counts();
+      await _mrdInject([{ type: "heading", text: mark }], { layout: undefined, contentFlex: undefined, imageFlex: undefined, imageCols: undefined }, (vp) => vp?.textContent.includes(mark) && !vp.querySelector("img") ? vp : null);
+      const rows = _m1RowTitles().length;
+      // Distinct widths (natural size is kept) mark the paste order.
+      const widths = Array.from({ length: n }, (_, k) => 120 + 60 * k);
+      const blobs = await Promise.all(widths.map((w, k) => { const cv = document.createElement("canvas"); cv.width = w; cv.height = 90; const g = cv.getContext("2d"); g.fillStyle = _tlColors[k % 5]; g.fillRect(0, 0, w, 90); return new Promise((r) => cv.toBlob(r, "image/png")); }));
+      for (let k = 0; k < n; k++) {
+        const dt = new DataTransfer(); dt.items.add(new File([blobs[k]], `b${k}.png`, { type: "image/png" }));
+        _mrdViewport().dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true }));
+        if (gap) await _wait(gap);
+      }
+      let got = [];
+      try { await _waitFor(() => { const vp = _mrdViewport(); got = Array.from(vp?.querySelectorAll("img") || []).filter((im) => im.complete && im.naturalWidth > 0).map((im) => im.naturalWidth); return got.length >= n && vp.textContent.includes(mark) ? vp : null; }, 8000); } catch { /* reported below */ }
+      await _wait(200);
+      const rowsAfter = _m1RowTitles().length;
+      // One undo step per paste: each Ctrl+Z removes exactly the last image.
+      // (Counted from the rendered slide: the history counter stops at its cap
+      // in a long battery run.)
+      let undoErr = null;
+      if (got.length === n) {
+        document.activeElement?.blur?.();
+        for (let k = n - 1; k >= 0 && !undoErr; k--) {
+          _key("z", { ctrlKey: true });
+          const left = await _waitFor(() => { const w = Array.from(_mrdViewport()?.querySelectorAll("img") || []).map((im) => im.naturalWidth); return w.length === k ? w : null; }, 1500).catch(() => null);
+          if (!left) undoErr = `undo ${n - k} did not remove exactly one image`;
+          else if (left.join(",") !== widths.slice(0, k).join(",")) undoErr = `undo ${n - k} left ${left.join(",")}`;
+        }
+      }
+      await _mrdUndoTo(past);
+      if (got.length !== n) throw new Error(`${label}: ${got.length}/${n} images on the target slide`);
+      if (got.join(",") !== widths.join(",")) throw new Error(`${label}: images out of paste order (${got.join(",")})`);
+      if (undoErr) throw new Error(`${label}: ${undoErr}`);
+      if (rowsAfter !== rows) throw new Error(`${label}: slide count changed ${rows} -> ${rowsAfter}`);
+    }
+  }},
+  { name: "CR23 stress matrix: the pasted layout and grid show >= 85% of the best alternative (5 gate repros + 12 seeded cases; the unit matrix has all 66)", fn: async () => {
+    // The last image goes through the real paste handler; the chosen result is
+    // then compared, by real rendering, with the other layout (split <-> stack)
+    // and with the uniform count-driven grid in the same layout.
+    const fixed = [{ body: "table", aspects: [16 / 9] }, { body: "table", aspects: [16 / 9, 16 / 9] }, { body: "bullets8", aspects: [16 / 9, 16 / 9, 16 / 9, 16 / 9] }, { body: "none", aspects: [1 / 3, 16 / 9] }, { body: "none", aspects: [1 / 3, 16 / 9, 1 / 3] }];
+    const cases = [...fixed, ...tidelineStressCases().filter((_, k) => k % 5 === 2).slice(0, 12)];
+    let min = Infinity, worst = "";
+    for (const c of cases) {
+      const r = await _tlStressCase(c);
+      if (r.ratio < min) { min = r.ratio; worst = r.label; }
+      if (r.ratio < 0.85) throw new Error(`${r.label}: chosen ${r.detail}`);
+    }
+    return { cases: cases.length, min: Number(min.toFixed(3)), worst };
+  }},
+  { name: "paste race: deleting the slide while an image paste is pending drops the paste", fn: async () => {
+    const past = _hooks().getHistoryCounts().past;
+    await _mrdInject([{ type: "heading", text: "TL-RACE-A" }], { layout: undefined }, (vp) => vp?.textContent.includes("TL-RACE-A") ? vp : null);
+    await _waitFor(() => _m1RowTitles().includes("TL-RACE-A"), 2000);
+    const before = _m1RowTitles(), i = before.indexOf("TL-RACE-A");
+    await _tlPasteBig();
+    _click(_tocRows()[i].querySelector("[data-testid='toc-slide-delete']"));
+    await _wait(2500);
+    const after = _m1RowTitles();
+    const want = before.filter((_, k) => k !== i).join("|");
+    await _mrdUndoTo(past);
+    if (after.join("|") !== want) throw new Error(`slide list after delete: ${after.join("|")} (expected ${want})`);
+  }},
+  { name: "paste race: Ctrl+Z right after a paste stays undone", fn: async () => {
+    const past = _hooks().getHistoryCounts().past;
+    await _mrdInject([{ type: "heading", text: "TL-RACE-B" }], { layout: undefined }, (vp) => vp?.textContent.includes("TL-RACE-B") ? vp : null);
+    await _mrdInject([{ type: "heading", text: "TL-RACE-B-E1" }], { layout: undefined }, (vp) => vp?.textContent.includes("TL-RACE-B-E1") ? vp : null);
+    await _tlPasteBig();
+    document.activeElement?.blur?.();
+    _key("z", { ctrlKey: true });
+    await _wait(2500);
+    const vp = _mrdViewport(), text = vp.textContent, imgs = vp.querySelectorAll("img").length;
+    await _mrdUndoTo(past);
+    if (text.includes("TL-RACE-B-E1") || !text.includes("TL-RACE-B")) throw new Error("the undone edit came back");
+    if (imgs) throw new Error(`${imgs} image(s) added after the undo`);
+  }},
+  { name: "paste race: an image paste into an open inline edit keeps the typed text", fn: async () => {
+    const past = _hooks().getHistoryCounts().past;
+    const vp = await _mrdInject([{ type: "heading", text: "TL-RACE-C" }], { layout: undefined }, (v) => v?.textContent.includes("TL-RACE-C") ? v : null);
+    const disp = Array.from(vp.querySelectorAll("[data-block-type='heading'] div")).find((d) => d.textContent === "TL-RACE-C" && d.style.cursor === "pointer");
+    if (!disp) throw new Error("heading text is not editable");
+    _click(disp);
+    const ed = await _waitFor(() => vp.querySelector("[data-block-type='heading'] [contenteditable]"), 1500);
+    ed.focus();
+    const sel = window.getSelection(); sel.selectAllChildren(ed); sel.collapseToEnd();
+    document.execCommand("insertText", false, "-TYPED");
+    const cv = document.createElement("canvas"); cv.width = 64; cv.height = 64;
+    const blob = await new Promise((r) => cv.toBlob(r, "image/png"));
+    const dt = new DataTransfer(); dt.items.add(new File([blob], "c.png", { type: "image/png" }));
+    ed.dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true }));
+    await _wait(1200);
+    const stillEditing = document.activeElement === ed;
+    ed.blur();
+    await _wait(300);
+    const text = _mrdViewport().textContent, imgs = _mrdViewport().querySelectorAll("img").length;
+    await _mrdUndoTo(past);
+    if (!stillEditing) throw new Error("the paste closed the inline edit");
+    if (!text.includes("TL-RACE-C-TYPED")) throw new Error("typed text was dropped");
+    if (imgs) throw new Error("the paste into the inline edit added an image");
+  }},
+], { setup: _selectFirstModule });
+
+// ── Review fixes: app markers, inline paste, cols AI edit, review cycle,
+// string checklist items ──
+const _rfxPast = () => (_hooks().getHistoryCounts ? _hooks().getHistoryCounts().past : 0);
+// A node inside the slide content with an app marker stands in for deck markup
+// that carries one (the sanitizer drops them; this checks the app does not trust them).
+const _rfxPlant = (attrs, style) => {
+  const host = _$("[data-vela-slide-content]");
+  if (!host) throw new Error("no slide content to plant a marker in");
+  const n = document.createElement("div");
+  for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v);
+  if (style) n.style.cssText = style;
+  host.appendChild(n);
+  return n;
+};
+uiSuite("review-fix-editor", [
+  { name: "S1: app markers inside slide content do not change Esc or fullscreen exit in Present", fn: async () => {
+    const planted = [];
+    try {
+      document.activeElement?.blur?.(); _key("f");
+      await _waitFor(() => !_$("header"), 2000);
+      planted.push(_rfxPlant({ "data-vela-modal": "" }), _rfxPlant({ "data-vela-zoom": "" }));
+      _key("Escape");
+      await _waitFor(() => _$("header"), 2000).catch(() => { throw new Error("Esc did not leave Present (a deck marker read as an open modal)"); });
+      planted.forEach((n) => n.remove()); planted.length = 0;
+      document.activeElement?.blur?.(); _key("f");
+      await _waitFor(() => !_$("header"), 2000);
+      planted.push(_rfxPlant({ "data-vela-zoom": "" }));
+      document.dispatchEvent(new Event("fullscreenchange"));
+      await _waitFor(() => _$("header"), 2000).catch(() => { throw new Error("browser fullscreen exit kept Present (a deck marker read as an open zoom)"); });
+    } finally {
+      planted.forEach((n) => n.remove());
+      await _exitFullscreen();
+    }
+  }},
+  { name: "S1: an editor-overlay marker inside slide content does not move the block toolbar", fn: async () => {
+    const past = _rfxPast();
+    let plant = null;
+    try {
+      await _mrdInject([{ type: "heading", text: "RFX toolbar", size: "2xl" }], null, (vp) => vp && vp.querySelector("[data-block-type='heading']"));
+      const barRect = async () => {
+        // Query the block each time: the slide can re-mount it after the inject.
+        await _wait(150);
+        const el = _mrdViewport().querySelector("[data-block-type='heading']");
+        await _mrdHover(el);
+        const bar = await _waitFor(() => el.querySelector("[data-testid='block-hover-toolbar']"), 1500);
+        await _mrdFrame();
+        const r = bar.getBoundingClientRect();
+        await _mrdUnhover(el);
+        return r;
+      };
+      const before = await barRect();
+      plant = _rfxPlant({ "data-editor-overlay": "deck" }, "position:absolute;inset:0;pointer-events:none");
+      const after = await barRect();
+      if (Math.abs(after.left - before.left) > 1) throw new Error(`toolbar moved ${Math.round(before.left - after.left)}px for a marker in slide content`);
+    } finally {
+      plant?.remove();
+      await _mrdUndoTo(past);
+    }
+  }},
+  { name: "S3: paste into an inline text editor inserts plain text only", fn: async () => {
+    const past = _rfxPast();
+    try {
+      await _mrdInject([{ type: "heading", text: "RFX paste", size: "2xl" }], null, (vp) => vp?.textContent.includes("RFX paste") ? vp : null);
+      _click(await _waitFor(() => _tlEditNode("RFX paste"), 2000));
+      const ed = await _waitFor(() => _$("[contenteditable='true']", _mrdViewport()), 1500);
+      const dt = new DataTransfer();
+      dt.setData("text/html", "<b>RFX-RICH</b><img src='data:image/gif;base64,R0lGODlhAQABAAAAACw='>");
+      dt.setData("text/plain", "RFX-PLAIN");
+      const ev = new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true });
+      ed.dispatchEvent(ev);
+      await _mrdFrame();
+      if (!ev.defaultPrevented) throw new Error("the inline editor left the paste to the browser (rich paste)");
+      if (ed.querySelector("img, b")) throw new Error("rich markup reached the inline editor");
+      if (!ed.textContent.includes("RFX-PLAIN")) throw new Error(`plain text was not inserted (got "${ed.textContent}")`);
+      _key("Escape");
+    } finally {
+      document.activeElement?.blur?.();
+      await _mrdUndoTo(past);
+    }
+  }},
+  { name: "E1: AI block edit on a two-column block writes back to that column", fn: async () => {
+    const past = _rfxPast();
+    const orig = { ready: window.__velaAgentReady, send: window.__velaAgentSend, gate: window.__velaTrustGate };
+    try {
+      window.__velaAgentReady = true;
+      window.__velaTrustGate = null;
+      window.__velaAgentSend = async () => JSON.stringify({ type: "text", text: "RFX-AI-LEFT" });
+      const sel = "[data-cols-side='left'] [data-block-type='text']";
+      const el = await _mrdInject([], { layout: "cols", L: [{ type: "text", text: "RFX left" }], R: [{ type: "text", text: "RFX right" }] }, (vp) => vp && vp.querySelector(sel));
+      await _mrdHover(el);
+      _click(await _waitFor(() => el.querySelector("[data-testid='block-hover-toolbar'] button[title='Edit this block with AI']"), 2000));
+      const inp = await _waitFor(() => _$("[data-testid='block-ai-popup'] input", _mrdViewport()), 2000);
+      _mrdSetRange(inp, "make it say RFX-AI-LEFT");
+      await _mrdFrame();
+      inp.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+      await _waitFor(() => _hooks().getCurrentSlideForTest?.()?.L?.[0]?.text === "RFX-AI-LEFT", 4000)
+        .catch(() => { throw new Error("the AI edit did not reach the left column block"); });
+      const s = _hooks().getCurrentSlideForTest();
+      if ((s.blocks || []).length) throw new Error("the AI edit added a block to the main blocks list");
+      if (s.R?.[0]?.text !== "RFX right") throw new Error("the AI edit changed the right column");
+    } finally {
+      window.__velaAgentReady = orig.ready; window.__velaAgentSend = orig.send; window.__velaTrustGate = orig.gate;
+      await _wait(300);
+      await _mrdUndoTo(past);
+    }
+  }},
+  { name: "E6: review cycle steps within the current module when its lane is collapsed", fn: async () => {
+    if (_tocRows().length < 2) throw new Error("need >=2 slide rows");
+    const hooks = _hooks();
+    if (typeof hooks.toggleSelectedLaneForTest !== "function") throw new Error("toggleSelectedLaneForTest hook missing");
+    const cyc = () => _$("[data-testid='review-cycle-toggle']");
+    let collapsed = false;
+    try {
+      await _m1ClickRow(0);
+      const start = hooks.getSelection();
+      const reviewed = hooks.getCurrentSlideForTest?.();
+      if (!start || start.slideIdx !== 0 || !reviewed) throw new Error("could not select slide 1");
+      collapsed = hooks.toggleSelectedLaneForTest(); await _mrdFrame();
+      _click(cyc());
+      await _waitFor(() => cyc()?.getAttribute("aria-pressed") === "true", 1500);
+      document.activeElement?.blur?.();
+      _key("ArrowRight");
+      await _waitFor(() => { const s = hooks.getSelection(); return s && s.itemId === start.itemId && s.slideIdx === 1; }, 1500)
+        .catch(() => { const s = hooks.getSelection(); throw new Error(`ArrowRight left the module or jumped (now ${s?.itemId === start.itemId ? "same" : "other"} module, slide ${s?.slideIdx})`); });
+    } finally {
+      if (cyc()?.getAttribute("aria-pressed") === "true") _click(cyc());
+      if (collapsed) hooks.toggleSelectedLaneForTest();
+      await _mrdFrame();
+      await _m1ClickRow(0).catch(() => {});
+    }
+  }},
+  { name: "E10: string checklist items edit inline; untouched items stay strings", fn: async () => {
+    const past = _rfxPast();
+    try {
+      await _mrdInject([{ type: "checklist", items: ["RFX alpha", "RFX beta", "RFX gamma"] }], null, (vp) => vp?.textContent.includes("RFX gamma") ? vp : null);
+      await _wait(150); // the slide can re-mount its blocks just after the inject
+      await _tlEdit("PENDING", "done", "DONE");
+      await _tlEdit("RFX beta", "RFX beta edited");
+      const items = _hooks().getCurrentSlideForTest()?.blocks?.[0]?.items || [];
+      if (items[0]?.text !== "RFX alpha" || items[0]?.status !== "done") throw new Error(`label edit on a string item gave ${JSON.stringify(items[0])}`);
+      if (items[1]?.text !== "RFX beta edited") throw new Error(`text edit on a string item gave ${JSON.stringify(items[1])}`);
+      if (items[2] !== "RFX gamma") throw new Error(`an untouched item changed form: ${JSON.stringify(items[2])}`);
+    } finally {
+      await _mrdUndoTo(past);
+    }
+  }},
+], { setup: _editorSetup });
+
+// Helpers for the CR23 stress matrix and the paste-race tests above.
+const _tlColors = ["#3b82f6", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6"];
+const _tlCanvas = (a, k) => { const cv = document.createElement("canvas"); cv.height = 300; cv.width = Math.max(1, Math.round(300 * a)); const g = cv.getContext("2d"); g.fillStyle = _tlColors[k % 5]; g.fillRect(0, 0, cv.width, cv.height); return cv; };
+const _tlPasteCanvas = async (cv) => {
+  const blob = await new Promise((r) => cv.toBlob(r, "image/png"));
+  const dt = new DataTransfer(); dt.items.add(new File([blob], "p.png", { type: "image/png" }));
+  _mrdViewport().dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true }));
+};
+const _tlPasteBig = async () => { const cv = document.createElement("canvas"); cv.width = 3000; cv.height = 2000; cv.getContext("2d").fillRect(0, 0, 3000, 2000); await _tlPasteCanvas(cv); };
+const _tlLoaded = (vp) => Array.from(vp?.querySelectorAll("img") || []).filter((im) => im.complete && im.naturalWidth > 0).length;
+const _tlStressMeasure = () => {
+  const vp = _mrdViewport(), v = vp.getBoundingClientRect(), s = v.width / 960, off = [];
+  vp.querySelectorAll("[data-block-type]").forEach((el) => {
+    if (el.dataset.blockType === "image") return;
+    const r = el.getBoundingClientRect();
+    if (r.width && (r.left < v.left - 1 || r.top < v.top - 1 || r.right > v.right + 1 || r.bottom > v.bottom + 1)) off.push(el.dataset.blockType);
+  });
+  const imgs = Array.from(vp.querySelectorAll("img")).map((im) => {
+    const r = im.getBoundingClientRect(), k = Math.min(r.width / im.naturalWidth, r.height / im.naturalHeight);
+    const w = im.naturalWidth * k, h = im.naturalHeight * k, cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+    if (cx - w / 2 < v.left - 1 || cx + w / 2 > v.right + 1 || cy - h / 2 < v.top - 1 || cy + h / 2 > v.bottom + 1) off.push("image");
+    return { w: w / s, h: h / s, scale: k / s, src: im.getAttribute("src") };
+  });
+  const grid = vp.querySelector("[data-testid='image-grid']");
+  return { off, imgs, area: imgs.reduce((t, i) => t + i.w * i.h, 0), split: !!vp.querySelector("[data-split-image]"), cols: grid ? Number(grid.getAttribute("data-image-cols")) : 1 };
+};
+const _tlStressCase = async (c) => {
+  const n = c.aspects.length, body = TL_STRESS_BODIES[c.body];
+  const label = `${c.body}:[${c.aspects.map((a) => a.toFixed(2)).join(",")}]`;
+  const past = _hooks().getHistoryCounts().past;
+  const base = { layout: undefined, contentFlex: undefined, imageFlex: undefined, imageCols: undefined };
+  const settle = async () => { await _wait(350); await _mrdFrame(); };
+  try {
+    await _mrdInject([...body, ...c.aspects.slice(0, -1).map((a, k) => ({ type: "image", src: _tlCanvas(a, k).toDataURL("image/png") }))], base, (vp) => _tlLoaded(vp) >= n - 1 && vp.querySelectorAll("img").length === n - 1 ? vp : null);
+    await _tlPasteCanvas(_tlCanvas(c.aspects[n - 1], n - 1));
+    await _waitFor(() => _tlLoaded(_mrdViewport()) >= n, 4000);
+    await _wait(150); await settle();
+    const chosen = _tlStressMeasure();
+    if (chosen.off.length) throw new Error(`${label}: off the slide: ${chosen.off.join(",")}`);
+    const big = chosen.imgs.find((i) => i.scale > 2.02);
+    if (big) throw new Error(`${label}: image shown at ${big.scale.toFixed(2)}x natural size`);
+    const blocks = [...body, ...chosen.imgs.map((i) => ({ type: "image", src: i.src }))];
+    const [cf, imf] = pasteSplitFlex(n, c.aspects[n - 1]);
+    const splitProps = { layout: "image-right", contentFlex: cf, imageFlex: imf, imageCols: undefined };
+    const render = async (props, ready) => { await _mrdInject(blocks, props, (vp) => _tlLoaded(vp) === n && ready(vp) ? vp : null); await settle(); return _tlStressMeasure(); };
+    const alts = [];
+    if (body.length) {
+      const other = await render(chosen.split ? base : splitProps, (vp) => !!vp.querySelector("[data-split-image]") !== chosen.split);
+      alts.push([chosen.split ? "stack" : "split", other.area]);
+    }
+    if (n >= 2) {
+      const cols = gridColsFor(n, chosen.split ? "half" : "full");
+      const eq = await render({ ...(chosen.split ? splitProps : base), imageCols: cols }, (vp) => vp.querySelector("[data-testid='image-grid']")?.getAttribute("data-image-cols") === String(cols) && !!vp.querySelector("[data-split-image]") === chosen.split);
+      alts.push([`uniform ${cols}-col grid`, eq.area]);
+    }
+    const best = alts.reduce((b, a) => (a[1] > b[1] ? a : b), ["chosen", chosen.area]);
+    return { label, ratio: chosen.area / best[1], detail: `${chosen.split ? "split" : "stack"} ${Math.round(chosen.area)} px2 vs ${best[0]} ${Math.round(best[1])} px2` };
+  } finally { await _mrdUndoTo(past); }
+};
+
+uiSuite("review-fix-shortcuts", [
+  { name: "Ctrl+E inside a text input does not toggle the TOC", fn: async () => {
+    const tocShown = () => _$$(".concept-row").length > 0;
+    if (!tocShown()) throw new Error("TOC not shown at start");
+    const inp = document.createElement("input");
+    document.body.appendChild(inp);
+    try {
+      inp.focus();
+      _key("e", { ctrlKey: true });
+      await new Promise((r) => setTimeout(r, 150));
+      if (!tocShown()) throw new Error("Ctrl+E in an input toggled the TOC");
+    } finally { if (inp.parentNode) inp.parentNode.removeChild(inp); }
+  }},
+], { setup: _selectFirstModule });
+
+// ── Review fixes: image grid and image paste ────────────────────────────
+const _rfiCanvas = (w, h, k) => { const cv = document.createElement("canvas"); cv.width = w; cv.height = h; const g = cv.getContext("2d"); g.fillStyle = _tlColors[k % 5]; g.fillRect(0, 0, w, h); return cv; };
+const _rfiSrc = (w, h, k) => _rfiCanvas(w, h, k).toDataURL("image/png");
+const _rfiPasteFile = (file) => {
+  const dt = new DataTransfer(); dt.items.add(file);
+  _mrdViewport().dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true }));
+};
+const _rfiPng = async (w, h, k) => { const blob = await new Promise((r) => _rfiCanvas(w, h, k).toBlob(r, "image/png")); return new File([blob], `r${k}.png`, { type: "image/png" }); };
+uiSuite("review-fix-image", [
+  { name: "E2: a solo full-bleed image is not click-to-zoom", fn: async () => {
+    const past = _hooks().getHistoryCounts().past;
+    try {
+      const vp = await _mrdInject([{ type: "image", src: _rfiSrc(400, 300, 0) }], { imageCols: undefined }, (v) => _tlLoaded(v) === 1 ? v : null);
+      if (!vp.querySelector("[data-testid='image-grid']")) throw new Error("the solo image left the grid path");
+      if (vp.querySelector("[data-vela-zoomable]")) throw new Error("the solo image has a zoom wrapper");
+      _click(vp.querySelector("img"));
+      await _wait(200);
+      const zoom = document.querySelector("[data-vela-zoom]");
+      if (zoom) { zoom.click(); throw new Error("a click on the solo image opened the zoom overlay"); }
+    } finally { await _mrdUndoTo(past); }
+  }},
+  { name: "E3: a short last grid row is centered exactly (auto and pinned imageCols)", fn: async () => {
+    const cases = [[5, undefined], [7, undefined], [2, 6], [3, 2], [5, 4]];
+    for (const [n, cols] of cases) {
+      const past = _hooks().getHistoryCounts().past;
+      try {
+        const blocks = Array.from({ length: n }, (_, k) => ({ type: "image", src: _rfiSrc(300, 300, k) }));
+        const vp = await _mrdInject(blocks, { imageCols: cols }, (v) => _tlLoaded(v) === n ? v : null);
+        await _wait(300); await _mrdFrame();
+        const grid = vp.querySelector("[data-testid='image-grid']"), g = grid.getBoundingClientRect(), s = vp.getBoundingClientRect().width / 960;
+        const rows = new Map();
+        grid.querySelectorAll("[data-testid='image-grid-cell']").forEach((c) => { const r = c.getBoundingClientRect(), key = Math.round(r.top); rows.set(key, [...(rows.get(key) || []), r]); });
+        if (rows.size < 2 && !(cols > n)) throw new Error(`${n} images, imageCols ${cols}: expected a short row, got ${rows.size} row(s)`);
+        for (const rs of rows.values()) {
+          const L = (Math.min(...rs.map((r) => r.left)) - g.left) / s, R = (g.right - Math.max(...rs.map((r) => r.right))) / s;
+          if (Math.abs(L - R) > 1) throw new Error(`${n} images, imageCols ${cols}: row of ${rs.length} has margins ${L.toFixed(1)} / ${R.toFixed(1)} px`);
+        }
+      } finally { await _mrdUndoTo(past); }
+    }
+  }},
+  { name: "E4: an undecodable image in a paste burst adds no block, shows a notice and keeps the rest", fn: async () => {
+    const past = _hooks().getHistoryCounts().past, mark = "RFI-E4";
+    try {
+      await _mrdInject([{ type: "heading", text: mark }], { imageCols: undefined }, (vp) => vp?.textContent.includes(mark) && !vp.querySelector("img") ? vp : null);
+      const good = [await _rfiPng(140, 90, 0), await _rfiPng(220, 90, 1)];
+      const bad = new File([new Uint8Array([73, 73, 42, 0, 1, 2, 3, 4, 5, 6, 7, 8])], "bad.tif", { type: "image/tiff" });
+      _rfiPasteFile(good[0]); _rfiPasteFile(bad); _rfiPasteFile(good[1]);
+      const notice = await _waitFor(() => document.querySelector("[data-testid='paste-notice']"), 4000).catch(() => null);
+      let got = [];
+      await _waitFor(() => { got = Array.from(_mrdViewport().querySelectorAll("img")).filter((im) => im.complete && im.naturalWidth > 0).map((im) => im.naturalWidth); return got.length >= 2; }, 6000).catch(() => {});
+      await _wait(400);
+      const imageBlocks = _mrdViewport().querySelectorAll("[data-block-type='image']").length;
+      if (imageBlocks !== 2) throw new Error(`${imageBlocks} image block(s) on the slide (expected 2)`);
+      if (got.join(",") !== "140,220") throw new Error(`images on the slide: ${got.join(",") || "none"} (expected 140,220 in paste order)`);
+      if (!notice) throw new Error("no notice for the image that could not be pasted");
+    } finally { await _mrdUndoTo(past); }
+  }},
+  { name: "E8: a fault in one paste is logged and the paste queue stays alive", fn: async () => {
+    const past = _hooks().getHistoryCounts().past, mark = "RFI-E8";
+    const warn = console.warn, warned = [], layoutFn = pasteImageLayout;
+    try {
+      await _mrdInject([{ type: "heading", text: mark }], { imageCols: undefined }, (vp) => vp?.textContent.includes(mark) && !vp.querySelector("img") ? vp : null);
+      console.warn = (...a) => { warned.push(a); };
+      pasteImageLayout = () => { throw new Error("rfi-e8-fault"); };
+      _rfiPasteFile(await _rfiPng(100, 80, 2));
+      await _waitFor(() => warned.length > 0, 3000).catch(() => {});
+      pasteImageLayout = layoutFn;
+      console.warn = warn;
+      _rfiPasteFile(await _rfiPng(160, 80, 3));
+      const ok = await _waitFor(() => _tlLoaded(_mrdViewport()) === 1, 4000).catch(() => null);
+      if (!warned.some((a) => a.some((x) => x && x.message === "rfi-e8-fault"))) throw new Error("the paste fault was not logged");
+      if (!ok) throw new Error("the paste after the fault did not land");
+    } finally { pasteImageLayout = layoutFn; console.warn = warn; await _mrdUndoTo(past); }
+  }},
+  { name: "E7: a grid image whose natural-size cache entry was evicted stays visible", fn: async () => {
+    const past = _hooks().getHistoryCounts().past;
+    try {
+      const blocks = [{ type: "image", src: _rfiSrc(320, 200, 0) }, { type: "image", src: _rfiSrc(200, 320, 1) }];
+      await _mrdInject(blocks, { imageCols: undefined }, (v) => _tlLoaded(v) === 2 ? v : null);
+      await _mrdFrame();
+      blocks.forEach((b) => IMAGE_NATURAL_SIZE.delete(b.src));
+      const vp = await _mrdInject(blocks, { imageCols: undefined, gap: 14 }, (v) => v);
+      await _wait(150); await _mrdFrame();
+      const hidden = Array.from(vp.querySelectorAll("img")).filter((im) => getComputedStyle(im).visibility === "hidden").length;
+      if (hidden) throw new Error(`${hidden} on-screen image(s) hidden after a cache eviction`);
+      if (!blocks.every((b) => IMAGE_NATURAL_SIZE.has(b.src))) throw new Error("the evicted natural sizes were not measured again");
+    } finally { await _mrdUndoTo(past); }
+  }},
+], { setup: _selectFirstModule });
+
+uiSuite("hunt1-fix-sanitize", [
+  { name: "HE4: the link box saves no link for free text, no-dot hosts, userinfo and other schemes", fn: async () => {
+    // Runs in the real browser URL parser (Chromium percent-encodes a space in a
+    // host where Node throws, so "garbage text" is only provable here).
+    const cases = [
+      ["garbage text", undefined], ["example", undefined], ["a@b", undefined], ["x@y.z/path", undefined],
+      ["sms:123", undefined], ["tel:5551234", undefined], ["..", undefined], ["user:pw@example.com", undefined],
+      ["example.com", "https://example.com/"], ["example.com:8080/x", "https://example.com:8080/x"],
+      ["me@example.com", "mailto:me@example.com"], ["https://example.org/p", "https://example.org/p"],
+    ];
+    for (const [input, want] of cases) {
+      const got = linkFromInput(input);
+      if (got !== want) throw new Error(`linkFromInput(${JSON.stringify(input)}) = ${JSON.stringify(got)}, want ${JSON.stringify(want)}`);
+    }
+  }},
+  { name: "HS3: a rendered deck SVG carries no class/role/aria-*/tabindex/autofocus; id refs stay", fn: async () => {
+    const past = _hooks().getHistoryCounts().past;
+    try {
+      const markup = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10" class="status-btn" role="tree" tabindex="0" autofocus="" aria-modal="true">'
+        + '<defs><linearGradient id="h1g"><stop offset="0" stop-color="#f00"/></linearGradient></defs>'
+        + '<rect class="slide-nav-btn" role="button" aria-label="x" tabindex="-1" fill="url(#h1g)" width="5" height="5"/></svg>';
+      const vp = await _mrdInject([{ type: "svg", markup }], null, (v) => (v && v.querySelector("linearGradient#h1g")) ? v : null);
+      // The deck's own <svg> (app chrome such as lucide icons carries its own class).
+      const root = vp.querySelector("linearGradient#h1g").closest("svg");
+      const els = [root, ...root.querySelectorAll("*")];
+      const leaked = [];
+      for (const el of els) {
+        for (const a of el.attributes) if (/^(class|role|tabindex|autofocus|aria-.*)$/i.test(a.name)) leaked.push(`${el.localName}@${a.name}=${a.value}`);
+      }
+      if (!els.some((el) => el.localName === "rect")) throw new Error("the deck SVG did not render in an svg block");
+      if (leaked.length) throw new Error("attributes kept on deck SVG: " + leaked.join(", "));
+      const rect = vp.querySelector("rect[fill='url(#h1g)']");
+      if (!rect) throw new Error("the url(#id) gradient ref was lost");
+    } finally { await _mrdUndoTo(past); }
+  }},
+], { setup: _selectFirstModule });
+
+// hunt1-fix-editor: Esc/arrow order with an open zoom or Present TOC, hover
+// cluster that covers no item text, IME Enter in the inline editors.
+const _hfeZoomed = () => !!document.querySelector("[data-vela-zoom]");
+const _hfeZoomables = () => Array.from(document.querySelectorAll("[data-vela-zoomable]")).filter((z) => z.getBoundingClientRect().width > 0 && !z.closest("[data-vela-zoom]"));
+const _hfeTocPanel = () => { let p = _$("input[placeholder^='Search slides']"); while (p && !(p.style && /^translateX/.test(p.style.transform || ""))) p = p.parentElement; return p; };
+const _hfeTocOpen = () => /^translateX\(0(px)?\)$/.test(_hfeTocPanel()?.style.transform || "");
+const _hfeHits = (a, b) => a.left < b.right - 0.5 && a.right > b.left + 0.5 && a.top < b.bottom - 0.5 && a.bottom > b.top + 0.5;
+const _hfeTextNode = (root, t) => { const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT); for (let n = w.nextNode(); n; n = w.nextNode()) if (n.nodeValue.trim() === t) return n; return null; };
+uiSuite("hunt1-fix-editor", [
+  { name: "HE1: with focus off the zoom overlay, Esc closes only the zoom and arrows step the zoom, not the slide", fn: async () => {
+    const past = _hooks().getHistoryCounts().past;
+    try {
+      await _mrdInject([{ type: "image", src: _rfiSrc(320, 200, 0) }, { type: "image", src: _rfiSrc(200, 320, 1) }], { imageCols: undefined }, (v) => _tlLoaded(v) === 2 ? v : null);
+      await _mrdFrame();
+      for (const mode of ["editor", "present"]) {
+        if (mode === "present") { document.activeElement?.blur?.(); _key("f"); await _waitFor(() => !_$("header"), 2000); }
+        const open = async () => { _click(await _waitFor(() => _hfeZoomables()[0], 2000)); await _waitFor(_hfeZoomed, 2000); document.activeElement?.blur?.(); await _mrdFrame(); };
+        await open();
+        const pos = _slidePos();
+        _key("ArrowRight"); await _wait(250);
+        if (_slidePos() !== pos) throw new Error(`${mode}: ArrowRight moved the slide behind the zoom`);
+        if (!_hfeZoomed()) throw new Error(`${mode}: ArrowRight did not step to the next zoomable image`);
+        document.activeElement?.blur?.();
+        _key("Escape");
+        await _waitFor(() => !_hfeZoomed(), 1500).catch(() => { throw new Error(`${mode}: Esc did not close the zoom`); });
+        await _wait(200);
+        if (mode === "present" && _$("header")) throw new Error("present: Esc with a zoom open also left Present");
+        if (mode === "editor" && !_$("header")) throw new Error("editor: Esc changed the view");
+      }
+    } finally {
+      if (_hfeZoomed()) window.dispatchEvent(new Event("vela-close-zoom"));
+      await _exitFullscreen();
+      await _mrdUndoTo(past);
+    }
+  }},
+  { name: "HE6: Esc with the Present TOC open closes the TOC first and keeps Present", fn: async () => {
+    try {
+      document.activeElement?.blur?.(); _key("f");
+      await _waitFor(() => !_$("header"), 2000);
+      _key("e", { ctrlKey: true });
+      await _waitFor(_hfeTocOpen, 2000);
+      await _wait(150);
+      document.activeElement?.blur?.();
+      _key("Escape");
+      await _waitFor(() => !_hfeTocOpen(), 1500).catch(() => { throw new Error("Esc did not close the Present TOC"); });
+      await _wait(200);
+      if (_$("header")) throw new Error("Esc with the Present TOC open left Present");
+      // Browser-fullscreen path: the browser eats Esc and only fires fullscreenchange.
+      _key("e", { ctrlKey: true });
+      await _waitFor(_hfeTocOpen, 2000);
+      document.dispatchEvent(new Event("fullscreenchange"));
+      await _waitFor(() => !_hfeTocOpen(), 1500).catch(() => { throw new Error("browser fullscreen exit did not close the Present TOC"); });
+      await _wait(200);
+      if (_$("header")) throw new Error("browser fullscreen exit with the Present TOC open left Present");
+      document.activeElement?.blur?.();
+      _key("Escape");
+      await _waitFor(() => _$("header"), 2000).catch(() => { throw new Error("the next Esc did not leave Present"); });
+    } finally { await _exitFullscreen(); }
+  }},
+  { name: "HE2/HE3: the item hover cluster covers no item text; a click on short text edits it", fn: async () => {
+    const past = _hooks().getHistoryCounts().past;
+    try {
+      const sets = [
+        [[{ type: "tag-group", items: [{ text: "ht1" }, { text: "ht2" }, { text: "ht3" }] }, { type: "comparison", items: [{ title: "Before", items: ["ha1", "ha2"] }, { title: "After", items: ["hb1"] }] }], ["ht1", "ht2", "ht3", "ha1", "ha2", "hb1"]],
+        [[{ type: "steps", items: [{ title: "hs1" }, { title: "hs2" }] }, { type: "progress", items: [{ label: "hg1", value: 5 }, { label: "hg2", value: 9 }] }], ["hs1", "hs2", "hg1", "hg2"]],
+      ];
+      let seen = 0;
+      for (const [blocks, labels] of sets) {
+        const vp = await _mrdInject(blocks, { align: "center" }, (v) => labels.every((t) => _hfeTextNode(v, t)) ? v : null);
+        await _wait(400); // entrance animation
+        for (const t of labels) {
+          const n = _hfeTextNode(vp, t);
+          const host = n.parentElement;
+          await _mrdHover(host); await _mrdFrame();
+          const cl = _$("[data-item-cluster]", vp);
+          if (cl) {
+            seen++;
+            const rg = document.createRange(); rg.selectNodeContents(n);
+            const tr = rg.getBoundingClientRect();
+            const over = Array.from(cl.querySelectorAll("button")).find((b) => _hfeHits(b.getBoundingClientRect(), tr));
+            if (over) throw new Error(`"${over.title}" covers the text "${t}"`);
+            const hit = document.elementFromPoint(tr.left + tr.width / 2, tr.top + tr.height / 2);
+            if (hit?.closest("button")) throw new Error(`a click on "${t}" lands on "${hit.closest("button").title}"`);
+          }
+          await _mrdUnhover(host);
+        }
+      }
+      if (seen < 8) throw new Error(`only ${seen} item hover clusters were shown`);
+      // Click the middle tag: it edits, it is not deleted.
+      const vp = await _mrdInject(sets[0][0], { align: "center" }, (v) => _hfeTextNode(v, "ht2") ? v : null);
+      await _wait(400);
+      const host = _hfeTextNode(vp, "ht2").parentElement;
+      await _mrdHover(host); await _mrdFrame();
+      const rg = document.createRange(); rg.selectNodeContents(_hfeTextNode(vp, "ht2"));
+      const tr = rg.getBoundingClientRect();
+      _click(document.elementFromPoint(tr.left + tr.width / 2, tr.top + tr.height / 2));
+      await _waitFor(() => _$("[contenteditable='true']", _mrdViewport()), 1500).catch(() => { throw new Error("a click on a short tag did not start the inline edit"); });
+      _key("Escape"); await _mrdFrame();
+      const tags = (_hooks().getCurrentSlideForTest()?.blocks?.[0]?.items || []).map((i) => i.text).join();
+      if (tags !== "ht1,ht2,ht3") throw new Error(`the click changed the tags: ${tags}`);
+    } finally {
+      document.activeElement?.blur?.();
+      await _mrdUndoTo(past);
+    }
+  }},
+  { name: "HE5: Enter during IME composition does not commit the inline text or SVG label editor", fn: async () => {
+    const past = _hooks().getHistoryCounts().past;
+    const ime = (el) => el.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", keyCode: 229, isComposing: true, bubbles: true, cancelable: true }));
+    const enter = (el) => el.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", keyCode: 13, bubbles: true, cancelable: true }));
+    try {
+      await _mrdInject([{ type: "heading", text: "HFE ime" }, { type: "cycle", items: [{ label: "HFEa" }, { label: "HFEb" }, { label: "HFEc" }] }], null, (vp) => vp?.textContent.includes("HFEc") ? vp : null);
+      await _wait(400);
+      _click(await _waitFor(() => _tlEditNode("HFE ime"), 2000));
+      const ed = await _waitFor(() => _$("[contenteditable='true']", _mrdViewport()), 1500);
+      ime(ed); await _mrdFrame();
+      if (!ed.isConnected || !ed.isContentEditable) throw new Error("a composing Enter closed the inline text editor");
+      enter(ed);
+      await _waitFor(() => !_$("[contenteditable='true']", _mrdViewport()), 1500).catch(() => { throw new Error("a plain Enter did not commit the inline text editor"); });
+      const lbl = await _waitFor(() => Array.from(_mrdViewport().querySelectorAll("text[data-svg-edit]")).find((t) => t.textContent.trim() === "HFEa"), 2000);
+      lbl.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+      const inp = await _waitFor(() => _$("[data-testid='svg-text-edit']", _mrdViewport()), 1500);
+      ime(inp); await _mrdFrame();
+      if (!_$("[data-testid='svg-text-edit']", _mrdViewport())) throw new Error("a composing Enter closed the SVG label editor");
+      enter(_$("[data-testid='svg-text-edit']", _mrdViewport()));
+      await _waitFor(() => !_$("[data-testid='svg-text-edit']", _mrdViewport()), 1500).catch(() => { throw new Error("a plain Enter did not commit the SVG label editor"); });
+    } finally {
+      document.activeElement?.blur?.();
+      await _mrdUndoTo(past);
+    }
+  }},
+], { setup: _selectFirstModule });
+
+// ── Bug-hunt round 1 fixes: image paste and placement ───────────────────
+const _h1Heavy = [{ type: "heading", text: "H1 heavy" }, { type: "bullets", items: ["one long bullet point with lots of words in it to wrap", "two long bullet point with lots of words in it to wrap", "three long bullet point with lots of words in it", "four long bullet point with lots of words in it", "five long bullet point with lots of words", "six long bullet point with lots of words", "seven long bullet point"] }, { type: "text", text: "Footer text that must stay on the slide." }];
+const _h1CellWidths = (vp) => Array.from(vp.querySelectorAll("[data-testid='image-grid-cell']")).map((c) => c.getBoundingClientRect().width);
+const _h1Imgs = (vp) => Array.from(vp.querySelectorAll("img")).filter((im) => im.complete && im.naturalWidth > 0);
+const _h1Paste = (files) => {
+  const dt = new DataTransfer(); files.forEach((f) => dt.items.add(f));
+  _mrdViewport().dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true }));
+};
+const _h1Heading = async (mark) => _mrdInject([{ type: "heading", text: mark }], { imageCols: undefined }, (vp) => vp?.textContent.includes(mark) && !vp.querySelector("img") ? vp : null);
+uiSuite("hunt1-fix-image", [
+  { name: "HI1: same-aspect photos next to a wide banner are drawn at the same size", fn: async () => {
+    const past = _hooks().getHistoryCounts().past;
+    try {
+      const blocks = [{ type: "image", src: _rfiSrc(1200, 200, 0) }, ...[1, 2, 3, 4].map((k) => ({ type: "image", src: _rfiSrc(400, 300, k) }))];
+      await _mrdInject(blocks, { imageCols: undefined }, (v) => _tlLoaded(v) === 5 ? v : null);
+      await _wait(500); await _mrdFrame();
+      const photos = _tlMeasure().imgs.slice(1).map((i) => i.w);
+      if (photos.length !== 4) throw new Error(`${photos.length} photos rendered`);
+      if (Math.min(...photos) < 0.98 * Math.max(...photos)) throw new Error(`photo widths differ: ${photos.map((w) => w.toFixed(0)).join(", ")}`);
+    } finally { await _mrdUndoTo(past); }
+  }},
+  { name: "HI2: wide banners under heavy text shrink; the text keeps its size", fn: async () => {
+    const past = _hooks().getHistoryCounts().past;
+    try {
+      let vp = await _mrdInject(_h1Heavy, { imageCols: undefined }, (v) => v?.textContent.includes("H1 heavy") && !v.querySelector("img") ? v : null);
+      await _wait(300); await _mrdFrame();
+      const h0 = vp.querySelector("[data-block-type='heading']").getBoundingClientRect().height;
+      const banners = [0, 1, 2, 3].map((k) => ({ type: "image", src: _rfiSrc(2000, 100, k) }));
+      vp = await _mrdInject([..._h1Heavy, ...banners], { imageCols: undefined }, (v) => _tlLoaded(v) === 4 ? v : null);
+      await _wait(600); await _mrdFrame();
+      const h1 = vp.querySelector("[data-block-type='heading']").getBoundingClientRect().height, m = _tlMeasure();
+      if (m.outside) throw new Error(`${m.outside} text block(s) off the slide`);
+      if (h1 < 0.97 * h0) throw new Error(`the text was scaled down: heading ${h0.toFixed(1)} -> ${h1.toFixed(1)} px`);
+    } finally { await _mrdUndoTo(past); }
+  }},
+  { name: "HI3: an evicted image aspect is measured again; the on-screen grid does not change", fn: async () => {
+    const past = _hooks().getHistoryCounts().past;
+    try {
+      const blocks = [{ type: "image", src: _rfiSrc(150, 450, 0) }, { type: "image", src: _rfiSrc(640, 360, 1) }];
+      let vp = await _mrdInject(blocks, { imageCols: undefined }, (v) => _tlLoaded(v) === 2 ? v : null);
+      await _wait(500); await _mrdFrame();
+      const before = _h1CellWidths(vp);
+      if (!(before.length === 2 && before[1] > 2 * before[0])) throw new Error(`precondition: expected aspect-sized cells, got ${before.map((w) => w.toFixed(0)).join(", ")}`);
+      blocks.forEach((b) => IMAGE_ASPECT_CACHE.delete(b.src));
+      // Re-render without a layout change (speakerNotes is not a layout input).
+      vp = await _mrdInject(blocks, { imageCols: undefined, speakerNotes: "h1-hi3" }, (v) => v);
+      await _wait(500); await _mrdFrame();
+      const after = _h1CellWidths(vp);
+      if (!blocks.every((b) => IMAGE_ASPECT_CACHE.has(b.src))) throw new Error("the evicted aspects were not measured again");
+      if (after.some((w, k) => Math.abs(w - before[k]) > 1)) throw new Error(`grid changed after eviction: ${before.map((w) => w.toFixed(0))} -> ${after.map((w) => w.toFixed(0))}`);
+    } finally { await _mrdUndoTo(past); }
+  }},
+  { name: "HI4: a corrupt image with an allowed type shows a notice and adds no block", fn: async () => {
+    const past = _hooks().getHistoryCounts().past;
+    try {
+      await _h1Heading("H1-HI4");
+      _h1Paste([new File(["this is not a png at all, garbage bytes"], "bad.png", { type: "image/png" })]);
+      _h1Paste([await _rfiPng(140, 90, 1)]);
+      const notice = await _waitFor(() => document.querySelector("[data-testid='paste-notice']"), 4000).catch(() => null);
+      await _waitFor(() => _h1Imgs(_mrdViewport()).length >= 1, 5000).catch(() => {});
+      await _wait(400);
+      const n = _mrdViewport().querySelectorAll("[data-block-type='image']").length;
+      if (n !== 1) throw new Error(`${n} image block(s) on the slide (expected 1)`);
+      if (!notice) throw new Error("no notice for the image that could not be pasted");
+    } finally { await _mrdUndoTo(past); }
+  }},
+  { name: "HI6: one paste event with two images pastes both, in order", fn: async () => {
+    const past = _hooks().getHistoryCounts().past;
+    try {
+      await _h1Heading("H1-HI6");
+      _h1Paste([await _rfiPng(140, 90, 0), await _rfiPng(220, 90, 1)]);
+      let got = [];
+      await _waitFor(() => { got = _h1Imgs(_mrdViewport()).map((im) => im.naturalWidth); return got.length >= 2; }, 5000).catch(() => {});
+      if (got.join(",") !== "140,220") throw new Error(`images on the slide: ${got.join(",") || "none"} (expected 140,220)`);
+    } finally { await _mrdUndoTo(past); }
+  }},
+  { name: "HI7: a transparent PNG keeps its transparency", fn: async () => {
+    const past = _hooks().getHistoryCounts().past;
+    try {
+      await _h1Heading("H1-HI7");
+      const cv = document.createElement("canvas"); cv.width = 200; cv.height = 100;
+      const g = cv.getContext("2d"); g.fillStyle = "#3b82f6"; g.fillRect(40, 20, 120, 60);
+      const blob = await new Promise((r) => cv.toBlob(r, "image/png"));
+      _h1Paste([new File([blob], "alpha.png", { type: "image/png" })]);
+      const img = await _waitFor(() => _h1Imgs(_mrdViewport())[0], 5000);
+      if (!/^data:image\/png;base64,/.test(img.getAttribute("src"))) throw new Error(`stored as ${img.getAttribute("src").slice(0, 22)}`);
+      const t = document.createElement("canvas"); t.width = img.naturalWidth; t.height = img.naturalHeight;
+      const tg = t.getContext("2d"); tg.drawImage(img, 0, 0);
+      const corner = tg.getImageData(0, 0, 1, 1).data[3], mid = tg.getImageData(100, 50, 1, 1).data[3];
+      if (corner !== 0 || mid !== 255) throw new Error(`alpha corner ${corner} / center ${mid} (expected 0 / 255)`);
+    } finally { await _mrdUndoTo(past); }
+  }},
+  { name: "HI8: pastes queued before a module switch land on their original slide, in order", fn: async () => {
+    const past = _hooks().getHistoryCounts().past;
+    try {
+      await _h1Heading("H1-HI8");
+      const rows = _$$(".concept-row");
+      if (rows.length < 2) throw new Error("the test deck needs two modules");
+      const from = _hooks().getSelection();
+      const files = [await _rfiPng(120, 90, 0), await _rfiPng(160, 90, 1), await _rfiPng(200, 90, 2)];
+      files.forEach((f) => _h1Paste([f]));
+      _click(rows[1]);
+      await _waitFor(() => { const s = _hooks().getSelection(); return s && s.itemId !== from.itemId; }, 2000);
+      await _wait(2500);
+      _click(rows[0]);
+      await _waitFor(() => { const s = _hooks().getSelection(); return s && s.itemId === from.itemId; }, 2000);
+      const vp = await _waitFor(() => { const v = _mrdViewport(); return v?.textContent.includes("H1-HI8") && _h1Imgs(v).length >= 3 ? v : null; }, 4000).catch(() => null);
+      const got = vp ? _h1Imgs(vp).map((im) => im.naturalWidth).join(",") : "none";
+      if (got !== "120,160,200") throw new Error(`images on the original slide: ${got} (expected 120,160,200)`);
+    } finally { await _mrdUndoTo(past); }
+  }},
+], { setup: _selectFirstModule });
+
+// ── WP7: Ctrl+U underline is saved as ++text++ and shows underlined ──
+// (This whole part is release-excluded by concat.py --release.)
+const _ulSaved = (marker) => {
+  const snap = _hooks().capturePostDemoFlushForTest?.();
+  let hit = null;
+  const walk = (v) => {
+    if (hit) return;
+    if (typeof v === "string") { if (v.includes(marker)) hit = v; }
+    else if (v && typeof v === "object") for (const k of Object.keys(v)) walk(v[k]);
+  };
+  walk(snap && snap.state);
+  return hit;
+};
+const _ulOpenEditor = async (vp, shown, partial) => {
+  const disp = Array.from(vp.querySelectorAll("[data-block-type='text'] div")).find((d) => (partial ? d.textContent.includes(shown) : d.textContent === shown) && d.style.cursor === "pointer");
+  if (!disp) throw new Error("text block is not editable");
+  _click(disp);
+  const ed = await _waitFor(() => vp.querySelector("[data-block-type='text'] [contenteditable]"), 1500);
+  ed.focus();
+  return ed;
+};
+uiSuite("wp7-underline", [
+  { name: "Ctrl+U saves ++text++, renders an underlined span, undo restores", fn: async () => {
+    const past = _hooks().getHistoryCounts().past;
+    try {
+      const vp = await _mrdInject([{ type: "text", text: "WP7U base" }], { layout: undefined }, (v) => v?.textContent.includes("WP7U base") ? v : null);
+      const afterInject = _hooks().getHistoryCounts().past;
+      const ed = await _ulOpenEditor(vp, "WP7U base");
+      const sel = window.getSelection(); sel.selectAllChildren(ed); sel.collapseToEnd();
+      document.execCommand("insertText", false, " under");
+      const tw = document.createTreeWalker(ed, NodeFilter.SHOW_TEXT);
+      let tn = null;
+      while (tw.nextNode()) if (tw.currentNode.textContent.includes("under")) tn = tw.currentNode;
+      if (!tn) throw new Error("typed text not found");
+      const at = tn.textContent.lastIndexOf("under");
+      const r = document.createRange(); r.setStart(tn, at); r.setEnd(tn, at + 5);
+      sel.removeAllRanges(); sel.addRange(r);
+      const ev = new KeyboardEvent("keydown", { key: "u", ctrlKey: true, bubbles: true, cancelable: true });
+      ed.dispatchEvent(ev);
+      if (!ev.defaultPrevented) throw new Error("Ctrl+U was not handled by the editor");
+      if (!ed.querySelector("u")) throw new Error("Ctrl+U did not underline the selection");
+      ed.blur();
+      const saved = await _waitFor(() => _ulSaved("WP7U base") === "WP7U base ++under++" ? true : null, 2000)
+        .catch(() => { throw new Error(`saved text is ${JSON.stringify(_ulSaved("WP7U base"))}`); });
+      if (!saved) throw new Error("not saved");
+      const span = await _waitFor(() => _mrdViewport().querySelector("[data-block-type='text'] span[data-vela-u]"), 1500);
+      if (span.textContent !== "under" || !getComputedStyle(span).textDecorationLine.includes("underline"))
+        throw new Error("rendered text has no underlined span");
+      if (_mrdViewport().textContent.includes("++")) throw new Error("the ++ markers are visible");
+      if (_hooks().getHistoryCounts().past !== afterInject + 1) throw new Error("the edit did not make one undo step");
+      _key("z", { ctrlKey: true });
+      await _waitFor(() => !_mrdViewport().querySelector("span[data-vela-u]") && _ulSaved("WP7U base") === "WP7U base", 2000)
+        .catch(() => { throw new Error("undo did not restore the text without underline"); });
+    } finally { await _mrdUndoTo(past); }
+  }},
+  { name: "literal C++ / i++ stay text; deck markup stays literal in the editor", fn: async () => {
+    const past = _hooks().getHistoryCounts().past;
+    try {
+      const txt = 'C++ and i++ <u onclick="window.__wp7ul=1">z</u> ++y++';
+      const vp = await _mrdInject([{ type: "text", text: txt }], { layout: undefined }, (v) => v?.textContent.includes("C++ and i++") ? v : null);
+      const spans = vp.querySelectorAll("[data-block-type='text'] span[data-vela-u]");
+      if (spans.length !== 1 || spans[0].textContent !== "y") throw new Error(`expected one underline span "y", got ${spans.length}`);
+      if (vp.querySelector("[data-block-type='text'] u")) throw new Error("deck <u> became markup");
+      // Ingress sanitizing may strip the tag text; either way it must never be markup.
+      const ed = await _ulOpenEditor(vp, "C++ and i++", true);
+      const us = ed.querySelectorAll("u");
+      if (us.length !== 1 || us[0].textContent !== "y" || us[0].attributes.length) throw new Error("editor HTML has deck markup");
+      if (ed.querySelector("[onclick]")) throw new Error("deck markup became live in the editor");
+      ed.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+      await _waitFor(() => !_$("[contenteditable='true']"), 1500);
+      if (window.__wp7ul) throw new Error("deck handler ran");
+    } finally { await _mrdUndoTo(past); }
+  }},
+], { setup: _selectFirstModule });
+
+// ── WP5: story images, image file drop, tile reorder ────────────────────
+// A story slide is set up on the second slide, so a previous slide exists for
+// the back path. Each test exits Present and undoes its own history steps.
+const _wp5Sel = () => _hooks().getSelection?.() || null;
+const _wp5Key = () => { const s = _wp5Sel(); return s ? `${s.itemId}|${s.slideIdx}` : null; };
+const _wp5Deck = () => _hooks().getDeckStateForTest?.() || {};
+const _wp5Fs = () => !!_wp5Deck().fullscreen;
+const _wp5Cur = () => _hooks().getCurrentSlideForTest?.() || null;
+const _wp5ImgSrcs = () => ((_wp5Cur() || {}).blocks || []).filter((b) => b.type === "image").map((b) => b.src);
+const _wp5Imgs = (n, cap) => Array.from({ length: n }, (_, k) => ({ type: "image", src: _rfiSrc(160 + 40 * k, 90, k), ...(cap && cap(k) ? { caption: cap(k) } : {}) }));
+const _wp5Inject = (mark, n, extra, cap) => _mrdInject([{ type: "heading", text: mark }, ..._wp5Imgs(n, cap)], { imageCols: undefined, story: undefined, ...(extra || {}) },
+  (vp) => vp?.textContent.includes(mark) && vp.querySelectorAll("img").length >= n ? vp : null);
+const _wp5UndoTo = async (past) => {
+  const h = _hooks();
+  document.activeElement?.blur?.();
+  for (let i = 0; i < 40 && h.getHistoryCounts && h.getHistoryCounts().past > past; i++) { _key("z", { ctrlKey: true }); await _wait(50); }
+};
+const _wp5Enter = async () => {
+  document.activeElement?.blur?.(); await _wait(60);
+  _key("f");
+  await _waitFor(() => _wp5Fs() && !_$("header"), 2500).catch(() => { throw new Error("did not enter Present"); });
+  await _mrdFrame();
+};
+const _wp5Exit = async () => {
+  for (let i = 0; i < 8 && _wp5Fs(); i++) { document.activeElement?.blur?.(); _key("Escape"); await _wait(150); }
+  if (_wp5Fs()) throw new Error("could not exit Present");
+  await _waitFor(() => _$("header"), 2000).catch(() => {});
+};
+const _wp5Layer = (root = document) => _$("[data-story-layer]", root);
+const _wp5CurThumb = (root = document) => _$("[data-story-rail] [aria-current='true']", root);
+const _wp5ZoomedAt = (k, root = document) => { const l = _wp5Layer(root); return !!l && l.style.pointerEvents === "auto" && _wp5CurThumb(root)?.getAttribute("aria-label") === `Image ${k}`; };
+const _wp5Grid = () => !_wp5Layer();
+const _wp5Step = async (key, want, label) => {
+  document.activeElement?.blur?.();
+  _key(key);
+  await _waitFor(want, 2500).catch(() => { throw new Error(`${key} → ${label}: not reached (layer=${!!_wp5Layer()}, current=${_wp5CurThumb()?.getAttribute("aria-label") || "-"}, slide=${_wp5Key()})`); });
+};
+// Run body on a fresh story slide (the second slide of the deck), then clean up.
+const _wp5OnSlide = async (mark, n, extra, body, cap) => {
+  await _wp5Exit(); await _selectFirstModule();
+  const k0 = _wp5Key();
+  document.activeElement?.blur?.(); _key("ArrowRight");
+  await _waitFor(() => _wp5Key() && _wp5Key() !== k0, 2500).catch(() => { throw new Error("could not move to the second slide"); });
+  const past = _hooks().getHistoryCounts().past;
+  const mm = window.matchMedia;
+  try {
+    const vp = await _wp5Inject(mark, n, extra, cap);
+    await body(vp, past);
+  } finally {
+    window.matchMedia = mm;
+    await _wp5Exit().catch(() => {});
+    await _wp5UndoTo(past);
+  }
+};
+const _wp5Toast = (re) => _$$(".nav-toast-in, .nav-toast-out, [data-testid='paste-notice']").map((t) => (t.textContent || "").trim()).find((t) => re.test(t)) || null;
+const _wp5Drop = (target, files, types = ["dragenter", "dragover", "drop"]) => {
+  const dt = new DataTransfer(); files.forEach((f) => dt.items.add(f));
+  const evs = types.map((type) => { const ev = new DragEvent(type, { dataTransfer: dt, bubbles: true, cancelable: true }); target.dispatchEvent(ev); return ev; });
+  return evs[evs.length - 1];
+};
+const _wp5Aspect = (src) => new Promise((res) => { const im = new Image(); im.onload = () => res(im.naturalHeight > 0 ? im.naturalWidth / im.naturalHeight : 0); im.onerror = () => res(0); im.src = src; });
+const _wp5NoBlob = () => { const b = _$$("img").find((im) => /^blob:/i.test(im.getAttribute("src") || "")); if (b) throw new Error("an img uses a blob: URL"); };
+
+uiSuite("wp5-story-present-nav", [
+  { name: "→ steps grid → image 1..4 → grid → next slide; rail has 4 thumbs, one current", fn: async () => {
+    await _wp5OnSlide("WP5 nav fwd", 4, { story: true }, async () => {
+      const here = _wp5Key();
+      await _wp5Enter();
+      if (_wp5Key() !== here) throw new Error("Present did not open on the story slide");
+      if (_wp5Layer()) throw new Error("the story slide opened zoomed, expected the grid");
+      if (_$("[data-story-rail]")) throw new Error("the index rail shows on the grid");
+      for (let k = 1; k <= 4; k++) {
+        await _wp5Step("ArrowRight", () => _wp5ZoomedAt(k), `image ${k}`);
+        const thumbs = _$$("[data-story-rail] button");
+        if (thumbs.length !== 4) throw new Error(`rail has ${thumbs.length} thumbs, expected 4`);
+        if (thumbs.filter((b) => b.getAttribute("aria-current") === "true").length !== 1) throw new Error("rail does not mark exactly one current thumb");
+        const zsrc = _$("[data-story-image] img")?.getAttribute("src"), tsrc = _$(`[data-story-idx='${k}'] img`)?.getAttribute("src");
+        if (!zsrc || zsrc !== tsrc) throw new Error(`zoomed image ${k} is not the tile ${k} image`);
+        if (_wp5Key() !== here) throw new Error(`left the slide at image ${k}`);
+      }
+      await _wp5Step("ArrowRight", _wp5Grid, "grid after image 4");
+      if (_wp5Key() !== here) throw new Error("left the slide before the final grid");
+      await _wp5Step("ArrowRight", () => _wp5Key() !== here, "next slide");
+    });
+  }},
+  { name: "← enters on the grid (k=N), zooms 4..1, grid, then previous slide", fn: async () => {
+    await _wp5OnSlide("WP5 nav back", 4, { story: true }, async () => {
+      const here = _wp5Key();
+      document.activeElement?.blur?.(); _key("ArrowRight"); // editor: plain slide nav
+      await _waitFor(() => _wp5Key() !== here, 2000);
+      await _wp5Enter();
+      await _wp5Step("ArrowLeft", () => _wp5Key() === here && _wp5Grid(), "story slide grid");
+      for (let k = 4; k >= 1; k--) await _wp5Step("ArrowLeft", () => _wp5ZoomedAt(k), `image ${k}`);
+      await _wp5Step("ArrowLeft", _wp5Grid, "grid before image 1");
+      if (_wp5Key() !== here) throw new Error("left the slide before the first grid");
+      await _wp5Step("ArrowLeft", () => _wp5Key() !== here, "previous slide");
+    });
+  }},
+  { name: "Esc zooms out first and → resumes at k+1; a thumb and a tile click jump", fn: async () => {
+    await _wp5OnSlide("WP5 nav esc", 4, { story: true }, async () => {
+      const here = _wp5Key();
+      await _wp5Enter();
+      await _wp5Step("ArrowRight", () => _wp5ZoomedAt(1), "image 1");
+      await _wp5Step("ArrowRight", () => _wp5ZoomedAt(2), "image 2");
+      await _wp5Step("Escape", _wp5Grid, "grid after Esc");
+      if (!_wp5Fs()) throw new Error("Esc while zoomed left Present");
+      await _wp5Step("ArrowRight", () => _wp5ZoomedAt(3), "image 3 (resume)");
+      _click(_$$("[data-story-rail] button")[3]);
+      await _waitFor(() => _wp5ZoomedAt(4), 2000).catch(() => { throw new Error("rail thumb 4 did not jump to image 4"); });
+      _click(_wp5Layer());
+      await _waitFor(_wp5Grid, 2000).catch(() => { throw new Error("a click on the zoomed image did not zoom out"); });
+      _click(_$("[data-story-idx='2'] img"));
+      await _waitFor(() => _wp5ZoomedAt(2), 2000).catch(() => { throw new Error("a tile click did not jump to image 2"); });
+      if (_$("[data-vela-zoom]")) throw new Error("a story tile click also opened the gallery zoom");
+      if (_wp5Key() !== here) throw new Error("left the slide");
+    });
+  }},
+]);
+
+uiSuite("wp5-story-off-unchanged", [
+  { name: "story OFF: arrows go slide to slide, a tile click opens the old zoom, no rail", fn: async () => {
+    await _wp5OnSlide("WP5 off", 4, {}, async () => {
+      const here = _wp5Key();
+      if (_$("[data-story-idx]")) throw new Error("story numbering on a story-off slide");
+      await _wp5Enter();
+      await _wp5Step("ArrowRight", () => _wp5Key() !== here, "next slide");
+      if (_wp5Layer()) throw new Error("story layer on a story-off slide");
+      await _wp5Step("ArrowLeft", () => _wp5Key() === here, "back to the slide");
+      _click(_$$("[data-testid='image-grid-cell'] img")[0]);
+      await _waitFor(() => _$("[data-vela-zoom]"), 2000).catch(() => { throw new Error("tile click did not open the gallery zoom"); });
+      if (_$("[data-story-rail]") || _wp5Layer()) throw new Error("story rail shows on a story-off slide");
+      _click(_$("[data-vela-zoom]"));
+      await _waitFor(() => !_$("[data-vela-zoom]"), 2000).catch(() => { throw new Error("gallery zoom did not close"); });
+    });
+  }},
+]);
+
+uiSuite("wp5-story-editor", [
+  { name: "editor: arrows change slides and never step the story", fn: async () => {
+    await _wp5OnSlide("WP5 editor nav", 4, { story: true }, async () => {
+      const here = _wp5Key();
+      if (_$("[data-testid='story-toggle']")?.getAttribute("aria-pressed") !== "true") throw new Error("story toggle is not pressed on a story slide");
+      await _wp5Step("ArrowRight", () => _wp5Key() !== here, "next slide");
+      if (_wp5Layer()) throw new Error("editor stepped the story");
+      await _wp5Step("ArrowLeft", () => _wp5Key() === here, "back");
+      await _wait(200);
+      if (_wp5Layer()) throw new Error("editor shows a story zoom layer");
+    });
+  }},
+  { name: "story toggle sets story:true, one undo restores; hidden with < 2 images", fn: async () => {
+    await _wp5OnSlide("WP5 toggle", 3, {}, async () => {
+      const btn = await _waitFor(() => _$("[data-testid='story-toggle']"), 2000).catch(() => { throw new Error("story toggle not shown for 3 images"); });
+      if (btn.getAttribute("aria-pressed") !== "false") throw new Error("toggle pressed on a story-off slide");
+      if (_$("[data-testid='story-preview']")) throw new Error("Preview story shown while story is off");
+      const p1 = _hooks().getHistoryCounts().past;
+      _click(btn);
+      await _waitFor(() => _wp5Cur()?.story === true && _$("[data-testid='story-toggle']")?.getAttribute("aria-pressed") === "true" && _$("[data-testid='story-preview']"), 2000)
+        .catch(() => { throw new Error("toggle did not set story:true"); });
+      if (_hooks().getHistoryCounts().past !== p1 + 1) throw new Error("toggle did not make exactly one undo step");
+      document.activeElement?.blur?.(); _key("z", { ctrlKey: true });
+      await _waitFor(() => _wp5Cur()?.story !== true && _$("[data-testid='story-toggle']")?.getAttribute("aria-pressed") === "false", 2000)
+        .catch(() => { throw new Error("one undo did not restore story off"); });
+      await _wp5Inject("WP5 toggle one", 1);
+      await _wait(150);
+      if (_$("[data-testid='story-toggle']")) throw new Error("story toggle shown with 1 image");
+    });
+  }},
+]);
+
+uiSuite("wp5-story-presenter", [
+  { name: "presenter NOW shows the story step, NEXT says image k/N then overview", fn: async () => {
+    await _wp5OnSlide("WP5 presenter", 4, { story: true }, async () => {
+      const here = _wp5Key();
+      await _wp5Enter();
+      document.activeElement?.blur?.(); _key("s");
+      const pv = await _waitFor(() => _$("[data-testid='presenter-view']"), 2000);
+      const label = () => (_$("[data-testid='presenter-next-story']")?.textContent || "").trim() || null;
+      const nowLayer = () => _$$("[data-story-layer]", pv).find((l) => !l.closest("[data-testid='presenter-next']")) || null;
+      await _waitFor(() => label() === "image 1/4", 2000).catch(() => { throw new Error(`NEXT label on the grid is ${JSON.stringify(label())}`); });
+      if (nowLayer()) throw new Error("NOW is zoomed on the grid step");
+      // Presenter thumbs have no jump, so their rail items are not buttons.
+      for (let k = 1; k <= 4; k++) {
+        const want = k < 4 ? `image ${k + 1}/4` : "overview";
+        document.activeElement?.blur?.(); _key("ArrowRight");
+        await _waitFor(() => label() === want && nowLayer(), 2000).catch(() => { throw new Error(`at image ${k}: NEXT=${JSON.stringify(label())}, NOW zoomed=${!!nowLayer()}`); });
+        const items = _$$("[data-story-rail] > *", nowLayer());
+        const cur = items.findIndex((x) => x.getAttribute("aria-current") === "true");
+        if (items.length !== 4 || cur !== k - 1) throw new Error(`NOW rail current is ${cur + 1} of ${items.length}, expected ${k} of 4`);
+      }
+      document.activeElement?.blur?.(); _key("ArrowRight");
+      await _waitFor(() => !label() && !nowLayer(), 2000).catch(() => { throw new Error("final grid: NEXT should be the next slide"); });
+      if (_wp5Key() !== here) throw new Error("left the slide too early");
+      await _wp5Step("ArrowRight", () => _wp5Key() !== here, "next slide");
+    });
+  }},
+]);
+
+uiSuite("wp5-caption-chip", [
+  { name: "editor hover shows \"+ Add title\" with no layout shift; typing sets the caption", fn: async () => {
+    await _wp5OnSlide("WP5 chip", 2, {}, async (vp) => {
+      const cell = _$$("[data-testid='image-grid-cell']", vp)[0];
+      if (!cell) throw new Error("no grid cell");
+      if (_$("[data-testid='caption-chip']")) throw new Error("chip shown before hover");
+      const r0 = cell.getBoundingClientRect();
+      cell.querySelector("img").dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
+      const chip = await _waitFor(() => _$("[data-testid='caption-chip']", cell), 2000).catch(() => { throw new Error("hover did not show the chip"); });
+      if ((chip.textContent || "").trim() !== "+ Add title") throw new Error(`chip text is ${JSON.stringify(chip.textContent)}`);
+      if (getComputedStyle(chip).position !== "absolute") throw new Error("chip is not absolutely positioned");
+      const r1 = cell.getBoundingClientRect();
+      if (Math.abs(r0.height - r1.height) > 0.5 || Math.abs(r0.width - r1.width) > 0.5) throw new Error("chip changed the tile size");
+      _click(chip);
+      const ed = await _waitFor(() => _$("[contenteditable='true']", cell), 2000).catch(() => { throw new Error("chip click did not open an inline editor"); });
+      ed.focus();
+      document.execCommand("insertText", false, "WP5 title");
+      ed.blur();
+      await _waitFor(() => (_wp5Cur()?.blocks || [])[1]?.caption === "WP5 title", 2000).catch(() => { throw new Error(`caption is ${JSON.stringify((_wp5Cur()?.blocks || [])[1]?.caption)}`); });
+      await _waitFor(() => vp.textContent.includes("WP5 title"), 1500);
+    });
+  }},
+  { name: "no chip in Present, also with present edit ON", fn: async () => {
+    await _wp5OnSlide("WP5 chip present", 2, {}, async () => {
+      await _wp5Enter();
+      document.activeElement?.blur?.(); _key("E", { shiftKey: true });
+      await _waitFor(() => _wp5Toast(/Edit mode ON/), 2000).catch(() => { throw new Error("present edit did not turn ON"); });
+      try {
+        for (const im of _$$("[data-testid='image-grid-cell'] img")) im.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
+        await _wait(250);
+        if (_$("[data-testid='caption-chip']")) throw new Error("caption chip rendered in Present with present edit ON");
+      } finally { document.activeElement?.blur?.(); _key("E", { shiftKey: true }); await _wait(150); }
+    });
+  }},
+  { name: "markup-like caption renders as literal text; no element, no handler", fn: async () => {
+    window.__wp5xss = 0;
+    const xss = '<img src=x onerror="window.__wp5xss=1">';
+    await _wp5OnSlide("WP5 xss", 2, { story: true }, async (vp) => {
+      const stored = (_wp5Cur()?.blocks || [])[1]?.caption || "";
+      const check = (root) => {
+        if (_$$("img", root).some((im) => !/^data:image\//.test(im.getAttribute("src") || ""))) throw new Error("caption created an img element");
+        if (_$("[onerror]", root)) throw new Error("caption created a handler attribute");
+      };
+      await _wait(300);
+      check(vp);
+      if (_$$("img", vp).length !== 2) throw new Error(`expected 2 tile imgs, got ${_$$("img", vp).length}`);
+      if (stored && !vp.textContent.includes(stored)) throw new Error("caption is not rendered as literal text");
+      // The story number is its own text node, never part of the caption string.
+      const tw = document.createTreeWalker(vp, NodeFilter.SHOW_TEXT);
+      let prefix = false;
+      while (tw.nextNode()) if (tw.currentNode.textContent === "1 · ") prefix = true;
+      if (stored && !prefix) throw new Error("story prefix is not a separate text node");
+      await _wp5Enter();
+      await _wp5Step("ArrowRight", () => _wp5ZoomedAt(1), "image 1");
+      await _wait(200);
+      check(document.body);
+      if ((_wp5Layer()?.textContent || "").includes("onerror")) throw new Error("caption shows inside the zoom layer");
+      if (window.__wp5xss) throw new Error("caption handler ran");
+    }, (k) => (k === 0 ? xss : null));
+    if (window.__wp5xss) throw new Error("caption handler ran");
+  }},
+]);
+
+uiSuite("wp5-image-paste-spill", [
+  { name: "paste 12 images: 10 here, 2 on a new story slide after it, toast", fn: async () => {
+    await _wp5Exit(); await _selectFirstModule();
+    const past = _hooks().getHistoryCounts().past;
+    const home = _wp5Key();
+    try {
+      const mark = "WP5 paste spill";
+      await _mrdInject([{ type: "heading", text: mark }], { imageCols: undefined, story: true }, (vp) => vp?.textContent.includes(mark) && !vp.querySelector("img") ? vp : null);
+      const files = [];
+      for (let k = 0; k < 12; k++) files.push(await _rfiPng(120 + 10 * k, 80, k));
+      _h1Paste(files);
+      const msg = await _waitFor(() => _wp5Toast(/Added \d+ here · \d+ on new slide \d+/), 20000).catch(() => { throw new Error("no spill toast"); });
+      const m = msg.match(/Added (\d+) here · (\d+) on new slide (\d+)/);
+      if (m[1] !== "10" || m[2] !== "2") throw new Error(`toast says ${JSON.stringify(msg)}`);
+      await _waitFor(() => _wp5ImgSrcs().length === 2, 3000).catch(() => { throw new Error(`spill slide has ${_wp5ImgSrcs().length} images`); });
+      const spill = _wp5Cur(), sel = _wp5Sel();
+      if (spill.story !== true) throw new Error("spill slide did not inherit story:true");
+      if (sel.slideIdx + 1 !== Number(m[3])) throw new Error(`toast names slide ${m[3]}, spill is slide ${sel.slideIdx + 1}`);
+      document.activeElement?.blur?.(); _key("ArrowLeft");
+      await _waitFor(() => _wp5Key() === home, 2000).catch(() => { throw new Error("spill slide is not right after the pasted slide"); });
+      const src = _wp5ImgSrcs();
+      if (src.length !== 10) throw new Error(`pasted slide has ${src.length} images, expected 10`);
+      if (!src.every((s) => SAFE_RASTER_DATA_IMAGE.test(s))) throw new Error("a pasted src is not a safe raster data URI");
+    } finally {
+      await _wp5UndoTo(past);
+      await _selectFirstModule();
+    }
+  }},
+]);
+
+uiSuite("wp5-tile-reorder", [
+  { name: "drag a tile handle: live reflow, one edit, one undo restores", fn: async () => {
+    await _wp5OnSlide("WP5 reorder", 3, {}, async (vp) => {
+      const before = _wp5ImgSrcs();
+      const cells = _$$("[data-testid='image-grid-cell']", vp);
+      if (cells.length !== 3) throw new Error(`expected 3 cells, got ${cells.length}`);
+      cells[0].querySelector("img").dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
+      const h = await _waitFor(() => _$("[data-testid='tile-drag-handle']", cells[0]), 2000).catch(() => { throw new Error("hover did not show the drag handle"); });
+      const hr = h.getBoundingClientRect(), c0 = cells[0].getBoundingClientRect(), t = cells[2].getBoundingClientRect();
+      const p1 = _hooks().getHistoryCounts().past;
+      h.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, cancelable: true, button: 0, pointerId: 1, isPrimary: true, clientX: hr.x + 4, clientY: hr.y + 4 }));
+      await _mrdFrame();
+      window.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, pointerId: 1, clientX: t.x + t.width / 2, clientY: t.y + t.height / 2 }));
+      await _waitFor(() => Math.abs(cells[0].getBoundingClientRect().left - c0.left) > 2, 1500).catch(() => { throw new Error("dragged tile did not reflow live"); });
+      if (_hooks().getHistoryCounts().past !== p1) throw new Error("drag move wrote history before drop");
+      window.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, pointerId: 1, clientX: t.x + t.width / 2, clientY: t.y + t.height / 2 }));
+      const want = [before[1], before[2], before[0]];
+      await _waitFor(() => JSON.stringify(_wp5ImgSrcs()) === JSON.stringify(want), 2000).catch(() => { throw new Error("drop did not reorder the blocks to 2,3,1"); });
+      if (_hooks().getHistoryCounts().past !== p1 + 1) throw new Error("reorder did not make exactly one undo step");
+      document.activeElement?.blur?.(); _key("z", { ctrlKey: true });
+      await _waitFor(() => JSON.stringify(_wp5ImgSrcs()) === JSON.stringify(before), 2000).catch(() => { throw new Error("one undo did not restore the order"); });
+    });
+  }},
+  { name: "Esc during a tile drag cancels with no change", fn: async () => {
+    await _wp5OnSlide("WP5 reorder esc", 3, {}, async (vp) => {
+      const before = _wp5ImgSrcs();
+      const cells = _$$("[data-testid='image-grid-cell']", vp);
+      cells[0].querySelector("img").dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
+      const h = await _waitFor(() => _$("[data-testid='tile-drag-handle']", cells[0]), 2000);
+      const hr = h.getBoundingClientRect(), c0 = cells[0].getBoundingClientRect(), t = cells[2].getBoundingClientRect();
+      const p1 = _hooks().getHistoryCounts().past;
+      h.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, cancelable: true, button: 0, pointerId: 1, isPrimary: true, clientX: hr.x + 4, clientY: hr.y + 4 }));
+      await _mrdFrame();
+      window.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, pointerId: 1, clientX: t.x + t.width / 2, clientY: t.y + t.height / 2 }));
+      await _waitFor(() => Math.abs(cells[0].getBoundingClientRect().left - c0.left) > 2, 1500).catch(() => { throw new Error("drag did not start"); });
+      document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+      await _mrdFrame();
+      window.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, pointerId: 1, clientX: t.x + t.width / 2, clientY: t.y + t.height / 2 }));
+      await _wait(300);
+      if (JSON.stringify(_wp5ImgSrcs()) !== JSON.stringify(before)) throw new Error("Esc did not cancel the reorder");
+      if (_hooks().getHistoryCounts().past !== p1) throw new Error("a cancelled drag wrote history");
+      if (Math.abs(cells[0].getBoundingClientRect().left - c0.left) > 0.5) throw new Error("tile did not go back after cancel");
+    });
+  }},
+]);
+
+uiSuite("wp5-story-motion-gallery", [
+  { name: "reduced motion: zoom in and out are instant (no fly animation)", fn: async () => {
+    await _wp5OnSlide("WP5 motion", 3, { story: true }, async () => {
+      await _wp5Enter();
+      await _wp5Step("ArrowRight", () => _wp5ZoomedAt(1), "image 1 (motion)");
+      if (!/350ms/.test(_$("[data-story-image]")?.style.transition || "")) throw new Error("control: no fly-zoom transition with motion allowed");
+      await _wp5Step("ArrowLeft", _wp5Grid, "grid (motion)");
+      const mm = window.matchMedia;
+      window.matchMedia = (q) => (/prefers-reduced-motion/.test(String(q))
+        ? { matches: true, media: String(q), onchange: null, addListener() {}, removeListener() {}, addEventListener() {}, removeEventListener() {}, dispatchEvent() { return false; } }
+        : mm.call(window, q));
+      await _wp5Step("ArrowRight", () => _wp5ZoomedAt(1), "image 1 (reduced)");
+      const box = _$("[data-story-image]"), rail = _$("[data-story-rail]");
+      if (box.style.transition !== "none" || box.style.transform !== "" || box.style.opacity !== "") throw new Error(`reduced motion still animates: transition=${box.style.transition}, transform=${box.style.transform}`);
+      if (rail.style.opacity !== "") throw new Error("reduced motion: rail fades in");
+      document.activeElement?.blur?.(); _key("ArrowLeft");
+      await _mrdFrame();
+      if (_wp5Layer()) throw new Error("reduced motion: zoom out is not instant");
+    });
+  }},
+  { name: "FX2b: with the Present gallery open, arrows do not step the story", fn: async () => {
+    await _wp5OnSlide("WP5 gallery", 3, { story: true }, async () => {
+      const here = _wp5Key();
+      await _wp5Enter();
+      document.activeElement?.blur?.(); _key("g");
+      await _waitFor(() => _mrdGalleryOpen(), 2000).catch(() => { throw new Error("gallery did not open in Present"); });
+      document.activeElement?.blur?.(); _key("ArrowRight");
+      await _waitFor(() => _wp5Key() !== here, 2000).catch(() => { throw new Error("ArrowRight in the gallery did not move as a plain slide"); });
+      if (_wp5Layer()) throw new Error("ArrowRight in the gallery stepped the story");
+      document.activeElement?.blur?.(); _key("ArrowLeft");
+      await _waitFor(() => _wp5Key() === here, 2000).catch(() => { throw new Error("ArrowLeft in the gallery did not go back"); });
+      await _wait(150);
+      if (_wp5Layer()) throw new Error("ArrowLeft in the gallery entered the story zoomed");
+      document.activeElement?.blur?.(); _key("Escape");
+      await _waitFor(() => !_mrdGalleryOpen(), 2000);
+      await _wp5Step("ArrowRight", () => _wp5ZoomedAt(1), "image 1 after the gallery closes");
+    });
+  }},
+]);
+
+// ── WP5b: story steps by wheel and swipe, Preview, phone layout, large images ──
+// Same story-slide setup and cleanup as WP5 (_wp5OnSlide). Wheel and swipe go
+// to the Present container, where SlidePanel listens for them.
+const _wp5bFsEl = () => _$$("div[tabindex='0']").find((d) => d.style.position === "fixed" && d.style.zIndex === "9999") || null;
+const _wp5bWheel = (dy) => {
+  const el = _wp5bFsEl(); if (!el) throw new Error("no Present container");
+  el.dispatchEvent(new WheelEvent("wheel", { deltaY: dy, deltaMode: 0, bubbles: true, cancelable: true }));
+};
+const _wp5bState = () => `layer=${!!_wp5Layer()}, current=${_wp5CurThumb()?.getAttribute("aria-label") || "-"}, slide=${_wp5Key()}`;
+// One wheel notch. Wait past the 200 ms reset first, so each notch starts at 0.
+const _wp5bWheelStep = async (dy, want, label) => {
+  document.activeElement?.blur?.(); await _wait(260);
+  _wp5bWheel(dy);
+  await _waitFor(want, 2500).catch(() => { throw new Error(`wheel ${dy} → ${label}: not reached (${_wp5bState()})`); });
+};
+// A synthetic touch. Use TouchEvent when the browser has it, else a plain Event
+// with the same touches/changedTouches fields that useSwipe reads.
+const _wp5bTouch = (el, type, x, y) => {
+  const pt = { identifier: 1, target: el, clientX: x, clientY: y, pageX: x, pageY: y, screenX: x, screenY: y };
+  let ev;
+  try {
+    const t = new Touch(pt);
+    ev = new TouchEvent(type, { bubbles: true, cancelable: true, touches: type === "touchend" ? [] : [t], changedTouches: [t] });
+  } catch {
+    ev = new Event(type, { bubbles: true, cancelable: true });
+    Object.defineProperty(ev, "touches", { value: type === "touchend" ? [] : [pt] });
+    Object.defineProperty(ev, "changedTouches", { value: [pt] });
+  }
+  el.dispatchEvent(ev);
+};
+const _wp5bSwipe = async (dx, dy = 4) => {
+  const el = _wp5bFsEl(); if (!el) throw new Error("no Present container");
+  const r = el.getBoundingClientRect();
+  const x0 = r.left + r.width / 2 - dx / 2, y0 = r.top + r.height / 2 - dy / 2;
+  _wp5bTouch(el, "touchstart", x0, y0); await _wait(40);
+  _wp5bTouch(el, "touchend", x0 + dx, y0 + dy);
+};
+const _wp5bSwipeStep = async (dx, want, label) => {
+  document.activeElement?.blur?.();
+  await _wp5bSwipe(dx);
+  await _waitFor(want, 2500).catch(() => { throw new Error(`swipe ${dx}px → ${label}: not reached (${_wp5bState()})`); });
+};
+// Hold a state for a short time: a no-op gesture must not move the story.
+const _wp5bHold = async (ok, label, ms = 400) => {
+  const end = performance.now() + ms;
+  while (performance.now() < end) { if (!ok()) throw new Error(`${label} (${_wp5bState()})`); await _wait(40); }
+};
+// Phone size: the app reads window.innerWidth (useIsMobile, MOBILE_BP 500). A
+// transform on #root makes it the box for the fixed Present container, so the
+// layout is really 390 px wide. Everything is restored after the body.
+const _wp5bPhone = async (body) => {
+  const root = document.getElementById("root"); if (!root) throw new Error("no #root");
+  const W = 390, H = Math.min(window.innerHeight, 844);
+  const dW = Object.getOwnPropertyDescriptor(window, "innerWidth"), dH = Object.getOwnPropertyDescriptor(window, "innerHeight");
+  const css = root.getAttribute("style");
+  const put = (k, d) => { if (d) Object.defineProperty(window, k, d); else delete window[k]; };
+  Object.defineProperty(window, "innerWidth", { configurable: true, get: () => W });
+  Object.defineProperty(window, "innerHeight", { configurable: true, get: () => H });
+  root.style.width = `${W}px`; root.style.height = `${H}px`; root.style.overflow = "hidden"; root.style.transform = "translateZ(0)";
+  window.dispatchEvent(new Event("resize"));
+  try {
+    await _waitFor(() => _$("header")?.style.height === "40px", 2500).catch(() => { throw new Error("the app did not switch to the phone layout"); });
+    await body(root);
+  } finally {
+    put("innerWidth", dW); put("innerHeight", dH);
+    if (css == null) root.removeAttribute("style"); else root.setAttribute("style", css);
+    window.dispatchEvent(new Event("resize"));
+    await _waitFor(() => _$("header")?.style.height === "44px", 2500).catch(() => {});
+  }
+};
+const _wp5bInside = (a, b, tol = 1) => a.left >= b.left - tol && a.top >= b.top - tol && a.right <= b.right + tol && a.bottom <= b.bottom + tol;
+const _wp5bOverlap = (a, b) => Math.max(0, Math.min(a.right, b.right) - Math.max(a.left, b.left)) * Math.max(0, Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top));
+const _wp5bBox = (r) => `${Math.round(r.left)},${Math.round(r.top)} ${Math.round(r.width)}x${Math.round(r.height)}`;
+// A 1600x900 JPEG with a gradient, a number and many small squares, so the
+// file is not trivial to decode.
+const _wp5bBig = (k) => {
+  const cv = document.createElement("canvas"); cv.width = 1600; cv.height = 900;
+  const g = cv.getContext("2d");
+  const gr = g.createLinearGradient(0, 0, 1600, 900);
+  gr.addColorStop(0, _tlColors[k % 5]); gr.addColorStop(1, `hsl(${(k * 36) % 360},70%,35%)`);
+  g.fillStyle = gr; g.fillRect(0, 0, 1600, 900);
+  for (let i = 0; i < 400; i++) { g.fillStyle = `hsla(${(i * 37 + k * 11) % 360},80%,60%,0.5)`; g.fillRect((i * 97 + k * 13) % 1560, (i * 53 + k * 7) % 860, 40, 40); }
+  g.fillStyle = "#fff"; g.font = "bold 360px sans-serif"; g.fillText(String(k + 1), 560, 600);
+  return cv.toDataURL("image/jpeg", 0.92);
+};
+const _wp5bLayerImg = () => { const l = _wp5Layer(); return l ? _$("[data-story-image] img", l) : null; };
+
+uiSuite("wp5b-story-gaps", [
+  { name: "wheel down steps the story like ArrowRight, then leaves the slide", fn: async () => {
+    await _wp5OnSlide("WP5b wheel fwd", 4, { story: true }, async () => {
+      const here = _wp5Key();
+      await _wp5Enter();
+      if (_wp5Layer()) throw new Error("the story slide opened zoomed, expected the grid");
+      for (let k = 1; k <= 4; k++) {
+        await _wp5bWheelStep(120, () => _wp5ZoomedAt(k), `image ${k}`);
+        if (_wp5Key() !== here) throw new Error(`left the slide at image ${k}`);
+      }
+      await _wp5bWheelStep(120, _wp5Grid, "grid after image 4");
+      if (_wp5Key() !== here) throw new Error("left the slide before the final grid");
+      await _wp5bWheelStep(120, () => _wp5Key() !== here, "next slide");
+    });
+  }},
+  { name: "wheel up steps the story back like ArrowLeft, then leaves the slide", fn: async () => {
+    await _wp5OnSlide("WP5b wheel back", 4, { story: true }, async () => {
+      const here = _wp5Key();
+      await _wp5Enter();
+      await _wp5bWheelStep(120, () => _wp5ZoomedAt(1), "image 1");
+      await _wp5bWheelStep(120, () => _wp5ZoomedAt(2), "image 2");
+      await _wp5bWheelStep(-120, () => _wp5ZoomedAt(1), "image 1 (back)");
+      await _wp5bWheelStep(-120, _wp5Grid, "grid before image 1");
+      if (_wp5Key() !== here) throw new Error("left the slide at the first grid");
+      await _wp5bWheelStep(-120, () => _wp5Key() !== here, "previous slide");
+      // Back onto the story slide from the previous slide: it starts at the grid.
+      await _wp5bWheelStep(120, () => _wp5Key() === here && _wp5Grid(), "story slide grid");
+    });
+  }},
+  { name: "wheel threshold: a small delta does nothing, deltas add up, one notch is one step", fn: async () => {
+    await _wp5OnSlide("WP5b wheel debounce", 4, { story: true }, async () => {
+      const here = _wp5Key();
+      await _wp5Enter();
+      document.activeElement?.blur?.();
+      // 60 < SCROLL_THRESHOLD (120): no step, and the sum resets after 200 ms.
+      _wp5bWheel(60);
+      await _wp5bHold(() => _wp5Grid() && _wp5Key() === here, "a 60 px wheel moved the story");
+      _wp5bWheel(60);
+      await _wp5bHold(() => _wp5Grid() && _wp5Key() === here, "two 60 px wheels 400 ms apart moved the story");
+      // Two halves inside the 200 ms window add up to one step.
+      _wp5bWheel(60); await _wait(30); _wp5bWheel(60);
+      await _waitFor(() => _wp5ZoomedAt(1), 2000).catch(() => { throw new Error(`60+60 px did not step to image 1 (${_wp5bState()})`); });
+      // One large delta is one step, not three.
+      await _wait(260); _wp5bWheel(360);
+      await _waitFor(() => _wp5ZoomedAt(2), 2000).catch(() => { throw new Error(`a 360 px wheel did not step to image 2 (${_wp5bState()})`); });
+      await _wp5bHold(() => _wp5ZoomedAt(2), "a 360 px wheel did more than one step");
+    });
+  }},
+  { name: "touch swipe left steps forward, swipe right steps back; short or vertical swipes do nothing", fn: async () => {
+    await _wp5OnSlide("WP5b swipe", 4, { story: true }, async () => {
+      const here = _wp5Key();
+      await _wp5Enter();
+      await _wp5bSwipeStep(-200, () => _wp5ZoomedAt(1), "image 1");
+      await _wp5bSwipeStep(-200, () => _wp5ZoomedAt(2), "image 2");
+      await _wp5bSwipeStep(200, () => _wp5ZoomedAt(1), "image 1 (back)");
+      // Under the 50 px threshold: no step.
+      await _wp5bSwipe(-30);
+      await _wp5bHold(() => _wp5ZoomedAt(1), "a 30 px swipe moved the story");
+      // Mostly vertical: no step.
+      await _wp5bSwipe(-60, 220);
+      await _wp5bHold(() => _wp5ZoomedAt(1), "a vertical swipe moved the story");
+      await _wp5bSwipeStep(200, _wp5Grid, "grid before image 1");
+      if (_wp5Key() !== here) throw new Error("left the slide at the first grid");
+      await _wp5bSwipeStep(200, () => _wp5Key() !== here, "previous slide");
+    });
+  }},
+  { name: "▶ Preview opens Present on this slide at the grid; Esc returns to the editor on the same slide", fn: async () => {
+    await _wp5OnSlide("WP5b preview", 3, { story: true }, async () => {
+      const here = _wp5Key();
+      const btn = await _waitFor(() => _$("[data-testid='story-preview']"), 2000).catch(() => { throw new Error("no ▶ Preview button on a story slide"); });
+      _click(btn);
+      await _waitFor(() => _wp5Fs() && !_$("header"), 2500).catch(() => { throw new Error("▶ Preview did not open Present"); });
+      await _mrdFrame();
+      if (_wp5Key() !== here) throw new Error(`Present opened on ${_wp5Key()}, expected ${here}`);
+      if (_wp5Layer()) throw new Error("Preview opened zoomed, expected the grid (step 0)");
+      await _wp5Step("ArrowRight", () => _wp5ZoomedAt(1), "image 1");
+      await _wp5Step("Escape", _wp5Grid, "grid after Esc");
+      if (!_wp5Fs()) throw new Error("Esc while zoomed left Present");
+      document.activeElement?.blur?.(); _key("Escape");
+      await _waitFor(() => !_wp5Fs() && _$("header"), 2500).catch(() => { throw new Error("Esc on the grid did not return to the editor"); });
+      if (_wp5Key() !== here) throw new Error(`editor is on ${_wp5Key()} after Esc, expected ${here}`);
+      await _waitFor(() => _$("[data-testid='story-preview']"), 2000).catch(() => { throw new Error("the editor toolbar did not come back"); });
+    });
+  }},
+  { name: "phone size: toolbar shows story icons only; zoomed rail stays on screen and clear of the image", fn: async () => {
+    await _wp5OnSlide("WP5b phone", 4, { story: true }, async () => {
+      const here = _wp5Key();
+      await _wp5bPhone(async (root) => {
+        const tog = await _waitFor(() => _$("[data-testid='story-toggle']"), 2500).catch(() => { throw new Error("no story toggle in the phone layout"); });
+        const pre = _$("[data-testid='story-preview']");
+        if (!pre) throw new Error("no ▶ Preview button in the phone layout");
+        for (const [b, icon] of [[tog, "🎞"], [pre, "▶"]]) {
+          const txt = (b.textContent || "").trim();
+          if (txt !== icon || b.querySelector("span")) throw new Error(`phone toolbar button shows ${JSON.stringify(txt)}, expected the icon ${icon} only`);
+        }
+        if (_wp5Key() !== here) throw new Error("the phone layout changed the slide");
+        _click(pre);
+        await _waitFor(() => _wp5Fs(), 2500).catch(() => { throw new Error("▶ Preview did not open Present in the phone layout"); });
+        await _mrdFrame();
+        const R = root.getBoundingClientRect();
+        if (R.width > 391) throw new Error(`phone box is ${Math.round(R.width)} px wide`);
+        for (let k = 1; k <= 4; k++) {
+          await _wp5Step("ArrowRight", () => _wp5ZoomedAt(k), `image ${k}`);
+          await _wait(420); await _mrdFrame(); // let the 350 ms zoom finish
+          const rail = _$("[data-story-rail]", _wp5Layer()).getBoundingClientRect();
+          const box = _$("[data-story-image]", _wp5Layer()).getBoundingClientRect();
+          const img = _wp5bLayerImg()?.getBoundingClientRect();
+          if (!(rail.width > 0 && rail.height > 0)) throw new Error(`image ${k}: the rail has no size (${_wp5bBox(rail)})`);
+          if (!(box.width > 20 && box.height > 20)) throw new Error(`image ${k}: the zoomed image box is too small (${_wp5bBox(box)})`);
+          if (!_wp5bInside(rail, R)) throw new Error(`image ${k}: rail ${_wp5bBox(rail)} is outside the phone box ${_wp5bBox(R)}`);
+          if (!_wp5bInside(box, R)) throw new Error(`image ${k}: image box ${_wp5bBox(box)} is outside the phone box ${_wp5bBox(R)}`);
+          if (img && !_wp5bInside(img, box)) throw new Error(`image ${k}: the zoomed img ${_wp5bBox(img)} spills out of its box ${_wp5bBox(box)}`);
+          if (_wp5bOverlap(rail, box) > 1) throw new Error(`image ${k}: rail ${_wp5bBox(rail)} overlaps the image box ${_wp5bBox(box)}`);
+          const thumbs = _$$("[data-story-rail] > *", _wp5Layer()).map((t) => t.getBoundingClientRect());
+          if (thumbs.length !== 4) throw new Error(`image ${k}: rail has ${thumbs.length} thumbs, expected 4`);
+          thumbs.forEach((t, i) => {
+            if (!(t.width > 0 && t.height > 0)) throw new Error(`image ${k}: thumb ${i + 1} has no size`);
+            if (!_wp5bInside(t, rail)) throw new Error(`image ${k}: thumb ${i + 1} ${_wp5bBox(t)} is outside the rail ${_wp5bBox(rail)}`);
+            if (_wp5bOverlap(t, box) > 1) throw new Error(`image ${k}: thumb ${i + 1} overlaps the image box`);
+            if (i > 0 && t.top < thumbs[i - 1].bottom - 1) throw new Error(`image ${k}: thumbs ${i} and ${i + 1} overlap`);
+          });
+        }
+        await _wp5Exit();
+      });
+    });
+  }},
+  { name: "10 large images (1600x900): every Present step shows the right image in time, no console errors", fn: async () => {
+    const big = Array.from({ length: 10 }, (_, k) => _wp5bBig(k));
+    const errs = [];
+    const ce = console.error;
+    const onErr = (e) => errs.push(String(e?.message || e?.reason || e).slice(0, 160));
+    console.error = (...a) => { errs.push(a.map((x) => String(x)).join(" ").slice(0, 160)); ce.apply(console, a); };
+    window.addEventListener("error", onErr); window.addEventListener("unhandledrejection", onErr);
+    try {
+      await _wp5OnSlide("WP5b big", 2, { story: true }, async () => {
+        const mark = "WP5b ten big";
+        await _mrdInject([{ type: "heading", text: mark }, ...big.map((src) => ({ type: "image", src }))], { imageCols: undefined, story: true },
+          (vp) => vp?.textContent.includes(mark) && vp.querySelectorAll("img").length >= 10 ? vp : null);
+        const srcs = _wp5ImgSrcs();
+        if (srcs.length !== 10 || new Set(srcs).size !== 10) throw new Error(`deck has ${srcs.length} images (${new Set(srcs).size} distinct), expected 10`);
+        if (srcs.some((s, i) => s !== big[i])) throw new Error("the deck changed an image src on load");
+        const here = _wp5Key();
+        await _wp5Enter();
+        const times = [];
+        for (let k = 1; k <= 10; k++) {
+          document.activeElement?.blur?.();
+          const t0 = performance.now();
+          _key("ArrowRight");
+          await _waitFor(() => { const im = _wp5bLayerImg(); return _wp5ZoomedAt(k) && im && im.getAttribute("src") === srcs[k - 1] && im.complete && im.naturalWidth === 1600 && im.naturalHeight === 900; }, 3000)
+            .catch(() => { const im = _wp5bLayerImg(); throw new Error(`image ${k}: not shown (${_wp5bState()}, src ok=${im?.getAttribute("src") === srcs[k - 1]}, size=${im?.naturalWidth}x${im?.naturalHeight})`); });
+          times.push(Math.round(performance.now() - t0));
+          if (times[k - 1] > 1500) throw new Error(`image ${k} took ${times[k - 1]} ms (limit 1500); times ${times.join(",")}`);
+          if (_wp5Key() !== here) throw new Error(`left the slide at image ${k}`);
+        }
+        await _wp5Step("ArrowRight", _wp5Grid, "grid after image 10");
+      });
+    } finally {
+      console.error = ce;
+      window.removeEventListener("error", onErr); window.removeEventListener("unhandledrejection", onErr);
+    }
+    if (errs.length) throw new Error(`console errors: ${errs.slice(0, 3).join(" | ")}`);
+  }},
+]);
+
+uiSuite("wp5-image-drop", [
+  { name: "OS drop keeps file order; stored src is a safe JPEG data URI; no blob:", fn: async () => {
+    await _wp5OnSlide("WP5 drop", 0, {}, async (vp) => {
+      const title = _wp5Deck().deckTitle;
+      const files = [await _rfiPng(200, 100, 0), await _rfiPng(300, 100, 1), await _rfiPng(400, 100, 2)];
+      const ev = _wp5Drop(vp, files);
+      if (!ev.defaultPrevented) throw new Error("image drop was not taken by the slide panel");
+      await _waitFor(() => _wp5ImgSrcs().length === 3, 10000).catch(() => { throw new Error(`slide has ${_wp5ImgSrcs().length} images after the drop`); });
+      const src = _wp5ImgSrcs();
+      src.forEach((s, i) => { if (!SAFE_RASTER_DATA_IMAGE.test(s) || !/^data:image\/jpeg;base64,/i.test(s)) throw new Error(`image ${i + 1} src is not a safe JPEG data URI`); });
+      const asp = await Promise.all(src.map(_wp5Aspect));
+      if (![2, 3, 4].every((a, i) => Math.abs(asp[i] - a) < 0.1)) throw new Error(`drop order lost: aspects ${asp.map((a) => a.toFixed(2)).join(",")}`);
+      _wp5NoBlob();
+      if (_wp5Deck().deckTitle !== title) throw new Error("image drop changed the deck");
+    });
+  }},
+  { name: "mixed image drop: SVG and oversize files are rejected, images kept, deck kept", fn: async () => {
+    await _wp5OnSlide("WP5 drop mixed", 0, {}, async (vp) => {
+      const title = _wp5Deck().deckTitle;
+      const svg = new File(['<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><rect width="10" height="10"/></svg>'], "a.svg", { type: "image/svg+xml" });
+      const big = new File([new Uint8Array(26 * 1024 * 1024)], "big.png", { type: "image/png" });
+      const files = [await _rfiPng(200, 100, 0), svg, big, await _rfiPng(300, 100, 1)];
+      const ev = _wp5Drop(vp, files);
+      if (!ev.defaultPrevented) throw new Error("mixed drop was not taken by the slide panel");
+      const msg = await _waitFor(() => _wp5Toast(/not added/), 10000).catch(() => { throw new Error("no reject notice"); });
+      if (msg !== "Added 2 · 2 not added") throw new Error(`notice is ${JSON.stringify(msg)}`);
+      const src = _wp5ImgSrcs();
+      if (src.length !== 2) throw new Error(`slide has ${src.length} images, expected 2`);
+      if (!src.every((s) => /^data:image\/jpeg;base64,/i.test(s) && SAFE_RASTER_DATA_IMAGE.test(s))) throw new Error("a kept src is not a safe JPEG data URI");
+      const asp = await Promise.all(src.map(_wp5Aspect));
+      if (Math.abs(asp[0] - 2) > 0.1 || Math.abs(asp[1] - 3) > 0.1) throw new Error("mixed drop lost the image order");
+      _wp5NoBlob();
+      await _wait(300);
+      if (_wp5Deck().deckTitle !== title) throw new Error("a mixed image drop changed the deck");
+    });
+  }},
+  { name: "a drop of a .vela file plus an image loads the deck and adds no image", fn: async () => {
+    await _wp5Exit(); await _selectFirstModule();
+    const title = _wp5Deck().deckTitle;
+    const deck = { deckTitle: "WP5 mixed deck", lanes: [{ id: "wp5x", title: "WP5 lane", items: [{ id: "wp5xm", title: "WP5 mixed module", slides: [{ blocks: [{ type: "heading", text: "WP5 MIXED DECK" }] }] }] }] };
+    const vela = new File([JSON.stringify(deck)], "mixed.vela", { type: "" });
+    try {
+      _wp5Drop(_mrdViewport(), [await _rfiPng(200, 100, 0), vela]);
+      await _waitFor(() => _wp5Deck().deckTitle === "WP5 mixed deck", 5000).catch(() => { throw new Error(`deck not loaded, title is ${JSON.stringify(_wp5Deck().deckTitle)}`); });
+      await _wait(300);
+      if (_wp5Deck().firstBlockText !== "WP5 MIXED DECK") throw new Error("loaded deck content is wrong");
+      const n = _wp5ImgSrcs().length;
+      if (n !== 0) throw new Error(`mixed drop added ${n} image(s) to the loaded deck`);
+      _wp5NoBlob();
+    } finally {
+      if (!_hooks().restoreStartupDeck?.()) throw new Error("could not restore the demo deck");
+      await _waitFor(() => _wp5Deck().deckTitle === title, 3000).catch(() => { throw new Error("demo deck not restored"); });
+      await _selectFirstModule();
+    }
+  }},
+  { name: "FX2a: images-only drop in Present shows a toast; deck unchanged", fn: async () => {
+    await _wp5OnSlide("WP5 drop present", 2, {}, async () => {
+      await _wp5Enter();
+      const title = _wp5Deck().deckTitle, before = JSON.stringify(_wp5Cur());
+      const target = document.elementFromPoint(innerWidth / 2, innerHeight / 2) || document.body;
+      const files = [await _rfiPng(200, 100, 0), await _rfiPng(300, 100, 1)];
+      _wp5Drop(target, files, ["dragenter", "dragover"]);
+      await _waitFor(() => _$text("Exit Present to add images"), 2000).catch(() => { throw new Error("drag overlay does not say to exit Present"); });
+      _wp5Drop(target, files, ["drop"]);
+      await _waitFor(() => _wp5Toast(/^Exit Present to add images$/), 2000).catch(() => { throw new Error("no 'Exit Present to add images' toast"); });
+      await _wait(800);
+      const leaf = _$$("*").filter((el) => el.children.length === 0 && (el.textContent || "").includes("Exit Present to add images"));
+      if (leaf.some((el) => !el.closest(".nav-toast-in, .nav-toast-out"))) throw new Error("drag overlay still shown after the drop");
+      if (!_wp5Fs()) throw new Error("drop left Present");
+      if (_wp5Deck().deckTitle !== title || JSON.stringify(_wp5Cur()) !== before) throw new Error("drop in Present changed the deck");
+    });
+  }},
+  { name: "a .vela-only drop still loads a deck", fn: async () => {
+    await _wp5Exit(); await _selectFirstModule();
+    const title = _wp5Deck().deckTitle;
+    const deck = { deckTitle: "WP5 dropped deck", lanes: [{ id: "wp5l", title: "WP5 lane", items: [{ id: "wp5m", title: "WP5 dropped module", slides: [{ blocks: [{ type: "heading", text: "WP5 DROPPED DECK" }] }] }] }] };
+    const vela = new File([JSON.stringify(deck)], "wp5.vela", { type: "" });
+    try {
+      _wp5Drop(_mrdViewport(), [vela]);
+      await _waitFor(() => _wp5Deck().deckTitle === "WP5 dropped deck", 5000).catch(() => { throw new Error(`deck not loaded, title is ${JSON.stringify(_wp5Deck().deckTitle)}`); });
+      _wp5NoBlob();
+    } finally {
+      if (!_hooks().restoreStartupDeck?.()) throw new Error("could not restore the demo deck");
+      await _waitFor(() => _wp5Deck().deckTitle === title, 3000).catch(() => { throw new Error("demo deck not restored"); });
+      await _selectFirstModule();
+    }
+  }},
+]);
+
+// Slide toolbar auto-compact: one row at any width; labels hide from the right.
+const _tbEl = () => _$("[data-testid='slide-toolbar']");
+const _tbButtons = () => Array.from(_tbEl()?.querySelectorAll("button") || []);
+const _tbOneRow = () => { const el = _tbEl(), c = _tbButtons().map((b) => { const r = b.getBoundingClientRect(); return r.top + r.height / 2; }); return c.length > 0 && c.every((y) => Math.abs(y - c[0]) < 2) && el.scrollWidth <= el.clientWidth + 1; }; // one row, and the row fits
+const _tbAtWidth = async (w, body) => {
+  await _selectFirstModule();
+  const el = await _waitFor(_tbEl, 3000).catch(() => { throw new Error("no slide toolbar"); });
+  const old = el.style.width;
+  try { el.style.width = w + "px"; await _wait(250); await body(el); }
+  finally { el.style.width = old; await _wait(150); }
+};
+uiSuite("toolbar-auto-compact", [
+  { name: "narrow toolbar: all buttons share one row", fn: async () => {
+    await _tbAtWidth(620, async () => {
+      if (!_tbOneRow()) throw new Error(`toolbar buttons wrap to more than one row (${_tbButtons().map((b) => Math.round(b.getBoundingClientRect().top)).join(",")})`);
+    });
+  }},
+  { name: "narrow toolbar: a button with a hidden label has an aria-label", fn: async () => {
+    await _tbAtWidth(620, async () => {
+      const ov = _$("[data-testid='editor-gallery-toggle']");
+      if (!ov) throw new Error("no Overview button");
+      if (ov.querySelector("span")) throw new Error("the rightmost label (Overview) is still shown at 620 px");
+      if (ov.getAttribute("aria-label") !== "Overview") throw new Error(`Overview aria-label is ${ov.getAttribute("aria-label")}`);
+      if (!ov.title) throw new Error("Overview lost its title tooltip");
+      const firstLabelled = _tbButtons()[0];
+      if (!firstLabelled.querySelector("span")) throw new Error("the leftmost label hid before the rightmost labels");
+    });
+  }},
+  { name: "wide toolbar: all labels show, no aria-label added", fn: async () => {
+    await _tbAtWidth(2400, async () => {
+      const bad = _tbButtons().filter((b) => !b.querySelector("span"));
+      if (bad.length) throw new Error(`${bad.length} button(s) without a label at 2400 px`);
+      const extra = _tbButtons().filter((b) => b.getAttribute("aria-label") && b.dataset.testid !== "story-preview");
+      if (extra.length) throw new Error(`aria-label set on a labelled button: ${extra.map((b) => b.getAttribute("aria-label")).join(",")}`);
+      if (!_tbOneRow()) throw new Error("toolbar is not one row at 2400 px");
+    });
+  }},
+  { name: "narrower toolbar: icons use compact padding, still one row that fits", fn: async () => {
+    await _tbAtWidth(360, async (el) => {
+      if (!_tbOneRow()) throw new Error(`toolbar wraps or overflows at 360 px (scrollWidth ${el.scrollWidth}, clientWidth ${el.clientWidth})`);
+      if (_tbButtons().some((b) => b.querySelector("span"))) throw new Error("a label is still shown at 360 px");
+      const pad = getComputedStyle(_tbButtons()[0]).paddingLeft;
+      if (pad !== "6px") throw new Error(`icon buttons do not use compact padding at 360 px (padding-left ${pad})`);
+    });
+  }},
+]);
 
 // ━━━ UI TEST RUNNER COMPONENT ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -17466,11 +22418,12 @@ function drawVelaWatermark(ctx, pw, ph) {
 }
 
 // ━━━ PDF Export Modal ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-function PdfExportModal({ slides: allSlides, branding, deckTitle, onClose }) {
+function PdfExportModal({ slides: deckSlides, branding, deckTitle, onClose }) {
   const [ratio, setRatio] = useState("16:9");
   const [quality, setQuality] = useState("high");
   const [useVector, setUseVector] = useState(false);
   const [includeCards, setIncludeCards] = useState(true);
+  const [expandStory, setExpandStory] = useState(true);
   const [phase, setPhase] = useState("choose"); // choose | exporting | done | error
   const [progress, setProgress] = useState(0);
   const [errorMsg, setErrorMsg] = useState("");
@@ -17487,6 +22440,11 @@ function PdfExportModal({ slides: allSlides, branding, deckTitle, onClose }) {
   ratioRef.current = ratio;
   const qualityRef = useRef(quality);
   qualityRef.current = quality;
+
+  // Story slides (slide.story with 2+ images) optionally expand to one page per image.
+  const storyExpanded = useMemo(() => expandStorySlides(deckSlides), [deckSlides]);
+  const storyPageCount = useMemo(() => storyExpanded.filter((s) => s._storyPage).length, [storyExpanded]);
+  const allSlides = expandStory ? storyExpanded : deckSlides;
 
   // Module title cards (the 🎬 "present card") are inserted by collectAllSlides as
   // _virtual slides. Let the user opt out, and surface how many enabled cards there are.
@@ -17703,6 +22661,24 @@ function PdfExportModal({ slides: allSlides, branding, deckTitle, onClose }) {
                 }} />
               </button>
             </div>}
+            {storyPageCount > 0 && <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20, padding: "10px 12px", background: "rgba(255,255,255,0.03)", border: `1px solid ${T.border}`, borderRadius: 8 }}>
+              <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                <span style={{ fontFamily: FONT.body, fontSize: 13, color: T.text }}>Expand story slides</span>
+                <span style={{ fontFamily: FONT.mono, fontSize: 9, color: T.textDim }}>🖼 {storyPageCount} extra image page{storyPageCount !== 1 ? "s" : ""} (one per story image)</span>
+              </div>
+              <button data-testid="pdf-expand-story" aria-pressed={expandStory} onClick={() => setExpandStory(b => !b)} style={{
+                width: 40, height: 22, borderRadius: 11, border: "none", cursor: "pointer",
+                background: expandStory ? T.accent : "rgba(255,255,255,0.12)",
+                position: "relative", transition: "background .2s", flexShrink: 0,
+              }}>
+                <div style={{
+                  width: 16, height: 16, borderRadius: 8, background: "#fff",
+                  position: "absolute", top: 3,
+                  left: expandStory ? 21 : 3,
+                  transition: "left .2s", boxShadow: "0 1px 3px rgba(0,0,0,0.3)",
+                }} />
+              </button>
+            </div>}
             <button data-testid="pdf-export-start" onClick={() => quality === "vector" ? setUseVector(true) : startExport()} style={{
               width: "100%", padding: "10px", fontFamily: FONT.mono, fontSize: 12, fontWeight: 700,
               background: T.accent, color: "#fff", border: "none", borderRadius: 6, cursor: "pointer",
@@ -17832,10 +22808,11 @@ function PdfExportModal({ slides: allSlides, branding, deckTitle, onClose }) {
         const slideBg = reflowed.bgGradient || reflowed.bg || T.slideBg;
         // Match presentation numbering: title cards aren't counted, real slides
         // keep continuous 1-based numbers (excluding any inserted title cards).
-        const displayTotal = slides.reduce((n, s) => n + (s._virtual ? 0 : 1), 0);
+        const displayTotal = slides.reduce((n, s) => n + (s._storyPage ? 0 : s._virtual ? 0 : 1), 0);
         let nonVirtualBefore = 0;
-        for (let i = 0; i < renderIdx; i++) if (!slides[i]._virtual) nonVirtualBefore++;
-        const displayIndex = currentSlide._virtual ? nonVirtualBefore - 1 : nonVirtualBefore;
+        for (let i = 0; i < renderIdx; i++) if (!(slides[i]._virtual || slides[i]._storyPage)) nonVirtualBefore++;
+        // A story page shares the number of its grid slide (the one just before it).
+        const displayIndex = (currentSlide._virtual || currentSlide._storyPage) ? nonVirtualBefore - 1 : nonVirtualBefore;
         return (
           <div style={{ position: "fixed", left: -9999, top: -9999, width: rw, height: rh, overflow: "hidden", zIndex: -1 }}>
             <div ref={offscreenRef} className="no-anim vela-pdf-capture" style={{ width: rw, height: rh, overflow: "hidden", background: slideBg }}>
@@ -18021,6 +22998,32 @@ function buildShadingDict(gradient, coords) {
 // ━━━ PDF Text encoding ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // For standard fonts, PDF uses WinAnsiEncoding (Latin-1 subset)
 // Characters outside this range get replaced with ?
+
+// WinAnsiEncoding bytes 128-159 → Unicode code point (PDF 32000-1, Annex D).
+// The ONE copy of this table: pdfStringEncode (byte emitted), isEmojiCodepoint
+// (these are text glyphs, not emoji images) and the embedded-font width table
+// in part-pdf-vector.jsx (concatenated after this part) all read it. A second
+// copy drifts: a char the width table knows but the encoder does not is sent
+// down the emoji-image path or dropped (the € sizing bug).
+const WIN_ANSI_HIGH = {
+  128: 0x20AC, 130: 0x201A, 131: 0x0192, 132: 0x201E, 133: 0x2026,
+  134: 0x2020, 135: 0x2021, 136: 0x02C6, 137: 0x2030, 138: 0x0160,
+  139: 0x2039, 140: 0x0152, 142: 0x017D, 145: 0x2018, 146: 0x2019,
+  147: 0x201C, 148: 0x201D, 149: 0x2022, 150: 0x2013, 151: 0x2014,
+  152: 0x02DC, 153: 0x2122, 154: 0x0161, 155: 0x203A, 156: 0x0153,
+  158: 0x017E, 159: 0x0178
+};
+const WIN_ANSI_FROM_UNICODE = new Map(Object.keys(WIN_ANSI_HIGH).map((b) => [WIN_ANSI_HIGH[b], Number(b)]));
+
+// The single-byte code a PDF string uses for code point `cp`, or -1 when
+// WinAnsiEncoding has no slot for it. 32-126 and 128-255 pass through (the
+// encoder has always emitted 128-255 as their own byte).
+function pdfWinAnsiByte(cp) {
+  if ((cp >= 32 && cp <= 126) || (cp >= 128 && cp <= 255)) return cp;
+  const b = WIN_ANSI_FROM_UNICODE.get(cp);
+  return b === undefined ? -1 : b;
+}
+
 function pdfStringEncode(str) {
   let out = "(";
   for (let i = 0; i < str.length; i++) {
@@ -18039,19 +23042,13 @@ function pdfStringEncode(str) {
       // Latin-1 chars (©, ·, ×, etc.) — must use octal escape to avoid
       // UTF-8 double-encoding when TextEncoder converts to bytes
       out += "\\" + c.toString(8).padStart(3, "0");
+    } else if (WIN_ANSI_FROM_UNICODE.has(c)) {
+      // WinAnsi 128-159 glyphs (€ – — “ ” ‘ ’ • … ™ ‰ …) — emit their real
+      // byte as an octal escape (avoids UTF-8 double-encoding via TextEncoder)
+      out += "\\" + WIN_ANSI_FROM_UNICODE.get(c).toString(8).padStart(3, "0");
     } else {
-      // Typographic Unicode → WinAnsiEncoding substitutions
-      // Values use PDF octal escapes to avoid UTF-8 double-encoding via TextEncoder
+      // No WinAnsi slot: ASCII substitutions for a few common symbols
       const typoMap = {
-        0x2014: "\\227", // em dash (WinAnsi 0x97)
-        0x2013: "\\226", // en dash (WinAnsi 0x96)
-        0x201C: "\\223", // left double quote (WinAnsi 0x93)
-        0x201D: "\\224", // right double quote (WinAnsi 0x94)
-        0x2018: "\\221", // left single quote (WinAnsi 0x91)
-        0x2019: "\\222", // right single quote (WinAnsi 0x92)
-        0x2022: "\\267", // bullet → middle dot (WinAnsi 0xB7)
-        0x2026: "...",   // ellipsis
-        0x2122: "TM",    // trademark
         0x2192: "->",    // right arrow
         0x2190: "<-",    // left arrow
         0x21D2: "=>",    // double right arrow
@@ -18075,8 +23072,12 @@ function isEmojiCodepoint(cp) {
   if (cp === 0xFE0F || cp === 0xFE0E || cp === 0x200D) return false;
   // Skin tone modifiers — not standalone visual
   if (cp >= 0x1F3FB && cp <= 0x1F3FF) return false;
-  // Common typographic characters we handle as text substitutions
-  const textSubs = [0x2014,0x2013,0x201C,0x201D,0x2018,0x2019,0x2022,0x2026,0x2122,0x2192,0x2190,0x2191,0x2193,0x21D2];
+  // Every WinAnsi-representable glyph (€, –, “, …, ™, •) is real text: the
+  // embedded fonts draw it at text size. Sending it down the emoji-image path
+  // drew a square bitmap squeezed into the glyph box (wrong size / stretched).
+  if (WIN_ANSI_FROM_UNICODE.has(cp)) return false;
+  // Arrows we handle as ASCII text substitutions
+  const textSubs = [0x2192,0x2190,0x2191,0x2193,0x21D2];
   if (textSubs.includes(cp)) return false;
   return cp > 0xFF;
 }
@@ -18353,6 +23354,12 @@ function getTextLines(textNode, containerRect) {
   }
   if (parts.length === 0) return [];
 
+  // Measure each line from its first non-space char. The line TEXT drops leading
+  // whitespace, so the measured range must drop it too: a text node that follows
+  // an inline span (" and more") otherwise reports x at the space and a width
+  // that includes it — the vector PDF then draws the run flush against the span
+  // and spreads the space's width over the glyphs as Tc (letter-spacing).
+  const lead = (s, e) => { while (s < e && /\s/.test(text[s])) s++; return s; };
   let lineStart = 0;
   let lineTop = null;
 
@@ -18369,7 +23376,7 @@ function getTextLines(textNode, containerRect) {
     } else if (Math.abs(rect.top - lineTop) > 3) {
       // New line — flush previous
       const prevEnd = parts[pi - 1] ? parts[pi - 1].end : p.start;
-      range.setStart(textNode, lineStart);
+      range.setStart(textNode, lead(lineStart, prevEnd));
       range.setEnd(textNode, prevEnd);
       const lr = range.getBoundingClientRect();
       const lt = text.substring(lineStart, prevEnd).replace(/^\s+/, "");
@@ -18393,7 +23400,7 @@ function getTextLines(textNode, containerRect) {
 
   // Last line
   const lastEnd = parts[parts.length - 1].end;
-  range.setStart(textNode, lineStart);
+  range.setStart(textNode, lead(lineStart, lastEnd));
   range.setEnd(textNode, lastEnd);
   const lr = range.getBoundingClientRect();
   const lt = text.substring(lineStart, lastEnd).replace(/^\s+/, "");
@@ -18563,6 +23570,9 @@ function extractTextRuns(container, containerRect) {
         fontStyle,
         fontFamily,
         letterSpacing,
+        // ++underline++ spans from parseInline carry data-vela-u (a code-set
+        // marker, not computed text-decoration, so links keep their old output).
+        ...(parent.closest("[data-vela-u]") ? { underline: true } : {}),
       });
     }
   }
@@ -19390,6 +24400,9 @@ function buildVectorPdf(pages, pageW, pageH, fonts, showBranding) {
       }
 
       content += "BT\n";
+      // Underline rects are path operators: they cannot sit inside BT/ET, so
+      // collect them here and fill them after ET.
+      let underlines = "";
       for (const run of page.textRuns) {
         const fontTag = pickFont(run.fontFamily, run.fontWeight, run.fontStyle);
         content += `${fontTag} ${run.fontSize.toFixed(1)} Tf\n`;
@@ -19410,7 +24423,8 @@ function buildVectorPdf(pages, pageW, pageH, fonts, showBranding) {
         if (n > 1 && run.w > 0 && fd && fd.widths) {
           let rawW = 0;
           for (let ci = 0; ci < n; ci++) {
-            const code = run.text.charCodeAt(ci);
+            // Width of the byte pdfStringEncode emits for this char
+            const code = pdfWinAnsiByte(run.text.charCodeAt(ci));
             rawW += (code >= 32 && code <= 255) ? (fd.widths[code - 32] || 0) : 500;
           }
           const rawPdfW = rawW * run.fontSize / 1000;
@@ -19427,10 +24441,17 @@ function buildVectorPdf(pages, pageW, pageH, fonts, showBranding) {
         if (Math.abs(tc) > 0.01) {
           content += "0 Tc\n";
         }
+        if (run.underline && run.w > 0) {
+          const th = Math.max(0.5, run.fontSize * 0.06);
+          const uy = pdfY - run.fontSize * 0.12 - th;
+          underlines += `${run.color.r.toFixed(3)} ${run.color.g.toFixed(3)} ${run.color.b.toFixed(3)} rg `
+            + `${run.x.toFixed(1)} ${uy.toFixed(1)} ${run.w.toFixed(1)} ${th.toFixed(2)} re f\n`;
+        }
         // Reset position for next run
         content += `${(-run.x).toFixed(1)} ${(-pdfY).toFixed(1)} Td\n`;
       }
       content += "ET\n";
+      if (underlines) content += "q\n" + underlines + "Q\n";
     }
 
     // Watermark (only when branding toggle is on)
@@ -19715,14 +24736,8 @@ function parseTTF(buf) {
 
   // Build WinAnsi char widths (chars 32-255)
   // WinAnsi maps chars 128-159 to special Unicode code points
-  const winAnsiMap = {
-    128: 0x20AC, 130: 0x201A, 131: 0x0192, 132: 0x201E, 133: 0x2026,
-    134: 0x2020, 135: 0x2021, 136: 0x02C6, 137: 0x2030, 138: 0x0160,
-    139: 0x2039, 140: 0x0152, 142: 0x017D, 145: 0x2018, 146: 0x2019,
-    147: 0x201C, 148: 0x201D, 149: 0x2022, 150: 0x2013, 151: 0x2014,
-    152: 0x02DC, 153: 0x2122, 154: 0x0161, 155: 0x203A, 156: 0x0153,
-    158: 0x017E, 159: 0x0178
-  };
+  // (WIN_ANSI_HIGH — the shared table in part-pdf-extract.jsx)
+  const winAnsiMap = WIN_ANSI_HIGH;
 
   const widths = new Array(224); // chars 32-255
   for (let i = 0; i < 224; i++) {
@@ -20321,10 +25336,11 @@ function VectorPdfExportModal({ slides, branding, deckTitle, onClose, initialRat
         const rw = Math.round(VIRTUAL_W / zoom);
         const rh = Math.round(rh0 / zoom);
         // Match presentation numbering: title cards aren't counted toward slide numbers.
-        const displayTotal = slides.reduce((n, s) => n + (s._virtual ? 0 : 1), 0);
+        const displayTotal = slides.reduce((n, s) => n + (s._storyPage ? 0 : s._virtual ? 0 : 1), 0);
         let nonVirtualBefore = 0;
-        for (let i = 0; i < renderIdx; i++) if (!slides[i]._virtual) nonVirtualBefore++;
-        const displayIndex = currentSlide._virtual ? nonVirtualBefore - 1 : nonVirtualBefore;
+        for (let i = 0; i < renderIdx; i++) if (!(slides[i]._virtual || slides[i]._storyPage)) nonVirtualBefore++;
+        // A story page shares the number of its grid slide (the one just before it).
+        const displayIndex = (currentSlide._virtual || currentSlide._storyPage) ? nonVirtualBefore - 1 : nonVirtualBefore;
         return (
           <div style={{ position: "fixed", left: -9999, top: -9999, width: rw, height: rh, overflow: "hidden", zIndex: -1 }}>
             <style>{`.no-anim, .no-anim * { animation: none !important; transition: none !important; }`}</style>
@@ -20367,6 +25383,32 @@ function collectAllSlides(lanes, branding) {
     }
   }
   return all;
+}
+
+// Story slides ("Expand story slides" export option): after a story-active slide,
+// emit one virtual full-slide page per story image. A page is built ONLY from
+// already-sanitized slide state and copies a fixed key list, so no deck key can
+// ride along; "_storyPage" is a renderer-private flag set here, after sanitization
+// (deck input can never carry a "_" key). A one-image page renders through the
+// solo-image path (full slide, contain). Hidden images are excluded because
+// storyImageList runs in presenting mode. Title cards (_virtual) are never story.
+const STORY_PAGE_KEYS = ["bg", "bgGradient", "bgImage", "color", "accent", "mutedColor", "duration"];
+function expandStorySlides(slides) {
+  const out = [];
+  for (const slide of (slides || [])) {
+    out.push(slide);
+    if (!slide || typeof slide !== "object" || slide._virtual) continue;
+    const list = storyImageList(slide, true);
+    if (!storyIsActive(slide, list)) continue;
+    for (const it of list) {
+      const page = {};
+      for (const k of STORY_PAGE_KEYS) if (slide[k] !== undefined) page[k] = slide[k];
+      page.blocks = [{ type: "image", src: it.src, alt: it.alt }];
+      page._storyPage = true;
+      out.push(page);
+    }
+  }
+  return out;
 }
 
 // © 2025-present Rui Quintino. Vela Slides — licensed under ELv2. See LICENSE.
@@ -20705,6 +25747,58 @@ function stripEsmImportsForStandalone(jsx) {
     .replace(/^export\s+default\s+function\s+/m, "function ");
 }
 
+// Neutralino serves a vela.jsx that sync-vela.py already prefixed with its own
+// UMD shim (the same React/lucide destructure buildStandaloneHtml adds). Keeping
+// both declares useState twice and Babel rejects the script (CR12). The serve.py
+// preview adds the same shim, with its own marker, inside its text/babel tag.
+// Strip a marked block ONLY at the start of the trusted template (only
+// whitespace may come before it: the text/babel tag starts with a newline),
+// before any deck is spliced in, so deck content can never forge or move this
+// anchor. `\r?\n` (not a bare `\n`) so a CRLF-written file (e.g. a Windows-side
+// sync-vela.py run) still matches — see D1 in the meridian sprint notes.
+const NEUTRALINO_UMD_SHIM_RE = /^\s*\/\/ --- (?:Neutralino UMD shim \(generated by sync-vela\.py\)|Vela UMD shim \(generated by serve\.py\)) -*\r?\n[^]*?\r?\n\/\/ -{10,}\r?\n\r?\n?/;
+function stripNeutralinoUmdShim(jsx) {
+  return typeof jsx === "string" ? jsx.replace(NEUTRALINO_UMD_SHIM_RE, "") : jsx;
+}
+
+// The serve.py preview's text/babel tag also ends with local.html's own mount
+// code. The export adds its own mount, and two createRoot() calls on one
+// container break the page, so strip that marked trailer. Anchored to the start
+// of a line and run on the template before the deck splice (deck JSON is always
+// mid-line), so deck content cannot forge it. No marker: source unchanged.
+const PREVIEW_MOUNT_RE = /\r?\n\/\/ --- Vela mount \(local\.html\) ---[^\r\n]*\r?\n[^]*$/;
+function stripPreviewMount(jsx) {
+  return jsx.replace(PREVIEW_MOUNT_RE, "\n");
+}
+
+// A desktop (sync-vela.py) or serve.py template has VELA_LOCAL_MODE flipped to
+// true. The exported file is opened by someone else in a plain browser, so it
+// must run exactly like a web export: local mode on would skip its persistence,
+// change its startup path and install shell-only globals. Reset the flag on the
+// TRUSTED template, before the deck splice; the pattern is anchored to the
+// start of a line, which spliced deck JSON (always mid-line, no raw newline)
+// cannot forge. No match (a web template) leaves the source unchanged. Only the
+// value is rewritten (no full declaration literal here: serve.py / sync-vela.py
+// find the declaration by its exact text, and a second copy would confuse them).
+const VELA_LOCAL_MODE_ON_RE = /^(const[ \t]+VELA_LOCAL_MODE[ \t]*=[ \t]*)true(?=[ \t]*;)/m;
+function resetLocalModeForStandalone(jsx) {
+  return jsx.replace(VELA_LOCAL_MODE_ON_RE, (_m, head) => head + "false");
+}
+
+// serve.py --ai also writes its loopback AI channel port and per-server secret
+// token into the template. The exported file is shared with other people, so it
+// must never carry them: the token is the only real gate on the local channel.
+// Reset both to the web defaults on the TRUSTED template, before the deck
+// splice, with the same start-of-line anchor as the local-mode reset (first
+// match only: the real declarations come before STARTUP_PATCH).
+const VELA_CHANNEL_PORT_RE = /^(const[ \t]+VELA_CHANNEL_PORT[ \t]*=[ \t]*)[^;\r\n]*(?=;)/m;
+const VELA_CHANNEL_TOKEN_RE = /^(const[ \t]+VELA_CHANNEL_TOKEN[ \t]*=[ \t]*)[^;\r\n]*(?=;)/m;
+function resetChannelForStandalone(jsx) {
+  return jsx
+    .replace(VELA_CHANNEL_PORT_RE, (_m, head) => head + "0")
+    .replace(VELA_CHANNEL_TOKEN_RE, (_m, head) => head + "\"\"");
+}
+
 // Replace the value bound to `const STARTUP_PATCH = ...;` with the current
 // deck, whether the source holds the pristine `null` sentinel (Neutralino:
 // freshly fetched vela.jsx) or an already-embedded deck object (artifact/
@@ -20763,7 +25857,7 @@ function escapeHtmlText(s) {
 function buildStandaloneHtml(jsxSource, deckObj, opts = {}) {
   const { footer = false, babel } = opts;
   if (!babel || typeof babel.transform !== "function") throw new Error("buildStandaloneHtml requires a Babel-standalone instance");
-  let jsx = stripEsmImportsForStandalone(jsxSource);
+  let jsx = resetChannelForStandalone(resetLocalModeForStandalone(stripEsmImportsForStandalone(stripPreviewMount(stripNeutralinoUmdShim(jsxSource)))));
   jsx = spliceStartupPatch(jsx, deckObj);
   jsx = flipPresentationMode(jsx);
   const shim =
@@ -21128,7 +26222,7 @@ function pptxEllipse(id, e) {
 }
 
 // t: { x,y,w,h, text, fontSize?|size?, color, bold?|fontWeight?, italic?|fontStyle?, font?|fontFamily?, align?,
-//      runs?: [ [ {text, bold?, italic?}, … ], … ] }
+//      runs?: [ [ {text, bold?, italic?, underline?}, … ], … ] }
 // One text box per source text element; PowerPoint reflows/wraps within the box.
 // `runs` (from pptxExtractTextBoxes) is an array of LINES, each an array of styled
 // runs — so inline **bold** / *italic* segments emit as separate <a:r> runs within
@@ -21143,7 +26237,7 @@ function pptxTextSp(id, t) {
   const algn = ({ left: "l", center: "ctr", right: "r", justify: "just", start: "l", end: "r" })[alignRaw] || "l";
   const hex = pptxColorHex(t.color) || "000000";
   const font = pptxFontName(t.font || t.fontFamily);
-  const mkRPr = (b, i) => `<a:rPr lang="en-US" sz="${pptxCpt(size)}"${b ? ' b="1"' : ""}${i ? ' i="1"' : ""} dirty="0">`
+  const mkRPr = (b, i, u) => `<a:rPr lang="en-US" sz="${pptxCpt(size)}"${b ? ' b="1"' : ""}${i ? ' i="1"' : ""}${u ? ' u="sng"' : ""} dirty="0">`
     + `<a:solidFill><a:srgbClr val="${hex}"/></a:solidFill>`
     + `<a:latin typeface="${pptxEsc(font)}"/><a:cs typeface="${pptxEsc(font)}"/></a:rPr>`;
   const emptyPara = `<a:endParaRPr lang="en-US" sz="${pptxCpt(size)}"/>`; // blank line — keep the paragraph, no run
@@ -21159,7 +26253,7 @@ function pptxTextSp(id, t) {
   if (Array.isArray(t.runs)) {
     paras = t.runs.map((lineRuns) => {
       const body = (lineRuns && lineRuns.length)
-        ? lineRuns.map((r) => `<a:r>${mkRPr(!!r.bold, !!r.italic)}<a:t>${pptxEsc(r.text)}</a:t></a:r>`).join("")
+        ? lineRuns.map((r) => `<a:r>${mkRPr(!!r.bold, !!r.italic, !!r.underline)}<a:t>${pptxEsc(r.text)}</a:t></a:r>`).join("")
         : emptyPara;
       return `<a:p><a:pPr algn="${algn}"/>${body}</a:p>`;
     }).join("");
@@ -21746,10 +26840,12 @@ function pptxExtractTextBoxes(container, containerRect) {
     // <br> starts a new line/paragraph (explicit "\n" in source); a block-level
     // child is left for the walker to emit as its own box (NOT marked seen here).
     const lines = [[]];
-    const pushRun = (txt, bold, italic) => { if (txt) lines[lines.length - 1].push({ text: txt, bold, italic }); };
-    const walkInline = (node, bold, italic) => {
+    // underline: only parseInline's ++underline++ spans (data-vela-u, a code-set
+    // marker) — not computed text-decoration, so link runs keep their old output.
+    const pushRun = (txt, bold, italic, underline) => { if (txt) lines[lines.length - 1].push(underline ? { text: txt, bold, italic, underline } : { text: txt, bold, italic }); };
+    const walkInline = (node, bold, italic, underline) => {
       for (const n of node.childNodes) {
-        if (n.nodeType === 3) { pushRun(n.textContent, bold, italic); continue; }
+        if (n.nodeType === 3) { pushRun(n.textContent, bold, italic, underline); continue; }
         if (n.nodeType !== 1) continue;
         if (n.tagName === "BR") { lines.push([]); continue; }
         if (String(n.tagName).toLowerCase() === "svg") continue; // icons handled separately
@@ -21757,18 +26853,19 @@ function pptxExtractTextBoxes(container, containerRect) {
         const cs = window.getComputedStyle(n);
         const b = bold || (parseInt(cs.fontWeight) || 400) >= 600;
         const it = italic || (String(cs.fontStyle).indexOf("italic") >= 0);
+        const u = underline || n.hasAttribute("data-vela-u");
         seen.add(n); // absorb this inline element so its text nodes don't spawn a box
-        walkInline(n, b, it);
+        walkInline(n, b, it, u);
       }
     };
     const baseBold = (parseInt(style.fontWeight) || 400) >= 600;
     const baseItalic = String(style.fontStyle).indexOf("italic") >= 0;
-    walkInline(blockEl, baseBold, baseItalic);
+    walkInline(blockEl, baseBold, baseItalic, blockEl.hasAttribute("data-vela-u"));
 
     // Normalize whitespace per line: collapse runs of whitespace to single spaces,
     // trim the outer edges, drop emptied runs, then apply text-transform per run.
     const runs = lines.map((lineRuns) => {
-      let rs = lineRuns.map((r) => ({ text: r.text.replace(/\s+/g, " "), bold: r.bold, italic: r.italic }));
+      let rs = lineRuns.map((r) => (r.underline ? { text: r.text.replace(/\s+/g, " "), bold: r.bold, italic: r.italic, underline: true } : { text: r.text.replace(/\s+/g, " "), bold: r.bold, italic: r.italic }));
       if (rs.length) {
         rs[0].text = rs[0].text.replace(/^\s+/, "");
         rs[rs.length - 1].text = rs[rs.length - 1].text.replace(/\s+$/, "");
@@ -22117,6 +27214,8 @@ function pptxExtractSlidePage(el, containerRect, slide) {
 // © 2025-present Rui Quintino. Vela Slides — licensed under ELv2. See LICENSE.
 // ━━━ Modal Backdrop (shared) ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 function ModalBackdrop({ onClose, onEnter, extraKeys, children }) {
+  // Registered for SlidePanel's Esc check (see VELA_OPEN_CHROME in part-blocks.jsx).
+  useEffect(() => { const t = {}; VELA_OPEN_CHROME.modals.add(t); return () => { VELA_OPEN_CHROME.modals.delete(t); }; }, []);
   useEffect(() => {
     const h = (e) => {
       if (e.key === "Escape") { e.preventDefault(); onClose(); return; }
@@ -22133,7 +27232,7 @@ function ModalBackdrop({ onClose, onEnter, extraKeys, children }) {
     return () => window.removeEventListener("keydown", h);
   }, [onClose, onEnter, extraKeys]);
   return (
-    <div onClick={onClose} style={{ position: "fixed", inset: 0, zIndex: 10001, background: "rgba(0,0,0,0.75)", backdropFilter: "blur(8px)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+    <div data-vela-modal="" onClick={onClose} style={{ position: "fixed", inset: 0, zIndex: 10001, background: "rgba(0,0,0,0.75)", backdropFilter: "blur(8px)", display: "flex", alignItems: "center", justifyContent: "center" }}>
       <div onClick={(e) => e.stopPropagation()} style={{ background: T.bgPanel, border: `1px solid ${T.border}`, borderRadius: 12, padding: "24px 28px", maxWidth: 520, width: "90vw", maxHeight: "85vh", overflowY: "auto", boxSizing: "border-box", boxShadow: "0 24px 64px rgba(0,0,0,0.5)" }}>
         {children}
       </div>
@@ -22151,7 +27250,7 @@ function ModalBackdrop({ onClose, onEnter, extraKeys, children }) {
 // then buildPptx() emits the OOXML+ZIP Blob. The artifact sandbox blocks blob:
 // URLs, so the bytes are base64-encoded into a data: URI for the <a download>
 // (same pattern the PDF modal uses for its own bytes).
-function PptxExportModal({ slides, branding, deckTitle, onClose }) {
+function PptxExportModal({ slides: allSlides, branding, deckTitle, onClose }) {
   const [phase, setPhase] = useState("choose"); // choose | exporting | done | error
   const [progress, setProgress] = useState(0);
   const [errorMsg, setErrorMsg] = useState("");
@@ -22164,6 +27263,11 @@ function PptxExportModal({ slides, branding, deckTitle, onClose }) {
   const [showBranding, setShowBranding] = useState(false);
   const showBrandingRef = useRef(showBranding);
   showBrandingRef.current = showBranding;
+  // Story slides (slide.story with 2+ images) optionally expand to one page per image.
+  const [expandStory, setExpandStory] = useState(true);
+  const storyExpanded = useMemo(() => expandStorySlides(allSlides), [allSlides]);
+  const storyPageCount = useMemo(() => storyExpanded.filter((s) => s._storyPage).length, [storyExpanded]);
+  const slides = expandStory ? storyExpanded : allSlides;
 
   const startExport = useCallback(() => {
     setPhase("exporting");
@@ -22297,6 +27401,23 @@ function PptxExportModal({ slides, branding, deckTitle, onClose }) {
                 }} />
               </button>
             </div>
+            {storyPageCount > 0 && <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20, padding: "10px 12px", background: "rgba(255,255,255,0.03)", border: `1px solid ${T.border}`, borderRadius: 8 }}>
+              <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                <span style={{ fontFamily: FONT.body, fontSize: 13, color: T.text }}>Expand story slides</span>
+                <span style={{ fontFamily: FONT.mono, fontSize: 9, color: T.textDim }}>{"🖼"} {storyPageCount} extra image page{storyPageCount !== 1 ? "s" : ""} (one per story image)</span>
+              </div>
+              <button data-testid="pptx-export-expand-story" aria-pressed={expandStory} onClick={() => setExpandStory(b => !b)} style={{
+                width: 40, height: 22, borderRadius: 11, border: "none", cursor: "pointer",
+                background: expandStory ? T.accent : "rgba(255,255,255,0.12)",
+                position: "relative", transition: "background .2s", flexShrink: 0,
+              }}>
+                <div style={{
+                  width: 16, height: 16, borderRadius: 8, background: "#fff",
+                  position: "absolute", top: 3, left: expandStory ? 21 : 3,
+                  transition: "left .2s", boxShadow: "0 1px 3px rgba(0,0,0,0.3)",
+                }} />
+              </button>
+            </div>}
             <button data-testid="pptx-export-start" onClick={startExport} style={{
               width: "100%", padding: "10px", fontFamily: FONT.mono, fontSize: 12, fontWeight: 700,
               background: T.accent, color: "#fff", border: "none", borderRadius: 6, cursor: "pointer",
@@ -22413,10 +27534,11 @@ function PptxExportModal({ slides, branding, deckTitle, onClose }) {
 
       {/* Off-screen slide renderer — one slide at a time, fixed 960×540 (16:9). */}
       {phase === "exporting" && currentSlide && (() => {
-        const displayTotal = slides.reduce((n, s) => n + (s._virtual ? 0 : 1), 0);
+        const displayTotal = slides.reduce((n, s) => n + (s._storyPage ? 0 : s._virtual ? 0 : 1), 0);
         let nonVirtualBefore = 0;
-        for (let i = 0; i < renderIdx; i++) if (!slides[i]._virtual) nonVirtualBefore++;
-        const displayIndex = currentSlide._virtual ? nonVirtualBefore - 1 : nonVirtualBefore;
+        for (let i = 0; i < renderIdx; i++) if (!(slides[i]._virtual || slides[i]._storyPage)) nonVirtualBefore++;
+        // A story page shares the number of its grid slide (the one just before it).
+        const displayIndex = (currentSlide._virtual || currentSlide._storyPage) ? nonVirtualBefore - 1 : nonVirtualBefore;
         return (
           <div style={{ position: "fixed", left: -9999, top: -9999, width: VIRTUAL_W, height: VIRTUAL_H, overflow: "hidden", zIndex: -1 }}>
             <style>{`.no-anim, .no-anim * { animation: none !important; transition: none !important; }`}</style>
@@ -22684,12 +27806,13 @@ function ShortcutHelp({ onClose }) {
       ["Space", "Next slide (same as →)"],
       ["↑ ↓", "Previous / next module"],
       ["", "Auto-crosses lane boundaries"],
-      ["[", "Toggle navigator panel"],
+      ["[ / Ctrl+E", "Toggle navigator panel"],
       ["G", "Toggle gallery view"],
     ]},
     { title: "Presentation", items: [
       ["F", "Toggle fullscreen"],
       ["F5", "Enter fullscreen (blocks reload)"],
+      ["Esc", "Exit fullscreen"],
       ["Ctrl+E", "Toggle slides TOC / search (fullscreen)"],
       ["D", "Toggle dark / light theme"],
       ["+ / −", "Scale font up / down"],
@@ -23262,6 +28385,20 @@ export default function App() {
   const postDemoFlushRequest = useRef(null);
   const postDemoFlushModes = useRef({ local: false, storage: false });
   const flushLocalStateRef = useRef(null);
+  // No-edit guard (CR01): JSON of the deck payload the file is known to hold —
+  // the state right after a load from disk, then each payload we send. A flush
+  // whose payload equals it is skipped, so opening a deck the user did not
+  // change never rewrites the file (sanitize can normalize values on load).
+  const _localDiskSig = useRef(null);
+  // Save ordering for the guard above: `sent` numbers each send, `done` is the
+  // newest send whose result is known. _localDiskSig moves only on a CONFIRMED
+  // write — a failed or unconfirmed send must not mark the payload as on disk,
+  // or a later identical flush would skip it and the edit is lost.
+  const _localSaveSeq = useRef({ sent: 0, done: 0 });
+  const _localSentSig = useRef(null); // payload JSON of the newest send
+  // lanes object of the last LOAD from disk (startup patch / incoming update);
+  // the lanes effect adopts that state as the baseline instead of saving it.
+  const _localBaselineLanes = useRef(null);
   const flushStorageStateRef = useRef(null);
   const requestPostDemoFlushRef = useRef(null);
   _localSyncState.current = state; // always up-to-date
@@ -23282,11 +28419,33 @@ export default function App() {
     if (!save.lanes?.length || !totalSlides) return false;
     delete save.chatMessages; delete save.chatLoading; delete save.fullscreen;
     delete save.lastDebug; delete save._bootstrap; delete save._version;
+    const payload = localDeckPayload(source);
+    const sig = JSON.stringify(payload);
+    // Unchanged vs file: nothing to write — but only when no send of a
+    // different payload is still in flight. That send can land after this
+    // flush and overwrite the file (edit, then undo during a slow save).
+    const inFlight = _localSaveSeq.current.sent > _localSaveSeq.current.done;
+    if (sig === _localDiskSig.current && (!inFlight || sig === _localSentSig.current)) return false;
+    const seq = ++_localSaveSeq.current.sent;
+    _localSentSig.current = sig;
+    // Backend contract: a Promise that resolves true only after the write is
+    // confirmed (false or a rejection = not written / superseded). A plain
+    // return is a synchronous backend: false = failed, anything else = written.
+    const settle = (okWrite) => {
+      const q = _localSaveSeq.current;
+      if (seq <= q.done) return; // a newer result or a disk load already decided
+      if (okWrite) { q.done = seq; _localDiskSig.current = sig; }
+      else if (seq === q.sent) { q.done = seq; _localDiskSig.current = null; } // file state unknown: next flush retries
+    };
     try {
-      window.__velaSendDeckUpdate({ deckTitle: source.deckTitle, lanes: save.lanes, branding: save.branding, guidelines: save.guidelines });
+      const res = window.__velaSendDeckUpdate(payload);
+      if (res && typeof res.then === "function") {
+        res.then((v) => settle(v === true), (error) => { dbg("Local save error:", error); settle(false); });
+      } else settle(res !== false);
       return true;
     } catch (error) {
       dbg("Local save error:", error);
+      settle(false);
       return false;
     }
   };
@@ -23453,6 +28612,20 @@ export default function App() {
         } : null;
       },
       getVeraMode: () => _localSyncState.current?.veraMode || null,
+      // A copy of the current slide, and a lane collapse for the selected module
+      // (TOGGLE_LANE has no UI path; a deck can arrive with a collapsed lane).
+      getCurrentSlideForTest: () => {
+        const s = _localSyncState.current;
+        for (const l of (s?.lanes || [])) { const it = (l.items || []).find((i) => i.id === s.selectedId); if (it) return JSON.parse(JSON.stringify(it.slides?.[s.slideIndex] || null)); }
+        return null;
+      },
+      toggleSelectedLaneForTest: () => {
+        const s = _localSyncState.current;
+        const lane = (s?.lanes || []).find((l) => (l.items || []).some((i) => i.id === s.selectedId));
+        if (!lane) return false;
+        dispatch({ type: "TOGGLE_LANE", id: lane.id });
+        return true;
+      },
       restoreStartupDeck: () => {
         if (!VELA_TEST_STARTUP_PATCH) return false;
         const raw = JSON.parse(JSON.stringify(VELA_TEST_STARTUP_PATCH));
@@ -23587,6 +28760,14 @@ export default function App() {
     // a deck switch (the _localSyncIncoming guard skips setting a new timer
     // but must still kill the old one).
     clearTimeout(localSyncTimer.current);
+    // First render of a deck just loaded from disk: record it as the file's
+    // content instead of scheduling a save (CR01 no-edit guard).
+    if (VELA_LOCAL_MODE && loaded.current && _localBaselineLanes.current && state.lanes === _localBaselineLanes.current) {
+      _localBaselineLanes.current = null;
+      _localDiskSig.current = JSON.stringify(localDeckPayload(_localSyncState.current));
+      _localSaveSeq.current.done = _localSaveSeq.current.sent; // older in-flight results must not replace this
+      return;
+    }
     if (!VELA_LOCAL_MODE || !loaded.current || _localSyncIncoming.current ||
         document.documentElement.dataset.velaDemoRunning === "true") return;
     localSyncTimer.current = setTimeout(() => flushLocalStateRef.current?.(null), 600);
@@ -23601,18 +28782,12 @@ export default function App() {
       _localSyncIncoming.current = true;
       try {
         const cur = _localSyncState.current;
-        const sanitized = validateAndSanitizeDeck(deck);
-        // Preserve lane/item IDs so selection stays valid
+        // Keep the file's own valid, unique ids (deck open/switch must not churn
+        // ids — CR01); only minted ids fall back to the current id at that
+        // position, so selection stays valid after an editor drops ids.
+        const sanitized = validateAndSanitizeDeck(deck, { keepIds: true });
         if (cur.lanes && sanitized.lanes && cur.lanes.length === sanitized.lanes.length) {
-          for (let li = 0; li < sanitized.lanes.length; li++) {
-            sanitized.lanes[li].id = cur.lanes[li].id;
-            if (sanitized.lanes[li].items && cur.lanes[li].items) {
-              const minItems = Math.min(sanitized.lanes[li].items.length, cur.lanes[li].items.length);
-              for (let ii = 0; ii < minItems; ii++) {
-                sanitized.lanes[li].items[ii].id = cur.lanes[li].items[ii].id;
-              }
-            }
-          }
+          adoptPriorDeckIds(sanitized, deck, cur);
         }
         // Check if this is a different deck (picker switch) vs same-deck external edit
         const isDifferentDeck = !cur.lanes?.length || cur.lanes.length !== sanitized.lanes.length ||
@@ -23621,12 +28796,16 @@ export default function App() {
         const payload = {
           ...cur,                                                    // keep everything
           lanes: sanitized.lanes,                                    // update content
-          deckTitle: deck.deckTitle || cur.deckTitle,                 // update title
+          deckTitle: deck.deckTitle ? sanitizeDeckTitle(deck.deckTitle) : cur.deckTitle,                 // update title
           branding: deck.branding ? { ...defaultBranding, ...sanitized.branding } : cur.branding, // sanitized (scrubbed) branding, not raw deck.branding (v12.67)
-          guidelines: deck.guidelines !== undefined ? deck.guidelines : cur.guidelines,
+          // Sanitized (string-typed, control/bidi-stripped, capped) as on import, not
+          // raw deck.guidelines: it goes into the Vera system prompt, and a
+          // non-string would make every AI call throw.
+          guidelines: deck.guidelines !== undefined ? sanitized.guidelines : cur.guidelines,
           // Reset selection when switching to a different deck so auto-select picks the first module
           ...(isDifferentDeck ? { selectedId: null, slideIndex: 0 } : {}),
         };
+        _localBaselineLanes.current = payload.lanes;
         dispatch({ type: "LOAD", payload });
       } catch (e) {
         // Fail closed: a malicious .vela edited on disk is pushed here over the serve.py
@@ -23695,6 +28874,72 @@ export default function App() {
 
   // ━━━ Mobile ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   const isMobile = useIsMobile();
+  // CR13: top-bar density level, measured from the real free space (no fixed
+  // breakpoints). 4 = all labels + labelled view switch; 3 = all labels,
+  // icon-only switch; 2 = six action buttons hide their label visually; 1 = the
+  // Present label hides too; 0 = as 1, but the action group may shrink (labels
+  // can wrap), the last resort for narrow windows. A hidden label stays in the
+  // DOM at zero width (so it can be measured; the title attr names the button).
+  // A level shows only while it fits on one line with the deck title >=
+  // HDR_TITLE_MIN; the switch labels also need the whole title to fit.
+  // The level is a function of the current space only (meridian-F7): each
+  // level's natural width is computed from measured widths, and the widest level
+  // that fits wins. No memory of past widths, so a window that grows gets its
+  // labels back at once, and the same width always gives the same level.
+  const HDR_TITLE_MIN = 120, HDR_TOP = 4, HDR_LABEL_GAP = 4;
+  const hdrGap = (lvl) => (lvl < 3 ? 8 : 10);
+  const [hdrSize, setHdrSize] = useState(1);
+  const hdrSizeRef = useRef(1);
+  hdrSizeRef.current = hdrSize;
+  const hdrRef = useRef(null), hdrBoxRef = useRef(null), hdrSpacerRef = useRef(null), hdrTitleRef = useRef(null);
+  const hdrSigRef = useRef(null);
+  const fitHeader = useCallback(() => {
+    const h = hdrRef.current, box = hdrBoxRef.current, sp = hdrSpacerRef.current;
+    if (!h || !box || !sp) return;
+    const ti = hdrTitleRef.current, lvl = hdrSizeRef.current;
+    // Skip the measurement when nothing that decides the level has changed.
+    const sig = [h.clientWidth, h.scrollWidth, box.scrollWidth, sp.offsetWidth, ti ? ti.scrollWidth : -1, ti ? ti.offsetWidth : -1, lvl].join("|");
+    if (hdrSigRef.current === sig) return;
+    hdrSigRef.current = sig;
+    const avail = h.getBoundingClientRect().width;
+    // Natural width at the current level: lay the bar out at max-content for one
+    // synchronous read (title and action group at full size), then restore.
+    const prevW = h.style.width;
+    h.style.width = "max-content";
+    const nat = h.getBoundingClientRect().width;
+    const tiNat = ti ? ti.getBoundingClientRect().width : 0;
+    h.style.width = prevW;
+    // A label's text width is the same shown or hidden (a hidden label stays in
+    // the DOM at zero width). A top-bar label cancels its button's 4px flex gap
+    // (margin -4, the space is in the text); a view-switch label adds the gap.
+    const range = document.createRange();
+    const textW = (sel, gap) => Array.from(h.querySelectorAll(sel)).reduce((sum, e) => { range.selectNodeContents(e); return sum + range.getBoundingClientRect().width + gap; }, 0);
+    const lab2 = textW("[data-hdr-label='2']", 0), lab3 = textW("[data-hdr-label='3']", 0);
+    // View-switch labels: the second span of each segment (shown or zero-width).
+    const lab4 = textW("[data-testid='view-switch'] button > span:nth-child(2)", HDR_LABEL_GAP) + VIEW_SWITCH_LABEL_EXTRA;
+    const inFlow = (e) => { const cs = getComputedStyle(e); return cs.display !== "none" && cs.position !== "absolute" && cs.position !== "fixed"; };
+    const gaps = Array.from(h.children).filter(inFlow).length - 1 + Array.from(box.children).filter(inFlow).length - 1;
+    const extra = (L) => (L >= 2 ? lab2 : 0) + (L >= 3 ? lab3 : 0) + (L >= 4 ? lab4 : 0) + hdrGap(L) * gaps;
+    const titleSlack = ti ? Math.max(0, tiNat - HDR_TITLE_MIN) : 0;
+    const base = nat - extra(lvl);
+    // Level 4 needs the whole title; levels 1-3 may shrink it to HDR_TITLE_MIN.
+    const need = (L) => base + extra(L) - (L < HDR_TOP ? titleSlack : 0);
+    let next = 0; // level 0: nothing fits unshrunk, so the action group may shrink
+    for (let L = HDR_TOP; L >= 1; L--) if (need(L) <= avail + 0.5) { next = L; break; }
+    if (next !== lvl) { hdrSizeRef.current = next; setHdrSize(next); }
+  }, []);
+  useLayoutEffect(() => { fitHeader(); });
+  useEffect(() => {
+    if (typeof ResizeObserver === "undefined") return;
+    // Web fonts change label widths without resizing the bar: measure again.
+    try { document.fonts?.ready.then(() => { hdrSigRef.current = null; fitHeader(); }); } catch (_) {}
+    const ro = new ResizeObserver(() => fitHeader());
+    [hdrRef.current, hdrBoxRef.current, hdrTitleRef.current].forEach((el) => el && ro.observe(el));
+    return () => ro.disconnect();
+  }, [fitHeader, isMobile, state.fullscreen, editingTitle]);
+  // Shown or hidden, a label is the same span text ("pre": the leading space is
+  // the icon gap, margin -4 cancels the flex gap), so fitHeader can measure it.
+  const hdrLabel = (txt, need = 3) => (hdrSize < need ? <span data-hdr-label={need} style={{ display: "inline-block", width: 0, overflow: "hidden", whiteSpace: "pre", marginLeft: -4, verticalAlign: "top" }}>{txt}</span> : <span data-hdr-label={need} style={{ whiteSpace: "pre", marginLeft: -4 }}>{txt}</span>);
   const [mobileTab, setMobileTab] = useState("list"); // "list" | "slides" | "chat"
   const [mobileMenu, setMobileMenu] = useState(false);
   const [viewMenu, setViewMenu] = useState(false);
@@ -23712,13 +28957,20 @@ export default function App() {
     prevSelectedRef.current = state.selectedId;
   }, [state.selectedId, isMobile]);
 
-  // TOC toggle shortcut: [
+  // TOC toggle shortcuts: [ (not while typing) and Ctrl/Cmd+E (editor only —
+  // in fullscreen, PresenterTOC owns Ctrl+E). AltGr arrives as Ctrl+Alt, and
+  // PT/ES/DE layouts need AltGr for "[", so Ctrl+Alt+[ still counts as "[".
   useEffect(() => {
     if (isMobile) return;
-    const h = (e) => { if (e.key === "[" && !e.ctrlKey && !e.metaKey && !["INPUT","TEXTAREA","SELECT"].includes(e.target.tagName) && !e.target.isContentEditable) { e.preventDefault(); setTocCollapsed((c) => !c); } };
+    const h = (e) => {
+      const typing = ["INPUT","TEXTAREA","SELECT"].includes(e.target.tagName) || e.target.isContentEditable;
+      const bracket = e.key === "[" && !e.metaKey && (!e.ctrlKey || e.altKey) && !typing;
+      const ctrlE = (e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && (e.key === "e" || e.key === "E") && !state.fullscreen && !typing;
+      if (bracket || ctrlE) { e.preventDefault(); setTocCollapsed((c) => !c); }
+    };
     window.addEventListener("keydown", h);
     return () => window.removeEventListener("keydown", h);
-  }, [isMobile]);
+  }, [isMobile, state.fullscreen]);
 
   // Theme toggle shortcut: D
   useEffect(() => {
@@ -23860,7 +29112,12 @@ export default function App() {
         if (VELA_LOCAL_MODE) {
           // Local/folder mode: file on disk is always authoritative — apply directly
           // (localStorage may contain a different deck from the same origin)
-          try { applyStartupPatch(loadedDeck || { lanes: [] }, dispatch); } catch (err) { dbg("[PATCH] Error:", err); }
+          try {
+            applyStartupPatch(loadedDeck || { lanes: [] }, (a) => {
+              if (a && a.type === "LOAD" && a.payload) _localBaselineLanes.current = a.payload.lanes;
+              dispatch(a);
+            });
+          } catch (err) { dbg("[PATCH] Error:", err); }
         } else if (!loadedDeck) {
           // First run — no saved data, apply patch directly
           try { applyStartupPatch({ lanes: [] }, dispatch); } catch (err) { dbg("[PATCH] Error:", err); }
@@ -23975,6 +29232,8 @@ export default function App() {
   React.useEffect(() => {
     const name = state.deckTitle || "Untitled";
     document.title = name === "Untitled" ? "Vela Slides" : `${name} — Vela Slides`;
+    // Desktop shell hook (nl-boot.js): mirror the sanitized title to the native window.
+    if (typeof window.__velaOnDeckTitle === "function") { try { window.__velaOnDeckTitle(state.deckTitle || ""); } catch (_) {} }
   }, [state.deckTitle]);
 
   // Export
@@ -24023,11 +29282,23 @@ export default function App() {
   const importDeck = (e) => { const file = e.target.files?.[0]; if (!file) return; e.target.value = ""; loadDeckFile(file); };
 
   const [fileDragOver, setFileDragOver] = useState(false);
+  const [fileDragImages, setFileDragImages] = useState(false); // the drag holds only image files
+  const [fileDragTaken, setFileDragTaken] = useState(false); // a child (editor slide panel) takes this drag
   const dragCountRef = useRef(0);
-  const handleGlobalDragEnter = useCallback((e) => { e.preventDefault(); if (e.dataTransfer?.types?.includes("Files")) { dragCountRef.current++; setFileDragOver(true); } }, []);
+  const fullscreenRef = useRef(false); fullscreenRef.current = !!state.fullscreen;
+  const handleGlobalDragEnter = useCallback((e) => { e.preventDefault(); if (e.dataTransfer?.types?.includes("Files")) { dragCountRef.current++; setFileDragOver(true); setFileDragImages(dragHasOnlyImageFiles(e.dataTransfer)); } }, []);
   const handleGlobalDragLeave = useCallback((e) => { e.preventDefault(); dragCountRef.current--; if (dragCountRef.current <= 0) { dragCountRef.current = 0; setFileDragOver(false); } }, []);
-  const handleGlobalDragOver = useCallback((e) => { e.preventDefault(); e.dataTransfer.dropEffect = "copy"; }, []);
-  const handleGlobalDrop = useCallback((e) => { e.preventDefault(); e.stopPropagation(); dragCountRef.current = 0; setFileDragOver(false); const file = e.dataTransfer?.files?.[0]; if (file) loadDeckFile(file); }, [loadDeckFile]);
+  // A child (the editor slide panel, for image files) that takes the drag calls
+  // preventDefault first; the shell then hides its own overlay over that child.
+  const handleGlobalDragOver = useCallback((e) => { const taken = e.isDefaultPrevented(); e.preventDefault(); e.dataTransfer.dropEffect = "copy"; setFileDragTaken(taken); }, []);
+  // A drop a child took (images added to a slide) must not also load as a deck.
+  const handleGlobalDrop = useCallback((e) => { const taken = e.isDefaultPrevented(); e.preventDefault(); e.stopPropagation(); dragCountRef.current = 0; setFileDragOver(false); setFileDragTaken(false); if (taken) return;
+    // An images-only drop that no slide took (Present, or the editor outside the
+    // slide panel) is told so, never loaded as a deck.
+    if (dragHasOnlyImageFiles(e.dataTransfer)) { slideActionsRef.current?.showToast?.(fullscreenRef.current ? "Exit Present to add images" : "Drop images on the slide to add them", !fullscreenRef.current); return; }
+    // A mixed drop loads its deck file, not whichever file happens to be first.
+    const files = Array.from(e.dataTransfer?.files || []);
+    const file = files.find((f) => !(typeof f.type === "string" && f.type.startsWith("image/"))) || files[0]; if (file) loadDeckFile(file); }, [loadDeckFile]);
 
   // Title editing
   const startEditTitle = () => { setTitleDraft(state.deckTitle || "Untitled"); setEditingTitle(true); };
@@ -24099,11 +29370,11 @@ export default function App() {
       onDragEnter={handleGlobalDragEnter} onDragLeave={handleGlobalDragLeave} onDragOver={handleGlobalDragOver} onDrop={handleGlobalDrop}>
       <style>{getCss()}</style>
       <input ref={fileInputRef} type="file" accept=".json,.vela" onChange={importDeck} style={{ display: "none" }} />
-      {fileDragOver && <div style={{ position: "absolute", inset: 0, zIndex: 99999, background: "rgba(59,130,246,0.12)", backdropFilter: "blur(4px)", display: "flex", alignItems: "center", justifyContent: "center", pointerEvents: "none" }}>
+      {fileDragOver && !fileDragTaken && <div style={{ position: "absolute", inset: 0, zIndex: 99999, background: "rgba(59,130,246,0.12)", backdropFilter: "blur(4px)", display: "flex", alignItems: "center", justifyContent: "center", pointerEvents: "none" }}>
         <div style={{ background: T.bgPanel, border: `2px dashed ${T.accent}`, borderRadius: 16, padding: "40px 60px", display: "flex", flexDirection: "column", alignItems: "center", gap: 12, boxShadow: "0 20px 60px rgba(0,0,0,0.4)" }}>
-          <span style={{ fontSize: 40 }}>📂</span>
-          <span style={{ fontFamily: FONT.display, fontSize: 18, fontWeight: 700, color: T.text }}>Drop deck to load</span>
-          <span style={{ fontFamily: FONT.mono, fontSize: 11, color: T.textDim }}>.json or .vela</span>
+          <span style={{ fontSize: 40 }}>{fileDragImages ? "🖼️" : "📂"}</span>
+          <span style={{ fontFamily: FONT.display, fontSize: 18, fontWeight: 700, color: T.text }}>{fileDragImages ? (state.fullscreen ? "Exit Present to add images" : "Drop on a slide to add images") : "Drop deck to load"}</span>
+          {!fileDragImages && <span style={{ fontFamily: FONT.mono, fontSize: 11, color: T.textDim }}>.json or .vela</span>}
         </div>
       </div>}
 
@@ -24122,7 +29393,7 @@ export default function App() {
       </div>}
 
       {/* ── TOP BAR — title left, actions right, dropdown buttons ── */}
-      {!state.fullscreen && <header style={{ padding: isMobile ? "6px 10px" : "0 14px", borderBottom: `1px solid ${T.border}`, display: "flex", alignItems: "center", gap: isMobile ? 8 : 10, background: T.bgPanel, flexShrink: 0, height: isMobile ? 40 : 44 }}>
+      {!state.fullscreen && <header ref={hdrRef} data-hdr-level={isMobile ? undefined : hdrSize} style={{ padding: isMobile ? "6px 10px" : "0 14px", borderBottom: `1px solid ${T.border}`, display: "flex", alignItems: "center", gap: isMobile ? 8 : hdrGap(hdrSize), background: T.bgPanel, flexShrink: 0, height: isMobile ? 40 : 44 }}>
         {/* Left: icon + title + time */}
         {isMobile && mobileTab !== "list" && <button onClick={() => { setMobileTab("list"); if (mobileTab === "slides") dispatch({ type: "DESELECT" }); }} style={S.btn({ padding: "2px 4px", color: T.accent, fontSize: 16 })}>{"←"}</button>}
         <span onClick={() => { if (typeof window !== "undefined" && typeof window.__velaOpenDeckPicker === "function") { window.__velaOpenDeckPicker(); } else { setShowChangelog(true); } }} style={{ cursor: "pointer", display: "flex", alignItems: "center" }} title={typeof window !== "undefined" && typeof window.__velaOpenDeckPicker === "function" ? "Open deck (Ctrl+O)" : "About"}><VelaIcon size={20} /></span>
@@ -24151,13 +29422,14 @@ export default function App() {
             onBlur={commitTitle}
             style={S.input({ padding: "3px 8px", fontSize: 14, fontWeight: 700, width: 200, minWidth: 60, flexShrink: 1, border: `1px solid ${T.accent}`, fontFamily: FONT.display })} />
         ) : (
-          <span onClick={startEditTitle} style={{ fontSize: 14, fontWeight: 700, color: T.text, fontFamily: FONT.display, cursor: "pointer", padding: "2px 4px", borderRadius: 4, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flexShrink: 1, minWidth: 0, maxWidth: isMobile ? "40vw" : undefined }} title={state.deckTitle || "Untitled"}>{state.deckTitle || "Untitled"}</span>
+          <span ref={hdrTitleRef} onClick={startEditTitle} style={{ fontSize: 14, fontWeight: 700, color: T.text, fontFamily: FONT.display, cursor: "pointer", padding: "2px 4px", borderRadius: 4, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flexShrink: 1, minWidth: isMobile ? 0 : HDR_TITLE_MIN, maxWidth: isMobile ? "40vw" : undefined }} title={state.deckTitle || "Untitled"}>{state.deckTitle || "Untitled"}</span>
         )}
         {!isMobile && (deckTime > 0 || total > 0) && <span onClick={() => setShowStats(true)} title={`${deckTimeAll > 0 ? fmtTime(deckTimeAll) + " total · " : ""}${slideCountVisible} slides · ${total} sections${hiddenSlideCount > 0 ? ` · ${hiddenSlideCount} hidden` : ""} — click for stats`} style={{ fontFamily: FONT.mono, fontSize: 13, fontWeight: 700, color: T.text, whiteSpace: "nowrap", flexShrink: 0, background: T.accent + "12", padding: "2px 8px", borderRadius: 4, cursor: "pointer" }}>{deckTime > 0 ? `⏱${fmtTimeMin(deckTime)} · ` : ""}{slideCountVisible}sl · {total}§{hiddenSlideCount > 0 ? <span style={{ opacity: 0.6 }}> · {hiddenSlideCount}⊘</span> : ""}</span>}
         {/* Spacer — pushes actions right */}
-        <div style={{ flex: 1, minWidth: isMobile ? 4 : 0 }} />
-        {/* Right: deck-level actions with dropdowns */}
-        {!isMobile && <>
+        <div ref={hdrSpacerRef} style={{ flex: 1, minWidth: isMobile ? 4 : 0 }} />
+        {/* Right: deck-level actions with dropdowns. Level >= 1 never shrinks (so no
+            label wraps; fitHeader drops a level instead); level 0 may shrink. */}
+        {!isMobile && <div ref={hdrBoxRef} style={{ display: "flex", alignItems: "center", gap: hdrGap(hdrSize), flexShrink: hdrSize === 0 ? 1 : 0 }}>
           {/* View dropdown — shows current ratio */}
           {(() => {
             const sa = slideActionsRef.current;
@@ -24179,19 +29451,24 @@ export default function App() {
             const sa = slideActionsRef.current;
             const has = !!selectedConcept;
             return <>
-              <button data-testid="batch-edit-toggle" onClick={() => sa?.toggleBatchEdit?.()} disabled={!aiOk || !has || !sa?.slidesCount} title={aiOk ? "Batch edit across slides" : VELA_AI_UNAVAILABLE_MSG} style={S.btn({ padding: "4px 10px", fontSize: 14, color: !aiOk ? T.textDim + "60" : sa?.showBatchEdit ? T.accent : (sa?.improving ? T.red : T.textDim), background: sa?.showBatchEdit || sa?.improving ? T.accent + "20" : "transparent", borderRadius: 4, opacity: aiOk && has && sa?.slidesCount ? 1 : 0.4, display: "flex", alignItems: "center", gap: 4, cursor: aiOk ? "pointer" : "not-allowed" })}>{sa?.improving ? "⏹" : "🔄"} Batch</button>
-              <button data-testid="brand-toggle" onClick={() => sa?.toggleBranding?.()} disabled={!has} title="Branding & guidelines" style={S.btn({ padding: "4px 10px", fontSize: 14, color: sa?.showBranding ? T.accent : (sa?.hasBranding ? T.accent : T.textDim), background: sa?.showBranding ? T.accent + "20" : "transparent", borderRadius: 4, opacity: has ? 1 : 0.4, display: "flex", alignItems: "center", gap: 4 })}>{"🎨"} Brand</button>
-              <button onClick={() => sa?.present?.()} disabled={!has} style={{ display: "flex", alignItems: "center", gap: 5, padding: "5px 14px", background: has ? T.green : T.border, color: has ? "#fff" : T.textDim, border: "none", borderRadius: 6, cursor: has ? "pointer" : "default", opacity: has ? 1 : 0.5, fontFamily: FONT.mono, fontSize: 14, fontWeight: 700 }}>{"▶"} Present</button>
+              <button data-testid="batch-edit-toggle" onClick={() => sa?.toggleBatchEdit?.()} disabled={!aiOk || !has || !sa?.slidesCount} title={aiOk ? "Batch edit across slides" : VELA_AI_UNAVAILABLE_MSG} style={S.btn({ padding: "4px 10px", fontSize: 14, color: !aiOk ? T.textDim + "60" : sa?.showBatchEdit ? T.accent : (sa?.improving ? T.red : T.textDim), background: sa?.showBatchEdit || sa?.improving ? T.accent + "20" : "transparent", borderRadius: 4, opacity: aiOk && has && sa?.slidesCount ? 1 : 0.4, display: "flex", alignItems: "center", gap: 4, cursor: aiOk ? "pointer" : "not-allowed" })}>{sa?.improving ? "⏹" : "🔄"}{hdrLabel(" Batch")}</button>
+              <button data-testid="brand-toggle" onClick={() => sa?.toggleBranding?.()} disabled={!has} title="Branding & guidelines" style={S.btn({ padding: "4px 10px", fontSize: 14, color: sa?.showBranding ? T.accent : (sa?.hasBranding ? T.accent : T.textDim), background: sa?.showBranding ? T.accent + "20" : "transparent", borderRadius: 4, opacity: has ? 1 : 0.4, display: "flex", alignItems: "center", gap: 4 })}>{"🎨"}{hdrLabel(" Brand")}</button>
+              {/* CR13: view switcher (editor | presenter | gallery), placed next to
+                  Present. Shows the live view and switches to it in one click — the
+                  gallery is no longer reachable only from the Overview button below
+                  the slide. */}
+              <ViewSwitch mode={sa?.viewMode || "editor"} onSet={(m) => sa?.setView?.(m)} disabled={!has} compact={hdrSize < HDR_TOP} />
+              <button data-testid="present-btn" onClick={() => sa?.present?.()} disabled={!has} style={{ display: "flex", alignItems: "center", gap: 5, padding: "5px 14px", background: has ? T.green : T.border, color: has ? "#fff" : T.textDim, border: "none", borderRadius: 6, cursor: has ? "pointer" : "default", opacity: has ? 1 : 0.5, fontFamily: FONT.mono, fontSize: 14, fontWeight: 700 }} title="Present">{"▶"}{hdrLabel(" Present", 2)}</button>
             </>;
           })()}
           <div style={{ width: 1, height: 22, background: T.border, flexShrink: 0 }} />
           {/* New Deck */}
-          <button onClick={() => setNewDeckDialog(true)} style={S.btn({ padding: "4px 10px", fontSize: 14, color: T.accent, display: "flex", alignItems: "center", gap: 4, borderRadius: 4 })}>{"+"} New</button>
+          <button onClick={() => setNewDeckDialog(true)} style={S.btn({ padding: "4px 10px", fontSize: 14, color: T.accent, display: "flex", alignItems: "center", gap: 4, borderRadius: 4 })} title="New deck">{"+"}{hdrLabel(" New")}</button>
           {/* Import */}
-          <button onClick={() => fileInputRef.current?.click()} style={S.btn({ padding: "4px 10px", fontSize: 14, color: T.textMuted, display: "flex", alignItems: "center", gap: 4, borderRadius: 4 })}>{"📥"} Import</button>
+          <button onClick={() => fileInputRef.current?.click()} style={S.btn({ padding: "4px 10px", fontSize: 14, color: T.textMuted, display: "flex", alignItems: "center", gap: 4, borderRadius: 4 })} title="Import deck">{"📥"}{hdrLabel(" Import")}</button>
           {/* Export dropdown */}
           <div style={{ position: "relative" }}>
-            <button data-testid="export-menu-toggle" onClick={() => { setExportMenu((v) => !v); setViewMenu(false); }} style={S.btn({ padding: "4px 10px", fontSize: 14, color: exportMenu ? T.accent : T.textMuted, display: "flex", alignItems: "center", gap: 4, background: exportMenu ? T.accent + "15" : "transparent", borderRadius: 4 })}>{"📤"} Export <span style={{ fontSize: 9, opacity: 0.5 }}>▾</span></button>
+            <button data-testid="export-menu-toggle" onClick={() => { setExportMenu((v) => !v); setViewMenu(false); }} style={S.btn({ padding: "4px 10px", fontSize: 14, color: exportMenu ? T.accent : T.textMuted, display: "flex", alignItems: "center", gap: 4, background: exportMenu ? T.accent + "15" : "transparent", borderRadius: 4 })} title="Export">{"📤"}{hdrLabel(" Export")}<span style={{ fontSize: 9, opacity: 0.5 }}>▾</span></button>
             {exportMenu && <>
               <div onClick={() => setExportMenu(false)} style={{ position: "fixed", inset: 0, zIndex: 9998 }} />
               <div style={{ position: "absolute", top: "100%", right: 0, zIndex: 9999, marginTop: 4, background: T.bgPanel, border: `1px solid ${T.border}`, borderRadius: 8, boxShadow: "0 8px 32px rgba(0,0,0,0.4)", padding: "4px 0", minWidth: 180 }}>
@@ -24210,9 +29487,9 @@ export default function App() {
           <CostBadge /></>}
           <button data-testid="run-demo" onClick={() => window.dispatchEvent(new CustomEvent("vela-run-demo"))} disabled={!!demoUnavailableReason} style={S.btn({ padding: "4px 10px", fontSize: 14, color: T.textMuted, borderRadius: 4, display: "flex", alignItems: "center", gap: 4, opacity: demoUnavailableReason ? 0.4 : 1, cursor: demoUnavailableReason ? "not-allowed" : "pointer" })} title={demoUnavailableReason || "Run product tour"}>{"🎬"}</button>
           <div style={{ width: 1, height: 22, background: T.border, flexShrink: 0 }} />
-          <button data-testid="comments-toggle" onClick={() => { const entering = !state.reviewMode; dispatch({ type: "SET_REVIEW_MODE", value: entering }); if (entering) { dispatch({ type: "SET_COMMENTS_PANEL", open: true }); dispatch({ type: "SET_CHAT", open: false }); } else { dispatch({ type: "SET_COMMENTS_PANEL", open: false }); } }} style={S.btn({ padding: "4px 10px", fontSize: 14, background: state.reviewMode ? T.amber : "transparent", color: state.reviewMode ? "#fff" : T.amber, borderRadius: 4, display: "flex", alignItems: "center", gap: 4 })}>{"💬"} Comments</button>
+          <button data-testid="comments-toggle" onClick={() => { const entering = !state.reviewMode; dispatch({ type: "SET_REVIEW_MODE", value: entering }); if (entering) { dispatch({ type: "SET_COMMENTS_PANEL", open: true }); dispatch({ type: "SET_CHAT", open: false }); } else { dispatch({ type: "SET_COMMENTS_PANEL", open: false }); } }} style={S.btn({ padding: "4px 10px", fontSize: 14, background: state.reviewMode ? T.amber : "transparent", color: state.reviewMode ? "#fff" : T.amber, borderRadius: 4, display: "flex", alignItems: "center", gap: 4 })} title="Comments">{"💬"}{hdrLabel(" Comments")}</button>
           <button onClick={() => { dispatch({ type: "SET_CHAT", open: !state.chatOpen }); if (!state.chatOpen) { dispatch({ type: "SET_COMMENTS_PANEL", open: false }); dispatch({ type: "SET_REVIEW_MODE", value: false }); } }} style={S.btn({ padding: "4px 10px", fontSize: 14, background: state.chatOpen ? T.accent : "transparent", color: state.chatOpen ? "#fff" : T.accent, borderRadius: 4, display: "flex", alignItems: "center", gap: 4 })}>{"🤖"} Vera</button>
-        </>}
+        </div>}
         {isMobile && <>
           <button onClick={() => setNewDeckDialog(true)} style={{ padding: "4px 10px", fontSize: 14, color: T.accent, background: "transparent", border: `1px solid ${T.accent}40`, borderRadius: 4, cursor: "pointer", flexShrink: 0, fontWeight: 700 }} title="New Deck">{"+"}</button>
           {total > 0 && <button onClick={() => { const sa = slideActionsRef.current; if (sa?.present) sa.present(); }} style={{ padding: "4px 10px", background: T.green, color: "#fff", border: "none", borderRadius: 4, fontFamily: FONT.mono, fontSize: 11, fontWeight: 700, cursor: "pointer", flexShrink: 0 }} title="Present">{"▶"}</button>}

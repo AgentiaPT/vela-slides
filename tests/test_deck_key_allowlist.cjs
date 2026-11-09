@@ -35,7 +35,7 @@ const prelude = `
 const combined = prelude + "\n" + importsSrc.slice(sliceStart, sliceEnd) + "\n" +
   "; return { sanitizeSlide, sanitizeBlock, sanitizeItem, validateAndSanitizeDeck," +
   " buildTitleCardSlide, SAFE_SLIDE_KEYS, SAFE_BLOCK_KEYS, SLIDE_NUMERIC_BOUNDS," +
-  " MAX_BLOCK_DEPTH, MAX_SUBOBJECT_DEPTH };";
+  " MAX_BLOCK_DEPTH, MAX_SUBOBJECT_DEPTH, resanitizeLoadedBranding, resanitizeLoadedLanes };";
 
 let API;
 try {
@@ -47,7 +47,7 @@ try {
 }
 const {
   sanitizeSlide, sanitizeBlock, sanitizeItem, validateAndSanitizeDeck,
-  buildTitleCardSlide, SAFE_SLIDE_KEYS, SAFE_BLOCK_KEYS, MAX_BLOCK_DEPTH,
+  buildTitleCardSlide, SAFE_SLIDE_KEYS, SAFE_BLOCK_KEYS, MAX_BLOCK_DEPTH, resanitizeLoadedLanes,
 } = API;
 
 // ---- assertion harness (matches test_reducer.cjs print/exit contract) ----
@@ -457,6 +457,53 @@ const baseSlide = (extra) => ({ duration: 60, blocks: [{ type: "heading", text: 
   const s = sanitizeSlide({ blocks: [], bgImage: dataUri });
   assert("v13.25: a legitimate slide bgImage data: URI still survives ingress",
     s.bgImage === dataUri);
+}
+
+{
+  // meridian-CR07: `reviewed` is an allowlisted slide field, strict boolean only.
+  assert("CR07: reviewed is in SAFE_SLIDE_KEYS", SAFE_SLIDE_KEYS.has("reviewed"));
+  assert("CR07: reviewed=true survives slide ingress", sanitizeSlide(baseSlide({ reviewed: true })).reviewed === true);
+  for (const v of ["yes", 1, "true", {}, [true], false, null]) {
+    assert("CR07: non-true reviewed dropped (" + JSON.stringify(v) + ")", !("reviewed" in sanitizeSlide(baseSlide({ reviewed: v }))));
+  }
+  const d = validateAndSanitizeDeck({ deckTitle: "D", lanes: [{ title: "L", items: [{ title: "M", slides: [baseSlide({ reviewed: true }), baseSlide()] }] }] });
+  const sl = d && d.lanes && d.lanes[0].items[0].slides;
+  assert("CR07: reviewed round-trips through full-deck ingress", !!sl && sl[0].reviewed === true && !("reviewed" in sl[1]));
+}
+
+// CR08 (meridian): accent height 0 means "no top line". It must survive deck
+// ingress and the storage-reload re-scrub as 0, not fall back to the 4px default.
+{
+  const { resanitizeLoadedBranding } = API;
+  const loaded = validateAndSanitizeDeck({ deckTitle: "D", branding: { enabled: true, accentBar: true, accentHeight: 0 },
+    lanes: [{ title: "L", items: [{ title: "M", slides: [baseSlide()] }] }] });
+  assert("CR08: branding.accentHeight 0 survives deck ingress", loaded.branding.accentHeight === 0,
+    `got ${loaded.branding.accentHeight}`);
+  const reloaded = resanitizeLoadedBranding(JSON.parse(JSON.stringify(loaded.branding)));
+  assert("CR08: branding.accentHeight 0 survives the storage-reload scrub", reloaded.accentHeight === 0,
+    `got ${reloaded.accentHeight}`);
+  const again = validateAndSanitizeDeck(JSON.parse(JSON.stringify(loaded)));
+  assert("CR08: branding.accentHeight 0 survives a save/load round trip", again.branding.accentHeight === 0,
+    `got ${again.branding.accentHeight}`);
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Slide `story` flag: strict boolean true only (gates a presentation mode)
+// ═══════════════════════════════════════════════════════════════════
+{
+  assert("story: true survives", sanitizeSlide(baseSlide({ story: true })).story === true);
+  assert("story: false dropped", !("story" in sanitizeSlide(baseSlide({ story: false }))));
+  for (const [label, v] of [["'true'", "true"], ["1", 1], ["{}", {}], ["[]", []], ["null", null]]) {
+    assert("story: " + label + " dropped", !("story" in sanitizeSlide(baseSlide({ story: v }))));
+  }
+  assert("story is in SAFE_SLIDE_KEYS", SAFE_SLIDE_KEYS.has("story"));
+  const s = sanitizeSlide(baseSlide({ story: true, _storyIdx: 1, _storyNav: true, _storyPage: true }));
+  assert("story: _storyIdx/_storyNav/_storyPage dropped", s._storyIdx === undefined && s._storyNav === undefined && s._storyPage === undefined && s.story === true);
+  const lanes = [{ title: "L", items: [{ title: "M", slides: [baseSlide({ story: true }), baseSlide({ story: "yes" })] }] }];
+  const re = resanitizeLoadedLanes(lanes)[0].items[0].slides;
+  assert("story: reload path keeps true, drops non-boolean", re[0].story === true && !("story" in re[1]));
+  const loaded = validateAndSanitizeDeck({ deckTitle: "D", lanes: [{ title: "L", items: [{ title: "M", slides: [baseSlide({ story: true })] }] }] });
+  assert("story: survives deck ingress", loaded.lanes[0].items[0].slides[0].story === true);
 }
 
 console.log(`\n  ${pass} passed, ${fail} failed`);

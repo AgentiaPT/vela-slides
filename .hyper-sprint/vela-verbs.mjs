@@ -135,7 +135,7 @@ export async function exportPptx(page, opts = {}) {
   await page.waitForFunction(() => {
     if (document.querySelector("[data-testid=pptx-export-error]")) return true;
     return !!document.querySelector("[data-testid=pptx-export-download]");
-  }, { timeout: 60000 });
+  }, undefined, { timeout: 60000 });
   const err = await page.evaluate(() => { const e = document.querySelector("[data-testid=pptx-export-error]"); return e ? e.textContent : null; });
   if (err) throw new Error(`exportPptx: modal reported error phase: ${err}`);
   const info = await page.evaluate(() => {
@@ -183,3 +183,143 @@ export async function swipe(page, dir = -1) {
   await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
   await page.waitForTimeout(150);
 }
+
+// ── meridian CR04 / CR14 / CR07 verbs ──────────────────────────────────────────
+// Contract testids: gallery-hide-toggle (data-hidden 0|1), toc-slide-delete,
+// reviewed-toggle (data-reviewed 0|1), review-cycle-toggle (aria-pressed).
+// Gallery must be open (openGallery). Clicks the i-th card's hide toggle; returns the new data-hidden.
+export async function galleryToggleHide(page, i = 0) {
+  const before = await page.evaluate((i) => { const t = document.querySelectorAll("[data-testid=gallery-slide]")[i]?.querySelector("[data-testid=gallery-hide-toggle]"); if (!t) return null; const v = t.getAttribute("data-hidden"); t.click(); return v; }, i);
+  if (before == null) throw new Error(`galleryToggleHide: no gallery-hide-toggle on card ${i}`);
+  await page.waitForFunction(({ i, before }) => document.querySelectorAll("[data-testid=gallery-slide]")[i]?.querySelector("[data-testid=gallery-hide-toggle]")?.getAttribute("data-hidden") !== before, { i, before }, { timeout: 3000 });
+  return page.evaluate((i) => document.querySelectorAll("[data-testid=gallery-slide]")[i].querySelector("[data-testid=gallery-hide-toggle]").getAttribute("data-hidden"), i);
+}
+// Clicks the delete icon on the i-th TOC slide row; waits for the row count to drop by one.
+export async function tocDeleteSlide(page, i = 0) {
+  const n = await page.evaluate((i) => { const rows = document.querySelectorAll("[data-testid=toc-slide-row]"); const d = rows[i]?.querySelector("[data-testid=toc-slide-delete]"); if (!d) return -1; d.click(); return rows.length; }, i);
+  if (n < 0) throw new Error(`tocDeleteSlide: no toc-slide-delete on row ${i}`);
+  await page.waitForFunction((n) => document.querySelectorAll("[data-testid=toc-slide-row]").length === n - 1, n, { timeout: 3000 });
+  return n - 1;
+}
+// Editor only. Toggles the current slide's reviewed checkmark; returns the new data-reviewed.
+export async function toggleReviewed(page) {
+  const before = await page.evaluate(() => { const b = document.querySelector("[data-testid=reviewed-toggle]"); if (!b) return null; const v = b.getAttribute("data-reviewed"); b.click(); return v; });
+  if (before == null) throw new Error("toggleReviewed: no reviewed-toggle (editor mode only)");
+  await page.waitForFunction((before) => document.querySelector("[data-testid=reviewed-toggle]")?.getAttribute("data-reviewed") !== before, before, { timeout: 3000 });
+  return page.evaluate(() => document.querySelector("[data-testid=reviewed-toggle]").getAttribute("data-reviewed"));
+}
+// Editor only. Sets the review cycle on/off (idempotent).
+export async function setReviewCycle(page, on = true) {
+  const ok = await page.evaluate((on) => { const b = document.querySelector("[data-testid=review-cycle-toggle]"); if (!b) return false; if ((b.getAttribute("aria-pressed") === "true") !== on) b.click(); return true; }, on);
+  if (!ok) throw new Error("setReviewCycle: no review-cycle-toggle (editor mode only)");
+  await page.waitForFunction((on) => document.querySelector("[data-testid=review-cycle-toggle]")?.getAttribute("aria-pressed") === String(on), on, { timeout: 3000 });
+}
+// Index of the active TOC slide row (aria-selected) among all rendered rows, or -1.
+export async function tocActiveRow(page) { return page.evaluate(() => [...document.querySelectorAll("[data-testid=toc-slide-row]")].findIndex((r) => r.getAttribute("aria-selected") === "true")); }
+// ── Branding pane + block chrome (sprint meridian C3) ─────────────────────────
+// Published driver contract (data-testids): brand-toggle, branding-panel
+// (data-docked="right" on desktop), branding-panel-close, branding-accent-height,
+// block-hover-toolbar (data-chrome-inside="true" when drawn inside the block),
+// block-ai-popup, block-link-popup, block-comment-popup; link badges carry
+// data-link-badge + data-link-badge-placed="text-end"|"corner".
+export async function openBrandingPane(page) {
+  if (!await page.$("[data-testid=branding-panel]")) await page.click("[data-testid=brand-toggle]");
+  await page.waitForSelector("[data-testid=branding-panel]", { timeout: 4000 });
+  return page.evaluate(() => { const p = document.querySelector("[data-testid=branding-panel]"); const r = p.getBoundingClientRect(); return { docked: p.dataset.docked || null, left: r.left, width: r.width }; });
+}
+export async function closeBrandingPane(page) {
+  const close = await page.$("[data-testid=branding-panel-close]");
+  if (close) await close.click();
+  await page.waitForFunction(() => !document.querySelector("[data-testid=branding-panel]"), undefined, { timeout: 4000 });
+}
+// Drive the accent-height slider through React's value setter (range inputs ignore fill()).
+// Returns the number of accent bars drawn on the editor slide afterwards.
+export async function setBrandingAccentHeight(page, px) {
+  await openBrandingPane(page);
+  await page.evaluate((px) => {
+    const el = document.querySelector("[data-testid=branding-accent-height]");
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set.call(el, String(px));
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+  }, px);
+  await page.waitForTimeout(120);
+  return page.evaluate(() => document.querySelectorAll("[data-testid=slide-viewport] [data-branding-accent]").length);
+}
+// Hover the Nth block on the editor slide with the real mouse; returns the toolbar placement.
+export async function hoverBlock(page, index = 0) {
+  const pt = await page.evaluate((i) => { const b = document.querySelectorAll("[data-testid=slide-viewport] [data-block-type]")[i]; if (!b) return null; const r = b.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + Math.min(40, r.height / 2) }; }, index);
+  if (!pt) throw new Error(`hoverBlock: no block #${index} on the editor slide`);
+  await page.mouse.move(1, 1);
+  await page.mouse.move(pt.x, pt.y, { steps: 4 });
+  await page.waitForSelector("[data-testid=block-hover-toolbar]", { timeout: 2000 });
+  return page.evaluate(() => { const t = document.querySelector("[data-testid=block-hover-toolbar]"); const r = t.getBoundingClientRect(); return { inside: t.dataset.chromeInside === "true", top: r.top, right: r.right }; });
+}
+// CR13 view switch. where: "top" (top bar, test-id view-switch), "gallery"
+// (gallery header, gallery-view-switch) or "fs" (fullscreen controls,
+// fs-view-switch). Clicks the segment with the REAL mouse only after
+// elementFromPoint at its centre hits that segment (not an overlay).
+// Returns { hit, active } — active is viewSwitchActive() after the click.
+export async function viewSwitch(page, where, mode) {
+  const tid = { top: "view-switch", gallery: "gallery-view-switch", fs: "fs-view-switch" }[where];
+  if (!tid) throw new Error(`viewSwitch: unknown place "${where}"`);
+  const pt = await page.evaluate((sel) => { const b = document.querySelector(`[data-testid=${sel}]`); if (!b) return null; const r = b.getBoundingClientRect(); const x = r.left + r.width / 2, y = r.top + r.height / 2; const top = document.elementFromPoint(x, y); return { x, y, hit: !!top && (top === b || b.contains(top)) }; }, `${tid}-${mode}`);
+  if (!pt) throw new Error(`viewSwitch: no ${tid}-${mode}`);
+  if (!pt.hit) throw new Error(`viewSwitch: ${tid}-${mode} is covered (elementFromPoint misses it)`);
+  await page.mouse.click(pt.x, pt.y);
+  await page.waitForTimeout(250);
+  return { hit: pt.hit, active: await viewSwitchActive(page) };
+}
+// Active view per mounted switch: { top, gallery, fs } — the aria-label of the
+// aria-pressed segment, or null when that switch is not mounted.
+export async function viewSwitchActive(page) {
+  return page.evaluate(() => { const a = (t) => { const g = document.querySelector(`[data-testid=${t}]`); if (!g) return null; const b = g.querySelector("button[aria-pressed=true]"); return b ? b.getAttribute("aria-label") : "none"; }; return { top: a("view-switch"), gallery: a("gallery-view-switch"), fs: a("fs-view-switch") }; });
+}
+// ── TOC drag auto-scroll (sprint tideline CR21) ───────────────────────────────
+// Real-mouse drag of TOC slide row `from` onto row `to` (negative = from the end;
+// where "top" = before it, "bottom" = after it). While the target row is out of
+// view, the pointer stays at the pane edge (top or bottom), so the pane must
+// auto-scroll. Returns { scrolledFrom, scrolledTo, holdMs } of the TOC pane.
+export async function tocDragSlideEdge(page, from, to, { where = "top", maxHoldMs = 8000 } = {}) {
+  const info = (i) => page.evaluate((i) => {
+    const rows = document.querySelectorAll("[data-testid=toc-slide-row]"); const r = rows[i < 0 ? rows.length + i : i];
+    const pane = document.querySelector("[data-testid=toc-tree]").parentElement; const p = pane.getBoundingClientRect();
+    if (!r) return null; const b = r.getBoundingClientRect();
+    return { x: b.left + Math.min(60, b.width / 2), top: b.top, bottom: b.bottom, h: b.height, pTop: p.top, pBottom: p.bottom, pX: p.left + p.width / 2, st: pane.scrollTop };
+  }, i);
+  const s0 = await info(from); if (!s0) throw new Error(`tocDragSlideEdge: no row ${from}`);
+  if (s0.top < s0.pTop || s0.bottom > s0.pBottom) {
+    await page.evaluate((i) => { const rows = document.querySelectorAll("[data-testid=toc-slide-row]"); rows[i < 0 ? rows.length + i : i].scrollIntoView({ block: "center" }); }, from);
+  }
+  // Hover can reveal an inline add bar that shifts rows, so re-read the row after
+  // the hover and retry once when no TOC drag started.
+  let s = await info(from); const scrolledFrom = s.st;
+  for (let attempt = 0; ; attempt++) {
+    await page.mouse.move(s.x, s.top + s.h / 2); await page.waitForTimeout(60); s = await info(from);
+    await page.evaluate(() => { window.__tocDragStarted = false; if (!window.__tocDragHook) { window.__tocDragHook = true; window.addEventListener("dragstart", () => { window.__tocDragStarted = true; }, true); } });
+    await page.mouse.move(s.x, s.top + s.h / 2); await page.mouse.down();
+    await page.mouse.move(s.x, s.top + s.h / 2 + 6, { steps: 3 });
+    if (await page.evaluate(() => window.__tocDragStarted)) break;
+    await page.mouse.up(); if (attempt >= 1) throw new Error(`tocDragSlideEdge: drag of row ${from} did not start`);
+    await page.waitForTimeout(100); s = await info(from);
+  }
+  const visible = (t) => t && t.top >= t.pTop && t.bottom <= t.pBottom;
+  // Hold at the edge until the row is clear of the edge zone (64px), or it is
+  // visible and the pane stopped scrolling (it reached the end).
+  const clear = (t) => t && t.top >= t.pTop + 64 && t.bottom <= t.pBottom - 64;
+  const t0 = Date.now(); let t = await info(to); let k = 0; let prev = null, same = 0;
+  while (!clear(t) && !(visible(t) && same >= 3) && Date.now() - t0 < maxHoldMs) {
+    const y = t.top + t.h / 2 < (t.pTop + t.pBottom) / 2 ? t.pTop + 4 : t.pBottom - 4;
+    await page.mouse.move(t.pX + (k++ % 2), y); await page.waitForTimeout(50); t = await info(to);
+    same = prev === t.st ? same + 1 : 0; prev = t.st;
+  }
+  const holdMs = Date.now() - t0;
+  if (!visible(t)) { await page.mouse.up(); throw new Error(`tocDragSlideEdge: row ${to} never scrolled into view`); }
+  // Leave the edge zone (pane middle) so the scroll stops, then aim at the row.
+  await page.mouse.move(t.pX, (t.pTop + t.pBottom) / 2, { steps: 2 }); await page.waitForTimeout(120); t = await info(to);
+  const y = where === "top" ? t.top + 3 : t.bottom - 3;
+  await page.mouse.move(t.x, y, { steps: 4 }); await page.waitForTimeout(80);
+  const at = await info(to); const hit = await page.evaluate(([x, y]) => { const e = document.elementFromPoint(x, y); const r = e && e.closest("[data-testid=toc-slide-row]"); return r ? r.textContent.slice(0, 30) : (e ? e.tagName + ":" + (e.textContent || "").slice(0, 20) : null); }, [t.x, y]);
+  await page.mouse.up(); await page.waitForTimeout(150);
+  return { scrolledFrom, scrolledTo: t.st, holdMs, dropY: y, rowTopAtDrop: at.top, hit };
+}
+// Titles (the flex:1 title span) of the TOC slide rows, in order.
+export async function tocSlideTitles(page) { return page.evaluate(() => [...document.querySelectorAll("[data-testid=toc-slide-row]")].map((r) => { const t = [...r.querySelectorAll("span")].find((x) => (x.style.flex || "").startsWith("1")); return ((t || r).textContent || "").trim(); })); }

@@ -56,7 +56,19 @@ acknowledgment before the deck mounts.
    keeping the webview's native surface minimal. `debug.log` is granted for the
    same reason — the client library's internal error handler writes to the
    fixed runtime log file (`logging.writeToLogFile` is on); it takes a message,
-   not a path, so it carries no arbitrary-path capability. Re-audit with:
+   not a path, so it carries no arbitrary-path capability. `window.setTitle`
+   is granted so the native title bar can show the open deck's title; it
+   takes only a string, which the shell passes as plain text — no path, no
+   markup, no command. The deck title is untrusted and can arrive unsanitized,
+   so `window-glue.js` filters it before the call: non-string → plain app
+   name; NFKC; control, format (bidi, zero-width, soft hyphen, tag), private-use,
+   unassigned, line/paragraph-separator and default-ignorable characters
+   dropped; blank-rendering glyphs turned into a space; whitespace collapsed;
+   capped at 200 code points (same policy as `_safe_term.py` `term_label`).
+   The title always reads `Vela Slides - <title>`; only a title that is exactly
+   "Vela Slides" shows as the plain app name, so deck text never stands alone
+   as the window title. This is the one documented exception to clause (c) of
+   the invariant in `docs/SECURITY.md`. Re-audit with:
    ```
    grep -rhoE "Neutralino\.[a-zA-Z]+\.[a-zA-Z]+" resources/ | sort -u
    ```

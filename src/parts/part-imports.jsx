@@ -138,8 +138,12 @@ const velaClipboardReadSlides = async () => {
   return [];
 };
 
-const VELA_VERSION = "13.74";
+const VELA_VERSION = "13.78";
 const VELA_CHANGELOG = [
+  { v: "13.78", d: ["Images: up to 10 per slide; overflow goes to a new slide.", "Images: drag image files from your computer onto a slide.", "Images: drag tiles to reorder.", "Story mode: present a slide's images one by one.", "Export: expand story slides to one page per image (PDF/PPTX).", "Text: Ctrl+U underline is saved and shows everywhere (++text++).", "Images: dropped files use the same ordered, safe queue as pasted images.", "Story mode: grid tiles keep a one-line title row, so tiles align.", "Vector PDF: text after bold/italic/underline/link keeps its space and letter spacing.", "Drop: images dropped outside a slide show a hint; a deck file dropped with images still loads.", "Slide toolbar stays on one row; labels change to icons when space is short."] },
+  { v: "13.77", d: ["Two-column slides: edits to a column block (link, text, hide, delete) are saved; before, they were lost.", "Link boxes accept a bare domain (example.com) or an email address; before, these were saved as an empty link.", "Desktop: outside edits to decks up to 50 MB now reload live (was 5 MB).", "Present: Esc exits fullscreen, also inside Claude.ai artifacts.", "Esc closes the gallery, presenter view, image zoom or an open dialog first.", "Present toolbar: removed the duplicate gallery icon; presenter view uses a notes icon.", "Image zoom fills the window again (it was limited to the scaled slide).", "Zoom: arrow keys step through the images on the slide; past the first or last image they close the zoom.", "Present toolbar stays faint until you point at it.", "Editor: Ctrl+E toggles the TOC (as in present mode); [ also works with AltGr keyboards."] },
+  { v: "13.76", d: ["TOC: dragging a slide or section near the list edge auto-scrolls the list.", "TOC: moving a slide to a section in an earlier lane no longer loses the slide.", "Images: a pasted image on an empty slide fills the slide, not one half.", "Images: grids pick rows and columns by image aspect ratio.", "Images: solo and wide images fill the free slide area.", "Images: images shrink to fit, so text below an image stays on the slide.", "Editing: all text in checklist, comparison, matrix, number-row, progress and flow blocks is editable inline.", "Checklist: type a status name to change the status; custom status labels survive compact/turbo formats."] },
+  { v: "13.75", d: ["Editor: mark slides reviewed (✓); Review cycle makes arrow keys skip reviewed slides.", "View switch (editor | presenter | gallery) next to Present.", "Gallery: hide/unhide a slide beside delete; TOC: delete icon on slide rows (undoable).", "Fullscreen nav icons stay visible on any slide background.", "Branding: right-side settings pane; accent line removable at 0px.", "Block toolbar stays visible on full-bleed images; link badges sit right after the text.", "Vector PDF: € and other WinAnsi symbols render as text at correct size.", "validate: reports a gradient in solid-color bg fields (use bgGradient).", "Opening or switching a deck keeps lane/module ids.", "Desktop: window title shows the deck title; keyboard works after alt-tab; AI agents detected on first start; HTML export fixed."] },
   { v: "13.74", d: ["Security: CLI output now neutralizes terminal control sequences in deck text (CWE-150 class), closing a display-spoofing channel.", "Security: the machine-readable --json output is fully escaped for the same class.", "Added one canonical output encoder, a CI gate keeping every CLI output path routed through it, and regression tests."] },
   { v: "13.73", d: ["Security (High): hardened the deck-injection build path — trusted app source is now transformed before untrusted deck data is injected.", "Security: added a fail-closed integrity check that refuses to write an artifact whose trusted bytes changed.", "Local preview server: same injection-last ordering applied to its HTML build path.", "Tests: added build-pipeline trust-boundary regression coverage."] },
   { v: "13.72", d: "Demo: synchronized the bundled product-tour deck and its content fingerprint." },
@@ -421,7 +425,10 @@ function applyStartupPatch(loadedDeck, dispatch) {
   if (STARTUP_PATCH.lanes) {
     dbg("[PATCH] Full deck replace");
     try {
-      const sanitized = validateAndSanitizeDeck(STARTUP_PATCH);
+      // keepIds: a startup patch REPLACES the whole deck (nothing else in state to
+      // collide with), so its own valid, unique ids survive. Minting fresh ids here
+      // churned every lane/module id on each desktop/local open (CR01).
+      const sanitized = validateAndSanitizeDeck(STARTUP_PATCH, { keepIds: true });
       dispatch({ type: "LOAD", payload: { ...sanitized, deckTitle: sanitizeDeckTitle(STARTUP_PATCH.deckTitle) } });
     } catch (e) {
       // Fail closed: never load an unsanitized deck. validateAndSanitizeDeck only throws
@@ -565,6 +572,30 @@ function sanitizeUrl(url, allowedProtocols = ["http:", "https:", "mailto:"]) {
     // data: image path is validated raw downstream). Backslashes already rejected.
     return trimmed;
   } catch (_) { return ""; }
+}
+
+// A link typed into an editor link box. People type "example.com" or
+// "www.example.com"; sanitizeUrl needs an explicit scheme, so a bare domain was
+// saved as empty with no feedback. Add https:// (or mailto: for a plain email
+// address) when no scheme is given, then gate through sanitizeUrl as before.
+// Schemeless input gets a scheme ONLY when it is a plain email address or looks
+// like a real host (dotted labels, optional port, then a path/query/fragment
+// with no whitespace). Anything else — free text, "a@b", "user@host/x" (would
+// become https userinfo), "sms:123" (would parse as host:port), ".." — returns
+// undefined, which the link box treats as "no link" (an empty box does the same).
+const LINK_HOST_LABEL = "[\\p{L}\\p{N}](?:[\\p{L}\\p{N}-]{0,61}[\\p{L}\\p{N}])?";
+const LINK_HOST = `(?:${LINK_HOST_LABEL}\\.)+${LINK_HOST_LABEL}`;
+const LINK_BARE_EMAIL = new RegExp(`^[A-Za-z0-9.!#$%&'*+=?^_\`{|}~-]+@${LINK_HOST}$`, "u");
+const LINK_BARE_HOST = new RegExp(`^${LINK_HOST}(?::\\d{1,5})?(?:[/?#]\\S*)?$`, "u");
+function linkFromInput(value) {
+  const t = String(value == null ? "" : value).trim();
+  if (!t) return undefined;
+  // "host:8080" is a host and port, not a scheme.
+  if (/^[a-z][a-z0-9+.\-]*:(?!\d)/i.test(t)) return sanitizeUrl(t) || undefined;
+  if (LINK_BARE_EMAIL.test(t)) return sanitizeUrl("mailto:" + t) || undefined;
+  const bare = t.replace(/^\/+/, "");
+  if (!LINK_BARE_HOST.test(bare)) return undefined;
+  return sanitizeUrl("https://" + bare) || undefined;
 }
 
 // Open a deck-supplied URL safely — re-sanitize at the sink so a javascript:/data:/
@@ -961,6 +992,20 @@ function sanitizeSvgMarkup(raw) {
           for (const a of attrs) {
             const name = a.name.toLowerCase();
             if (name.startsWith("on")) { child.removeAttribute(a.name); continue; }
+            // UI-integrity (namespace forgery, §3.13): the app marks its own chrome
+            // and export plumbing with data-* attributes and queries them. No deck
+            // feature needs data-* in SVG, so drop every one (both spellings: a
+            // prefixed name keeps "data-…" as its localName).
+            if (name.startsWith("data-") || (a.localName || "").toLowerCase().startsWith("data-")) { child.removeAttribute(a.name); continue; }
+            // UI-integrity (§3.15): class lets deck SVG opt into the app's global
+            // stylesheet rules (hover transforms etc. on the root <svg>, which
+            // SVG_ROOT_BLOCKED forbids as attributes). role / aria-* / tabindex /
+            // autofocus let deck SVG take focus and pose as app widgets that the
+            // keyboard handlers treat specially. No deck diagram needs them; paint
+            // uses presentation attributes and refs use id, which stays.
+            // Both spellings, as for data-* above.
+            const chromeAttr = /^(?:class|role|tabindex|autofocus|aria-.*)$/;
+            if (chromeAttr.test(name) || chromeAttr.test((a.localName || "").toLowerCase())) { child.removeAttribute(a.name); continue; }
             // src/srcset never appear on legitimate SVG elements (SVG uses href/
             // xlink:href), so they survive the SVG parse inert — but the sanitized
             // string is later parsed in an HTML context (dangerouslySetInnerHTML into a
@@ -1397,7 +1442,7 @@ const SAFE_SLIDE_KEYS = new Set([
   "align", "verticalAlign", "padding", "gap",
   "splitGap", "contentFlex", "imageFlex", "imageCols",
   // presentation metadata
-  "duration", "timeLock", "hidden", "notes", "speakerNotes", "studyNotes",
+  "duration", "timeLock", "hidden", "reviewed", "story", "notes", "speakerNotes", "studyNotes",
   "comments", "image",
 ]);
 const SAFE_BLOCK_KEYS = new Set([
@@ -1535,6 +1580,9 @@ function sanitizeBlock(block, depth = 0) {
     }
     if (clean.type === "flow" || clean.type === "steps" || clean.type === "timeline" || clean.type === "tag-group" || clean.type === "funnel" || clean.type === "cycle" || clean.type === "number-row" || clean.type === "checklist") {
       clean.items = clean.items.slice(0, 20).map((it) => {
+        // A checklist item may be a plain string (the renderer and validate.py
+        // accept it); keep it as sanitized text instead of dropping it.
+        if (typeof it === "string" && clean.type === "checklist") return sanitizeString(it, 1000);
         if (!it || typeof it !== "object") return null;
         const c = { ...it };
         if (c.label) c.label = sanitizeString(c.label, 200);
@@ -1623,7 +1671,8 @@ function sanitizeComment(c) {
     anchor: typeof c.anchor === "string" ? sanitizeString(c.anchor, 200) : null,
     blockIndex: typeof c.blockIndex === "number" ? c.blockIndex : null,
     status: VALID_COMMENT_STATUSES.has(c.status) ? c.status : "open",
-    createdAt: typeof c.createdAt === "string" ? c.createdAt.slice(0, 30) : now(),
+    // null, not now(): a stamp here changed an unchanged deck on each open (CR01).
+    createdAt: typeof c.createdAt === "string" ? c.createdAt.slice(0, 30) : null,
     resolvedAt: typeof c.resolvedAt === "string" ? c.resolvedAt.slice(0, 30) : null,
   };
 }
@@ -1692,6 +1741,12 @@ function sanitizeSlide(slide) {
   }
   // `hidden` (slide excluded from presentation/counts) — strict boolean only.
   if ("hidden" in clean) { if (clean.hidden === true) clean.hidden = true; else delete clean.hidden; }
+  // `reviewed` (editor review-cycle mark; never rendered or exported) — strict boolean only.
+  if ("reviewed" in clean) { if (clean.reviewed === true) clean.reviewed = true; else delete clean.reviewed; }
+  // `story` (Present shows the slide's images one by one) — strict boolean only.
+  // Any other shape is deleted, never coerced: it gates a presentation mode, so
+  // a truthy string/number from a deck must not switch it on.
+  if ("story" in clean) { if (clean.story === true) clean.story = true; else delete clean.story; }
   // NOTE: wrap the sanitizeBlock calls — a bare `.map(sanitizeBlock)` would pass
   // the array INDEX into the recursion-depth parameter.
   if (Array.isArray(clean.blocks)) clean.blocks = clean.blocks.slice(0, 30).map((b) => sanitizeBlock(b)).filter(Boolean);
@@ -1728,12 +1783,27 @@ function sanitizeSlide(slide) {
   return clean;
 }
 
+// Deterministic short id from a string (djb2, base36). Used where a value is
+// DERIVED from deck content during sanitize, so the same deck gives the same
+// value on every open (CR01): a random id here made an unchanged deck look
+// edited. Not a security primitive — the output is a fixed charset.
+function stableIdFrom(str) {
+  let h = 5381;
+  for (let i = 0; i < str.length; i++) h = ((h << 5) + h + str.charCodeAt(i)) | 0;
+  return (h >>> 0).toString(36);
+}
+
 function sanitizeItem(item) {
   if (!item || typeof item !== "object") return null;
   const comments = Array.isArray(item.comments) ? item.comments.slice(0, MAX_COMMENTS).map(sanitizeComment).filter(Boolean) : [];
-  // Migrate legacy notes to a module-level comment if no comments exist
+  const createdAt = typeof item.createdAt === "string" ? item.createdAt.slice(0, 30) : null;
+  // Migrate legacy notes to a module-level comment if no comments exist.
+  // id + createdAt are derived from the module (not uid()/now()), so re-opening
+  // the same deck gives the same comment (CR01).
   if (comments.length === 0 && typeof item.notes === "string" && item.notes.trim()) {
-    comments.push({ id: "c_" + uid(), text: sanitizeString(item.notes.trim(), 1000), anchor: null, blockIndex: null, status: "open", createdAt: now(), resolvedAt: null });
+    const text = sanitizeString(item.notes.trim(), 1000);
+    const seed = (typeof item.id === "string" ? item.id.slice(0, 64) : "") + "\u0000" + (typeof item.title === "string" ? item.title.slice(0, 200) : "") + "\u0000" + text;
+    comments.push({ id: "c_n" + stableIdFrom(seed), text, anchor: null, blockIndex: null, status: "open", createdAt, resolvedAt: null });
   }
   return {
     id: uid(),
@@ -1744,7 +1814,9 @@ function sanitizeItem(item) {
     importance: VALID_IMPORTANCES.has(item.importance) ? item.importance : "should",
     order: typeof item.order === "number" ? item.order : 0,
     slides: Array.isArray(item.slides) ? item.slides.slice(0, 100).map(sanitizeSlide).filter(Boolean) : [],
-    createdAt: typeof item.createdAt === "string" ? item.createdAt.slice(0, 30) : now(),
+    // A missing createdAt stays absent (nothing reads it): stamping now() here
+    // changed the deck on every open (CR01).
+    ...(createdAt !== null ? { createdAt } : {}),
     ...(item.presentCard ? { presentCard: true } : {}),
   };
 }
@@ -1812,15 +1884,78 @@ function resanitizeLoadedBranding(branding) {
   return b;
 }
 
-function validateAndSanitizeDeck(raw) {
+// Lane/module ids a deck may keep when the caller passes { keepIds: true }.
+// Type-checked first (no coercion), charset-limited, no leading "_" (reserved
+// for renderer-private keys). Anything else is replaced by a fresh uid().
+const KEEPABLE_DECK_ID = /^[A-Za-z0-9][A-Za-z0-9-]{0,63}$/;
+// Ids key plain-object maps (gallery counts/colours, per-module storage
+// chunks). An id that names an Object.prototype member would read the
+// inherited value (a function) instead of "missing", so it is not keepable.
+const isKeepableDeckId = (v) => typeof v === "string" && KEEPABLE_DECK_ID.test(v) && !(v in Object.prototype);
+
+// Live deck update (external edit / deck switch): `sanitized` came from
+// validateAndSanitizeDeck(raw, { keepIds: true }). A lane/module whose id was
+// freshly minted (the raw id was missing/invalid/duplicate) takes the id at the
+// same position in `cur`, so selection survives an editor that dropped ids —
+// but only when that id is valid and not already used in `sanitized` (ids stay
+// unique). Ids the file kept are never overwritten (CR01).
+function adoptPriorDeckIds(sanitized, raw, cur) {
+  if (!sanitized || !Array.isArray(sanitized.lanes) || !cur || !Array.isArray(cur.lanes)) return sanitized;
+  const rawIds = new Set();
+  for (const l of (raw && Array.isArray(raw.lanes) ? raw.lanes : [])) {
+    if (l && typeof l.id === "string") rawIds.add(l.id);
+    for (const it of (l && Array.isArray(l.items) ? l.items : [])) if (it && typeof it.id === "string") rawIds.add(it.id);
+  }
+  const used = new Set();
+  for (const l of sanitized.lanes) { used.add(l.id); for (const it of l.items || []) used.add(it.id); }
+  const adopt = (obj, prior) => {
+    if (rawIds.has(obj.id) || !prior || !isKeepableDeckId(prior.id) || used.has(prior.id)) return;
+    used.delete(obj.id); obj.id = prior.id; used.add(obj.id);
+  };
+  sanitized.lanes.forEach((l, li) => {
+    const cl = cur.lanes[li];
+    adopt(l, cl);
+    (l.items || []).forEach((it, ii) => adopt(it, cl && Array.isArray(cl.items) ? cl.items[ii] : null));
+  });
+  return sanitized;
+}
+
+// The deck content the local/desktop shell writes to the file (part-app.jsx
+// flushLocalStateRef). Its JSON is the no-edit guard's signature: a flush whose
+// signature equals the file's known content is skipped, so opening a deck the
+// user did not change never writes the file (CR01).
+function localDeckPayload(s) {
+  return { deckTitle: s.deckTitle, lanes: s.lanes, branding: s.branding, guidelines: s.guidelines };
+}
+
+function validateAndSanitizeDeck(raw, opts) {
   if (!raw || typeof raw !== "object") throw new Error("Invalid deck format");
   if (!Array.isArray(raw.lanes)) throw new Error("Missing lanes array");
+  // Default (fresh import): every lane/module id is re-minted so an imported
+  // deck can never collide with ids already in state. keepIds (full-deck
+  // replace, e.g. the startup patch): keep each valid id that is unique across
+  // ALL lanes + modules of this deck; a duplicate or invalid id is repaired
+  // with a fresh one, so the collision defense still holds inside the deck.
+  const keepIds = !!(opts && opts.keepIds === true);
+  const seenIds = new Set();
+  const deckId = (v) => {
+    if (keepIds && isKeepableDeckId(v) && !seenIds.has(v)) { seenIds.add(v); return v; }
+    let id = uid();
+    while (seenIds.has(id)) id = uid();
+    seenIds.add(id);
+    return id;
+  };
   // Clamp rather than throw: a >50-lane deck must not be able to trip an exception
   // that a fail-open caller would catch and then load raw, unsanitized (sanitizer off-switch).
   const lanes = raw.lanes.slice(0, 50).map((lane) => {
     if (!lane || typeof lane !== "object") return null;
-    const items = Array.isArray(lane.items) ? lane.items.slice(0, 200).map(sanitizeItem).filter(Boolean) : [];
-    return { id: uid(), title: sanitizeString(lane.title || "Untitled", 100), collapsed: !!lane.collapsed, items };
+    const laneId = deckId(lane.id);
+    const items = Array.isArray(lane.items) ? lane.items.slice(0, 200).map((item) => {
+      const clean = sanitizeItem(item);
+      if (clean) clean.id = deckId(item.id);
+      return clean;
+    }).filter(Boolean) : [];
+    return { id: laneId, title: sanitizeString(lane.title || "Untitled", 100), collapsed: !!lane.collapsed, items };
   }).filter(Boolean);
   const rawBranding = raw.branding && typeof raw.branding === "object" ? raw.branding : {};
   const importedBranding = {
@@ -1859,18 +1994,42 @@ function validateAndSanitizeDeck(raw) {
 }
 
 // ━━━ Image Compression ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-function compressImage(dataUrl, maxWidth = 800, quality = 0.7) {
+const PNG_KEEP_MAX = 400000; // max data-URL length of a kept (transparent) PNG
+// `opts.strict` (drop + paste): resolve null — never the original — when the
+// image cannot be decoded or exceeds IMAGE_MAX_PIXELS, so an undecodable or
+// decompression-bomb file is rejected instead of stored raw. Without it the
+// behaviour is unchanged (chat keeps the fail-open default).
+function compressImage(dataUrl, maxWidth = 800, quality = 0.7, opts) {
+  const strict = !!(opts && opts.strict);
   return new Promise((resolve) => {
     const img = new Image();
     img.onload = () => {
+      if (strict && !((img.naturalWidth || 0) * (img.naturalHeight || 0) <= IMAGE_MAX_PIXELS)) { resolve(null); return; }
       let w = img.width, h = img.height;
       if (w > maxWidth) { h = Math.round(h * maxWidth / w); w = maxWidth; }
       const c = document.createElement("canvas");
       c.width = w; c.height = h;
-      c.getContext("2d").drawImage(img, 0, 0, w, h);
+      const ctx = c.getContext("2d");
+      ctx.drawImage(img, 0, 0, w, h);
+      // HI7: JPEG has no alpha. An image with transparent pixels (PNG, GIF,
+      // WebP, SVG...) keeps them as PNG, but only while the PNG stays small
+      // (PNG_KEEP_MAX chars), so a paste cannot grow the deck without bound.
+      // Otherwise (or for an image too large to scan) it is JPEG on white, not on
+      // the canvas's transparent black.
+      let alpha = false;
+      if (!/^data:image\/jpe?g[;,]/i.test(dataUrl) && w * h <= 4e6) {
+        try { const px = ctx.getImageData(0, 0, w, h).data; for (let k = 3; k < px.length; k += 4) if (px[k] < 255) { alpha = true; break; } } catch (_) { alpha = false; }
+      }
+      if (alpha) {
+        const png = c.toDataURL("image/png");
+        if (png.length <= PNG_KEEP_MAX) { resolve(png); return; }
+      }
+      ctx.globalCompositeOperation = "destination-over";
+      ctx.fillStyle = "#ffffff";
+      ctx.fillRect(0, 0, w, h);
       resolve(c.toDataURL("image/jpeg", quality));
     };
-    img.onerror = () => resolve(dataUrl);
+    img.onerror = () => resolve(strict ? null : dataUrl);
     img.src = dataUrl;
   });
 }
@@ -1887,6 +2046,13 @@ const imageAspect = (dataUrl) => new Promise((resolve) => {
   img.onerror = () => resolve(1);
   img.src = dataUrl;
 });
+// Natural size {w, h} of a data URL image; {w: 0, h: 0} on error (CR23 paste caps).
+const imageNaturalSize = (dataUrl) => new Promise((resolve) => {
+  const img = new Image();
+  img.onload = () => resolve({ w: img.naturalWidth || 0, h: img.naturalHeight || 0 });
+  img.onerror = () => resolve({ w: 0, h: 0 });
+  img.src = dataUrl;
+});
 
 // Decide the layout for a slide an image is being pasted onto. Returns the layout
 // the slide should carry: an explicit author layout is preserved; an empty/mostly-
@@ -1894,7 +2060,7 @@ const imageAspect = (dataUrl) => new Promise((resolve) => {
 // the image below ("stack"); otherwise the slide is promoted to "image-right" so
 // the image sits beside the existing body content. aspect = image width / height.
 const PASTE_TITLE_BLOCKS = new Set(["heading", "text", "subtitle", "badge", "quote"]);
-function pasteImageLayout(slide, aspect, n) {
+function pasteImageLayout(slide, aspect, n, aspects, measure, naturalW) {
   const layout = slide && slide.layout;
   if (layout && layout !== "stack") return layout; // respect explicit author layout
   const body = ((slide && slide.blocks) || []).filter((b) => b.type !== "image" && b.type !== "spacer" && b.type !== "divider");
@@ -1903,9 +2069,114 @@ function pasteImageLayout(slide, aspect, n) {
   // Heavy body text + a grid of images (>=3): don't cram the grid into a half.
   // Keep the slide stacked so the text reads as a full-width header and the
   // image run grids full-width below it (the renderer auto-grids the run).
-  if (hasContent && n >= 3) return "stack";
   const wide = aspect >= 1.6;
-  return (!mostlyTitle && !wide) ? "image-right" : "stack";
+  const rule = (hasContent && n >= 3) ? "stack" : (!mostlyTitle && !wide) ? "image-right" : "stack";
+  // CR23: with every image aspect known, compare the two candidates and keep the
+  // one that shows the most image area (see pasteLayoutArea). The count rule
+  // above is the fallback when the estimate cannot be made.
+  if (!body.length || !Array.isArray(aspects) || aspects.length !== n) return rule;
+  const split = pasteLayoutArea(slide, aspects, "image-right", measure, naturalW), stack = pasteLayoutArea(slide, aspects, "stack", measure, naturalW);
+  if (split == null || stack == null) return rule;
+  return split > stack ? "image-right" : "stack";
+}
+
+// Split-column flex the paste handler gives a split slide it lays out itself: a
+// lone square/portrait image gives the text the larger share; a grid splits 1:1.
+function pasteSplitFlex(n, aspect) {
+  return n === 1 && aspect <= 1.2 ? [1.4, 1] : [1, 1];
+}
+
+// CR23: estimated image area (slide px^2) for `aspects` on `slide` in layout
+// "stack" (body text on top, image grid full width below) or "image-right" (body
+// text beside an image column), at the default 960x540 geometry. The image area
+// comes from imageGridPlan(), the same packing the renderer draws, so the two
+// cannot disagree. The body height comes from `measure(width)` (the paste handler
+// measures the rendered blocks); without it, from a per-block estimate that
+// covers every block type. A stacked slide whose text overflows is scaled down as
+// a whole (area x scale^2). A split slide widens its columns when it scales, so
+// its image column keeps its visual size. Null only for a custom slide padding.
+const PASTE_TEXT_METRICS = { heading: ["2xl", 1.2, 0.56], text: ["md", 1.6, 0.5], bullets: ["md", 1.6, 0.5], quote: ["xl", 1.4, 0.52] };
+function pasteBodyEstimate(body, w, gap) {
+  let total = 0;
+  for (const b of body) {
+    const m = PASTE_TEXT_METRICS[b.type];
+    if (b.type === "badge") total += 28;
+    else if (m) {
+      const px = parseFloat(BASE_SIZES[b.size] || BASE_SIZES[m[0]]) * 16, lineH = px * m[1];
+      const lines = (str, width) => String(str == null ? "" : str).split("\n").reduce((k, seg) => k + Math.max(1, Math.ceil(seg.length * px * m[2] / Math.max(40, width))), 0);
+      if (b.type === "bullets") {
+        const items = Array.isArray(b.items) ? b.items : [];
+        total += items.reduce((h, it) => h + lines(typeof it === "string" ? it : it && it.text, w - 28) * lineH, 0) + Math.max(0, items.length - 1) * (Number(b.gap) || 8);
+      } else total += lines(b.text, b.type === "quote" ? w * 0.85 : w) * lineH;
+    }
+    // Conservative, width-free estimates for every other block type.
+    else if (Array.isArray(b.rows)) total += 44 + b.rows.length * 38;
+    else if (b.type === "code") total += 36 + String(b.text || "").split("\n").length * 20;
+    else if (b.type === "chart") total += 240;
+    else if (Array.isArray(b.items)) total += 24 + b.items.length * 44;
+    else total += 90;
+    total += gap;
+  }
+  return Math.max(0, total - gap);
+}
+function pasteLayoutArea(slide, aspects, layout, measure, naturalW) {
+  if (!slide || slide.padding != null || !Array.isArray(aspects) || !aspects.length) return null;
+  if (!aspects.every((a) => typeof a === "number" && a > 0 && Number.isFinite(a))) return null;
+  const body = (slide.blocks || []).filter((b) => b && b.type !== "image" && b.type !== "spacer" && b.type !== "divider");
+  const gap = Number(slide.gap) || 12, W = 864, H = 468;
+  const textH = (w) => {
+    const m = typeof measure === "function" ? measure(w) : null;
+    return typeof m === "number" && Number.isFinite(m) && m >= 0 ? m : pasteBodyEstimate(body, w, gap);
+  };
+  const n = aspects.length;
+  // Upscale caps (natural widths, optional): a grid cell draws an image at most
+  // GRID_IMG_MAX_UPSCALE x natural size; a lone side image at most 1x.
+  const known = Array.isArray(naturalW) && naturalW.length === n;
+  const capGrid = known ? naturalW.map((w) => w * GRID_IMG_MAX_UPSCALE) : undefined;
+  // The author's imageCols pins the grid, clamped as renderImageGrid does, so the
+  // estimate packs the images as the slide renders them. A lone side image does
+  // not render as a grid, so the pin does not apply to it.
+  const pinned = slide.imageCols ? Math.min(6, Math.max(1, slide.imageCols | 0)) : 0;
+  if (layout === "stack") {
+    const head = body.length ? textH(W) + gap : 0;
+    // The renderer's one-row floor (renderImageGrid minGridH).
+    const gridH = Math.max(H - head, 72);
+    const s = Math.min(1, H / (head + gridH));
+    return imageGridPlan(aspects, W, gridH, gap, gridColsFor(n, "full"), pinned, capGrid).area * s * s;
+  }
+  const [cf, imf] = pasteSplitFlex(n, aspects[n - 1]);
+  const colW = (W - (Number(slide.splitGap) || 32)) / (cf + imf);
+  return imageGridPlan(aspects, colW * imf, H, gap, gridColsFor(n, "half"), n === 1 ? 0 : pinned, n === 1 && known ? naturalW : capGrid).area;
+}
+
+// CR23: body-height probe for pasteLayoutArea(). When a paste starts, it copies
+// (cloneNode) the rendered non-image blocks of the on-screen slide. measure(w)
+// lays the copies out at width w in a hidden box inside the slide and returns
+// their stacked height in slide px, so every block type (table, chart, code...)
+// is measured, not guessed. Null when the viewport does not show `slide`.
+function pasteBodyProbe(root, slide) {
+  const vp = root && root.querySelector ? root.querySelector("[data-testid='slide-viewport']") : null;
+  if (!vp || !slide) return null;
+  const els = Array.from(vp.querySelectorAll("[data-block-type]")).filter((el) => el.getAttribute("data-block-type") !== "image" && !el.parentElement.closest("[data-block-type]"));
+  if (els.length !== (slide.blocks || []).filter((b) => b && b.type !== "image").length) return null;
+  if (!els.length) return () => 0;
+  const host = els[0].parentElement, copies = els.map((el) => el.cloneNode(true));
+  const gap = Number(slide.gap) || 12, cache = new Map();
+  return (w) => {
+    if (cache.has(w)) return cache.get(w);
+    let h = null;
+    if (host && host.isConnected) {
+      const probe = document.createElement("div");
+      probe.setAttribute("aria-hidden", "true");
+      probe.style.cssText = `position:absolute;left:0;top:0;visibility:hidden;pointer-events:none;display:flex;flex-direction:column;gap:${gap}px;width:${Math.max(1, Math.round(w))}px`;
+      copies.forEach((c) => probe.appendChild(c));
+      host.appendChild(probe);
+      h = probe.offsetHeight;
+      probe.remove();
+    }
+    cache.set(w, h);
+    return h;
+  };
 }
 
 // Columns for a run of `n` images, by region. "full" = image-only slide or a
@@ -1918,6 +2189,235 @@ function gridColsFor(n, region) {
   n = Math.max(1, n | 0);
   if (region === "half") return n <= 1 ? 1 : 2;
   return ({ 1: 1, 2: 2, 3: 3, 4: 2, 5: 3 })[n] || 3;
+}
+
+// CR23: the image-grid packing. The renderer (renderImageGrid) and the paste
+// layout chooser (pasteLayoutArea) both use it, so they cannot disagree.
+// A plan is a list of rows; each row is { cells: [{ i, f }], gc, hw }:
+//   cell width = (boxW - gap * gc) * f     (f = share of the row width)
+//   row height = (boxH - gap * (rows - 1)) * hw / sum(hw)
+// Each image is drawn with objectFit:contain in its cell. Candidates:
+//   - uniform grids of 1..6 columns (equal cells; a short last row is centered);
+//   - for mixed aspect ratios, "justified" rows: consecutive images share one
+//     row height and get widths in proportion to their aspect (every row split).
+// The count-driven uniform grid (`fallback` columns) wins unless another plan
+// shows at least 5% more image area, so the arrangement is stable. `pinned`
+// (the author's imageCols) forces a uniform grid. Unknown aspects or box → the
+// fallback grid with area 0. aspects = width / height of each image, in order;
+// maxW (optional) = the widest each image may be drawn (the upscale cap).
+function imageGridPlan(aspects, boxW, boxH, gap, fallback, pinned, maxW) {
+  const n = Array.isArray(aspects) ? aspects.length : 0;
+  const g = Math.max(0, Number(gap) || 0);
+  const valid = n > 0 && boxW > 0 && boxH > 0 && aspects.every((a) => typeof a === "number" && a > 0 && Number.isFinite(a));
+  const uniform = (c) => {
+    const rows = [];
+    for (let s = 0; s < n; s += c) rows.push({ cells: aspects.slice(s, s + c).map((_, k) => ({ i: s + k, f: 1 / c })), gc: c - 1, hw: 1 });
+    return { rows, cols: c };
+  };
+  const areaOf = (rows) => {
+    const avail = boxH - g * (rows.length - 1), sumHw = rows.reduce((t, r) => t + r.hw, 0);
+    if (!(avail > 0 && sumHw > 0)) return 0;
+    let area = 0;
+    for (const r of rows) {
+      const h = avail * r.hw / sumHw;
+      for (const c of r.cells) {
+        const w = (boxW - g * r.gc) * c.f, a = aspects[c.i];
+        if (!(w > 0)) return 0;
+        const cap = maxW && maxW[c.i] > 0 ? maxW[c.i] : Infinity;
+        const iw = Math.min(w, h * a, cap);
+        area += iw * iw / a;
+      }
+    }
+    return area;
+  };
+  const pack = (p) => ({ ...p, area: valid ? areaOf(p.rows) : 0 });
+  if (pinned) return pack(uniform(Math.min(6, Math.max(1, pinned | 0))));
+  if (n <= 1) return pack(uniform(1));
+  const base = pack(uniform(Math.min(n, Math.max(1, fallback | 0))));
+  if (!valid) return base;
+  // Drawn width of each image in its cell (objectFit:contain, no upscale cap).
+  const fitW = (rows) => {
+    const avail = boxH - g * (rows.length - 1), sumHw = rows.reduce((t, r) => t + r.hw, 0), out = [];
+    for (const r of rows) for (const c of r.cells) out[c.i] = Math.max(0, Math.min((boxW - g * r.gc) * c.f, avail * r.hw / sumHw * aspects[c.i]));
+    return out;
+  };
+  const baseW = fitW(base.rows);
+  // Fairness for justified rows (a higher total area alone is not enough):
+  // images of the same aspect are drawn at the same size, and no image is drawn
+  // at less than half the area the count-driven uniform grid gives it. Without
+  // this, a wide banner shares a row with a photo and shrinks that photo to a
+  // sliver while an identical photo in the next row is drawn large.
+  const fair = (rows) => {
+    const w = fitW(rows);
+    for (let i = 0; i < n; i++) {
+      if (w[i] * w[i] < 0.5 * baseW[i] * baseW[i]) return false;
+      for (let j = i + 1; j < n; j++) {
+        if (Math.abs(aspects[i] - aspects[j]) <= 0.02 * Math.min(aspects[i], aspects[j]) && Math.abs(w[i] - w[j]) > 0.02 * Math.max(w[i], w[j])) return false;
+      }
+    }
+    return true;
+  };
+  let best = base;
+  const consider = (p, justified) => { const q = pack(p); if (q.area > base.area * 1.05 && q.area > best.area && (!justified || fair(p.rows))) best = q; };
+  for (let c = 1; c <= Math.min(n, 6); c++) consider(uniform(c));
+  // Justified rows only help a mixed set; equal aspects keep uniform cells.
+  if (n <= 8 && Math.max(...aspects) > Math.min(...aspects) * 1.15) {
+    for (let mask = 0; mask < (1 << (n - 1)); mask++) {
+      const rows = [];
+      let run = [0];
+      for (let i = 1; i <= n; i++) {
+        if (i === n || (mask >> (i - 1)) & 1) {
+          const S = run.reduce((t, k) => t + aspects[k], 0);
+          rows.push({ cells: run.map((k) => ({ i: k, f: aspects[k] / S })), gc: run.length - 1, hw: 1 / S });
+          run = [i];
+        } else run.push(i);
+      }
+      consider({ rows, cols: Math.max(...rows.map((r) => r.cells.length)) }, true);
+    }
+  }
+  return best;
+}
+// Column count of the chosen plan (the longest row).
+function bestImageGridCols(aspects, boxW, boxH, gap, fallback) {
+  return imageGridPlan(aspects, boxW, boxH, gap, fallback).cols;
+}
+
+// ━━━ Story images (present a slide's images one by one) ━━━━━━━━━━━━━━
+// Pure helpers; no DOM. Story state is { k, zoomed }: k = 0..N is the last image
+// visited (0 = overview grid), zoomed = that image is shown full size.
+const PASTE_MAX_IMAGES = 10;
+// Raster types accepted from an OS file drop. SVG is deliberately absent: an
+// SVG file is active markup, and the drop path only ever stores re-encoded JPEG.
+const IMAGE_DROP_MIME = new Set(["image/png", "image/jpeg", "image/gif", "image/webp", "image/avif", "image/bmp"]);
+const IMAGE_DROP_MAX_BYTES = 25 * 1024 * 1024;
+const IMAGE_DROP_MAX_FILES = 20;
+const IMAGE_MAX_PIXELS = 40e6;
+
+// Top-level image blocks that take part in story mode, in presentation order.
+// idx is in the SlideContent index space: blocks[i] -> i, L[i] -> blocks.length+i,
+// R[i] -> blocks.length+L.length+i. Grid-nested images are excluded. When
+// `presenting`, hidden blocks are excluded (they are not drawn in Present).
+function storyImageList(slide, presenting) {
+  const out = [];
+  if (!slide || typeof slide !== "object") return out;
+  const blocks = Array.isArray(slide.blocks) ? slide.blocks : [];
+  const L = Array.isArray(slide.L) ? slide.L : [];
+  const R = Array.isArray(slide.R) ? slide.R : [];
+  const add = (b, idx) => {
+    if (!b || typeof b !== "object" || b.type !== "image") return;
+    if (typeof b.src !== "string" || !b.src) return;
+    if (presenting && b.hidden) return;
+    out.push({ idx, src: b.src, alt: typeof b.alt === "string" ? b.alt : "" });
+  };
+  blocks.forEach((b, i) => add(b, i));
+  // L/R columns are drawn only in the "cols" layout; elsewhere they are not on
+  // the slide, so they must not become story steps or export pages.
+  if (slide.layout === "cols") {
+    L.forEach((b, i) => add(b, blocks.length + i));
+    R.forEach((b, i) => add(b, blocks.length + L.length + i));
+  }
+  return out;
+}
+// Story is on only for an explicit `true` and at least two images.
+function storyIsActive(slide, list) {
+  return !!slide && slide.story === true && Array.isArray(list) && list.length >= 2;
+}
+// Entry state when Present lands on a story slide: forward -> overview grid,
+// backward -> the last image visited with the grid showing (n = image count).
+function storyEntry(dir, n) {
+  return dir < 0 ? { k: n, zoomed: false } : { k: 0, zoomed: false };
+}
+// Next step. Returns the new state, or null to leave the slide.
+function storyNext(s, n) {
+  if (s.zoomed) return s.k < n ? { k: s.k + 1, zoomed: true } : { k: n, zoomed: false };
+  return s.k < n ? { k: s.k + 1, zoomed: true } : null;
+}
+// Previous step. Returns the new state, or null to leave the slide.
+function storyPrev(s, n) {
+  if (s.zoomed) return s.k > 1 ? { k: s.k - 1, zoomed: true } : { k: 0, zoomed: false };
+  return s.k >= 1 ? { k: s.k, zoomed: true } : null;
+}
+// Escape: zoom out when zoomed; otherwise null (not consumed).
+function storyEsc(s) {
+  return s.zoomed ? { k: s.k, zoomed: false } : null;
+}
+// Filter an OS file list to droppable raster images. Reads only f.type and
+// f.size (never f.name). Order is kept; the count cap applies after the
+// type/size filter. Returns { files, rejected } (rejected = count).
+function imageDropFiles(fileList) {
+  const all = fileList ? Array.prototype.slice.call(fileList) : [];
+  const files = [];
+  let rejected = 0;
+  for (const f of all) {
+    const okType = !!f && typeof f.type === "string" && IMAGE_DROP_MIME.has(f.type);
+    const okSize = okType && typeof f.size === "number" && f.size >= 0 && f.size <= IMAGE_DROP_MAX_BYTES;
+    if (okSize && files.length < IMAGE_DROP_MAX_FILES) files.push(f); else rejected++;
+  }
+  return { files, rejected };
+}
+
+// Deck-wide 1-based number of the slide at `index` of module `moduleId`, when
+// that module's slide list is `slides`: the number the on-slide badge shows
+// (visible slides only, all modules before it counted). Used by the image
+// overflow notice ("on new slide N"). `slides` can differ from the module's
+// list in `lanes` (a slide not yet inserted).
+function deckSlideNumber(lanes, moduleId, slides, index) {
+  let n = 0;
+  for (const l of (lanes || [])) {
+    for (const item of (l?.items || [])) {
+      if (!item) continue;
+      if (item.id === moduleId) {
+        return n + (slides || []).slice(0, Math.max(0, index)).filter((s) => s && !s.hidden).length + 1;
+      }
+      n += (item.slides || []).filter((s) => s && !s.hidden).length;
+    }
+  }
+  return index + 1;
+}
+
+// Bounded cache of image aspect ratios keyed by the (data:) src, filled by the
+// slide renderer via imageAspect() so bestImageGridCols() has aspects to work with.
+const IMAGE_ASPECT_CACHE = new Map();
+function rememberImageAspect(src, aspect) {
+  if (typeof src !== "string" || !(aspect > 0)) return;
+  if (IMAGE_ASPECT_CACHE.size >= 256) IMAGE_ASPECT_CACHE.delete(IMAGE_ASPECT_CACHE.keys().next().value);
+  IMAGE_ASPECT_CACHE.set(src, aspect);
+}
+
+// CR23: which split layouts the paste handler set itself. Keyed by the pasted
+// image src; the value is the slide's layout signature right after that paste.
+// A later paste re-evaluates the layout only when the slide still carries that
+// exact signature (the user did not change it). Session memory only: after a
+// reload a split is treated as the author's choice.
+const PASTE_LAYOUT_OWNED = new Map();
+const pasteLayoutSig = (s) => `${(s && s.layout) || "stack"}|${s && s.contentFlex != null ? s.contentFlex : ""}|${s && s.imageFlex != null ? s.imageFlex : ""}`;
+function rememberPasteLayout(src, slide) {
+  if (typeof src !== "string") return;
+  if (PASTE_LAYOUT_OWNED.size >= 256) PASTE_LAYOUT_OWNED.delete(PASTE_LAYOUT_OWNED.keys().next().value);
+  PASTE_LAYOUT_OWNED.set(src, pasteLayoutSig(slide));
+}
+
+// Rapid image pastes. Slides carry no id, so an async paste finds its target by
+// object identity. Each applied paste records the slide object it produced as
+// the successor of the slide it changed (or spilled over from), so a paste
+// queued behind it follows the chain to the live slide instead of being dropped.
+// An undo that restores the older object ends the chain there. WeakMap: session
+// memory only, nothing is kept for slides that are gone.
+const PASTE_SLIDE_SUCC = new WeakMap();
+// The newest member of the target's successor chain that is still in `list`, or null.
+function pasteResolveTarget(target, list) {
+  if (!target || !Array.isArray(list)) return null;
+  let best = list.includes(target) ? target : null;
+  for (let x = target, k = 0; k < 512 && (x = PASTE_SLIDE_SUCC.get(x)); k++) if (list.includes(x)) best = x;
+  return best;
+}
+// After a paste renders: link `from` to the new slide object whose last block is
+// the pasted image (the one slide in `after` that was not in `before`).
+function pasteRecordSuccessor(from, before, after, src) {
+  if (!from || typeof from !== "object" || !Array.isArray(after)) return;
+  const seen = new Set(before || []);
+  const next = after.find((s) => s && !seen.has(s) && Array.isArray(s.blocks) && s.blocks.length && s.blocks[s.blocks.length - 1].src === src);
+  if (next) PASTE_SLIDE_SUCC.set(from, next);
 }
 
 // ━━━ Status & Importance Meta ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -2079,7 +2579,7 @@ const getCss = () => `
 .vela-wide-scroll::-webkit-scrollbar{width:10px} .vela-wide-scroll::-webkit-scrollbar-thumb{background:${T.textDim};border-radius:5px}
 .concept-row{transition:all .15s;cursor:pointer} .concept-row:hover{background:${T.accentGlow}!important} .concept-row.selected{background:${T.accent}18!important;border-left-color:${T.accent}!important}
 .status-btn{cursor:pointer;transition:transform .15s} .status-btn:hover{transform:scale(1.3)}
-.slide-nav-btn{opacity:.4;transition:opacity .2s;cursor:pointer} .slide-nav-btn:hover{opacity:1}
+.slide-nav-btn{opacity:.85;transition:opacity .2s,background .2s;cursor:pointer;background:rgba(0,0,0,0.38);backdrop-filter:blur(2px);-webkit-backdrop-filter:blur(2px)} .slide-nav-btn:hover{opacity:1;background:rgba(0,0,0,0.55)} .vela-fs-toolbar{opacity:.15;transition:opacity .3s;pointer-events:none} .vela-fs-toolbar>*{pointer-events:auto} .vela-fs-toolbar:hover,.vela-fs-toolbar:focus-within{opacity:1}
 .imp-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0}
 .add-btn{transition:all .15s} .add-btn:hover{background:${T.accent}!important;color:#fff!important}
 .lane-header{transition:background .15s} .lane-header:hover{background:${T.bgCard}!important}
@@ -2181,16 +2681,16 @@ function useSwipe(ref, { onLeft, onRight, threshold = 50 } = {}) {
 }
 
 // ━━━ Shared Prompt Constants (deduped from 3 system prompts) ━━━━━━━
-const BLOCK_REFERENCE = `Slide: { blocks: [...], bg?, bgGradient?: "linear-gradient(...)", color?, accent?, align?, verticalAlign?, padding?, gap?, duration?: seconds_integer, layout?: "stack"|"image-right"|"image-left"|"cols", contentFlex?, imageFlex?, splitGap?, imageCols?: 1-6, L?: [...], R?: [...] }
-Numeric slide fields are range-checked on load: imageCols is an integer 1-6, gap/splitGap 0-200, contentFlex/imageFlex 0.1-20. imageCols pins the column count for a run of adjacent image blocks (omit for automatic).
+const BLOCK_REFERENCE = `Slide: { blocks: [...], bg?, bgGradient?: "linear-gradient(...)", color?, accent?, align?, verticalAlign?, padding?, gap?, duration?: seconds_integer, layout?: "stack"|"image-right"|"image-left"|"cols", contentFlex?, imageFlex?, splitGap?, imageCols?: 1-6, story?: true, L?: [...], R?: [...] }
+Numeric slide fields are range-checked on load: imageCols is an integer 1-6, gap/splitGap 0-200, contentFlex/imageFlex 0.1-20. imageCols pins the column count for a run of adjacent image blocks (omit for automatic). story:true = Present shows the slide's images one by one (needs 2+ images); an image caption is its tile title.
 Layout: "stack" (default) = vertical column. "image-right"/"image-left" = splits content blocks and image blocks side-by-side. "cols" = explicit two-column layout using L (left blocks) and R (right blocks) arrays. blocks renders full-width above columns (optional header). contentFlex/imageFlex control column ratio (default 1:1). splitGap controls gap between columns (default 32).
-Inline formatting: All text supports **bold**, *italic*, ***bold+italic*** using markdown syntax (also __bold__ and _italic_). Use in headings, text, bullets, callouts, etc.
+Inline formatting: All text supports **bold**, *italic*, ***bold+italic***, ~~strike~~ and ++underline++ using markdown syntax (also __bold__ and _italic_). ++ marks only a whole word or phrase (C++ and i++ stay literal). Use in headings, text, bullets, callouts, etc.
 Links: ANY block can have an optional "link" property: {type:"text", text:"Read the paper", link:"https://..."} — renders clickable. For sources/citations, ALWAYS use a descriptive text block or badge with link property instead of putting raw URLs in text. E.g. {type:"badge", text:"📎 Yao et al., ReAct (2022)", icon:"ExternalLink", link:"https://arxiv.org/abs/2210.03629"} or {type:"text", text:"Source: Snorkel AI Blog", size:"sm", link:"https://snorkel.ai/blog/..."}
 Block types:
 - heading: {type:"heading", text, size:"xs|sm|md|lg|xl|2xl|3xl|4xl", color?, weight?, align?, icon?:"Zap", iconColor?}
 - text: {type:"text", text, size?, color?, bold?, italic?, align?, maxWidth?}
 - bullets: {type:"bullets", items:["string" or {text, icon?:"CheckCircle", link?:"https://..."},...], size?, dotColor?, gap?, color?}
-- image: {type:"image", src, caption?, maxWidth?, shadow?, rounded?}
+- image: {type:"image", src, caption?, alt?, maxWidth?, shadow?, rounded?}
 - code: {type:"code", text:"code here", label?"JAVASCRIPT", size?, bg?, color?}
 - grid: {type:"grid", cols:1|2|3, gap?, items:[{blocks:[...], bg?, padding?, borderRadius?, border?, style?, align?, direction?:"row"|"column"}]}
 - callout: {type:"callout", text, title?, bg?, border?, color?, icon?:"AlertTriangle"}

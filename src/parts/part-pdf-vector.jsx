@@ -751,6 +751,9 @@ function buildVectorPdf(pages, pageW, pageH, fonts, showBranding) {
       }
 
       content += "BT\n";
+      // Underline rects are path operators: they cannot sit inside BT/ET, so
+      // collect them here and fill them after ET.
+      let underlines = "";
       for (const run of page.textRuns) {
         const fontTag = pickFont(run.fontFamily, run.fontWeight, run.fontStyle);
         content += `${fontTag} ${run.fontSize.toFixed(1)} Tf\n`;
@@ -771,7 +774,8 @@ function buildVectorPdf(pages, pageW, pageH, fonts, showBranding) {
         if (n > 1 && run.w > 0 && fd && fd.widths) {
           let rawW = 0;
           for (let ci = 0; ci < n; ci++) {
-            const code = run.text.charCodeAt(ci);
+            // Width of the byte pdfStringEncode emits for this char
+            const code = pdfWinAnsiByte(run.text.charCodeAt(ci));
             rawW += (code >= 32 && code <= 255) ? (fd.widths[code - 32] || 0) : 500;
           }
           const rawPdfW = rawW * run.fontSize / 1000;
@@ -788,10 +792,17 @@ function buildVectorPdf(pages, pageW, pageH, fonts, showBranding) {
         if (Math.abs(tc) > 0.01) {
           content += "0 Tc\n";
         }
+        if (run.underline && run.w > 0) {
+          const th = Math.max(0.5, run.fontSize * 0.06);
+          const uy = pdfY - run.fontSize * 0.12 - th;
+          underlines += `${run.color.r.toFixed(3)} ${run.color.g.toFixed(3)} ${run.color.b.toFixed(3)} rg `
+            + `${run.x.toFixed(1)} ${uy.toFixed(1)} ${run.w.toFixed(1)} ${th.toFixed(2)} re f\n`;
+        }
         // Reset position for next run
         content += `${(-run.x).toFixed(1)} ${(-pdfY).toFixed(1)} Td\n`;
       }
       content += "ET\n";
+      if (underlines) content += "q\n" + underlines + "Q\n";
     }
 
     // Watermark (only when branding toggle is on)
@@ -1076,14 +1087,8 @@ function parseTTF(buf) {
 
   // Build WinAnsi char widths (chars 32-255)
   // WinAnsi maps chars 128-159 to special Unicode code points
-  const winAnsiMap = {
-    128: 0x20AC, 130: 0x201A, 131: 0x0192, 132: 0x201E, 133: 0x2026,
-    134: 0x2020, 135: 0x2021, 136: 0x02C6, 137: 0x2030, 138: 0x0160,
-    139: 0x2039, 140: 0x0152, 142: 0x017D, 145: 0x2018, 146: 0x2019,
-    147: 0x201C, 148: 0x201D, 149: 0x2022, 150: 0x2013, 151: 0x2014,
-    152: 0x02DC, 153: 0x2122, 154: 0x0161, 155: 0x203A, 156: 0x0153,
-    158: 0x017E, 159: 0x0178
-  };
+  // (WIN_ANSI_HIGH — the shared table in part-pdf-extract.jsx)
+  const winAnsiMap = WIN_ANSI_HIGH;
 
   const widths = new Array(224); // chars 32-255
   for (let i = 0; i < 224; i++) {
@@ -1682,10 +1687,11 @@ function VectorPdfExportModal({ slides, branding, deckTitle, onClose, initialRat
         const rw = Math.round(VIRTUAL_W / zoom);
         const rh = Math.round(rh0 / zoom);
         // Match presentation numbering: title cards aren't counted toward slide numbers.
-        const displayTotal = slides.reduce((n, s) => n + (s._virtual ? 0 : 1), 0);
+        const displayTotal = slides.reduce((n, s) => n + (s._storyPage ? 0 : s._virtual ? 0 : 1), 0);
         let nonVirtualBefore = 0;
-        for (let i = 0; i < renderIdx; i++) if (!slides[i]._virtual) nonVirtualBefore++;
-        const displayIndex = currentSlide._virtual ? nonVirtualBefore - 1 : nonVirtualBefore;
+        for (let i = 0; i < renderIdx; i++) if (!(slides[i]._virtual || slides[i]._storyPage)) nonVirtualBefore++;
+        // A story page shares the number of its grid slide (the one just before it).
+        const displayIndex = (currentSlide._virtual || currentSlide._storyPage) ? nonVirtualBefore - 1 : nonVirtualBefore;
         return (
           <div style={{ position: "fixed", left: -9999, top: -9999, width: rw, height: rh, overflow: "hidden", zIndex: -1 }}>
             <style>{`.no-anim, .no-anim * { animation: none !important; transition: none !important; }`}</style>
@@ -1728,5 +1734,31 @@ function collectAllSlides(lanes, branding) {
     }
   }
   return all;
+}
+
+// Story slides ("Expand story slides" export option): after a story-active slide,
+// emit one virtual full-slide page per story image. A page is built ONLY from
+// already-sanitized slide state and copies a fixed key list, so no deck key can
+// ride along; "_storyPage" is a renderer-private flag set here, after sanitization
+// (deck input can never carry a "_" key). A one-image page renders through the
+// solo-image path (full slide, contain). Hidden images are excluded because
+// storyImageList runs in presenting mode. Title cards (_virtual) are never story.
+const STORY_PAGE_KEYS = ["bg", "bgGradient", "bgImage", "color", "accent", "mutedColor", "duration"];
+function expandStorySlides(slides) {
+  const out = [];
+  for (const slide of (slides || [])) {
+    out.push(slide);
+    if (!slide || typeof slide !== "object" || slide._virtual) continue;
+    const list = storyImageList(slide, true);
+    if (!storyIsActive(slide, list)) continue;
+    for (const it of list) {
+      const page = {};
+      for (const k of STORY_PAGE_KEYS) if (slide[k] !== undefined) page[k] = slide[k];
+      page.blocks = [{ type: "image", src: it.src, alt: it.alt }];
+      page._storyPage = true;
+      out.push(page);
+    }
+  }
+  return out;
 }
 

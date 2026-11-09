@@ -112,6 +112,18 @@ const md1 = (blocks, slideExtra, deckExtra) => deckToMarkdown(deckWith(blocks, s
   hasSub(md, "line1  \nline2", "newline becomes markdown hard break (two spaces + \\n)");
 }
 
+// ── ++underline++ stays literal plain text (v13.78 WP7) ────────────
+{
+  const md = md1([
+    { type: "text", text: "say ++two words++ and **++x++**" },
+    { type: "text", text: "C++ and i++ stay" },
+    { type: "bullets", items: ["++item++"] },
+  ]);
+  hasLine(md, "say ++two words++ and **++x++**", "++underline++ kept literally in text");
+  hasLine(md, "C++ and i++ stay", "C++ / i++ unchanged");
+  hasSub(md, "++item++", "++underline++ kept literally in a bullet");
+}
+
 // ── badge ──────────────────────────────────────────────────────────
 hasLine(md1([{ type: "badge", text: "NEW" }]), "**NEW**", "badge -> bold");
 
@@ -437,6 +449,25 @@ noThrow("missing lane/module/deck titles use defaults", () => {
   const cellbs = md1([{ type: "table", headers: ["a\\b|c"], rows: [["p|q"]] }]);
   hasSub(cellbs, "a\\\\b\\|c", "table cell: backslash escaped once + pipe escaped");
   noSub(cellbs, "a\\\\\\\\b", "table cell: backslash NOT double-escaped");
+}
+
+// ── story slides (regression guard): markdown is unchanged by story mode ─────
+// A story slide still exports its image captions exactly like a gallery slide:
+// no extra pages/lines, and caption metacharacters stay escaped (`[`, `<`, `*`).
+{
+  const imgs = [
+    { type: "image", src: "data:image/png;base64,AAAA", caption: "A <img src=https://attacker.example/b.png> *x* [r]" },
+    { type: "image", src: "data:image/png;base64,AAAA", caption: "Plain" },
+    { type: "image", src: "data:image/png;base64,AAAA" },
+  ];
+  const on = md1(imgs, { story: true });
+  const off = md1(imgs, {});
+  if (on === off) ok("story slide: markdown output identical to the same slide without story");
+  else bad("story slide: markdown output identical to the same slide without story");
+  noRawTag(on, "story slide: caption with HTML tag stays escaped");
+  hasSub(on, "\\[r\\]", "story slide: caption square brackets escaped");
+  hasLine(on, "*Plain*", "story slide: plain caption emitted as before");
+  noSub(on, "data:image", "story slide: no image bytes inlined");
 }
 
 console.log(`\n  ${pass} passed, ${fail} failed`);

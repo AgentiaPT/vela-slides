@@ -148,6 +148,7 @@ class NeutralinoConfigInvariants(unittest.TestCase):
         expected = {
             "window.setFullScreen", "window.exitFullScreen", "window.maximize",
             "window.unmaximize", "window.isMaximized", "window.focus",
+            "window.setTitle",  # CR16 title sync (window-glue.js); string only, no path
         }
         self.assertEqual(window_entries, expected)
 
@@ -358,6 +359,28 @@ class AIAvailabilityEventContractInvariants(unittest.TestCase):
         self.assertIn('dispatchEvent(new Event("vela-agent-update"))', boot_js)
         self.assertIn('"vela-agent-update"', imports_jsx)
         self.assertIn("useAIAvailable", imports_jsx)
+
+
+class FullscreenBridgeEscapeInvariants(unittest.TestCase):
+    """Vela owns Escape in Present mode (zoom / gallery / presenter view /
+    dialog close first). A bridge-level Escape listener runs before Vela and
+    always leaves OS fullscreen, so Present exits on every Esc."""
+
+    def test_bridge_does_not_handle_escape(self):
+        boot_js = read("vela-neutralino", "resources", "js", "nl-boot.js")
+        start = boot_js.index("function installFullscreenBridge")
+        end = boot_js.index("\n}\n", start)
+        self.assertNotRegex(boot_js[start:end], r'e\.key\s*===\s*["\']Escape["\']')
+
+    def test_vela_exits_present_on_escape(self):
+        panel = read("src", "parts", "part-slidepanel.jsx")
+        # Open modals are tracked in an app-owned registry (not a page-wide
+        # attribute query that deck-supplied markup could satisfy).
+        self.assertRegex(panel, r'e\.key === "Escape" && fullscreen && VELA_OPEN_CHROME\.modals\.size === 0')
+        self.assertNotIn('querySelector("[data-vela-modal]")', panel)
+        modals = read("src", "parts", "part-app-modals.jsx")
+        self.assertIn("VELA_OPEN_CHROME.modals.add(", modals)
+        self.assertIn("VELA_OPEN_CHROME.modals.delete(", modals)
 
 
 class FsGuardHardeningInvariants(unittest.TestCase):

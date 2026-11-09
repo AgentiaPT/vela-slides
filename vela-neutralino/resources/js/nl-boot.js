@@ -24,6 +24,7 @@ import { trust } from "./trust.js";
 import { checkForUpdate } from "./update-check.js";
 import { fsGuard } from "./fs-guard.js";
 import { showDeckWarning } from "./deck-warning.js";
+import { focusWindow, installRefocus, setWindowTitle } from "./window-glue.js";
 
 const $ = (id) => document.getElementById(id);
 const loadingMsg = $("vela-loading-msg");
@@ -53,19 +54,7 @@ function showError(text) {
   host.appendChild(body);
 }
 
-// Bring the native OS window to the foreground and give it keyboard focus.
-// Neutralino opens the window but on Windows/WebView2 (and some Linux WMs) it
-// does NOT grab focus on launch — so keydown events never reach the webview
-// until the user clicks the window. That breaks every "press Enter to confirm"
-// dialog on first run (deck warning, trust prompt, React confirm modals). We
-// focus explicitly after init, and retry a couple of times because the native
-// window is created asynchronously and an immediate focus() can no-op.
-function focusWindow() {
-  const tryFocus = () => { try { Neutralino.window.focus(); } catch { /* window.* gated or not ready */ } };
-  tryFocus();
-  setTimeout(tryFocus, 120);
-  setTimeout(tryFocus, 400);
-}
+// focusWindow() / installRefocus() / setWindowTitle() live in window-glue.js.
 
 async function boot() {
   setMsg("Starting Neutralino…");
@@ -75,6 +64,13 @@ async function boot() {
     return showError("Neutralino.init() failed: " + e.message);
   }
   focusWindow();
+  // Re-arm keyboard focus after every alt-tab / refocus, not only at launch (CR18).
+  installRefocus();
+  // Native window title follows the deck title (CR16): part-app.jsx calls this
+  // on mount, on title edit and on deck switch. The title is deck-supplied and
+  // can arrive unsanitized (desktop deck-open path), so setWindowTitle
+  // (window-glue.js) does the full filter before the native call.
+  window.__velaOnDeckTitle = setWindowTitle;
   // Wrap Neutralino.filesystem.* so every path must resolve inside an allowed
   // root (the decks folder + ~/.vela, registered by deck-io/config-store).
   // Installed before any module touches the filesystem.
@@ -227,7 +223,7 @@ async function boot() {
 // selection commits a path via the `resolve` handle.
 
 const picker = {
-  el: null, list: null, folderEl: null, countEl: null, changeBtn: null,
+  el: null, list: null, folderEl: null, countEl: null, changeBtn: null, errorEl: null,
   decks: [], focusIdx: 0,
   resolve: null,
   onSelect: null,
@@ -240,6 +236,7 @@ function ensurePickerBound() {
   picker.folderEl = $("deck-picker-folder");
   picker.countEl = $("deck-picker-count");
   picker.changeBtn = $("deck-picker-change");
+  picker.errorEl = $("deck-picker-error");
 
   picker.changeBtn.onclick = async () => {
     try {
@@ -315,6 +312,7 @@ function renderPickerList() {
 
 async function openPicker() {
   ensurePickerBound();
+  if (picker.errorEl) { picker.errorEl.hidden = true; picker.errorEl.textContent = ""; }
   await refreshPicker();
   picker.el.classList.add("open");
 }
@@ -346,7 +344,25 @@ async function closePicker(selectedPath) {
       }
     } catch (e) {
       console.error("[nl-boot] openDeck failed:", e);
+      // The current deck stays open (deck-io keeps its pending save and its
+      // watcher). Tell the user in the picker, not only in the console.
+      showPickerError(selectedPath);
     }
+  }
+}
+
+// Show a failed open in the deck picker (the shell's own UI). textContent only,
+// and a basename only: the file name comes from disk, and the full path and the
+// raw error stay shell-side (console).
+async function showPickerError(path) {
+  try {
+    await openPicker();
+    if (!picker.errorEl) return;
+    const name = String(path == null ? "" : path).replace(/\\/g, "/").split("/").pop();
+    picker.errorEl.textContent = `Could not open ${name}: it is not a valid Vela deck, or it could not be read. Your current deck is still open.`;
+    picker.errorEl.hidden = false;
+  } catch (e) {
+    console.error("[nl-boot] could not show the open error:", e);
   }
 }
 
@@ -414,7 +430,24 @@ async function selectProvider(id) {
   window.dispatchEvent(new Event("vela-agent-update"));
 }
 
+// Startup budget for agent detection: a cold, AV-scanned gatekeeper (and its
+// first agent `--version` run) can need this long on a fresh build.
+const AGENT_STARTUP_BUDGET_MS = 45000;
+let bootDeadline = 0;
+
+function publishAgentState(up) {
+  if (up === null) {
+    window.__velaAgentReady = false;
+  } else {
+    window.__velaAgentInfo = agents.info();
+    window.__velaAgentReady = agents.available();
+    window.__velaAgentActive = window.__velaAgentInfo.model || window.__velaAgentInfo.id;
+  }
+  window.dispatchEvent(new Event("vela-agent-update"));
+}
+
 function installAgentsBridge() {
+  bootDeadline = Date.now() + AGENT_STARTUP_BUDGET_MS;
   // Default to unavailable until detection completes.
   window.__velaAgentReady = false;
   window.__velaAgentInfo = { id: null, label: "—", available: false, version: null, model: null, providers: [] };
@@ -437,13 +470,11 @@ function installAgentsBridge() {
     list: () => agents.list(),
     activeId: () => agents.activeId(),
     pick: (id) => selectProvider(id),
-    refresh: async () => {
-      await agents.detect();
-      window.__velaAgentInfo = agents.info();
-      window.__velaAgentReady = agents.available();
-      window.__velaAgentActive = window.__velaAgentInfo.model || window.__velaAgentInfo.id;
-      window.dispatchEvent(new Event("vela-agent-update"));
-    },
+    // Manual rescan: a short, bounded probe (agents.rescan), so a click with no
+    // agent installed answers in about a second. During a slow gatekeeper start
+    // the boot probe below keeps running in the background and publishes the
+    // agent when it appears, so the rescan does not need the boot budget.
+    refresh: () => agents.rescan({ onAttempt: publishAgentState }),
   };
   // Consumed by trust.js to render the provider choice in the confirm modal.
   window.__velaSelectProvider = selectProvider;
@@ -455,31 +486,7 @@ function installAgentsBridge() {
   // whole session shows AI as unavailable until the app is closed and reopened.
   // Retry with backoff until the gatekeeper answers (or a budget elapses), so a
   // slow first launch self-heals instead of needing a manual restart.
-  (async () => {
-    const deadline = Date.now() + 45000; // give a cold, AV-scanned exe time to boot
-    let emptyTries = 0;                   // gatekeeper answered but no agent installed
-    let delay = 500;
-    for (;;) {
-      let gatekeeperUp = false;
-      try {
-        gatekeeperUp = await agents.detect();
-        window.__velaAgentInfo = agents.info();
-        window.__velaAgentReady = agents.available();
-        window.__velaAgentActive = window.__velaAgentInfo.model || window.__velaAgentInfo.id;
-      } catch {
-        window.__velaAgentReady = false;
-      }
-      window.dispatchEvent(new Event("vela-agent-update"));
-
-      if (window.__velaAgentReady) break;              // found an agent — done
-      // Gatekeeper responded but reported no agent: mostly a real negative, but a
-      // slow first-run `claude --version` can time out too, so allow a few retries.
-      if (gatekeeperUp && ++emptyTries >= 3) break;
-      if (Date.now() >= deadline) break;               // gatekeeper never came up
-      await new Promise((r) => setTimeout(r, delay));
-      delay = Math.min(Math.round(delay * 1.5), 4000);
-    }
-  })();
+  agents.probeUntilReady({ deadline: bootDeadline, onAttempt: publishAgentState });
 }
 
 // ---------- Fullscreen bridge ---------------------------------------------
@@ -499,8 +506,11 @@ function installAgentsBridge() {
 //   2. Override document.exitFullscreen likewise.
 //   3. Expose a read-only document.fullscreenElement getter so code that
 //      checks "am I in fullscreen?" still works.
-//   4. Listen for Escape and the F11 shortcut so users have an out even
-//      when Vela's handlers don't fire.
+//   4. Listen for the F11 shortcut so users have an out even when Vela's
+//      handlers don't fire. Escape is NOT handled here: Vela owns it, so Esc
+//      first closes a zoom / gallery / presenter view / dialog, and only then
+//      leaves Present (which calls document.exitFullscreen → exit() below).
+//      A capture-phase Escape here ran before Vela and always left fullscreen.
 
 function installFullscreenBridge() {
   let fsElement = null;
@@ -573,7 +583,6 @@ function installFullscreenBridge() {
 
   document.addEventListener("keydown", (e) => {
     if (e.key === "F11") { e.preventDefault(); fsElement ? exit() : enter(document.documentElement); }
-    else if (e.key === "Escape" && fsElement) { exit(); }
   }, true);
 }
 

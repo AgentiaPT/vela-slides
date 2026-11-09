@@ -14,10 +14,11 @@ that symbol in the named part for the line. No line numbers here — they rot.
 - Startup Patch System: STARTUP_PATCH VELA_TEST_STARTUP_PATCH levenshtein extractSlideText applyStartupPatch
 - Distributed Storage: dirty tracking: _dirtyMods _deletedMods _loadedMods _autoEditItemId _fullRewrite now
 - Validation Constants: MAX_IMPORT_SIZE VALID_STATUSES VALID_IMPORTANCES SAFE_BLOCK_TYPES defaultBranding linkPreview
-- Sanitizers: sanitizeString sanitizeDeckTitle sanitizeUrl openExternalLink SVG_ALLOWED_TAGS SVG_URL_REF_ATTRS CSS_FETCH_SCHEME SVG_VALUE_FNS SVG_STYLE_PROPS SVG_ROOT_BLOCKED isSvgStyleSafe isSvgInlineStyleSafe sanitizeSvgMarkup SAFE_RASTER_DATA_IMAGE sanitizeImageDataUri SAFE_STYLE_KEYS STYLE_VALUE_REJECT sanitizeStyle CSS_COLOR_KEY scrubCssFields scrubColorFields CSS_LAYOUT_KEY scrubLayoutFields CSS_PAINT_KEY cssKeyStem scrubPaintFields velaTestSurfaceEnabled MAX_SUBOBJECT_DEPTH scrubSubObject cssUrl CSS_COLOR_OK cssColor CSS_GRADIENT_OK cssGradient
+- Sanitizers: sanitizeString sanitizeDeckTitle sanitizeUrl LINK_HOST_LABEL LINK_HOST LINK_BARE_EMAIL LINK_BARE_HOST linkFromInput openExternalLink SVG_ALLOWED_TAGS SVG_URL_REF_ATTRS CSS_FETCH_SCHEME SVG_VALUE_FNS SVG_STYLE_PROPS SVG_ROOT_BLOCKED isSvgStyleSafe isSvgInlineStyleSafe sanitizeSvgMarkup SAFE_RASTER_DATA_IMAGE sanitizeImageDataUri SAFE_STYLE_KEYS STYLE_VALUE_REJECT sanitizeStyle CSS_COLOR_KEY scrubCssFields scrubColorFields CSS_LAYOUT_KEY scrubLayoutFields CSS_PAINT_KEY cssKeyStem scrubPaintFields velaTestSurfaceEnabled MAX_SUBOBJECT_DEPTH scrubSubObject cssUrl CSS_COLOR_OK cssColor CSS_GRADIENT_OK cssGradient
 - Deck-ingress key allowlists: SAFE_SLIDE_KEYS SAFE_BLOCK_KEYS SLIDE_NUMERIC_BOUNDS clampDeckNumber MAX_BLOCK_DEPTH sanitizeBlock VALID_COMMENT_STATUSES MAX_COMMENTS sanitizeComment
-- Offline Study Notes sanitizer: sanitizeStudyNotes sanitizeSlide sanitizeItem resanitizeLoadedLanes resanitizeLoadedBranding validateAndSanitizeDeck
-- Image Compression: compressImage IMG_SETTINGS compressSlideImage imageAspect PASTE_TITLE_BLOCKS pasteImageLayout gridColsFor
+- Offline Study Notes sanitizer: sanitizeStudyNotes sanitizeSlide stableIdFrom sanitizeItem resanitizeLoadedLanes resanitizeLoadedBranding KEEPABLE_DECK_ID isKeepableDeckId adoptPriorDeckIds localDeckPayload validateAndSanitizeDeck
+- Image Compression: PNG_KEEP_MAX compressImage IMG_SETTINGS compressSlideImage imageAspect imageNaturalSize PASTE_TITLE_BLOCKS pasteImageLayout pasteSplitFlex PASTE_TEXT_METRICS pasteBodyEstimate pasteLayoutArea pasteBodyProbe gridColsFor imageGridPlan bestImageGridCols
+- Story images (present a slide's images one by one): PASTE_MAX_IMAGES IMAGE_DROP_MIME IMAGE_DROP_MAX_BYTES IMAGE_DROP_MAX_FILES IMAGE_MAX_PIXELS storyImageList storyIsActive storyEntry storyNext storyPrev storyEsc imageDropFiles deckSlideNumber IMAGE_ASPECT_CACHE rememberImageAspect PASTE_LAYOUT_OWNED pasteLayoutSig rememberPasteLayout PASTE_SLIDE_SUCC pasteResolveTarget pasteRecordSuccessor
 - Status & Importance Meta: STATUSES STATUS_META IMP
 - Themes: themes T statusColor FONT buildTitleCardSlide
 - Vela Logo Icon: VelaIcon BASE_SIZES
@@ -32,15 +33,17 @@ that symbol in the named part for the line. No line numbers here — they rot.
 
 ### part-blocks.jsx
 - Error Boundary: SlideErrorBoundary
-- Inline Formatting: **bold**, *italic*, ***both***, ~~strike~~: parseInline
-- X-Ray Glossary Link — inline popover for [term](#key) refs: GlossaryLink EditableText
+- Inline Formatting: **bold**, *italic*, ***both***, ~~strike~~, ++underline++: UL_EDGE_WORD UL_SPACE ulCharBefore ulCharAt findUnderlineSpan findUnderlineSpans inlineLineParts inlineMdToHtml UL_OPEN inlineHtmlToMd parseInline
+- X-Ray Glossary Link — inline popover for [term](#key) refs: GlossaryLink EDIT_PLACEHOLDER EditableText EditPlaceholder SvgEditText
 - Block Helpers: stg COL_TOOLBAR_PAD patchItemAt removeItemAt setItemLink itemLinkOf addItemAt moveItemAt _noPin reorderCtl itemReorder blankItemFor PLACEHOLDER_FIELDS cloneGridCell clonePoint newItemFor
 - Add-Item Affordance — "+ add" button shown only in edit mode: AddItem ItemText IconBubble
-- Per-Item Chrome — hover toolbar (🔗 link + ✕ delete) for one item of a multi-item block: ItemHoverContext itemChromeBtn reorderArrowBtn ItemChrome
+- Link Badge — one placement rule for every link badge (CR17): linkBadgeTextEnd LinkBadge
+- Per-Item Chrome — hover toolbar (🔗 link + ✕ delete) for one item of a multi-item block: ItemHoverContext itemChromeBtn reorderArrowBtn placeItemCluster ItemChrome
 - Icon Row Item (per-item link + delete): IconRowItem
 - Bullet Item (per-item link + delete): BulletItem
 - Grid Cell Block (with per-block link editing): GridCellBlock
-- Zoomable Block Wrapper: ZoomWrap
+- Grid-cell image (capped upscale): GRID_IMG_MAX_UPSCALE IMAGE_NATURAL_SIZE GridCellImage
+- Zoomable Block Wrapper: VELA_OPEN_CHROME ZoomWrap
 - Code Block (sub-component for useState copy feedback): CodeBlock
 - Callout Block (sub-component for useState reveal toggle): CalloutBlock
 - Block Renderer: RenderBlock
@@ -49,6 +52,7 @@ that symbol in the named part for the line. No line numbers here — they rot.
 - Branding Overlay: BrandingOverlay
 
 ### part-canvas.jsx
+- Story zoom layer (story images in Present): STORY_RAIL_W STORY_THUMB_H storyPrefersReducedMotion storyContainBox StoryZoomLayer
 - Inline Comment Card (review mode): InlineCommentCard SlideContent
 
 ### part-reducer.jsx
@@ -82,10 +86,11 @@ that symbol in the named part for the line. No line numbers here — they rot.
 - StudentPanel — dispatcher: static studyNotes first, else live Vera: StudentPanel TeacherPanel SectionPicker
 
 ### part-slidepanel.jsx
-- Slide Panel — editor slide view, fullscreen/presenter nav, per-slide AI actions: SlidePanel
+- Slide Panel — editor slide view, fullscreen/presenter nav, per-slide AI actions: VIEW_SWITCH_SEGMENTS VIEW_SWITCH_PAD VIEW_SWITCH_LABEL_EXTRA ViewSwitch dragHasOnlyImageFiles TB_COMPACT_PAD_X useToolbarCompact SlidePanel
 
 ### part-list.jsx
 - (file preamble): _velaDrag _setDrag _clearDrag
+- TOC drag auto-scroll: TOC_AUTOSCROLL_ZONE TOC_AUTOSCROLL_MAX tocAutoScrollSpeed tocScrollParent useTocDragAutoScroll
 - Reusable right-click context menu: ContextMenu CtxItem SLIDE_STYLE_KEYS blankSlideFrom
 - AI Slide Adder (inline prompt): AiSlideAdder
 - Add Menu (blank / AI / section): AddMenu
@@ -100,7 +105,7 @@ that symbol in the named part for the line. No line numbers here — they rot.
 - JSON Clipboard Modal: JsonClipboardModal
 
 ### part-test.jsx
-- Vela Battery Test: VELA_TESTS
+- tideline CR23: seeded image-placement stress matrix: TL_STRESS_ASPECTS TL_STRESS_BODIES tidelineStressCases tidelineStressUnit VELA_TESTS
 - Feature: Delete key: VelaBatteryTest
 
 ### part-uitest.jsx
@@ -119,6 +124,17 @@ that symbol in the named part for the line. No line numbers here — they rot.
 - CR5: Consistent AI-working animation: _fxWrap _normColor _settleFx _cr5Setup _allCssText
 - AI editor request ownership: _editorOwnershipSetup _openQuickEditor _openAiSlideAdder
 - Product Tour Suite: _productTourSetup
+- meridian CR04 / CR14 / CR07 (sprint "meridian"): _m1RowTitles _m1Undo _m1ClickRow
+- meridian-CR10 / meridian-CR11: fullscreen nav icons keep a visible chip: _mrdIsLightTheme _mrdCheckNavGlyphs
+- meridian-CR13: editor|presenter|gallery view switcher next to Present: _mrdSeg _mrdActive _mrdOnTop _mrdSwitchTo _mrdGalleryOpen
+- Sprint meridian (C3): split image alignment, accent 0, docked branding: _mrdSvg _mrdViewport _mrdFrame _mrdInject _mrdSetRange _mrdOpenBranding _mrdCloseBranding _mrdUndoTo _mrdHover _mrdUnhover _mrdCr15Clear _meridianF8SlowSave _tlEditNode _tlEdit _tidelineTocDrag _tidelineFire _tidelineHold _tidelineRows _tidelineTitle
+- Sprint tideline (CR22-CR25): image paste placement stress test: _tlAspects _tlBases _tlPaste _tlMeasure _tlCase
+- Review fixes: app markers, inline paste, cols AI edit, review cycle,: _rfxPast _rfxPlant _tlColors _tlCanvas _tlPasteCanvas _tlPasteBig _tlLoaded _tlStressMeasure _tlStressCase
+- Review fixes: image grid and image paste: _rfiCanvas _rfiSrc _rfiPasteFile _rfiPng _hfeZoomed _hfeZoomables _hfeTocPanel _hfeTocOpen _hfeHits _hfeTextNode
+- Bug-hunt round 1 fixes: image paste and placement: _h1Heavy _h1CellWidths _h1Imgs _h1Paste _h1Heading
+- WP7: Ctrl+U underline is saved as ++text++ and shows underlined: _ulSaved _ulOpenEditor
+- WP5: story images, image file drop, tile reorder: _wp5Sel _wp5Key _wp5Deck _wp5Fs _wp5Cur _wp5ImgSrcs _wp5Imgs _wp5Inject _wp5UndoTo _wp5Enter _wp5Exit _wp5Layer _wp5CurThumb _wp5ZoomedAt _wp5Grid _wp5Step _wp5OnSlide _wp5Toast _wp5Drop _wp5Aspect _wp5NoBlob
+- WP5b: story steps by wheel and swipe, Preview, phone layout, large images: _wp5bFsEl _wp5bWheel _wp5bState _wp5bWheelStep _wp5bTouch _wp5bSwipe _wp5bSwipeStep _wp5bHold _wp5bPhone _wp5bInside _wp5bOverlap _wp5bBox _wp5bBig _wp5bLayerImg _tbEl _tbButtons _tbOneRow _tbAtWidth
 - UI TEST RUNNER COMPONENT: computeDeckFingerprint DEMO_DECK_FP_TITLE VelaUITestRunner
 
 ### part-demo.jsx
@@ -146,7 +162,7 @@ that symbol in the named part for the line. No line numbers here — they rot.
 - Check if slide has image blocks: slideHasImages
 - Color parsing: _compositeBg compositeColor _isExportHidden parseColor
 - CSS linear-gradient parsing: parseLinearGradient gradientLineCoords buildShadingDict
-- PDF Text encoding: pdfStringEncode
+- PDF Text encoding: WIN_ANSI_HIGH WIN_ANSI_FROM_UNICODE pdfWinAnsiByte pdfStringEncode
 - Emoji detection and rendering: isEmojiCodepoint emojiCanvasCache renderEmojiToImage extractEmojiImages extractLogoImages
 - Font metrics for standard PDF fonts: CHAR_WIDTHS measureText
 - DOM Element Extraction: extractBoxes getTextLines getVisualScale extractTextRuns extractLinks
@@ -161,11 +177,11 @@ that symbol in the named part for the line. No line numbers here — they rot.
 - Font loading: _fontCache loadFonts
 - Font selection: pickFont
 - Image capture fallback (from existing pdf-export): vectorDomToCanvas
-- Vector PDF Export Modal: VectorPdfExportModal stripHiddenBlocks collectAllSlides
+- Vector PDF Export Modal: VectorPdfExportModal stripHiddenBlocks collectAllSlides STORY_PAGE_KEYS expandStorySlides
 
 ### part-export-md.jsx
 - Markdown Export: deckToMarkdown exportMarkdown
-- Standalone HTML Export: VELA_STANDALONE_LIBS escapeForScriptContext stripEsmImportsForStandalone spliceStartupPatch flipPresentationMode MADE_WITH_VELA_FOOTER_HTML escapeHtmlText buildStandaloneHtml getStandaloneJsxSource velaStandaloneExportGateReason
+- Standalone HTML Export: VELA_STANDALONE_LIBS escapeForScriptContext stripEsmImportsForStandalone NEUTRALINO_UMD_SHIM_RE stripNeutralinoUmdShim PREVIEW_MOUNT_RE stripPreviewMount VELA_LOCAL_MODE_ON_RE resetLocalModeForStandalone VELA_CHANNEL_PORT_RE VELA_CHANNEL_TOKEN_RE resetChannelForStandalone spliceStartupPatch flipPresentationMode MADE_WITH_VELA_FOOTER_HTML escapeHtmlText buildStandaloneHtml getStandaloneJsxSource velaStandaloneExportGateReason
 - Standalone HTML Export Modal: StandaloneHtmlModal
 
 ### part-pptx.jsx
@@ -232,7 +248,7 @@ keyboard ternaries) or are currently unused — check before assuming a UI exist
 - REMOVE_COMMENT: part-app-modals.jsx part-canvas.jsx part-list.jsx part-slides.jsx
 - REMOVE_ITEM: part-list.jsx
 - REMOVE_LANE: (no direct dispatch site)
-- REMOVE_SLIDE: part-slidepanel.jsx part-slides.jsx
+- REMOVE_SLIDE: part-list.jsx part-slidepanel.jsx part-slides.jsx
 - REMOVE_SLIDES: part-list.jsx
 - RENAME_ITEM: part-list.jsx
 - RENAME_LANE: (no direct dispatch site)
@@ -259,7 +275,7 @@ keyboard ternaries) or are currently unused — check before assuming a UI exist
 - SET_LOADING: part-chat.jsx
 - SET_REVIEW_MODE: part-app-modals.jsx part-app.jsx part-demo.jsx part-slidepanel.jsx
 - SET_SECTION_COLLAPSED: part-demo.jsx part-list.jsx
-- SET_SLIDES: part-slidepanel.jsx
+- SET_SLIDES: (no direct dispatch site)
 - SET_SLIDE_INDEX: part-app.jsx part-chat.jsx part-list.jsx part-slidepanel.jsx part-slides.jsx
 - SET_SLIDE_SELECTION: part-demo.jsx part-list.jsx
 - SET_STATUS: (no direct dispatch site)
@@ -270,10 +286,11 @@ keyboard ternaries) or are currently unused — check before assuming a UI exist
 - TEACHER_CLEAR: part-app.jsx part-slides.jsx
 - TEACHER_LOADING: part-slides.jsx
 - TEACHER_MSG: part-app.jsx part-slides.jsx
-- TOGGLE_LANE: (no direct dispatch site)
+- TOGGLE_LANE: part-app.jsx
 - TOGGLE_PRESENT_CARD: part-list.jsx
 - TOGGLE_SECTION_COLLAPSE: part-list.jsx
-- TOGGLE_SLIDE_HIDDEN: part-list.jsx
+- TOGGLE_SLIDE_HIDDEN: part-list.jsx part-slides.jsx
+- TOGGLE_SLIDE_REVIEWED: part-slidepanel.jsx
 - UNDO: (no direct dispatch site)
 - UPDATE_COMMENT: (no direct dispatch site)
 - UPDATE_SLIDE: part-app.jsx part-imports.jsx part-list.jsx part-slidepanel.jsx
@@ -313,18 +330,20 @@ add_lane add_item batch_add_items remove_item remove_lane rename_item rename_lan
 
 ## Navigability debt (WARN — candidates for banners or splits)
 
-- part-imports.jsx: 860-line unbannered stretch after line 509
-- part-blocks.jsx: 764-line unbannered stretch after line 769
-- part-canvas.jsx: 414-line unbannered stretch after line 24
-- part-slidepanel.jsx: 446-line unbannered stretch after line 206
-- part-slidepanel.jsx: 394-line unbannered stretch after line 964
+- part-imports.jsx: 898-line unbannered stretch after line 516
+- part-blocks.jsx: 806-line unbannered stretch after line 1265
+- part-canvas.jsx: 581-line unbannered stretch after line 150
+- part-slidepanel.jsx: 437-line unbannered stretch after line 1367
 - part-uitest.jsx: 616-line unbannered stretch after line 1230
 - part-uitest2.jsx: 448-line unbannered stretch after line 2
-- part-uitest2.jsx: 593-line unbannered stretch after line 1395
+- part-uitest2.jsx: 593-line unbannered stretch after line 1457
+- part-uitest2.jsx: 837-line unbannered stretch after line 2323
+- part-uitest2.jsx: 376-line unbannered stretch after line 4088
+- part-uitest2.jsx: 387-line unbannered stretch after line 4464
 - part-demo.jsx: 407-line unbannered stretch after line 510
 - part-demo.jsx: 373-line unbannered stretch after line 917
-- part-pdf.jsx: 389-line unbannered stretch after line 582
+- part-pdf.jsx: 414-line unbannered stretch after line 582
 - part-pdf-vector.jsx: 441-line unbannered stretch after line 2
-- part-pdf-vector.jsx: 479-line unbannered stretch after line 459
-- part-pdf-vector.jsx: 524-line unbannered stretch after line 1209
-- part-pptx.jsx: no level-1 banners (1188 lines)
+- part-pdf-vector.jsx: 490-line unbannered stretch after line 459
+- part-pdf-vector.jsx: 551-line unbannered stretch after line 1214
+- part-pptx.jsx: no level-1 banners (1191 lines)
