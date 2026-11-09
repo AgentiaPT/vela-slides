@@ -2,10 +2,10 @@
 
 ## Overview
 
-Vela Slides is a **single-file React application** (18,421 lines, ~1.3 MB) designed to run inside Claude.ai's artifact sandbox. The sandbox requires all code to be in one `.jsx` file with no external module imports between files — so Vela uses a **modular source / concatenated output** architecture.
+Vela Slides is a **single-file React application** (~24,400 lines, ~1.8 MB) designed to run inside Claude.ai's artifact sandbox. The sandbox requires all code to be in one `.jsx` file with no external module imports between files — so Vela uses a **modular source / concatenated output** architecture.
 
 ```
-Source (16 part-files)  →  concat.py  →  vela.jsx  →  assemble.py  →  final.jsx
+Source (23 part-files)  →  concat.py  →  vela.jsx  →  assemble.py  →  final.jsx
      ↑ edit these                         ↑ monolith                  ↑ with deck data
 ```
 
@@ -28,23 +28,29 @@ The dependency graph is fixed and acyclic. Concatenation is the simplest correct
 ### Dependency Graph
 
 ```
-part-imports    → Constants, sanitizers, helpers, storage
-part-icons      → Icon resolution system (270+ icons)
-part-blocks     → 27 block-type renderers (RenderBlock switch)
-part-branding   → BrandingOverlay slide chrome (accent bar, footer, slide number, logo)
-part-canvas     → SlideContent slide canvas, per-block editing chrome
-part-reducer    → State management, dispatch actions
-part-engine     → Vera AI engine, system prompts, API calls
-part-slides     → Slide panel, fullscreen, branding overlay
-part-list       → Lane/module list, drag & drop
-part-chat       → Chat panel, tool trace cards
-part-test       → Battery tests
-part-uitest     → UI integration tests (185 tests in 33 suites)
-part-demo       → Cinematic demo mode (18 scenes)
-part-pdf-fonts  → Offline font fallback data (compressed TTF blobs)
-part-pdf        → PDF export (raster + vector), markdown export
-part-pptx       → Native editable PowerPoint (.pptx) export
-part-app        → Top-level shell, modals, shortcuts
+part-imports      → Constants, sanitizers, helpers, storage
+part-icons        → Icon resolution system (270+ icons)
+part-blocks       → 27 block-type renderers (RenderBlock switch)
+part-branding     → BrandingOverlay slide chrome (accent bar, footer, slide number, logo)
+part-canvas       → SlideContent slide canvas, per-block editing chrome
+part-reducer      → State management, dispatch actions
+part-engine       → Vera AI engine, system prompts, API calls
+part-slides       → Presenter, gallery, student/teacher panels, virtual slide
+part-slidepanel   → SlidePanel editor view, navigation, per-slide AI actions
+part-list         → Lane/module list, drag & drop
+part-chat         → Chat panel, tool trace cards
+part-test         → Battery tests (dev only)
+part-uitest       → UI integration test battery (dev only)
+part-uitest2      → UI test battery continued (dev only)
+part-demo         → Product tour demo mode
+part-pdf-fonts    → Offline font fallback data (compressed TTF blobs)
+part-pdf          → Canvas (raster) PDF export
+part-pdf-extract  → PDF/PPTX shared DOM extractors and encoders
+part-pdf-vector   → Vector PDF export
+part-export-md    → Markdown and standalone-HTML export
+part-pptx         → Native editable PowerPoint (.pptx) export
+part-app-modals   → App-level modals and dialogs
+part-app          → Top-level shell, shortcuts
 ```
 
 Dependencies flow strictly **top-down**. No circular dependencies. Each part can reference anything defined in parts above it in the concat order.
@@ -56,30 +62,36 @@ build order, and each part's purpose line — read it directly rather than a
 copy here, which can drift:
 
 ```
-imports → icons → blocks → canvas → reducer → engine → slides → list → chat → test → uitest → demo → pdf-fonts → pdf → pptx → app
+imports → icons → blocks → branding → canvas → reducer → engine → slides → slidepanel → list → chat → test → uitest → uitest2 → demo → pdf-fonts → pdf → pdf-extract → pdf-vector → export-md → pptx → app-modals → app
 ```
 
 ### Part Responsibilities
 
 | Part | Lines | What it owns |
 |---|---|---|
-| `part-imports.jsx` | ~1,940 | Constants (FONT, SIZES, COLORS), deck sanitization, import/export helpers, storage API, Levenshtein matching, startup patch system |
+| `part-imports.jsx` | ~2,240 | Constants (FONT, SIZES, COLORS), `VELA_VERSION`/changelog, deck sanitization, import/export helpers, storage API, startup patch system |
 | `part-icons.jsx` | ~290 | `getIcon()` resolver with 270+ Lucide icon mappings, aliases, emoji fallback |
-| `part-blocks.jsx` | ~1,520 | Every block renderer: heading, text, bullets, flow, grid, metric, timeline, steps, table, callout, quote, SVG, badge, icon, icon-row, tag-group, progress, code, image, comparison, funnel, cycle, number-row, matrix, checklist, divider, spacer. Plus `EditableText`/`ItemChrome` for WYSIWYG. |
-| `part-branding.jsx` | ~50 | `BrandingOverlay` (accent bar, footer, slide number, logo) — split out of part-canvas.jsx |
-| `part-canvas.jsx` | ~370 | `SlideContent` (slide canvas + block layout), `renderBlockItem` (per-block hover toolbar/AI-prompt popup), `InlineCommentCard` (review mode) — split out of part-blocks.jsx |
-| `part-reducer.jsx` | ~390 | `useReducer` state shape, all dispatch actions (SELECT, LOAD, ADD_LANE, SET_SLIDES, etc.) |
-| `part-engine.jsx` | ~1,240 | `callClaudeAPI()`, Vera system prompts, tool definitions, slide improve/edit/create/alternatives, batch operations, agentic ReAct loop |
-| `part-slides.jsx` | ~2,580 | `SlidePanel` component, slide rendering pipeline, fullscreen presenter, branding overlay, thumbnail generation, image compression |
-| `part-list.jsx` | ~780 | `ModuleList`, `LaneSection`, `ConceptRow`, drag-and-drop reordering, AI slide adder |
-| `part-chat.jsx` | ~450 | `ChatPanel`, message rendering, tool trace cards, image paste/drop, starter prompts |
-| `part-test.jsx` | ~410 | `VelaBatteryTest` — automated render tests for block types |
-| `part-uitest.jsx` | ~2,800 | 185 UI integration tests in 33 suites — comprehensive coverage of block rendering, themes, edge cases |
-| `part-demo.jsx` | ~860 | Cinematic demo mode with 18 scenes showcasing all Vela features |
-| `part-pdf-fonts.jsx` | ~15 | `COMPRESSED_FONTS` — offline font fallback data (compressed TTF blobs), rarely changes; split out of part-pdf.jsx so its ~242KB of base64 doesn't sit inside the frequently-edited export logic |
-| `part-pdf.jsx` | ~4,040 | Canvas-based PDF renderer (raster + vector export path), watermark system, link annotations, markdown export |
-| `part-pptx.jsx` | ~1,190 | Native, editable PowerPoint (.pptx) exporter — a second emitter over the same primitive IR the vector-PDF path produces |
-| `part-app.jsx` | ~2,070 | `VelaApp` root component, modals (JSON clipboard, shortcuts, changelog), keyboard handlers, mobile navigation, file browser |
+| `part-blocks.jsx` | ~1,530 | Every block renderer (27 types) in `RenderBlock`, plus `EditableText`/`ItemChrome` for WYSIWYG |
+| `part-branding.jsx` | ~50 | `BrandingOverlay` (accent bar, footer, slide number, logo) |
+| `part-canvas.jsx` | ~680 | `SlideContent` (slide canvas + block layout), `renderBlockItem` (per-block toolbar/AI-prompt popup), `InlineCommentCard` |
+| `part-reducer.jsx` | ~440 | State shape, all dispatch actions, undo/redo history |
+| `part-engine.jsx` | ~1,350 | `callClaudeAPI()`, Vera system prompts, 22 tool definitions, `executeTool`, ReAct loop |
+| `part-slides.jsx` | ~1,370 | Virtual/fullscreen slide, presenter view, gallery, student/teacher panels |
+| `part-slidepanel.jsx` | ~1,360 | `SlidePanel` editor view, keyboard/wheel navigation, fullscreen orchestration, per-slide AI actions |
+| `part-list.jsx` | ~810 | `ModuleList`, `ConceptRow`, drag-and-drop reordering, AI slide adder |
+| `part-chat.jsx` | ~460 | `ChatPanel`, message rendering, tool trace cards, image paste/drop |
+| `part-test.jsx` | ~410 | `VelaBatteryTest` — automated render tests (dev only) |
+| `part-uitest.jsx` | ~2,390 | UI test registry/runner and suites (dev only) |
+| `part-uitest2.jsx` | ~2,210 | Later UI suites, security suites, `VelaUITestRunner` (dev only) |
+| `part-demo.jsx` | ~1,290 | Product tour demo mode |
+| `part-pdf-fonts.jsx` | ~15 | `COMPRESSED_FONTS` — offline font fallback data, rarely changes |
+| `part-pdf.jsx` | ~970 | Canvas-based (raster) PDF export, watermark, slide reflow |
+| `part-pdf-extract.jsx` | ~780 | Shared PDF/PPTX plumbing: color parsing, `pdfStringEncode`, DOM extractors |
+| `part-pdf-vector.jsx` | ~1,730 | Vector PDF builder (`buildVectorPdf`), TrueType font parsing, export modal |
+| `part-export-md.jsx` | ~560 | Markdown export (`deckToMarkdown`) and standalone-HTML export |
+| `part-pptx.jsx` | ~1,190 | Native editable PowerPoint (.pptx) exporter, reusing the PDF extractors |
+| `part-app-modals.jsx` | ~1,100 | App-level modals: PPTX export, stats, changelog, comments, new deck, help, merge patch |
+| `part-app.jsx` | ~1,200 | `VelaApp` root component, keyboard handlers, mobile navigation, file browser |
 
 ## Assembly Pipeline
 
