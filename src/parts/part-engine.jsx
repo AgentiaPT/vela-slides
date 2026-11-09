@@ -736,7 +736,7 @@ const CANVAS_RULES = `## CANVAS
 The slide renders at 960×540px (16:9). Content MUST fit within this space. Use padding "36px 48px" as baseline. Do NOT overfill — fewer blocks with better spacing beats cramming content.`;
 
 function buildDesignCtx(branding, guidelines) {
-  const brandingCtx = branding?.enabled ? `\nBranding overlay active: accent bar (top, ${branding.accentHeight || 4}px), footer bar (bottom, 28px). Leave extra padding. Match accent: ${branding.accentColor}.` : "";
+  const brandingCtx = branding?.enabled ? `\nBranding overlay active: accent bar (top, ${branding.accentHeight ?? 4}px), footer bar (bottom, 28px). Leave extra padding. Match accent: ${branding.accentColor}.` : "";
   const guidelinesCtx = guidelines?.trim() ? `\n\n## MANDATORY SLIDE GUIDELINES\nThe user has set these rules for ALL slides. Follow them strictly:\n${guidelines.trim()}\n---` : "";
   const guidelinesReminder = guidelines?.trim() ? `\n\n## ⚠️ SLIDE RULES REMINDER\n${guidelines.trim()}\nApply these rules. The screenshot may show a different style — follow these rules instead.` : "";
   return { brandingCtx, guidelinesCtx, guidelinesReminder };

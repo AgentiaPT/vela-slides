@@ -4141,6 +4141,24 @@ def test_deck_key_allowlist_structure():
 
 
 # ━━━ PDF Title-Card Export Tests (v12.57 / v12.58) ━━━━━━━━━━━━━━━
+def test_review_fix_title_and_shortcuts():
+    print("\n── Review-fix guards (receive-path title, Ctrl+E typing, accent 0) ──")
+    app = open(os.path.join(PARTS_DIR, "part-app.jsx"), encoding="utf-8").read()
+    eng = open(os.path.join(PARTS_DIR, "part-engine.jsx"), encoding="utf-8").read()
+    if re.search(r"deckTitle:\s*deck\.deckTitle\s*\?\s*sanitizeDeckTitle\(deck\.deckTitle\)", app):
+        ok("deck receive path sanitizes deckTitle")
+    else:
+        fail("deck receive path must pass deckTitle through sanitizeDeckTitle")
+    if re.search(r"const ctrlE = [^;\n]*&& !typing;", app):
+        ok("Ctrl/Cmd+E shortcut honours the typing guard")
+    else:
+        fail("Ctrl/Cmd+E shortcut must include && !typing")
+    if "branding.accentHeight ?? 4" in eng and "branding.accentHeight || 4" not in eng:
+        ok("Vera prompt respects accentHeight 0")
+    else:
+        fail("Vera prompt must use a nullish check for accentHeight")
+
+
 def test_pdf_title_cards():
     print("\n── PDF Title-Card Export Tests ──")
 
@@ -4984,6 +5002,7 @@ if __name__ == "__main__":
         test_bg_gradient_validation()
         test_deck_key_allowlist_structure()
         test_pdf_title_cards()
+        test_review_fix_title_and_shortcuts()
         test_script_context_escape_parity()
         test_build_pipeline_trust_boundary()
         test_svg_style_recurrence_guards()

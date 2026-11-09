@@ -365,6 +365,17 @@ const clearTrackers = () => { _dirtyMods.clear(); _deletedMods.clear(); _loadedM
   assert("MOVE_SLIDE_TO_MODULE inserts at toIndex", marks(findItem(out, "B").slides).join() === "8,2,9");
   assert("MOVE_SLIDE_TO_MODULE uses toIndex as slideIndex", out.slideIndex === 1);
 }
+{
+  // Cross-lane: target section sits in an EARLIER lane than the source (two-pass fix)
+  const st = present([lane("L0", [item("B", [slide(9)])]), lane("L1", [item("A", [slide(1), slide(2)])])], "A", 0);
+  const total = (s) => s.lanes.reduce((n, l) => n + l.items.reduce((m, i) => m + i.slides.length, 0), 0);
+  const out = innerReducer(st, { type: "MOVE_SLIDE_TO_MODULE", fromId: "A", toId: "B", index: 0 });
+  assert("MOVE_SLIDE_TO_MODULE cross-lane (target earlier) delivers the slide", marks(findItem(out, "B").slides).join() === "9,1");
+  assert("MOVE_SLIDE_TO_MODULE cross-lane keeps total slide count", total(out) === total(st) && marks(findItem(out, "A").slides).join() === "2");
+  const outM = innerReducer(st, { type: "MOVE_SLIDES_TO_MODULE", fromId: "A", toId: "B", indices: [0, 1] });
+  assert("MOVE_SLIDES_TO_MODULE cross-lane (target earlier) delivers the slides", marks(findItem(outM, "B").slides).join() === "9,1,2");
+  assert("MOVE_SLIDES_TO_MODULE cross-lane keeps total slide count", total(outM) === total(st) && findItem(outM, "A").slides.length === 0);
+}
 
 // ═══════════════════════════════════════════════════════════════════
 // 8. Selection / view flags

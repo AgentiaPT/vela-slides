@@ -30,7 +30,7 @@ adds bring-up overhead for no gain.
 ```bash
 # 1. verify provisioning (~1s) — do NOT npm-install or rebuild if these hold
 [ -e node_modules/jsdom ] && [ -e skills/vela-slides/app/vela.jsx ] \
-  && ls /opt/pw-browsers/chromium-*/chrome-linux/chrome >/dev/null && echo "provisioned ✓"
+  && ls /opt/pw-browsers/chromium-*/chrome-linux*/chrome >/dev/null && echo "provisioned ✓"
 
 # 2. build sync + suite (the real gate)
 python3 tools/vela-dev/scripts/concat.py     # ~0.2s — must print "in sync"
@@ -42,7 +42,7 @@ node .hyper-sprint/render-offline.js examples/vela-demo.vela /tmp/vout
 node <SCRATCH>/drive.mjs file:///tmp/vout/render.html <shotDir>
 ```
 `<SCRATCH>` = the session scratch dir holding `drive.mjs` (a validated one-launch
-Playwright driver: Chromium `/opt/pw-browsers/chromium-*/chrome-linux/chrome`, launch
+Playwright driver: Chromium `/opt/pw-browsers/chromium-*/chrome-linux*/chrome`, launch
 `--no-sandbox --autoplay-policy=no-user-gesture-required`, waits `window.__velaBooted`).
 
 Total ≈ **25s** (or **<10s** if you trust concat-sync and defer the full Python suite to

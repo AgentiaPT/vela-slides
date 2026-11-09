@@ -6672,7 +6672,7 @@ const CANVAS_RULES = `## CANVAS
 The slide renders at 960×540px (16:9). Content MUST fit within this space. Use padding "36px 48px" as baseline. Do NOT overfill — fewer blocks with better spacing beats cramming content.`;
 
 function buildDesignCtx(branding, guidelines) {
-  const brandingCtx = branding?.enabled ? `\nBranding overlay active: accent bar (top, ${branding.accentHeight || 4}px), footer bar (bottom, 28px). Leave extra padding. Match accent: ${branding.accentColor}.` : "";
+  const brandingCtx = branding?.enabled ? `\nBranding overlay active: accent bar (top, ${branding.accentHeight ?? 4}px), footer bar (bottom, 28px). Leave extra padding. Match accent: ${branding.accentColor}.` : "";
   const guidelinesCtx = guidelines?.trim() ? `\n\n## MANDATORY SLIDE GUIDELINES\nThe user has set these rules for ALL slides. Follow them strictly:\n${guidelines.trim()}\n---` : "";
   const guidelinesReminder = guidelines?.trim() ? `\n\n## ⚠️ SLIDE RULES REMINDER\n${guidelines.trim()}\nApply these rules. The screenshot may show a different style — follow these rules instead.` : "";
   return { brandingCtx, guidelinesCtx, guidelinesReminder };
@@ -10216,13 +10216,17 @@ function useTocDragAutoScroll(treeRef) {
     const onLeave = (e) => { if (!e.relatedTarget) speed = 0; }; // pointer left the window
     document.addEventListener("dragover", onOver, true);
     document.addEventListener("dragleave", onLeave, true);
-    document.addEventListener("drop", stop, true);
-    document.addEventListener("dragend", stop, true);
+    // The source row can unmount mid-drag (its dragend then never reaches React),
+    // so clear the shared drag state here for any drag end or drop. Defer it:
+    // this capture listener runs before the React drop handlers read _velaDrag.
+    const end = () => { stop(); setTimeout(_clearDrag, 0); };
+    document.addEventListener("drop", end, true);
+    document.addEventListener("dragend", end, true);
     return () => {
       document.removeEventListener("dragover", onOver, true);
       document.removeEventListener("dragleave", onLeave, true);
-      document.removeEventListener("drop", stop, true);
-      document.removeEventListener("dragend", stop, true);
+      document.removeEventListener("drop", end, true);
+      document.removeEventListener("dragend", end, true);
       stop();
     };
   }, []);
@@ -17848,6 +17852,21 @@ const _tlStressCase = async (c) => {
     return { label, ratio: chosen.area / best[1], detail: `${chosen.split ? "split" : "stack"} ${Math.round(chosen.area)} px2 vs ${best[0]} ${Math.round(best[1])} px2` };
   } finally { await _mrdUndoTo(past); }
 };
+
+uiSuite("review-fix-shortcuts", [
+  { name: "Ctrl+E inside a text input does not toggle the TOC", fn: async () => {
+    const tocShown = () => _$$(".concept-row").length > 0;
+    if (!tocShown()) throw new Error("TOC not shown at start");
+    const inp = document.createElement("input");
+    document.body.appendChild(inp);
+    try {
+      inp.focus();
+      _key("e", { ctrlKey: true });
+      await new Promise((r) => setTimeout(r, 150));
+      if (!tocShown()) throw new Error("Ctrl+E in an input toggled the TOC");
+    } finally { if (inp.parentNode) inp.parentNode.removeChild(inp); }
+  }},
+], { setup: _selectFirstModule });
 
 // ━━━ UI TEST RUNNER COMPONENT ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -26180,7 +26199,7 @@ export default function App() {
         const payload = {
           ...cur,                                                    // keep everything
           lanes: sanitized.lanes,                                    // update content
-          deckTitle: deck.deckTitle || cur.deckTitle,                 // update title
+          deckTitle: deck.deckTitle ? sanitizeDeckTitle(deck.deckTitle) : cur.deckTitle,                 // update title
           branding: deck.branding ? { ...defaultBranding, ...sanitized.branding } : cur.branding, // sanitized (scrubbed) branding, not raw deck.branding (v12.67)
           guidelines: deck.guidelines !== undefined ? deck.guidelines : cur.guidelines,
           // Reset selection when switching to a different deck so auto-select picks the first module
@@ -26346,7 +26365,7 @@ export default function App() {
     const h = (e) => {
       const typing = ["INPUT","TEXTAREA","SELECT"].includes(e.target.tagName) || e.target.isContentEditable;
       const bracket = e.key === "[" && !e.metaKey && (!e.ctrlKey || e.altKey) && !typing;
-      const ctrlE = (e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && (e.key === "e" || e.key === "E") && !state.fullscreen;
+      const ctrlE = (e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && (e.key === "e" || e.key === "E") && !state.fullscreen && !typing;
       if (bracket || ctrlE) { e.preventDefault(); setTocCollapsed((c) => !c); }
     };
     window.addEventListener("keydown", h);

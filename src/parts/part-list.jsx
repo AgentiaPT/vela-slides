@@ -62,13 +62,17 @@ function useTocDragAutoScroll(treeRef) {
     const onLeave = (e) => { if (!e.relatedTarget) speed = 0; }; // pointer left the window
     document.addEventListener("dragover", onOver, true);
     document.addEventListener("dragleave", onLeave, true);
-    document.addEventListener("drop", stop, true);
-    document.addEventListener("dragend", stop, true);
+    // The source row can unmount mid-drag (its dragend then never reaches React),
+    // so clear the shared drag state here for any drag end or drop. Defer it:
+    // this capture listener runs before the React drop handlers read _velaDrag.
+    const end = () => { stop(); setTimeout(_clearDrag, 0); };
+    document.addEventListener("drop", end, true);
+    document.addEventListener("dragend", end, true);
     return () => {
       document.removeEventListener("dragover", onOver, true);
       document.removeEventListener("dragleave", onLeave, true);
-      document.removeEventListener("drop", stop, true);
-      document.removeEventListener("dragend", stop, true);
+      document.removeEventListener("drop", end, true);
+      document.removeEventListener("dragend", end, true);
       stop();
     };
   }, []);

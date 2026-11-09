@@ -448,7 +448,7 @@ export default function App() {
         const payload = {
           ...cur,                                                    // keep everything
           lanes: sanitized.lanes,                                    // update content
-          deckTitle: deck.deckTitle || cur.deckTitle,                 // update title
+          deckTitle: deck.deckTitle ? sanitizeDeckTitle(deck.deckTitle) : cur.deckTitle,                 // update title
           branding: deck.branding ? { ...defaultBranding, ...sanitized.branding } : cur.branding, // sanitized (scrubbed) branding, not raw deck.branding (v12.67)
           guidelines: deck.guidelines !== undefined ? deck.guidelines : cur.guidelines,
           // Reset selection when switching to a different deck so auto-select picks the first module
@@ -614,7 +614,7 @@ export default function App() {
     const h = (e) => {
       const typing = ["INPUT","TEXTAREA","SELECT"].includes(e.target.tagName) || e.target.isContentEditable;
       const bracket = e.key === "[" && !e.metaKey && (!e.ctrlKey || e.altKey) && !typing;
-      const ctrlE = (e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && (e.key === "e" || e.key === "E") && !state.fullscreen;
+      const ctrlE = (e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && (e.key === "e" || e.key === "E") && !state.fullscreen && !typing;
       if (bracket || ctrlE) { e.preventDefault(); setTocCollapsed((c) => !c); }
     };
     window.addEventListener("keydown", h);

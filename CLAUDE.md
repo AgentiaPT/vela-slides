@@ -297,7 +297,7 @@ re-exploring `evals/` each time.
 
 The container blocks the React/lucide CDNs and Playwright downloads — never
 fetch esm.sh or run `npx playwright install`. Chromium is pinned at
-`/opt/pw-browsers/chromium-1194/chrome-linux/chrome`, ffmpeg at
+`/opt/pw-browsers/chromium-*/chrome-linux*/chrome`, ffmpeg at
 `/opt/pw-browsers/ffmpeg-1011/ffmpeg-linux`.
 - **One-off / interactive** work (explore, screenshot, reproduce, verify UX):
   use the **`playwright-cli-setup`** skill (persistent CLI browser, one

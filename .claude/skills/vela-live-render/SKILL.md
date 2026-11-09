@@ -21,7 +21,7 @@ desktop shell's proven recipe: **vendored UMD React/ReactDOM/lucide-react + Babe
 transpiled in Node, loaded as an EXTERNAL `<script>`.**
 
 ## One-time environment facts (already true in this container)
-- Prebuilt Chromium: `/opt/pw-browsers/chromium-1194/chrome-linux/chrome`
+- Prebuilt Chromium: `/opt/pw-browsers/chromium-*/chrome-linux*/chrome`
   (the npm `playwright` expects a newer build → `executablePath` must be pinned;
   `vela-drive.js` already does this).
 - ffmpeg (for webm→mp4/gif if needed): `/opt/pw-browsers/ffmpeg-1011/ffmpeg-linux`

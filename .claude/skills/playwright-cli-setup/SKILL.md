@@ -34,7 +34,7 @@ config path, read from the repo root). It solves the two things that otherwise f
   "browser": {
     "browserName": "chromium",
     "launchOptions": {
-      "executablePath": "/opt/pw-browsers/chromium-1194/chrome-linux/chrome",
+      "executablePath": "/opt/pw-browsers/chromium-1243/chrome-linux64/chrome",
       "headless": true,
       "args": ["--no-sandbox"]
     }

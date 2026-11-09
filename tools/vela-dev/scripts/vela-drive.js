@@ -4,7 +4,7 @@
 // prebuilt Chromium. Boot-check, screenshot, run the in-app UI test battery,
 // or record a demo video. No CDN needed.
 //
-// Prebuilt Chromium lives at /opt/pw-browsers/chromium-1194/... (the npm
+// Prebuilt Chromium lives at /opt/pw-browsers/chromium-*/chrome-linux*/ (layout varies by image) (the npm
 // playwright version expects a newer build, so executablePath is pinned).
 //
 // USAGE:

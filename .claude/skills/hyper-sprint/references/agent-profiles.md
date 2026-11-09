@@ -151,7 +151,7 @@ If markers partially match (e.g. `/opt/pw-browsers` but no proxy), you're in a *
 
 ### Browser (Playwright, pre-installed)
 - `PLAYWRIGHT_BROWSERS_PATH=/opt/pw-browsers`; do **not** run `playwright install`.
-- Chromium: `/opt/pw-browsers/chromium-1194/chrome-linux/chrome` (pin via
+- Chromium: `/opt/pw-browsers/chromium-*/chrome-linux*/chrome` (pin via
   `executablePath`; it's newer than the npm `playwright` package expects).
 - Launch headless with `--no-sandbox`. Node 22, local `playwright` ~1.60.
 - Record video via `browser.newContext({ recordVideo: { dir } })` → **VP8 `.webm`**

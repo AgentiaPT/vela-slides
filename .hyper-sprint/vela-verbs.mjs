@@ -135,7 +135,7 @@ export async function exportPptx(page, opts = {}) {
   await page.waitForFunction(() => {
     if (document.querySelector("[data-testid=pptx-export-error]")) return true;
     return !!document.querySelector("[data-testid=pptx-export-download]");
-  }, { timeout: 60000 });
+  }, undefined, { timeout: 60000 });
   const err = await page.evaluate(() => { const e = document.querySelector("[data-testid=pptx-export-error]"); return e ? e.textContent : null; });
   if (err) throw new Error(`exportPptx: modal reported error phase: ${err}`);
   const info = await page.evaluate(() => {

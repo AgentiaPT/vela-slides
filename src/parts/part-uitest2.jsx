@@ -3475,6 +3475,21 @@ const _tlStressCase = async (c) => {
   } finally { await _mrdUndoTo(past); }
 };
 
+uiSuite("review-fix-shortcuts", [
+  { name: "Ctrl+E inside a text input does not toggle the TOC", fn: async () => {
+    const tocShown = () => _$$(".concept-row").length > 0;
+    if (!tocShown()) throw new Error("TOC not shown at start");
+    const inp = document.createElement("input");
+    document.body.appendChild(inp);
+    try {
+      inp.focus();
+      _key("e", { ctrlKey: true });
+      await new Promise((r) => setTimeout(r, 150));
+      if (!tocShown()) throw new Error("Ctrl+E in an input toggled the TOC");
+    } finally { if (inp.parentNode) inp.parentNode.removeChild(inp); }
+  }},
+], { setup: _selectFirstModule });
+
 // ━━━ UI TEST RUNNER COMPONENT ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 // Demo deck guard — UI tests only run against the original demo deck
