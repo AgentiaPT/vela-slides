@@ -1560,6 +1560,9 @@ function sanitizeBlock(block, depth = 0) {
     }
     if (clean.type === "flow" || clean.type === "steps" || clean.type === "timeline" || clean.type === "tag-group" || clean.type === "funnel" || clean.type === "cycle" || clean.type === "number-row" || clean.type === "checklist") {
       clean.items = clean.items.slice(0, 20).map((it) => {
+        // A checklist item may be a plain string (the renderer and validate.py
+        // accept it); keep it as sanitized text instead of dropping it.
+        if (typeof it === "string" && clean.type === "checklist") return sanitizeString(it, 1000);
         if (!it || typeof it !== "object") return null;
         const c = { ...it };
         if (c.label) c.label = sanitizeString(c.label, 200);

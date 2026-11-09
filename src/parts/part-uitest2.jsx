@@ -3453,8 +3453,11 @@ uiSuite("review-fix-editor", [
     const past = _rfxPast();
     let plant = null;
     try {
-      const el = await _mrdInject([{ type: "heading", text: "RFX toolbar", size: "2xl" }], null, (vp) => vp && vp.querySelector("[data-block-type='heading']"));
+      await _mrdInject([{ type: "heading", text: "RFX toolbar", size: "2xl" }], null, (vp) => vp && vp.querySelector("[data-block-type='heading']"));
       const barRect = async () => {
+        // Query the block each time: the slide can re-mount it after the inject.
+        await _wait(150);
+        const el = _mrdViewport().querySelector("[data-block-type='heading']");
         await _mrdHover(el);
         const bar = await _waitFor(() => el.querySelector("[data-testid='block-hover-toolbar']"), 1500);
         await _mrdFrame();
@@ -3547,6 +3550,7 @@ uiSuite("review-fix-editor", [
     const past = _rfxPast();
     try {
       await _mrdInject([{ type: "checklist", items: ["RFX alpha", "RFX beta", "RFX gamma"] }], null, (vp) => vp?.textContent.includes("RFX gamma") ? vp : null);
+      await _wait(150); // the slide can re-mount its blocks just after the inject
       await _tlEdit("PENDING", "done", "DONE");
       await _tlEdit("RFX beta", "RFX beta edited");
       const items = _hooks().getCurrentSlideForTest()?.blocks?.[0]?.items || [];
