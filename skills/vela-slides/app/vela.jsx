@@ -23244,6 +23244,20 @@ function stripNeutralinoUmdShim(jsx) {
   return typeof jsx === "string" ? jsx.replace(NEUTRALINO_UMD_SHIM_RE, "") : jsx;
 }
 
+// A desktop (sync-vela.py) or serve.py template has VELA_LOCAL_MODE flipped to
+// true. The exported file is opened by someone else in a plain browser, so it
+// must run exactly like a web export: local mode on would skip its persistence,
+// change its startup path and install shell-only globals. Reset the flag on the
+// TRUSTED template, before the deck splice; the pattern is anchored to the
+// start of a line, which spliced deck JSON (always mid-line, no raw newline)
+// cannot forge. No match (a web template) leaves the source unchanged. Only the
+// value is rewritten (no full declaration literal here: serve.py / sync-vela.py
+// find the declaration by its exact text, and a second copy would confuse them).
+const VELA_LOCAL_MODE_ON_RE = /^(const[ \t]+VELA_LOCAL_MODE[ \t]*=[ \t]*)true(?=[ \t]*;)/m;
+function resetLocalModeForStandalone(jsx) {
+  return jsx.replace(VELA_LOCAL_MODE_ON_RE, (_m, head) => head + "false");
+}
+
 // Replace the value bound to `const STARTUP_PATCH = ...;` with the current
 // deck, whether the source holds the pristine `null` sentinel (Neutralino:
 // freshly fetched vela.jsx) or an already-embedded deck object (artifact/
@@ -23302,7 +23316,7 @@ function escapeHtmlText(s) {
 function buildStandaloneHtml(jsxSource, deckObj, opts = {}) {
   const { footer = false, babel } = opts;
   if (!babel || typeof babel.transform !== "function") throw new Error("buildStandaloneHtml requires a Babel-standalone instance");
-  let jsx = stripEsmImportsForStandalone(stripNeutralinoUmdShim(jsxSource));
+  let jsx = resetLocalModeForStandalone(stripEsmImportsForStandalone(stripNeutralinoUmdShim(jsxSource)));
   jsx = spliceStartupPatch(jsx, deckObj);
   jsx = flipPresentationMode(jsx);
   const shim =

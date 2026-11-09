@@ -66,8 +66,10 @@ async function boot() {
   focusWindow();
   // Re-arm keyboard focus after every alt-tab / refocus, not only at launch (CR18).
   installRefocus();
-  // Native window title follows the app's own sanitized deck title (CR16):
-  // part-app.jsx calls this on mount, on title edit and on deck switch.
+  // Native window title follows the deck title (CR16): part-app.jsx calls this
+  // on mount, on title edit and on deck switch. The title is deck-supplied and
+  // can arrive unsanitized (desktop deck-open path), so setWindowTitle
+  // (window-glue.js) does the full filter before the native call.
   window.__velaOnDeckTitle = setWindowTitle;
   // Wrap Neutralino.filesystem.* so every path must resolve inside an allowed
   // root (the decks folder + ~/.vela, registered by deck-io/config-store).
@@ -411,7 +413,6 @@ async function selectProvider(id) {
 // Startup budget for agent detection: a cold, AV-scanned gatekeeper (and its
 // first agent `--version` run) can need this long on a fresh build.
 const AGENT_STARTUP_BUDGET_MS = 45000;
-const RESCAN_BUDGET_MS = 10000;
 let bootDeadline = 0;
 
 function publishAgentState(up) {
@@ -449,13 +450,11 @@ function installAgentsBridge() {
     list: () => agents.list(),
     activeId: () => agents.activeId(),
     pick: (id) => selectProvider(id),
-    // Manual rescan: same retry loop as boot. Inside the startup budget it keeps
-    // probing until the boot deadline; after it, it still gets a short window,
-    // so one click during a slow gatekeeper start is not a final "offline".
-    refresh: () => agents.probeUntilReady({
-      deadline: Math.max(bootDeadline, Date.now() + RESCAN_BUDGET_MS),
-      onAttempt: publishAgentState,
-    }),
+    // Manual rescan: a short, bounded probe (agents.rescan), so a click with no
+    // agent installed answers in about a second. During a slow gatekeeper start
+    // the boot probe below keeps running in the background and publishes the
+    // agent when it appears, so the rescan does not need the boot budget.
+    refresh: () => agents.rescan({ onAttempt: publishAgentState }),
   };
   // Consumed by trust.js to render the provider choice in the confirm modal.
   window.__velaSelectProvider = selectProvider;
