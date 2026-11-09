@@ -29,6 +29,19 @@ application chrome.** Every "image-loading" CSS/SVG/HTML construct is the
 regulated surface for (a)–(c); any construct that can inject *cascade-global*
 CSS (rather than element-local styling) is the regulated surface for (d).
 
+Clause (c) has one bounded, documented exception: the Neutralino desktop
+shell passes the deck title to `window.setTitle` so the native title bar can
+show it (`vela-neutralino/resources/js/window-glue.js`). The value is
+type-checked (a non-string never reaches the call), NFKC-normalized, filtered
+by Unicode property (control, format, private-use, unassigned, line/paragraph
+separator and default-ignorable characters are dropped; blank-rendering glyphs
+become a space), whitespace-collapsed and capped at 200 code points — the same
+identity-label policy as `skills/vela-slides/scripts/_safe_term.py`. It always
+carries the fixed `Vela Slides - ` prefix; only a title that is exactly the app
+name shows as the plain app name. The method takes only a string: no path,
+markup or command reaches native code. Any other deck value reaching the native
+bridge is a violation.
+
 Clause (d) is the **UI-integrity** invariant. It exists because untrusted
 deck-rendered markup shares one DOM and one CSS cascade with Vela's own UI, so
 a construct that injects a document-global stylesheet could restyle, hide,

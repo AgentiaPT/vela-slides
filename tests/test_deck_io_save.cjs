@@ -553,6 +553,104 @@ const PATH = "/decks/a.vela";
     assert((await m.saveCurrent(DECK())) === false, "no-target save did not resolve false");
   });
 
+  // A1: flush runs are serialized, so an older write can never land after a
+  // newer one, and the newer save resolves true only after its own bytes are
+  // the last ones written.
+  const gate = () => { let open; const p = new Promise((r) => { open = r; }); return { p, open }; };
+  const titleOn = (N) => JSON.parse(N.files[PATH]).deckTitle;
+  await test("A1 retry: a newer save during an older retry backoff ends with the newer bytes", async () => {
+    const N = makeNeu({});
+    const g = gate();
+    const realWrite = N.filesystem.writeFile;
+    let n = 0;
+    N.filesystem.writeFile = async (p, d) => {
+      if (n++ === 0) { await g.p; throw new Error("EBUSY temporary lock"); }
+      return realWrite(p, d);
+    };
+    const m = buildModule(N, recordingConsole());
+    m.state.folder = "/decks"; m.state.currentPath = PATH;
+    const pA = m.saveCurrent({ ...DECK(), deckTitle: "EDIT" });
+    const fA = m.flushNow();
+    await tick(5);
+    const pB = m.saveCurrent({ ...DECK(), deckTitle: "UNDO" });
+    g.open();
+    const fB = m.flushNow();
+    const [rA, rB] = await Promise.all([pA, pB, fA, fB]);
+    await tick(40); // longer than the shrunk backoff: a stale retry would land now
+    assert(rA === false, "older save did not resolve false: " + rA);
+    assert(rB === true, "newer save did not resolve true: " + rB);
+    assert(titleOn(N) === "UNDO", "older retry overwrote the newer save: " + titleOn(N));
+    assert(n === 2, "stale older run retried its write: " + n + " writes");
+  });
+  await test("A1 slow write: a newer save waits for the older write and its bytes land last", async () => {
+    const N = makeNeu({});
+    const g = gate();
+    const realWrite = N.filesystem.writeFile;
+    let n = 0;
+    N.filesystem.writeFile = async (p, d) => {
+      if (n++ === 0) await g.p;
+      return realWrite(p, d);
+    };
+    const m = buildModule(N, recordingConsole());
+    m.state.folder = "/decks"; m.state.currentPath = PATH;
+    const pA = m.saveCurrent({ ...DECK(), deckTitle: "EDIT" });
+    const fA = m.flushNow();
+    await tick(5);
+    const pB = m.saveCurrent({ ...DECK(), deckTitle: "UNDO" });
+    let rB = null;
+    pB.then((v) => { rB = v; });
+    const fB = m.flushNow();
+    await tick(20);
+    assert(rB === null, "newer save resolved while the older write was still in flight: " + rB);
+    g.open();
+    await Promise.all([fA, fB]);
+    await tick(5);
+    assert((await pA) === false, "superseded older save did not resolve false");
+    assert(rB === true, "newer save did not resolve true: " + rB);
+    assert(titleOn(N) === "UNDO", "older slow write landed after the newer one: " + titleOn(N));
+  });
+
+  // A8: a path that drops the pending save settles its promise with false (not
+  // written), so the app does not keep the send counted as in flight.
+  const settleOf = async (p) => { let v = "pending"; p.then((x) => { v = x; }); await tick(5); return v; };
+  await test("A8 openDeck settles a dropped pending save with false", async () => {
+    const N = makeNeu({ files: { "/decks/b.vela": JSON.stringify(DECK()) } });
+    const m = buildModule(N);
+    m.state.folder = "/decks"; m.state.currentPath = PATH;
+    const p = m.saveCurrent(DECK());
+    await m.deckIO.openDeck("/decks/b.vela");
+    assert((await settleOf(p)) === false, "openDeck left the dropped save pending");
+    assert(!N.files[PATH], "dropped save was written");
+  });
+  await test("A8 openDeck settles the dropped save with false even when the read fails", async () => {
+    const N = makeNeu({});
+    const m = buildModule(N);
+    m.state.folder = "/decks"; m.state.currentPath = PATH;
+    const p = m.saveCurrent(DECK());
+    let threw = false;
+    try { await m.deckIO.openDeck("/decks/missing.vela"); } catch { threw = true; }
+    assert(threw, "openDeck of a missing file did not throw");
+    assert((await settleOf(p)) === false, "dropped save stayed pending after a failed open");
+  });
+  await test("A8 newDeck settles a dropped pending save with false", async () => {
+    const N = makeNeu({});
+    const m = buildModule(N);
+    m.state.folder = "/decks"; m.state.currentPath = PATH;
+    const p = m.saveCurrent(DECK());
+    const np = await m.deckIO.newDeck("Fresh");
+    assert(np === "/decks/Fresh.vela", "newDeck path: " + np);
+    assert((await settleOf(p)) === false, "newDeck left the dropped save pending");
+  });
+  await test("A8 reselectFolder settles a dropped pending save with false", async () => {
+    const N = makeNeu({});
+    N.os.showFolderDialog = async () => "/other";
+    const m = buildModule(N);
+    m.state.folder = "/decks"; m.state.currentPath = PATH;
+    const p = m.saveCurrent(DECK());
+    await m.deckIO.reselectFolder();
+    assert((await settleOf(p)) === false, "reselectFolder left the dropped save pending");
+  });
+
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail === 0 ? 0 : 1);
 })();

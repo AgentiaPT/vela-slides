@@ -9,27 +9,70 @@
 
 const APP_NAME = "Vela Slides";
 
-// Control, bidi and zero-width characters have no place in a native title bar
-// (they can visually reorder or hide text). The value comes from the app's own
-// sanitized state; this is only a last cheap filter + length cap.
-const TITLE_STRIP = /[\u0000-\u001f\u007f-\u009f\u061c\u200b-\u200f\u2028\u2029\u202a-\u202e\u2060-\u2064\u2066-\u206f\ufeff]/g;
+// The deck title is deck-supplied (untrusted) and this is the one place it
+// reaches a native call, so this filter is the control, not a backstop: on
+// the desktop deck-open path the app receives the file's own title text and
+// calls setWindowTitle with it. Policy mirrors the identity-label encoder
+// skills/vela-slides/scripts/_safe_term.py (term_label): NFKC first, then drop
+// by Unicode property, blank glyphs to a space, whitespace collapsed, capped.
+//   Cc            controls (C0, DEL, C1)
+//   Cf            format: bidi overrides, zero-width, soft hyphen, tag chars
+//   Co / Cn       private use (font-dependent glyphs) / unassigned
+//   Zl / Zp       line / paragraph separators (break a one-line title)
+//   Default_Ignorable_Code_Point  characters that render as nothing
+// Without this, a title can hide or reorder text, or pad the bar with blank
+// glyphs so that deck text reads as app-issued text.
+const TITLE_DROP = /[\p{Cf}\p{Co}\p{Cn}\p{Zl}\p{Zp}\p{Default_Ignorable_Code_Point}]/u;
+const TITLE_CONTROL = /\p{Cc}/u;
+// Glyphs that render blank but are not whitespace (mirrors _safe_term.py
+// _BLANK_GLYPHS). They become a space, which the collapse below then folds.
+const TITLE_BLANK = /[ᅟᅠ឴឵᠎⠀ㅤﾠ]/u;
+const TITLE_SURROGATE = /\p{Cs}/u;
+const TITLE_COMBINING = /[\p{Mn}\p{Me}]/u;
+const ZWJ = "‍";
+const MAX_COMBINING_RUN = 2;
+const TITLE_MAX = 200; // code points, ellipsis included
+
+// Pure: untrusted title text -> one plain line ("" when nothing is left).
+// One pass over code points, as in _safe_term.py.
+function titleLabel(raw) {
+  let s;
+  try { s = raw.normalize("NFKC"); } catch { return ""; }
+  const cps = Array.from(s);
+  let out = "", run = 0;
+  for (let i = 0; i < cps.length; i++) {
+    const ch = cps[i];
+    if (TITLE_SURROGATE.test(ch)) return ""; // lone surrogate: fail closed
+    if (TITLE_BLANK.test(ch)) { out += " "; run = 0; continue; }
+    // Emoji joiner: kept only between two non-ASCII characters (pictographs).
+    if (ch === ZWJ && i > 0 && i < cps.length - 1 &&
+        cps[i - 1].codePointAt(0) > 0x7f && cps[i + 1].codePointAt(0) > 0x7f) { out += ch; continue; }
+    if (TITLE_DROP.test(ch)) { run = 0; continue; }
+    if (/\s/.test(ch)) { out += " "; run = 0; continue; } // tab, newline, NBSP... -> space
+    if (TITLE_CONTROL.test(ch)) { run = 0; continue; }
+    if (TITLE_COMBINING.test(ch)) { if (++run > MAX_COMBINING_RUN) continue; } else run = 0;
+    out += ch;
+  }
+  out = out.replace(/\s+/g, " ").trim();
+  const outCps = Array.from(out);
+  if (outCps.length > TITLE_MAX) out = outCps.slice(0, TITLE_MAX - 1).join("").trimEnd() + "…";
+  return out;
+}
 
 // The app's own "no title" sentinel (part-reducer.jsx / part-app.jsx). It must
 // map to the plain app name, the same as an empty title, not show up as text.
 const NO_TITLE_SENTINEL = "Untitled";
 
-// A title "starts with the app name" only at a word boundary: "Vela Slides",
-// "Vela Slides - X" do; "Vela Slideshow" does not (it gets the prefix).
-const APP_NAME_PREFIX = /^vela slides(?![\p{L}\p{N}_])/iu;
-
 // Pure: deck title -> native window title. Type-check first: a non-string
-// never reaches the native call. A title that already starts with the app
-// name is used as-is so the bar never reads "Vela Slides - Vela Slides ...".
+// never reaches the native call. Every deck title gets the fixed
+// "Vela Slides - " prefix, so deck text never stands as the whole title and
+// cannot read as app-issued text. Only a title that IS exactly the app name
+// maps to the plain app name (no "Vela Slides - Vela Slides"); a title that
+// only starts with the app name still gets the prefix.
 export function windowTitleFor(deckTitle) {
   if (typeof deckTitle !== "string") return APP_NAME;
-  const t = deckTitle.replace(TITLE_STRIP, "").trim().slice(0, 200);
-  if (!t || t === NO_TITLE_SENTINEL) return APP_NAME;
-  if (APP_NAME_PREFIX.test(t)) return t;
+  const t = titleLabel(deckTitle);
+  if (!t || t === NO_TITLE_SENTINEL || t.toLowerCase() === APP_NAME.toLowerCase()) return APP_NAME;
   return `${APP_NAME} - ${t}`;
 }
 

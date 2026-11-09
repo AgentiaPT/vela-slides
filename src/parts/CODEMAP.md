@@ -173,7 +173,7 @@ that symbol in the named part for the line. No line numbers here — they rot.
 
 ### part-export-md.jsx
 - Markdown Export: deckToMarkdown exportMarkdown
-- Standalone HTML Export: VELA_STANDALONE_LIBS escapeForScriptContext stripEsmImportsForStandalone NEUTRALINO_UMD_SHIM_RE stripNeutralinoUmdShim spliceStartupPatch flipPresentationMode MADE_WITH_VELA_FOOTER_HTML escapeHtmlText buildStandaloneHtml getStandaloneJsxSource velaStandaloneExportGateReason
+- Standalone HTML Export: VELA_STANDALONE_LIBS escapeForScriptContext stripEsmImportsForStandalone NEUTRALINO_UMD_SHIM_RE stripNeutralinoUmdShim VELA_LOCAL_MODE_ON_RE resetLocalModeForStandalone spliceStartupPatch flipPresentationMode MADE_WITH_VELA_FOOTER_HTML escapeHtmlText buildStandaloneHtml getStandaloneJsxSource velaStandaloneExportGateReason
 - Standalone HTML Export Modal: StandaloneHtmlModal
 
 ### part-pptx.jsx

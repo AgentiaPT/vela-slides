@@ -144,18 +144,34 @@ async function detect() {
 // negative, and the old 3-empty-answers cutoff (~2.4s) gave up long before the
 // startup budget. A real negative costs only a few cheap background probes.
 // Every attempt is reported to onAttempt(gatekeeperUp, or null on error).
+// `maxNegatives` (optional) stops after that many "gatekeeper answered, no
+// agent" answers; only the manual rescan sets it (see rescan below).
 // `now` / `wait` are injectable for tests (fake clock).
-async function probeUntilReady({ deadline, onAttempt, now = () => Date.now(), wait = sleep } = {}) {
-  let delay = 500;
+async function probeUntilReady({ deadline, onAttempt, maxNegatives, now = () => Date.now(), wait = sleep } = {}) {
+  let delay = 500, negatives = 0;
   for (;;) {
     let up = null;
     try { up = await detect(); } catch { up = null; }
     if (onAttempt) { try { onAttempt(up); } catch {} }
     if (activeId && detected?.[activeId]?.available) return true;
+    if (up === true && maxNegatives > 0 && ++negatives >= maxNegatives) return false;
     if (!(now() < deadline)) return false;
     await wait(Math.min(delay, Math.max(0, deadline - now())));
     delay = Math.min(Math.round(delay * 1.5), 4000);
   }
+}
+
+// Manual rescan (Agent settings "Rescan"): a short, bounded probe. The user
+// waits on it, so a machine with no agent installed must get its answer in
+// about a second, not after the 45 s launch budget. The launch-time probe
+// (nl-boot) keeps the long budget and runs in the background on its own.
+// Gatekeeper not answering: give up after this. One attempt without handshake
+// files already polls ~3 s (readHandshake), so this allows that one attempt;
+// a stale cached port fails fast and is re-read on the next attempt (CR19).
+const RESCAN_BUDGET_MS = 3000;
+const RESCAN_MAX_NEGATIVES = 2; // gatekeeper answers "no agent": stop after this many
+function rescan({ onAttempt, now = () => Date.now(), wait = sleep } = {}) {
+  return probeUntilReady({ deadline: now() + RESCAN_BUDGET_MS, maxNegatives: RESCAN_MAX_NEGATIVES, onAttempt, now, wait });
 }
 
 export const agents = {
@@ -163,6 +179,8 @@ export const agents = {
   async detect() { return detect(); },
 
   probeUntilReady(opts) { return probeUntilReady(opts); },
+
+  rescan(opts) { return rescan(opts); },
 
   // Available providers only (for the picker UI).
   list() { return availableList(); },

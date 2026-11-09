@@ -84,11 +84,11 @@ function makeNeu() {
       assert(mod.windowTitleFor(v) === "Vela Slides", `for ${String(v)} got ${mod.windowTitleFor(v)}`);
     }
   });
-  await test("meridian-CR16 never doubles 'Vela Slides'", () => {
+  await test("meridian-CR16 never doubles 'Vela Slides' for the exact app name", () => {
     const { mod } = loadGlue(makeNeu());
-    for (const v of ["Vela Slides", "vela slides", "Vela Slides — Demo", "Vela Slides - X"]) {
+    for (const v of ["Vela Slides", "vela slides", "  Vela  Slides ", "Vela\u00a0Slides"]) {
       const t = mod.windowTitleFor(v);
-      assert((t.match(/vela slides/gi) || []).length === 1, `${v} -> ${t}`);
+      assert(t === "Vela Slides", `${JSON.stringify(v)} -> ${t}`);
     }
   });
   await test("meridian-CR16 control/bidi chars stripped, length capped", () => {
@@ -131,13 +131,60 @@ function makeNeu() {
       "Vela Slideshow tips": "Vela Slides - Vela Slideshow tips",
       "vela slides2": "Vela Slides - vela slides2",
       "Vela Slides": "Vela Slides",
-      "Vela Slides - X": "Vela Slides - X",
-      "Vela Slides: Q3": "Vela Slides: Q3",
+      // S2: only the exact app name is exempt from the fixed prefix.
+      "Vela Slides - X": "Vela Slides - Vela Slides - X",
+      "Vela Slides: Q3": "Vela Slides - Vela Slides: Q3",
     };
     for (const [inp, want] of Object.entries(cases)) {
       const got = mod.windowTitleFor(inp);
       assert(got === want, `${inp} -> ${got} (want ${want})`);
     }
+  });
+
+  // S2: the title filter works by Unicode property and NFKC, and deck text
+  // can never stand as the whole native title.
+  await test("S2 invisible / blank / default-ignorable glyphs are removed from the title", () => {
+    const { mod } = loadGlue(makeNeu());
+    const invisible = ["\u00ad", "\u034f", "\u115f", "\u1160", "\u180e", "\u2800", "\u3164", "\uffa0",
+      "\u{e0001}", "\u{e0041}", "\u{e007f}", "\u200b", "\u2066", "\ufeff", "\u{f0000}", "\ue000", "\u0378"];
+    for (const ch of invisible) {
+      const t = mod.windowTitleFor("Q3" + ch + ch + "plan");
+      assert(t === "Vela Slides - Q3plan" || t === "Vela Slides - Q3 plan",
+        `U+${ch.codePointAt(0).toString(16)} kept: ${JSON.stringify(t)}`);
+    }
+  });
+  await test("S2 whitespace and blank-glyph runs collapse to one space", () => {
+    const { mod } = loadGlue(makeNeu());
+    const t = mod.windowTitleFor("  a\t\n\u00a0\u2800\u3164  b  ");
+    assert(t === "Vela Slides - a b", JSON.stringify(t));
+  });
+  await test("S2 NFKC folds compatibility forms (fullwidth app name gets no exemption trick)", () => {
+    const { mod } = loadGlue(makeNeu());
+    assert(mod.windowTitleFor("\uff36\uff45\uff4c\uff41 Slides") === "Vela Slides", "fullwidth exact name");
+    assert(mod.windowTitleFor("\uff21\uff22") === "Vela Slides - AB", mod.windowTitleFor("\uff21\uff22"));
+  });
+  await test("S2 a title that starts with the app name still gets the fixed prefix", () => {
+    const { mod } = loadGlue(makeNeu());
+    for (const v of ["Vela Slides \u2014 Update required", "vela slides: sign in again", "Vela Slides\u00ad - X"]) {
+      const t = mod.windowTitleFor(v);
+      assert(t.startsWith("Vela Slides - ") && t.length > "Vela Slides - ".length, `${JSON.stringify(v)} -> ${t}`);
+    }
+  });
+  await test("S2 length cap counts code points and never splits a surrogate pair", () => {
+    const { mod } = loadGlue(makeNeu());
+    const t = mod.windowTitleFor("\u{1f600}".repeat(300));
+    const body = t.slice("Vela Slides - ".length);
+    assert(Array.from(body).length === 200, "cap: " + Array.from(body).length);
+    assert(!/[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/.test(body), "lone surrogate in title");
+    assert(mod.windowTitleFor("a\ud800b") === "Vela Slides", "lone surrogate input not fail-closed");
+  });
+  await test("S2 emoji joiner kept between pictographs; combining runs capped", () => {
+    const { mod } = loadGlue(makeNeu());
+    const fam = "\u{1f468}\u200d\u{1f469}";
+    assert(mod.windowTitleFor(fam) === "Vela Slides - " + fam, "ZWJ emoji broken");
+    assert(mod.windowTitleFor("a\u200db") === "Vela Slides - ab", "ZWJ between ASCII kept");
+    const z = mod.windowTitleFor("e" + "\u0301".repeat(30));
+    assert((z.match(/\p{M}/gu) || []).length <= 2, "combining run not capped: " + JSON.stringify(z));
   });
 
   await test("meridian-F6 DOM focus restore focuses a focusable #root (tabindex -1)", () => {
@@ -313,9 +360,46 @@ function makeNeu() {
     });
     assert(found === true, "not found after files appeared");
   });
-  await test("meridian-CR19 nl-boot boot loop and rescan both use probeUntilReady; no new native call", () => {
+  // A3: the manual rescan is a short, bounded probe; the boot probe keeps the
+  // long budget (pinned by the CR19 cases above).
+  await test("A3 manual rescan with no agent installed answers fast (no 10-45 s wait)", async () => {
+    const gk = { port: 5001, token: "tok", agentFrom: Infinity };
+    const h = loadAgents(gk);
+    h.setFiles(5001, "tok");
+    let attempts = 0;
+    const found = await h.agents.rescan({ onAttempt: () => attempts++, now: h.clock.now, wait: h.clock.wait });
+    assert(found === false, "reported found");
+    assert(h.getT() < 2000, "rescan took " + h.getT() + " ms with no agent installed");
+    assert(attempts >= 1 && attempts <= 2, "attempts=" + attempts);
+  });
+  await test("A3 manual rescan with the gatekeeper down stops at a short bound", async () => {
+    const gk = { port: 5001, token: "tok", agentFrom: 0 };
+    const h = loadAgents(gk);                // no handshake files: gatekeeper not up
+    h.setT(60000);                           // well after the boot budget
+    const found = await h.agents.rescan({ now: h.clock.now, wait: h.clock.wait });
+    assert(found === false, "reported found");
+    assert(h.getT() - 60000 <= 3500, "rescan ran " + (h.getT() - 60000) + " ms");
+  });
+  await test("A3 manual rescan still drops a stale handshake and reaches the new gatekeeper", async () => {
+    const gk = { port: 5002, token: "new", agentFrom: 0 };
+    const h = loadAgents(gk);
+    h.setFiles(4999, "old");
+    assert((await h.agents.detect()) === false, "stale port answered?");
+    h.setFiles(5002, "new");
+    const found = await h.agents.rescan({ now: h.clock.now, wait: h.clock.wait });
+    assert(found === true, "rescan kept using the stale cached port");
+  });
+  await test("A3 manual rescan still finds an installed agent", async () => {
+    const gk = { port: 5001, token: "tok", agentFrom: 0 };
+    const h = loadAgents(gk);
+    h.setFiles(5001, "tok");
+    const found = await h.agents.rescan({ now: h.clock.now, wait: h.clock.wait });
+    assert(found === true && h.agents.available() === true, "agent not found by rescan");
+  });
+  await test("meridian-CR19 nl-boot boot loop uses probeUntilReady, rescan uses agents.rescan; no new native call", () => {
     const boot = fs.readFileSync(path.join(JS, "nl-boot.js"), "utf8");
-    assert((boot.match(/agents\.probeUntilReady\(/g) || []).length === 2, "boot + refresh must share the probe loop");
+    assert((boot.match(/agents\.probeUntilReady\(/g) || []).length === 1, "boot must use the long probe loop");
+    assert(/refresh:\s*\(\)\s*=>\s*agents\.rescan\(/.test(boot), "manual refresh must use the bounded agents.rescan");
     assert(!/emptyTries/.test(boot), "old early-exit counter still present");
     const bridge = fs.readFileSync(path.join(JS, "agents-bridge.js"), "utf8");
     assert(!/Neutralino\.os\.spawnProcess\(|extensions\.dispatch\(/.test(bridge), "bridge must never spawn");

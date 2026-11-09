@@ -52,6 +52,7 @@ const state = {
   lastWrittenSig: null, // signature of the exact bytes last written (echo guard)
   lastWrittenText: null, // those exact bytes — the signature alone can collide
   saveWaiter: null,   // { deck, resolve } — the promise saveCurrent returned for pendingDeck
+  flushChain: Promise.resolve(), // tail of the serialized flush runs (see flushSave)
 };
 
 // Settle the promise saveCurrent returned (true = write confirmed on disk).
@@ -181,6 +182,7 @@ async function openDeck(path) {
   if (state.saveTimer) { clearTimeout(state.saveTimer); state.saveTimer = null; }
   state.pendingDeck = null;
   state.pendingPath = null;
+  settleWaiter(undefined, false); // the dropped save was not written
   // Reject saves for the duration of the switch. The React app still holds the
   // PREVIOUS deck and its debounced autosave (__velaSendDeckUpdate) can fire
   // during the awaits below — after currentPath has advanced to `path`. Without
@@ -215,7 +217,19 @@ function saveCurrent(deckObject) {
   return new Promise((resolve) => { state.saveWaiter = { deck: deckObject, resolve }; });
 }
 
-async function flushSave() {
+// Flush runs are SERIALIZED: each run starts only after the previous one ends,
+// and reads the newest pendingDeck when it starts. Without this, an older run
+// (a slow write, or a retry after a failed write) can land its bytes AFTER a
+// newer run wrote and resolved true — the file then holds the older deck while
+// the app believes it holds the newer one, and the app's no-edit guard skips
+// every later identical flush (silent app/disk divergence).
+function flushSave() {
+  const run = state.flushChain.then(flushSaveOnce);
+  state.flushChain = run.catch(() => {});
+  return run;
+}
+
+async function flushSaveOnce() {
   const deck = state.pendingDeck;
   const path = state.pendingPath;
   if (!deck || !path) return;
@@ -230,10 +244,13 @@ async function flushSave() {
 
   const attempts = SAVE_RETRY_DELAYS.length + 1;
   let lastErr = null, conn = false;
+  // Stale run: a deck switch (openDeck/newDeck) moved the target, or a newer
+  // deck is pending. The next serialized run writes that newer deck, so this
+  // run must not write (or retry) the older bytes after it.
+  const stale = () => (state.pendingPath && state.pendingPath !== path) ||
+    (state.pendingDeck && state.pendingDeck !== deck);
   for (let i = 0; i < attempts; i++) {
-    // A deck switch (openDeck/newDeck) moved the target — a fresher flush owns
-    // the new path; abandon this stale write rather than clobbering it.
-    if (state.pendingPath && state.pendingPath !== path) { settleWaiter(deck, false); return; }
+    if (stale()) { settleWaiter(deck, false); return; }
     try {
       state.lastWriteAt = Date.now();
       await Neutralino.filesystem.writeFile(path, json);
@@ -269,7 +286,7 @@ async function flushSave() {
         emitStatus({ state: "reconnecting", path, at: Date.now() });
         try { await Neutralino.filesystem.getStats(state.folder); conn = false; } catch {}
       }
-      if (i < attempts - 1) await new Promise((r) => setTimeout(r, SAVE_RETRY_DELAYS[i]));
+      if (i < attempts - 1 && !stale()) await new Promise((r) => setTimeout(r, SAVE_RETRY_DELAYS[i]));
     }
   }
   // Final failure — KEEP pendingDeck/pendingPath so the next autosave or a
@@ -395,6 +412,7 @@ export const deckIO = {
     if (state.saveTimer) { clearTimeout(state.saveTimer); state.saveTimer = null; }
     state.pendingDeck = null;
     state.pendingPath = null;
+    settleWaiter(undefined, false); // the dropped save was not written
     await stopWatcher();
     state.folder = await pickFolder();
     state.currentPath = null;
@@ -412,6 +430,7 @@ export const deckIO = {
     if (state.saveTimer) { clearTimeout(state.saveTimer); state.saveTimer = null; }
     state.pendingDeck = null;
     state.pendingPath = null;
+    settleWaiter(undefined, false); // the dropped save was not written
     // Build a unique "<slug>.vela" (then -2, -3, …) that doesn't collide. Slice
     // BEFORE the final trailing-separator strip so a truncated name can't end in
     // a stray "-"/"." right before the extension.
