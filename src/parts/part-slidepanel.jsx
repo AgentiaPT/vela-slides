@@ -352,15 +352,20 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
   // already steps over hidden slides WITHIN a module (nextVisible/prevVisible),
   // so this only fires on a land and can never oscillate (it always resolves to a
   // visible slide, and nav never re-lands on a hidden one).
+  // Present detour state (see onDetour below). Declared here, before its first
+  // use in this effect's deps, so the render never reads it in the TDZ.
+  const [detour, setDetour] = useState(null);
   useEffect(() => {
     if (!fullscreen) return;
     const cur = presSlides[slideIndex];
     if (!cur || !cur.hidden) return;
+    // A detour shows a hidden slide on purpose; do not nudge off it.
+    if (detour && detour.at.id === concept.id && detour.at.index === slideIndex) return;
     let n = -1;
     for (let i = slideIndex + 1; i < presSlides.length; i++) if (!presSlides[i].hidden) { n = i; break; }
     if (n < 0) for (let i = slideIndex - 1; i >= 0; i--) if (!presSlides[i].hidden) { n = i; break; }
     if (n >= 0 && n !== slideIndex) dispatch({ type: "SET_SLIDE_INDEX", index: n });
-  }, [fullscreen, slideIndex, presSlides]);
+  }, [fullscreen, slideIndex, presSlides, detour, concept.id]);
   const [showImproveInput, setShowImproveInput] = useState(false);
   const [improvePrompt, setImprovePrompt] = useState("");
   const [improveScope, setImproveScope] = useState("all"); // "slide" | "module" | "section" | "all"
@@ -374,6 +379,30 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
   // CR07: editor-only review cycle — arrow keys skip slides marked `reviewed`.
   // Distinct from state.reviewMode (comments review), which owns that name.
   const [reviewCycle, setReviewCycle] = useState(false);
+  // Present detour: a TOC search jump to a hidden slide (or a collapsed lane).
+  // `ret` is the last VISIBLE slide (kept across chained detours), `at` is the
+  // detour slide. Arrows, wheel and Esc on the detour slide return to `ret`;
+  // landing anywhere else ends the detour (effect below). Indices are Present
+  // indices (title-card offset included), as passed to SET_SLIDE_INDEX.
+  // (The `detour` state itself is declared above the hidden-slide nudge effect.)
+  const detourRef = useRef(null);
+  detourRef.current = detour;
+  const onDetour = useCallback((on, at) => {
+    if (!on) { setDetour(null); return; }
+    setDetour((d) => ({ ret: d ? d.ret : { id: concept.id, index: slideIndex }, at }));
+  }, [concept.id, slideIndex]);
+  const detourBackRef = useRef(() => false);
+  detourBackRef.current = () => {
+    const d = detourRef.current;
+    if (!d) return false;
+    setDetour(null);
+    if (d.ret.id !== concept.id) dispatch({ type: "SELECT", id: d.ret.id });
+    dispatch({ type: "SET_SLIDE_INDEX", index: d.ret.index });
+    return true;
+  };
+  useEffect(() => {
+    if (detour && (!fullscreen || detour.at.id !== concept.id || detour.at.index !== slideIndex)) setDetour(null);
+  }, [detour, fullscreen, concept.id, slideIndex]);
   const showGalleryRef = useRef(false);
   const setGallery = (v) => { const val = typeof v === "function" ? v(showGalleryRef.current) : v; showGalleryRef.current = val; setShowGallery(val); };
   // ── Presenter view (CR-08) — single-screen speaker dashboard: current +
@@ -894,6 +923,10 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       // (editor nav keeps reaching them so they can be edited/unhidden).
       const nextVisible = (from) => { for (let i = from + 1; i < navSlides.length; i++) if (!fullscreen || !navSlides[i].hidden) return i; return -1; };
       const prevVisible = (from) => { for (let i = from - 1; i >= 0; i--) if (!fullscreen || !navSlides[i].hidden) return i; return -1; };
+      // Present detour: any step key returns to the slide the detour left.
+      if (fullscreen && detourRef.current && ["ArrowRight", "ArrowDown", " ", "ArrowLeft", "ArrowUp"].includes(e.key)) {
+        e.preventDefault(); stopAlternatives(); detourBackRef.current(); return;
+      }
       // CR07: editor review cycle — step through unreviewed slides across modules.
       // The current slide stays in the order (even if reviewed) only to anchor the step.
       const reviewNav = !fullscreen && reviewCycle;
@@ -1001,6 +1034,8 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       // sandboxed iframe (Claude.ai artifact) requestFullscreen fails, so the key lands here.
       // An open modal takes Esc first (it closes on the same keydown).
       // A story slide zoomed on an image: Esc zooms out to the grid first and Present stays.
+      // A Present detour: Esc returns to the slide it left, and Present stays.
+      if (e.key === "Escape" && fullscreen && VELA_OPEN_CHROME.modals.size === 0 && detourBackRef.current()) { e.preventDefault(); return; }
       if (e.key === "Escape" && fullscreen && VELA_OPEN_CHROME.modals.size === 0 && storyEscRef.current()) { e.preventDefault(); return; }
       if (e.key === "Escape" && fullscreen && VELA_OPEN_CHROME.modals.size === 0) { e.preventDefault(); stopAlternatives(); dispatch({ type: "SET_FULLSCREEN", value: false }); return; }
       // Ctrl+C → copy ALL selected slides (multi-select) to system clipboard,
@@ -1099,6 +1134,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       if (Math.abs(scrollAccum.current) >= SCROLL_THRESHOLD) {
         const dir = scrollAccum.current > 0 ? 1 : -1;
         scrollAccum.current = 0;
+        if (fullscreen && detourBackRef.current()) return; // a detour returns first
         if (storyStepRef.current(dir)) return; // one story step per notch
         const navSlides = fullscreen ? presSlides : slides;
         if (dir > 0) {
@@ -1478,9 +1514,9 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
             .slide-transition-fade (part-imports.jsx). Independent of the per-block
             .stg-N stagger reveal inside SlideContent, which keeps working as-is. */}
         <div key={slideIndex} className="slide-transition-fade" style={{ position: "relative", width: "100%", height: "100%" }}>
-          <FullscreenSlide key={`deck-${state._deckEpoch}`} slide={presSlides[slideIndex]} index={slideIndex} total={presSlides.length} innerRef={slideRef} branding={presSlides[slideIndex]?._virtual ? null : branding} editable={!isStudent && !presSlides[slideIndex]?._virtual} onEdit={isStudent || presSlides[slideIndex]?._virtual ? undefined : handleSlideEdit} onBlockEdit={isStudent || presSlides[slideIndex]?._virtual ? undefined : runBlockEdit} blockEditing={isStudent ? null : blockEditing} fontScale={fontScale} mode="fill" forceEdit={presentEdit && !isStudent} displayIndex={globalSlideIndex - presOffset} displayTotal={globalSlideTotal} story={story} onStoryJump={story ? onStoryJump : undefined} onStoryZoomOut={story ? onStoryZoomOut : undefined} />
+          <FullscreenSlide key={`deck-${state._deckEpoch}`} slide={presSlides[slideIndex]} index={slideIndex} total={presSlides.length} innerRef={slideRef} branding={presSlides[slideIndex]?._virtual ? null : branding} editable={!isStudent && !presSlides[slideIndex]?._virtual} onEdit={isStudent || presSlides[slideIndex]?._virtual ? undefined : handleSlideEdit} onBlockEdit={isStudent || presSlides[slideIndex]?._virtual ? undefined : runBlockEdit} blockEditing={isStudent ? null : blockEditing} fontScale={fontScale} mode="fill" forceEdit={presentEdit && !isStudent} displayIndex={globalSlideIndex - presOffset} displayTotal={globalSlideTotal} hideSlideNumber={!!detour} story={story} onStoryJump={story ? onStoryJump : undefined} onStoryZoomOut={story ? onStoryZoomOut : undefined} />
         </div>
-        {!isMobile && <PresenterTOC slides={presSlides} slideIndex={slideIndex} onJump={(i) => dispatch({ type: "SET_SLIDE_INDEX", index: i })} lanes={lanes} currentConceptId={concept.id} dispatch={dispatch} />}
+        {!isMobile && <PresenterTOC slides={presSlides} slideIndex={slideIndex} onJump={(i) => dispatch({ type: "SET_SLIDE_INDEX", index: i })} lanes={lanes} currentConceptId={concept.id} dispatch={dispatch} onDetour={onDetour} />}
                 {fontScale !== 1 && <div style={{ position: "absolute", top: 12, right: 16, fontFamily: FONT.mono, fontSize: 13, fontWeight: 700, color: T.accent, background: T.bgPanel + "e0", padding: "3px 10px", borderRadius: 4, border: `1px solid ${T.accent}40`, zIndex: 20, letterSpacing: "0.05em", pointerEvents: "none" }}>FONT {Math.round(fontScale * 100)}%</div>}
         {improving && <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, padding: "10px 20px", background: "rgba(0,0,0,0.82)", backdropFilter: "blur(6px)", display: "flex", alignItems: "center", gap: 12, zIndex: 20 }}>
           <div style={{ fontSize: 18, animation: "spin 1.5s linear infinite", display: "inline-block" }}>✨</div>
@@ -1535,7 +1571,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
         for (let i = slideIndex + 1; i < presSlides.length; i++) if (!presSlides[i].hidden) { nextIdx = i; break; }
         // NEXT on a story slide is its next step; after the last step, the next slide.
         const nextStory = story ? storyNext(story, storyN) : null;
-        return <PresenterView current={presSlides[slideIndex]} next={nextStory ? presSlides[slideIndex] : nextIdx >= 0 ? presSlides[nextIdx] : null} currentStory={story} nextStory={nextStory || undefined} index={globalSlideIndex - presOffset} total={globalSlideTotal} duration={presSlides[slideIndex]?.duration || 0} elapsed={presentElapsed} branding={branding} onClose={() => setPresenterView(false)} />;
+        return <PresenterView current={presSlides[slideIndex]} next={nextStory ? presSlides[slideIndex] : nextIdx >= 0 ? presSlides[nextIdx] : null} currentStory={story} nextStory={nextStory || undefined} index={globalSlideIndex - presOffset} total={globalSlideTotal} duration={presSlides[slideIndex]?.duration || 0} elapsed={presentElapsed} branding={branding} onClose={() => setPresenterView(false)} detourReturn={detour ? detourReturnTitle(lanes, detour.ret) : null} />;
       })()}
     </div>
   );

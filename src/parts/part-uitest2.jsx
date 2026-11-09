@@ -4848,6 +4848,80 @@ uiSuite("toolbar-auto-compact", [
   }},
 ]);
 
+// v13.79 Present detour: while typing, Ctrl+E search lists hidden slides (and
+// matches hidden-block text); a jump shows the hidden slide with no slide
+// number; arrows or Esc return to the slide that was left; Present stays.
+const _pdSel = () => _hooks().getSelection();
+const _pdOnSlide = (t) => _$$("[data-block-type]").some((el) => (el.textContent || "").includes(t));
+const _pdSame = (a, b) => !!a && !!b && a.itemId === b.itemId && a.slideIdx === b.slideIdx;
+// Make the slide after the first one hidden, with a hidden block that holds the
+// search word, then go back to the first slide. Returns the history mark.
+const _pdPrepare = async () => {
+  const past = _hooks().getHistoryCounts().past;
+  const s0 = _pdSel();
+  if (!s0) throw new Error("no module selected");
+  document.activeElement?.blur?.();
+  _key("ArrowRight");
+  await _waitFor(() => { const s = _pdSel(); return s && s.itemId === s0.itemId && s.slideIdx === s0.slideIdx + 1; }, 1500)
+    .catch(() => { throw new Error("the first module needs 2 or more slides"); });
+  _hooks().injectBlocks([{ type: "heading", text: "PDBACKUP heading" }, { type: "text", text: "secret zqxdetour token", hidden: true }], { hidden: true });
+  await _wait(150);
+  document.activeElement?.blur?.();
+  _key("ArrowLeft");
+  await _waitFor(() => _pdSame(_pdSel(), s0), 1500);
+  return past;
+};
+const _pdEnterPresent = async () => { document.activeElement?.blur?.(); _key("f"); await _waitFor(() => !_$("header"), 2000); await _wait(150); };
+// Open the Present TOC, type the word, and jump to the detour row.
+const _pdJump = async (checkEmpty) => {
+  _key("e", { ctrlKey: true });
+  await _waitFor(_hfeTocOpen, 2000);
+  await _wait(150);
+  if (checkEmpty && _$("[data-testid='toc-detour-section']")) throw new Error("hidden slides are listed with an empty search");
+  _type(_$("input[placeholder^='Search slides']"), "zqxdetour");
+  const row = await _waitFor(() => _$("[data-testid='toc-detour-row']"), 1500).catch(() => { throw new Error("search did not list the hidden slide"); });
+  if (checkEmpty && !row.querySelector("[data-testid='toc-hidden-block']")) throw new Error("a hidden-block match has no HIDDEN BLOCK tag");
+  _click(row);
+  await _waitFor(() => _pdOnSlide("PDBACKUP"), 1500).catch(() => { throw new Error("the jump did not show the hidden slide"); });
+  await _wait(400); // the hidden-slide auto-skip must not move off a detour
+  if (!_pdOnSlide("PDBACKUP")) throw new Error("Present moved off the detour slide by itself");
+  document.activeElement?.blur?.();
+};
+uiSuite("present-detour-search", [
+  { name: "D1: hidden slide found only while typing; jump shows it with no number; Presenter view shows the detour; an arrow returns", fn: async () => {
+    let past = null;
+    try {
+      past = await _pdPrepare();
+      await _pdEnterPresent();
+      const before = _pdSel();
+      await _pdJump(true);
+      if (_slideCounterEl()) throw new Error("the detour slide shows a slide number");
+      _key("s");
+      await _waitFor(() => _$("[data-testid='presenter-detour']"), 1500).catch(() => { throw new Error("Presenter view shows no detour cue"); });
+      _key("s");
+      await _waitFor(() => !_$("[data-testid='presenter-view']"), 1500);
+      document.activeElement?.blur?.();
+      _key("ArrowRight");
+      await _waitFor(() => _pdSame(_pdSel(), before), 1500).catch(() => { throw new Error("ArrowRight did not return to the slide the detour left"); });
+      if (_pdOnSlide("PDBACKUP")) throw new Error("the hidden slide is still on screen after the return");
+      if (_$("header")) throw new Error("the return left Present");
+    } finally { await _exitFullscreen(); if (past != null) await _mrdUndoTo(past); }
+  }},
+  { name: "D2: Esc on a detour returns to the slide that was left and keeps Present", fn: async () => {
+    let past = null;
+    try {
+      past = await _pdPrepare();
+      await _pdEnterPresent();
+      const before = _pdSel();
+      await _pdJump(false);
+      _key("Escape");
+      await _waitFor(() => _pdSame(_pdSel(), before), 1500).catch(() => { throw new Error("Esc did not return to the slide the detour left"); });
+      await _wait(200);
+      if (_$("header")) throw new Error("Esc on a detour left Present");
+    } finally { await _exitFullscreen(); if (past != null) await _mrdUndoTo(past); }
+  }},
+], { setup: _selectFirstModule });
+
 // ━━━ UI TEST RUNNER COMPONENT ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 // Demo deck guard — UI tests only run against the original demo deck

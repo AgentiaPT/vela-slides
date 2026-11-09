@@ -138,8 +138,9 @@ const velaClipboardReadSlides = async () => {
   return [];
 };
 
-const VELA_VERSION = "13.78";
+const VELA_VERSION = "13.79";
 const VELA_CHANGELOG = [
+  { v: "13.79", d: ["Present: Ctrl+E search also matches slide text, with a snippet.", "Present: while typing, search also lists hidden slides and slides in collapsed lanes (a detour).", "Present: after a detour, arrows, wheel or Esc return to the slide you left.", "Present: a detour slide shows no slide number; Presenter view shows where you will return."] },
   { v: "13.78", d: ["Images: up to 10 per slide; overflow goes to a new slide.", "Images: drag image files from your computer onto a slide.", "Images: drag tiles to reorder.", "Story mode: present a slide's images one by one.", "Export: expand story slides to one page per image (PDF/PPTX).", "Text: Ctrl+U underline is saved and shows everywhere (++text++).", "Images: dropped files use the same ordered, safe queue as pasted images.", "Story mode: grid tiles keep a one-line title row, so tiles align.", "Vector PDF: text after bold/italic/underline/link keeps its space and letter spacing.", "Drop: images dropped outside a slide show a hint; a deck file dropped with images still loads.", "Slide toolbar stays on one row; labels change to icons when space is short."] },
   { v: "13.77", d: ["Two-column slides: edits to a column block (link, text, hide, delete) are saved; before, they were lost.", "Link boxes accept a bare domain (example.com) or an email address; before, these were saved as an empty link.", "Desktop: outside edits to decks up to 50 MB now reload live (was 5 MB).", "Present: Esc exits fullscreen, also inside Claude.ai artifacts.", "Esc closes the gallery, presenter view, image zoom or an open dialog first.", "Present toolbar: removed the duplicate gallery icon; presenter view uses a notes icon.", "Image zoom fills the window again (it was limited to the scaled slide).", "Zoom: arrow keys step through the images on the slide; past the first or last image they close the zoom.", "Present toolbar stays faint until you point at it.", "Editor: Ctrl+E toggles the TOC (as in present mode); [ also works with AltGr keyboards."] },
   { v: "13.76", d: ["TOC: dragging a slide or section near the list edge auto-scrolls the list.", "TOC: moving a slide to a section in an earlier lane no longer loses the slide.", "Images: a pasted image on an empty slide fills the slide, not one half.", "Images: grids pick rows and columns by image aspect ratio.", "Images: solo and wide images fill the free slide area.", "Images: images shrink to fit, so text below an image stays on the slide.", "Editing: all text in checklist, comparison, matrix, number-row, progress and flow blocks is editable inline.", "Checklist: type a status name to change the status; custom status labels survive compact/turbo formats."] },
@@ -5103,12 +5104,13 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
 }
 // © 2025-present Rui Quintino. Vela Slides — licensed under ELv2. See LICENSE.
 // ━━━ Branding Overlay ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-function BrandingOverlay({ branding, index, total, displayIndex, displayTotal, slideBg }) {
+function BrandingOverlay({ branding, index, total, displayIndex, displayTotal, hideSlideNumber, slideBg }) {
   if (!branding?.enabled) return null;
   const b = branding;
   const di = displayIndex != null ? displayIndex : index;
   const dt = displayTotal != null ? displayTotal : total;
-  const slideNum = `${String(di + 1).padStart(2, "0")} / ${String(dt).padStart(2, "0")}`;
+  // A Present detour (hidden slide) has no place in the numbering: show none.
+  const slideNum = hideSlideNumber ? "" : `${String(di + 1).padStart(2, "0")} / ${String(dt).padStart(2, "0")}`;
   const rightText = b.footerRight === "auto" ? slideNum : (b.footerRight || "");
   // Detect light slides for contrast-appropriate footer defaults
   const isLight = (() => {
@@ -5321,7 +5323,7 @@ function InlineCommentCard({ comment, itemId, slideIndex, dispatch }) {
   );
 }
 
-function SlideContent({ slide, index, total, branding, editable, onEdit, presenting, onBlockEdit, blockEditing, fontScale = 1, reviewMode, itemId, dispatch: externalDispatch, displayIndex, displayTotal, story, storyAnimate, onStoryJump, onStoryZoomOut, presentSurface }) {
+function SlideContent({ slide, index, total, branding, editable, onEdit, presenting, onBlockEdit, blockEditing, fontScale = 1, reviewMode, itemId, dispatch: externalDispatch, displayIndex, displayTotal, hideSlideNumber, story, storyAnimate, onStoryJump, onStoryZoomOut, presentSurface }) {
   const st = { text: slide.color || T.text, muted: slide.mutedColor || T.textMuted, textDim: T.textDim, accent: slide.accent || T.accent, border: T.border, codeBg: T.codeBg };
   // Hidden elements (CR: hide any element). In presentation they are removed
   // entirely — no render, no layout — so a slide can carry a title that only
@@ -6204,8 +6206,8 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
           </div>;
         })()}
         {branding?.enabled
-          ? <BrandingOverlay branding={branding} index={index} total={total} displayIndex={displayIndex} displayTotal={displayTotal} slideBg={slide.bg} />
-          : (() => { const di = displayIndex != null ? displayIndex : index; const dt = displayTotal != null ? displayTotal : total; return <div data-no-pdf="" style={{ position: "absolute", bottom: 16, right: 16, fontFamily: FONT.mono, fontSize: 11, fontWeight: 600, letterSpacing: "0.04em", color: "#e2e8f0", background: "rgba(0,0,0,0.4)", padding: "3px 9px", borderRadius: 20, opacity: 0.85 }}>{String(di + 1).padStart(2, "0")} / {String(dt).padStart(2, "0")}</div>; })()
+          ? <BrandingOverlay branding={branding} index={index} total={total} displayIndex={displayIndex} displayTotal={displayTotal} hideSlideNumber={hideSlideNumber} slideBg={slide.bg} />
+          : hideSlideNumber ? null : (() => { const di = displayIndex != null ? displayIndex : index; const dt = displayTotal != null ? displayTotal : total; return <div data-no-pdf="" style={{ position: "absolute", bottom: 16, right: 16, fontFamily: FONT.mono, fontSize: 11, fontWeight: 600, letterSpacing: "0.04em", color: "#e2e8f0", background: "rgba(0,0,0,0.4)", padding: "3px 9px", borderRadius: 20, opacity: 0.85 }}>{String(di + 1).padStart(2, "0")} / {String(dt).padStart(2, "0")}</div>; })()
         }
       </div>
     </SlideErrorBoundary>
@@ -8133,7 +8135,7 @@ function computeSlideLayoutStats(slideEl) {
 }
 
 // ━━━ Virtual Slide ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-function VirtualSlide({ slide, index, total, innerRef, branding, editable, onEdit, mode = "fit-width", onBlockEdit, blockEditing, fontScale, virtualW, virtualH, bordered, reviewMode, itemId, dispatch: externalDispatch, displayIndex, displayTotal, forceEdit, story, storyAnimate, onStoryJump, onStoryZoomOut }) {
+function VirtualSlide({ slide, index, total, innerRef, branding, editable, onEdit, mode = "fit-width", onBlockEdit, blockEditing, fontScale, virtualW, virtualH, bordered, reviewMode, itemId, dispatch: externalDispatch, displayIndex, displayTotal, hideSlideNumber, forceEdit, story, storyAnimate, onStoryJump, onStoryZoomOut }) {
   const outerRef = useRef(null);
   const isFill = mode === "fill";
 
@@ -8210,7 +8212,7 @@ function VirtualSlide({ slide, index, total, innerRef, branding, editable, onEdi
         transform: isFullscreen ? `translate(${offset.x}px, ${offset.y}px) scale(${scale})` : `scale(${scale})`,
         transformOrigin: "top left", background: bg, position: "absolute", top: 0, left: 0,
       }}>
-        {slide && <SlideContent key={`${index}-${vw}-${vh}`} slide={slide} index={index} total={total} branding={branding} editable={editable} onEdit={onEdit} presenting={((mode === "fit-viewport" || isFill) && !bordered) && !forceEdit} onBlockEdit={onBlockEdit} blockEditing={blockEditing} fontScale={fontScale} reviewMode={reviewMode} itemId={itemId} dispatch={externalDispatch} displayIndex={displayIndex} displayTotal={displayTotal}
+        {slide && <SlideContent key={`${index}-${vw}-${vh}`} slide={slide} index={index} total={total} branding={branding} editable={editable} onEdit={onEdit} presenting={((mode === "fit-viewport" || isFill) && !bordered) && !forceEdit} onBlockEdit={onBlockEdit} blockEditing={blockEditing} fontScale={fontScale} reviewMode={reviewMode} itemId={itemId} dispatch={externalDispatch} displayIndex={displayIndex} displayTotal={displayTotal} hideSlideNumber={hideSlideNumber}
           story={story} storyAnimate={storyAnimate === undefined ? presentSurface : !!storyAnimate} onStoryJump={onStoryJump} onStoryZoomOut={onStoryZoomOut} presentSurface={presentSurface} />}
       </div>
     </div>
@@ -8402,7 +8404,51 @@ function getSlideSource(slide, idx) {
 }
 function getSlideTitle(slide, idx) { return getSlideSource(slide, idx).text; }
 
-function PresenterTOC({ slides, slideIndex, onJump, lanes, currentConceptId, dispatch }) {
+// Present search text: every string in a slide's blocks (nested layouts too),
+// each flagged when it sits in a hidden block. Styling, media and id keys are
+// skipped so colours and data URIs never match. The text is only compared and
+// rendered as React text children, never as markup or a style/URL value.
+const PRESENT_SEARCH_SKIP = new Set(["type", "id", "src", "image", "images", "svg", "icon", "bg", "bgGradient", "color", "accent", "style", "href", "link", "url", "layout", "align", "variant", "size", "font", "comments"]);
+function slideSearchTexts(slide) {
+  const out = [];
+  if (typeof slide?.title === "string" && slide.title) out.push({ text: slide.title, hidden: false });
+  const walk = (v, hidden, depth) => {
+    if (v == null || depth > 8) return;
+    if (typeof v === "string") { if (v && !v.startsWith("data:")) out.push({ text: v, hidden }); return; }
+    if (Array.isArray(v)) { for (const x of v) walk(x, hidden, depth + 1); return; }
+    if (typeof v === "object") {
+      const h = hidden || v.hidden === true;
+      for (const k of Object.keys(v)) if (!PRESENT_SEARCH_SKIP.has(k)) walk(v[k], h, depth + 1);
+    }
+  };
+  walk(slide?.blocks, false, 0);
+  return out;
+}
+// Match one slide against a lower-case query: title first, then visible block
+// text, then hidden block text. Returns null on no match.
+function matchPresentSlide(slide, idx, q) {
+  const title = getSlideTitle(slide, idx);
+  if (!q || title.toLowerCase().includes(q)) return { title, snippet: null, hiddenBlock: false };
+  const texts = slideSearchTexts(slide);
+  const hit = texts.find((t) => !t.hidden && t.text.toLowerCase().includes(q)) || texts.find((t) => t.hidden && t.text.toLowerCase().includes(q));
+  if (!hit) return null;
+  const flat = hit.text.replace(/\s+/g, " ");
+  const at = flat.toLowerCase().indexOf(q);
+  const from = Math.max(0, at - 24), to = Math.min(flat.length, at + q.length + 36);
+  return { title, snippet: (from > 0 ? "…" : "") + flat.slice(from, to) + (to < flat.length ? "…" : ""), hiddenBlock: hit.hidden };
+}
+// "Module · slide title" for a detour's return point (Present index → raw slide).
+function detourReturnTitle(lanes, ret) {
+  for (const l of (lanes || [])) {
+    const it = (l.items || []).find((i) => i.id === ret.id);
+    if (!it) continue;
+    const raw = ret.index - (it.presentCard ? 1 : 0);
+    return raw < 0 ? it.title : `${it.title} · ${getSlideTitle((it.slides || [])[raw], raw)}`;
+  }
+  return "";
+}
+
+function PresenterTOC({ slides, slideIndex, onJump, lanes, currentConceptId, dispatch, onDetour }) {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [pinned, setPinned] = useState(false);
@@ -8460,11 +8506,31 @@ function PresenterTOC({ slides, slideIndex, onJump, lanes, currentConceptId, dis
         // Hidden slides are not part of the presentation, so keep them out of the
         // presenter TOC/search entirely (but preserve their real slide index).
         const itemSlides = (item.slides || []).map((s, i) => {
-          const title = getSlideTitle(s, i);
-          return { title, slideIdx: i, hidden: !!s.hidden, visible: !s.hidden && (!q || title.toLowerCase().includes(q)) };
-        }).filter((s) => !s.hidden);
+          if (s.hidden) return null;
+          const m = matchPresentSlide(s, i, q);
+          return { title: m ? m.title : getSlideTitle(s, i), snippet: m?.snippet, hiddenBlock: !!m?.hiddenBlock, slideIdx: i, visible: !!m };
+        }).filter(Boolean);
         if (q && !itemSlides.some((s) => s.visible) && !item.title.toLowerCase().includes(q)) continue;
         groups.push({ id: item.id, title: item.title, laneTitle: lane.title, slides: itemSlides, isCurrent: item.id === currentConceptId });
+      }
+    }
+    return groups;
+  }, [lanes, search, currentConceptId]);
+  // Detour results: while a query is typed, matching hidden slides and slides
+  // in collapsed lanes, listed after the presentation's own matches.
+  const detourGroups = useMemo(() => {
+    const q = search.toLowerCase().trim();
+    if (!q) return [];
+    const groups = [];
+    for (const lane of (lanes || [])) {
+      for (const item of lane.items) {
+        const hits = [];
+        (item.slides || []).forEach((s, i) => {
+          if (!s.hidden && !lane.collapsed) return;
+          const m = matchPresentSlide(s, i, q);
+          if (m) hits.push({ ...m, slideIdx: i, visible: true });
+        });
+        if (hits.length) groups.push({ id: item.id, title: item.title, slides: hits, isCurrent: item.id === currentConceptId });
       }
     }
     return groups;
@@ -8494,10 +8560,12 @@ function PresenterTOC({ slides, slideIndex, onJump, lanes, currentConceptId, dis
   const activeRef = useRef(null);
   useEffect(() => { if (open) requestAnimationFrame(() => { activeRef.current?.scrollIntoView({ block: "nearest", behavior: "smooth" }); }); }, [slideIndex, open, currentConceptId]);
 
-  const handleJump = (moduleId, slideIdx) => {
+  const handleJump = (moduleId, slideIdx, detour = false) => {
     // Add the target module's title-card offset so the jump lands on the intended
     // slide (not one early) in presentCard modules.
     const idx = slideIdx + (presentCardOf(moduleId) ? 1 : 0);
+    // A detour jump records where to return; a normal jump ends any detour.
+    onDetour?.(detour, { id: moduleId, index: idx });
     if (moduleId === currentConceptId) {
       onJump(idx);
     } else {
@@ -8516,6 +8584,43 @@ function PresenterTOC({ slides, slideIndex, onJump, lanes, currentConceptId, dis
       const first = g.slides.find((s) => s.visible);
       if (first) { handleJump(g.id, first.slideIdx); return; }
     }
+    for (const g of detourGroups) { handleJump(g.id, g.slides[0].slideIdx, true); return; }
+  };
+
+  const renderRow = (group, { title, slideIdx, visible, snippet, hiddenBlock }, detour) => {
+    if (!visible) return null;
+    const active = group.isCurrent && slideIdx === slideIndex - currentOffset;
+    return (
+      <div
+        key={slideIdx}
+        ref={active ? activeRef : null}
+        data-testid={detour ? "toc-detour-row" : undefined}
+        onClick={() => handleJump(group.id, slideIdx, detour)}
+        style={{
+          padding: "6px 16px 6px 24px", cursor: "pointer",
+          display: "flex", alignItems: "baseline", gap: 10,
+          background: active ? `${T.accent}18` : "transparent",
+          borderLeft: active ? `3px solid ${T.accent}` : "3px solid transparent",
+          transition: "background 0.15s", opacity: detour && !active ? 0.6 : 1,
+        }}
+        onMouseEnter={(e) => { if (!active) e.currentTarget.style.background = T.isDark ? "rgba(255,255,255,0.04)" : "rgba(0,0,0,0.04)"; }}
+        onMouseLeave={(e) => { if (!active) e.currentTarget.style.background = "transparent"; }}
+      >
+        <span style={{ fontFamily: FONT.mono, fontSize: 9, color: active ? T.accent : T.textDim, minWidth: 14, textAlign: "right", flexShrink: 0 }}>{detour ? "🙈" : slideIdx + 1}</span>
+        <span style={{ display: "flex", flexDirection: "column", minWidth: 0, gap: 2 }}>
+          <span style={{
+            fontFamily: FONT.display, fontSize: 13, fontWeight: active ? 600 : 400,
+            color: active ? T.text : group.isCurrent ? T.textMuted : T.textDim,
+            lineHeight: 1.4, overflow: "hidden", textOverflow: "ellipsis",
+            display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical",
+          }}>{title}</span>
+          {snippet && <span data-testid="toc-snippet" style={{ fontFamily: FONT.body, fontSize: 11, color: T.textDim, lineHeight: 1.35, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            {hiddenBlock && <span data-testid="toc-hidden-block" style={{ fontFamily: FONT.mono, fontSize: 8, fontWeight: 700, color: T.amber, border: `1px solid ${T.amber}60`, borderRadius: 3, padding: "0 3px", marginRight: 5, letterSpacing: "0.04em" }}>HIDDEN BLOCK</span>}
+            {snippet}
+          </span>}
+        </span>
+      </div>
+    );
   };
 
   return (
@@ -8583,37 +8688,23 @@ function PresenterTOC({ slides, slideIndex, onJump, lanes, currentConceptId, dis
                 <span style={{ fontFamily: FONT.mono, fontSize: 9, color: T.textDim }}>{group.slides.length}</span>
               </div>
               {/* Slides */}
-              {group.slides.map(({ title, slideIdx, visible }) => {
-                if (!visible) return null;
-                const active = group.isCurrent && slideIdx === slideIndex - currentOffset;
-                return (
-                  <div
-                    key={slideIdx}
-                    ref={active ? activeRef : null}
-                    onClick={() => handleJump(group.id, slideIdx)}
-                    style={{
-                      padding: "6px 16px 6px 24px", cursor: "pointer",
-                      display: "flex", alignItems: "baseline", gap: 10,
-                      background: active ? `${T.accent}18` : "transparent",
-                      borderLeft: active ? `3px solid ${T.accent}` : "3px solid transparent",
-                      transition: "background 0.15s",
-                    }}
-                    onMouseEnter={(e) => { if (!active) e.currentTarget.style.background = T.isDark ? "rgba(255,255,255,0.04)" : "rgba(0,0,0,0.04)"; }}
-                    onMouseLeave={(e) => { if (!active) e.currentTarget.style.background = "transparent"; }}
-                  >
-                    <span style={{ fontFamily: FONT.mono, fontSize: 9, color: active ? T.accent : T.textDim, minWidth: 14, textAlign: "right", flexShrink: 0 }}>{slideIdx + 1}</span>
-                    <span style={{
-                      fontFamily: FONT.display, fontSize: 13, fontWeight: active ? 600 : 400,
-                      color: active ? T.text : group.isCurrent ? T.textMuted : T.textDim,
-                      lineHeight: 1.4, overflow: "hidden", textOverflow: "ellipsis",
-                      display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical",
-                    }}>{title}</span>
-                  </div>
-                );
-              })}
+              {group.slides.map((s) => renderRow(group, s, false))}
             </div>
           ))}
-          {grouped.length === 0 && search && (
+          {detourGroups.length > 0 && (
+            <div data-testid="toc-detour-section" style={{ marginTop: 6, borderTop: `1px dashed ${T.border}` }}>
+              <div style={{ padding: "8px 16px 2px", display: "flex", alignItems: "center", gap: 6, fontFamily: FONT.mono, fontSize: 9, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: T.textDim }}>
+                🙈 Hidden · detour
+              </div>
+              {detourGroups.map((group) => (
+                <div key={group.id}>
+                  <div style={{ padding: "6px 16px 2px", fontFamily: FONT.mono, fontSize: 9, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: T.textDim, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{group.title}</div>
+                  {group.slides.map((s) => renderRow(group, s, true))}
+                </div>
+              ))}
+            </div>
+          )}
+          {grouped.length === 0 && detourGroups.length === 0 && search && (
             <div style={{ padding: "20px 16px", fontFamily: FONT.body, fontSize: 13, color: T.textDim, textAlign: "center" }}>No matches</div>
           )}
         </div>
@@ -8710,7 +8801,7 @@ function fmtElapsed(totalSeconds) {
   const r = s % 60;
   return `${m}:${String(r).padStart(2, "0")}`;
 }
-function PresenterView({ current, next, index, total, duration, elapsed, branding, onClose, currentStory, nextStory }) {
+function PresenterView({ current, next, index, total, duration, elapsed, branding, onClose, currentStory, nextStory, detourReturn }) {
   const notes = (current?.notes || "").trim();
   // Story slide: the NEXT step can still be on this slide (nextStory set), so
   // NEXT then shows the current slide at that step, labelled "image k/N" or
@@ -8725,7 +8816,9 @@ function PresenterView({ current, next, index, total, duration, elapsed, brandin
         <span style={{ fontSize: 16 }}>🗒️</span>
         <span style={{ fontFamily: FONT.mono, fontSize: 13, fontWeight: 700, color: "#60a5fa", letterSpacing: "0.05em" }}>PRESENTER VIEW</span>
         <span data-testid="presenter-timer" style={{ fontFamily: FONT.mono, fontSize: 15, fontWeight: 700, color: "#fff", background: "rgba(255,255,255,0.08)", padding: "3px 12px", borderRadius: 6 }}>⏱ {fmtElapsed(elapsed)}</span>
-        <span style={{ fontFamily: FONT.mono, fontSize: 12, color: "#94a3b8" }}>Slide {index + 1} / {total}</span>
+        {detourReturn != null
+          ? <span data-testid="presenter-detour" style={{ fontFamily: FONT.mono, fontSize: 12, fontWeight: 700, color: "#0a0d14", background: "#f59e0b", padding: "3px 10px", borderRadius: 6, maxWidth: "40%", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>↪ DETOUR · hidden slide · ← → Esc return to {detourReturn}</span>
+          : <span style={{ fontFamily: FONT.mono, fontSize: 12, color: "#94a3b8" }}>Slide {index + 1} / {total}</span>}
         {duration > 0 && <span style={{ fontFamily: FONT.mono, fontSize: 12, color: "#facc15" }}>budget {fmtElapsed(duration)}</span>}
         <span style={{ marginLeft: "auto", fontFamily: FONT.mono, fontSize: 11, color: "#64748b" }}>← → to advance · S or Esc to close</span>
         <button onClick={onClose} title="Close presenter view" style={{ background: "none", border: "none", color: "#94a3b8", cursor: "pointer", fontSize: 18, padding: 4 }}>✕</button>
@@ -9768,15 +9861,20 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
   // already steps over hidden slides WITHIN a module (nextVisible/prevVisible),
   // so this only fires on a land and can never oscillate (it always resolves to a
   // visible slide, and nav never re-lands on a hidden one).
+  // Present detour state (see onDetour below). Declared here, before its first
+  // use in this effect's deps, so the render never reads it in the TDZ.
+  const [detour, setDetour] = useState(null);
   useEffect(() => {
     if (!fullscreen) return;
     const cur = presSlides[slideIndex];
     if (!cur || !cur.hidden) return;
+    // A detour shows a hidden slide on purpose; do not nudge off it.
+    if (detour && detour.at.id === concept.id && detour.at.index === slideIndex) return;
     let n = -1;
     for (let i = slideIndex + 1; i < presSlides.length; i++) if (!presSlides[i].hidden) { n = i; break; }
     if (n < 0) for (let i = slideIndex - 1; i >= 0; i--) if (!presSlides[i].hidden) { n = i; break; }
     if (n >= 0 && n !== slideIndex) dispatch({ type: "SET_SLIDE_INDEX", index: n });
-  }, [fullscreen, slideIndex, presSlides]);
+  }, [fullscreen, slideIndex, presSlides, detour, concept.id]);
   const [showImproveInput, setShowImproveInput] = useState(false);
   const [improvePrompt, setImprovePrompt] = useState("");
   const [improveScope, setImproveScope] = useState("all"); // "slide" | "module" | "section" | "all"
@@ -9790,6 +9888,30 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
   // CR07: editor-only review cycle — arrow keys skip slides marked `reviewed`.
   // Distinct from state.reviewMode (comments review), which owns that name.
   const [reviewCycle, setReviewCycle] = useState(false);
+  // Present detour: a TOC search jump to a hidden slide (or a collapsed lane).
+  // `ret` is the last VISIBLE slide (kept across chained detours), `at` is the
+  // detour slide. Arrows, wheel and Esc on the detour slide return to `ret`;
+  // landing anywhere else ends the detour (effect below). Indices are Present
+  // indices (title-card offset included), as passed to SET_SLIDE_INDEX.
+  // (The `detour` state itself is declared above the hidden-slide nudge effect.)
+  const detourRef = useRef(null);
+  detourRef.current = detour;
+  const onDetour = useCallback((on, at) => {
+    if (!on) { setDetour(null); return; }
+    setDetour((d) => ({ ret: d ? d.ret : { id: concept.id, index: slideIndex }, at }));
+  }, [concept.id, slideIndex]);
+  const detourBackRef = useRef(() => false);
+  detourBackRef.current = () => {
+    const d = detourRef.current;
+    if (!d) return false;
+    setDetour(null);
+    if (d.ret.id !== concept.id) dispatch({ type: "SELECT", id: d.ret.id });
+    dispatch({ type: "SET_SLIDE_INDEX", index: d.ret.index });
+    return true;
+  };
+  useEffect(() => {
+    if (detour && (!fullscreen || detour.at.id !== concept.id || detour.at.index !== slideIndex)) setDetour(null);
+  }, [detour, fullscreen, concept.id, slideIndex]);
   const showGalleryRef = useRef(false);
   const setGallery = (v) => { const val = typeof v === "function" ? v(showGalleryRef.current) : v; showGalleryRef.current = val; setShowGallery(val); };
   // ── Presenter view (CR-08) — single-screen speaker dashboard: current +
@@ -10310,6 +10432,10 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       // (editor nav keeps reaching them so they can be edited/unhidden).
       const nextVisible = (from) => { for (let i = from + 1; i < navSlides.length; i++) if (!fullscreen || !navSlides[i].hidden) return i; return -1; };
       const prevVisible = (from) => { for (let i = from - 1; i >= 0; i--) if (!fullscreen || !navSlides[i].hidden) return i; return -1; };
+      // Present detour: any step key returns to the slide the detour left.
+      if (fullscreen && detourRef.current && ["ArrowRight", "ArrowDown", " ", "ArrowLeft", "ArrowUp"].includes(e.key)) {
+        e.preventDefault(); stopAlternatives(); detourBackRef.current(); return;
+      }
       // CR07: editor review cycle — step through unreviewed slides across modules.
       // The current slide stays in the order (even if reviewed) only to anchor the step.
       const reviewNav = !fullscreen && reviewCycle;
@@ -10417,6 +10543,8 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       // sandboxed iframe (Claude.ai artifact) requestFullscreen fails, so the key lands here.
       // An open modal takes Esc first (it closes on the same keydown).
       // A story slide zoomed on an image: Esc zooms out to the grid first and Present stays.
+      // A Present detour: Esc returns to the slide it left, and Present stays.
+      if (e.key === "Escape" && fullscreen && VELA_OPEN_CHROME.modals.size === 0 && detourBackRef.current()) { e.preventDefault(); return; }
       if (e.key === "Escape" && fullscreen && VELA_OPEN_CHROME.modals.size === 0 && storyEscRef.current()) { e.preventDefault(); return; }
       if (e.key === "Escape" && fullscreen && VELA_OPEN_CHROME.modals.size === 0) { e.preventDefault(); stopAlternatives(); dispatch({ type: "SET_FULLSCREEN", value: false }); return; }
       // Ctrl+C → copy ALL selected slides (multi-select) to system clipboard,
@@ -10515,6 +10643,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       if (Math.abs(scrollAccum.current) >= SCROLL_THRESHOLD) {
         const dir = scrollAccum.current > 0 ? 1 : -1;
         scrollAccum.current = 0;
+        if (fullscreen && detourBackRef.current()) return; // a detour returns first
         if (storyStepRef.current(dir)) return; // one story step per notch
         const navSlides = fullscreen ? presSlides : slides;
         if (dir > 0) {
@@ -10894,9 +11023,9 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
             .slide-transition-fade (part-imports.jsx). Independent of the per-block
             .stg-N stagger reveal inside SlideContent, which keeps working as-is. */}
         <div key={slideIndex} className="slide-transition-fade" style={{ position: "relative", width: "100%", height: "100%" }}>
-          <FullscreenSlide key={`deck-${state._deckEpoch}`} slide={presSlides[slideIndex]} index={slideIndex} total={presSlides.length} innerRef={slideRef} branding={presSlides[slideIndex]?._virtual ? null : branding} editable={!isStudent && !presSlides[slideIndex]?._virtual} onEdit={isStudent || presSlides[slideIndex]?._virtual ? undefined : handleSlideEdit} onBlockEdit={isStudent || presSlides[slideIndex]?._virtual ? undefined : runBlockEdit} blockEditing={isStudent ? null : blockEditing} fontScale={fontScale} mode="fill" forceEdit={presentEdit && !isStudent} displayIndex={globalSlideIndex - presOffset} displayTotal={globalSlideTotal} story={story} onStoryJump={story ? onStoryJump : undefined} onStoryZoomOut={story ? onStoryZoomOut : undefined} />
+          <FullscreenSlide key={`deck-${state._deckEpoch}`} slide={presSlides[slideIndex]} index={slideIndex} total={presSlides.length} innerRef={slideRef} branding={presSlides[slideIndex]?._virtual ? null : branding} editable={!isStudent && !presSlides[slideIndex]?._virtual} onEdit={isStudent || presSlides[slideIndex]?._virtual ? undefined : handleSlideEdit} onBlockEdit={isStudent || presSlides[slideIndex]?._virtual ? undefined : runBlockEdit} blockEditing={isStudent ? null : blockEditing} fontScale={fontScale} mode="fill" forceEdit={presentEdit && !isStudent} displayIndex={globalSlideIndex - presOffset} displayTotal={globalSlideTotal} hideSlideNumber={!!detour} story={story} onStoryJump={story ? onStoryJump : undefined} onStoryZoomOut={story ? onStoryZoomOut : undefined} />
         </div>
-        {!isMobile && <PresenterTOC slides={presSlides} slideIndex={slideIndex} onJump={(i) => dispatch({ type: "SET_SLIDE_INDEX", index: i })} lanes={lanes} currentConceptId={concept.id} dispatch={dispatch} />}
+        {!isMobile && <PresenterTOC slides={presSlides} slideIndex={slideIndex} onJump={(i) => dispatch({ type: "SET_SLIDE_INDEX", index: i })} lanes={lanes} currentConceptId={concept.id} dispatch={dispatch} onDetour={onDetour} />}
                 {fontScale !== 1 && <div style={{ position: "absolute", top: 12, right: 16, fontFamily: FONT.mono, fontSize: 13, fontWeight: 700, color: T.accent, background: T.bgPanel + "e0", padding: "3px 10px", borderRadius: 4, border: `1px solid ${T.accent}40`, zIndex: 20, letterSpacing: "0.05em", pointerEvents: "none" }}>FONT {Math.round(fontScale * 100)}%</div>}
         {improving && <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, padding: "10px 20px", background: "rgba(0,0,0,0.82)", backdropFilter: "blur(6px)", display: "flex", alignItems: "center", gap: 12, zIndex: 20 }}>
           <div style={{ fontSize: 18, animation: "spin 1.5s linear infinite", display: "inline-block" }}>✨</div>
@@ -10951,7 +11080,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
         for (let i = slideIndex + 1; i < presSlides.length; i++) if (!presSlides[i].hidden) { nextIdx = i; break; }
         // NEXT on a story slide is its next step; after the last step, the next slide.
         const nextStory = story ? storyNext(story, storyN) : null;
-        return <PresenterView current={presSlides[slideIndex]} next={nextStory ? presSlides[slideIndex] : nextIdx >= 0 ? presSlides[nextIdx] : null} currentStory={story} nextStory={nextStory || undefined} index={globalSlideIndex - presOffset} total={globalSlideTotal} duration={presSlides[slideIndex]?.duration || 0} elapsed={presentElapsed} branding={branding} onClose={() => setPresenterView(false)} />;
+        return <PresenterView current={presSlides[slideIndex]} next={nextStory ? presSlides[slideIndex] : nextIdx >= 0 ? presSlides[nextIdx] : null} currentStory={story} nextStory={nextStory || undefined} index={globalSlideIndex - presOffset} total={globalSlideTotal} duration={presSlides[slideIndex]?.duration || 0} elapsed={presentElapsed} branding={branding} onClose={() => setPresenterView(false)} detourReturn={detour ? detourReturnTitle(lanes, detour.ret) : null} />;
       })()}
     </div>
   );
@@ -20311,6 +20440,80 @@ uiSuite("toolbar-auto-compact", [
     });
   }},
 ]);
+
+// v13.79 Present detour: while typing, Ctrl+E search lists hidden slides (and
+// matches hidden-block text); a jump shows the hidden slide with no slide
+// number; arrows or Esc return to the slide that was left; Present stays.
+const _pdSel = () => _hooks().getSelection();
+const _pdOnSlide = (t) => _$$("[data-block-type]").some((el) => (el.textContent || "").includes(t));
+const _pdSame = (a, b) => !!a && !!b && a.itemId === b.itemId && a.slideIdx === b.slideIdx;
+// Make the slide after the first one hidden, with a hidden block that holds the
+// search word, then go back to the first slide. Returns the history mark.
+const _pdPrepare = async () => {
+  const past = _hooks().getHistoryCounts().past;
+  const s0 = _pdSel();
+  if (!s0) throw new Error("no module selected");
+  document.activeElement?.blur?.();
+  _key("ArrowRight");
+  await _waitFor(() => { const s = _pdSel(); return s && s.itemId === s0.itemId && s.slideIdx === s0.slideIdx + 1; }, 1500)
+    .catch(() => { throw new Error("the first module needs 2 or more slides"); });
+  _hooks().injectBlocks([{ type: "heading", text: "PDBACKUP heading" }, { type: "text", text: "secret zqxdetour token", hidden: true }], { hidden: true });
+  await _wait(150);
+  document.activeElement?.blur?.();
+  _key("ArrowLeft");
+  await _waitFor(() => _pdSame(_pdSel(), s0), 1500);
+  return past;
+};
+const _pdEnterPresent = async () => { document.activeElement?.blur?.(); _key("f"); await _waitFor(() => !_$("header"), 2000); await _wait(150); };
+// Open the Present TOC, type the word, and jump to the detour row.
+const _pdJump = async (checkEmpty) => {
+  _key("e", { ctrlKey: true });
+  await _waitFor(_hfeTocOpen, 2000);
+  await _wait(150);
+  if (checkEmpty && _$("[data-testid='toc-detour-section']")) throw new Error("hidden slides are listed with an empty search");
+  _type(_$("input[placeholder^='Search slides']"), "zqxdetour");
+  const row = await _waitFor(() => _$("[data-testid='toc-detour-row']"), 1500).catch(() => { throw new Error("search did not list the hidden slide"); });
+  if (checkEmpty && !row.querySelector("[data-testid='toc-hidden-block']")) throw new Error("a hidden-block match has no HIDDEN BLOCK tag");
+  _click(row);
+  await _waitFor(() => _pdOnSlide("PDBACKUP"), 1500).catch(() => { throw new Error("the jump did not show the hidden slide"); });
+  await _wait(400); // the hidden-slide auto-skip must not move off a detour
+  if (!_pdOnSlide("PDBACKUP")) throw new Error("Present moved off the detour slide by itself");
+  document.activeElement?.blur?.();
+};
+uiSuite("present-detour-search", [
+  { name: "D1: hidden slide found only while typing; jump shows it with no number; Presenter view shows the detour; an arrow returns", fn: async () => {
+    let past = null;
+    try {
+      past = await _pdPrepare();
+      await _pdEnterPresent();
+      const before = _pdSel();
+      await _pdJump(true);
+      if (_slideCounterEl()) throw new Error("the detour slide shows a slide number");
+      _key("s");
+      await _waitFor(() => _$("[data-testid='presenter-detour']"), 1500).catch(() => { throw new Error("Presenter view shows no detour cue"); });
+      _key("s");
+      await _waitFor(() => !_$("[data-testid='presenter-view']"), 1500);
+      document.activeElement?.blur?.();
+      _key("ArrowRight");
+      await _waitFor(() => _pdSame(_pdSel(), before), 1500).catch(() => { throw new Error("ArrowRight did not return to the slide the detour left"); });
+      if (_pdOnSlide("PDBACKUP")) throw new Error("the hidden slide is still on screen after the return");
+      if (_$("header")) throw new Error("the return left Present");
+    } finally { await _exitFullscreen(); if (past != null) await _mrdUndoTo(past); }
+  }},
+  { name: "D2: Esc on a detour returns to the slide that was left and keeps Present", fn: async () => {
+    let past = null;
+    try {
+      past = await _pdPrepare();
+      await _pdEnterPresent();
+      const before = _pdSel();
+      await _pdJump(false);
+      _key("Escape");
+      await _waitFor(() => _pdSame(_pdSel(), before), 1500).catch(() => { throw new Error("Esc did not return to the slide the detour left"); });
+      await _wait(200);
+      if (_$("header")) throw new Error("Esc on a detour left Present");
+    } finally { await _exitFullscreen(); if (past != null) await _mrdUndoTo(past); }
+  }},
+], { setup: _selectFirstModule });
 
 // ━━━ UI TEST RUNNER COMPONENT ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
