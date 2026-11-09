@@ -36,6 +36,17 @@ const MAX_DECK_BYTES = 50 * 1024 * 1024;
 // AV real-time scanning, a synced folder (OneDrive/Dropbox), or a briefly-held
 // file handle. 3 attempts total: the initial write + these two delays.
 const SAVE_RETRY_DELAYS = [400, 1500];
+// Upper bound on ONE native filesystem call made by a save (write, verify, probe).
+// A native promise can stay unsettled forever (for example, the socket drops after
+// the call is sent). Without a bound, one such call stops the serialized flush
+// chain: every later save and the Retry button wait behind it forever. A call that
+// times out counts as a failed attempt (pending is kept; the status says "failed").
+const NATIVE_CALL_TIMEOUT_MS = 15000;
+// A write that timed out can still land later ("stray"). We keep its bytes so we
+// can detect and repair a late landing (see trackStray). At most this many strays
+// may be unsettled at a time: past the cap the native side is plainly stuck, so we
+// do not queue more writes (and more deck copies in memory) behind it.
+const MAX_STRAY_WRITES = 3;
 
 const state = {
   folder: null,
@@ -53,7 +64,86 @@ const state = {
   lastWrittenText: null, // those exact bytes — the signature alone can collide
   saveWaiter: null,   // { deck, resolve } — the promise saveCurrent returned for pendingDeck
   flushChain: Promise.resolve(), // tail of the serialized flush runs (see flushSave)
+  writeSeq: 0,        // order of every write attempt issued by a save
+  strays: [],         // [{ seq, path, text, landed }] timed-out writes that may still land
+  confirmed: new Map(), // path → { seq, text, deck } newest confirmed write while an older stray exists
 };
+
+// Race a native call against NATIVE_CALL_TIMEOUT_MS. The rejection carries
+// `timedOut: true` so the caller can tell "no answer" from a real error.
+function withTimeout(p) {
+  let t;
+  const timer = new Promise((_, reject) => {
+    t = setTimeout(() => { const e = new Error("native call timed out"); e.timedOut = true; reject(e); }, NATIVE_CALL_TIMEOUT_MS);
+  });
+  return Promise.race([Promise.resolve(p), timer]).finally(() => clearTimeout(t));
+}
+
+function unsettledStrays() { return state.strays.filter((s) => !s.landed).length; }
+
+function forgetStrays(list) {
+  state.strays = state.strays.filter((s) => !list.includes(s));
+  for (const path of [...state.confirmed.keys()]) {
+    if (!state.strays.some((s) => s.path === path)) state.confirmed.delete(path);
+  }
+}
+
+// A write timed out but its native call may still land. Guarantee kept here: a
+// late stray can NEVER leave older bytes on disk after a newer save resolved true.
+// When the stray settles as written (or the watcher sees its exact bytes on disk),
+// repairAfterStray re-writes the newest confirmed bytes for that path. A stray that
+// settles as failed wrote nothing and is forgotten.
+function trackStray(writePromise, seq, path, text) {
+  const s = { seq, path, text, landed: false };
+  state.strays.push(s);
+  Promise.resolve(writePromise).then(
+    () => { s.landed = true; scheduleRepair(path); },
+    () => { if (!s.landed) forgetStrays([s]); },
+  );
+}
+
+// Repairs run on the same serialized chain as saves, so a repair never races a
+// save run, and it decides only after any run that was in flight has finished.
+function scheduleRepair(path) {
+  const run = state.flushChain.then(() => repairAfterStray(path));
+  state.flushChain = run.catch(() => {});
+  return run;
+}
+
+async function repairAfterStray(path) {
+  const landed = state.strays.filter((s) => s.path === path && s.landed);
+  if (!landed.length) return;
+  const good = state.confirmed.get(path);
+  // Only a stray issued BEFORE the newest confirmed write can have overwritten it.
+  const older = good ? landed.filter((s) => s.seq < good.seq) : [];
+  forgetStrays(landed.filter((s) => !older.includes(s)));
+  if (!older.length) return;
+  let text = null;
+  try { text = await withTimeout(readDeckText(path)); } catch { text = null; }
+  // Disk still holds the confirmed bytes, or a later external edit: do not touch it.
+  if (text === good.text || (text !== null && !older.some((s) => s.text === text))) { forgetStrays(older); return; }
+  const seq = ++state.writeSeq;
+  let w = null;
+  try {
+    state.lastWriteAt = Date.now();
+    w = Neutralino.filesystem.writeFile(path, good.text);
+    await withTimeout(w);
+    state.lastWriteAt = Date.now();
+    if (path === state.currentPath) { state.lastWrittenSig = sigOf(good.text); state.lastWrittenText = good.text; }
+    if ((await verifyWrite(path, byteLen(good.text), good.text)) === "mismatch") throw new Error("verify-after-write mismatch");
+    forgetStrays(older);
+  } catch (e) {
+    forgetStrays(older);
+    if (e && e.timedOut && w) trackStray(w, seq, path, good.text);
+    // Could not put the newest bytes back. Re-arm them as pending (when nothing
+    // newer is pending) so the next autosave or Retry writes them, and say so.
+    console.error("[deck-io] repair after a late write failed:", path, e);
+    if (!state.pendingDeck && !state.switching && path === state.currentPath) {
+      state.pendingDeck = good.deck; state.pendingPath = path;
+    }
+    emitStatus({ state: "failed", path, at: Date.now() });
+  }
+}
 
 // Settle the promise saveCurrent returned (true = write confirmed on disk).
 // The app advances its "file already holds this" signature only on true, so a
@@ -119,11 +209,11 @@ function emitStatus(s) {
 //                "unverified" status so an unverifiable write is never silent.
 async function verifyWrite(path, expectedBytes, expectedText) {
   let st;
-  try { st = await Neutralino.filesystem.getStats(path); } catch { return "unknown"; }
+  try { st = await withTimeout(Neutralino.filesystem.getStats(path)); } catch { return "unknown"; }
   if (!st || typeof st.size !== "number") return "unknown";
   if (st.size !== expectedBytes) return "mismatch";
   let text;
-  try { text = await readDeckText(path); } catch { return "unknown"; }
+  try { text = await withTimeout(readDeckText(path)); } catch { return "unknown"; }
   if (typeof text !== "string") return "unknown";
   if (sigOf(text) !== sigOf(expectedText)) return "mismatch";
   return text === expectedText ? "verified" : "mismatch";
@@ -177,6 +267,10 @@ async function readDeck(path) {
 }
 
 async function openDeck(path) {
+  // Read and parse the new deck FIRST. If that fails (missing file, malformed
+  // .vela), the current deck must stay exactly as it was: its pending save still
+  // flushes and its watcher keeps running. The error goes to the caller.
+  const deck = await readDeck(path);
   // Cancel any pending save from the previous deck BEFORE changing
   // currentPath — otherwise flushSave() writes old data to the new file.
   if (state.saveTimer) { clearTimeout(state.saveTimer); state.saveTimer = null; }
@@ -193,7 +287,6 @@ async function openDeck(path) {
   state.switching = true;
   try {
     await stopWatcher();
-    const deck = await readDeck(path);
     state.currentPath = path;
     await Neutralino.storage.setData(LAST_DECK_KEY, path);
     if (state.onDeckLoaded) state.onDeckLoaded(deck, path);
@@ -251,9 +344,14 @@ async function flushSaveOnce() {
     (state.pendingDeck && state.pendingDeck !== deck);
   for (let i = 0; i < attempts; i++) {
     if (stale()) { settleWaiter(deck, false); return; }
+    const seq = ++state.writeSeq;
+    let w = null;
     try {
+      // Native side plainly stuck: fail fast instead of queuing one more write.
+      if (unsettledStrays() >= MAX_STRAY_WRITES) throw new Error("earlier writes still unanswered");
       state.lastWriteAt = Date.now();
-      await Neutralino.filesystem.writeFile(path, json);
+      w = Neutralino.filesystem.writeFile(path, json);
+      await withTimeout(w);
       // Stamp again AFTER the write resolves so the watcher-echo window is
       // measured from completion, not from when we started.
       state.lastWriteAt = Date.now();
@@ -264,6 +362,10 @@ async function flushSaveOnce() {
       state.lastWrittenSig = sig;
       state.lastWrittenText = json;
       state.lastWriteAt = Date.now();
+      // An older stray to this path may still land: remember these bytes so the
+      // repair can put them back (see trackStray).
+      if (state.strays.some((s) => s.path === path && s.seq < seq)) state.confirmed.set(path, { seq, text: json, deck });
+      else state.confirmed.delete(path);
       if (state.pendingDeck === deck) { state.pendingDeck = null; state.pendingPath = null; }
       settleWaiter(deck, true);
       if (verdict === "unknown") {
@@ -278,13 +380,21 @@ async function flushSaveOnce() {
       return;
     } catch (e) {
       lastErr = e;
+      if (e && e.timedOut) {
+        // No answer from the native side. Do not retry inside this run (that only
+        // stacks more unanswered writes): end it as failed so later saves and Retry
+        // go ahead. The write may still land; trackStray repairs that case.
+        if (w) trackStray(w, seq, path, json);
+        if (stale()) { settleWaiter(deck, false); return; }
+        break;
+      }
       if (isConnError(e)) {
         conn = true;
         // Liveness probe: if the folder still stats OK the socket is alive and
         // this was a one-off; otherwise stay in a "reconnecting" posture.
         console.warn("[deck-io] save connection error:", path, e);
         emitStatus({ state: "reconnecting", path, at: Date.now() });
-        try { await Neutralino.filesystem.getStats(state.folder); conn = false; } catch {}
+        try { await withTimeout(Neutralino.filesystem.getStats(state.folder)); conn = false; } catch {}
       }
       if (i < attempts - 1 && !stale()) await new Promise((r) => setTimeout(r, SAVE_RETRY_DELAYS[i]));
     }
@@ -376,6 +486,10 @@ function onWatchEvent(evt) {
     // short digest, so two different documents can share one — on its own it could
     // drop a genuine external edit as "our own echo" (silent app/disk divergence).
     if (state.lastWrittenSig && sigOf(text) === state.lastWrittenSig && text === state.lastWrittenText) return;
+    // A stray (timed-out) write of ours landed late. It is our own older bytes, not
+    // an external edit: do not reload it into the app; put the newest bytes back.
+    const stray = state.strays.find((s) => s.path === path && s.text === text);
+    if (stray) { stray.landed = true; scheduleRepair(path); return; }
     const deck = JSON.parse(text);
     // D5/CR3: adopt the just-loaded external content as the new echo baseline.
     // Without this the baseline only ever tracks OUR writes, so a later external
