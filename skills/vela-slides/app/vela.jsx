@@ -19787,6 +19787,257 @@ uiSuite("wp5-story-motion-gallery", [
   }},
 ]);
 
+// ── WP5b: story steps by wheel and swipe, Preview, phone layout, large images ──
+// Same story-slide setup and cleanup as WP5 (_wp5OnSlide). Wheel and swipe go
+// to the Present container, where SlidePanel listens for them.
+const _wp5bFsEl = () => _$$("div[tabindex='0']").find((d) => d.style.position === "fixed" && d.style.zIndex === "9999") || null;
+const _wp5bWheel = (dy) => {
+  const el = _wp5bFsEl(); if (!el) throw new Error("no Present container");
+  el.dispatchEvent(new WheelEvent("wheel", { deltaY: dy, deltaMode: 0, bubbles: true, cancelable: true }));
+};
+const _wp5bState = () => `layer=${!!_wp5Layer()}, current=${_wp5CurThumb()?.getAttribute("aria-label") || "-"}, slide=${_wp5Key()}`;
+// One wheel notch. Wait past the 200 ms reset first, so each notch starts at 0.
+const _wp5bWheelStep = async (dy, want, label) => {
+  document.activeElement?.blur?.(); await _wait(260);
+  _wp5bWheel(dy);
+  await _waitFor(want, 2500).catch(() => { throw new Error(`wheel ${dy} → ${label}: not reached (${_wp5bState()})`); });
+};
+// A synthetic touch. Use TouchEvent when the browser has it, else a plain Event
+// with the same touches/changedTouches fields that useSwipe reads.
+const _wp5bTouch = (el, type, x, y) => {
+  const pt = { identifier: 1, target: el, clientX: x, clientY: y, pageX: x, pageY: y, screenX: x, screenY: y };
+  let ev;
+  try {
+    const t = new Touch(pt);
+    ev = new TouchEvent(type, { bubbles: true, cancelable: true, touches: type === "touchend" ? [] : [t], changedTouches: [t] });
+  } catch {
+    ev = new Event(type, { bubbles: true, cancelable: true });
+    Object.defineProperty(ev, "touches", { value: type === "touchend" ? [] : [pt] });
+    Object.defineProperty(ev, "changedTouches", { value: [pt] });
+  }
+  el.dispatchEvent(ev);
+};
+const _wp5bSwipe = async (dx, dy = 4) => {
+  const el = _wp5bFsEl(); if (!el) throw new Error("no Present container");
+  const r = el.getBoundingClientRect();
+  const x0 = r.left + r.width / 2 - dx / 2, y0 = r.top + r.height / 2 - dy / 2;
+  _wp5bTouch(el, "touchstart", x0, y0); await _wait(40);
+  _wp5bTouch(el, "touchend", x0 + dx, y0 + dy);
+};
+const _wp5bSwipeStep = async (dx, want, label) => {
+  document.activeElement?.blur?.();
+  await _wp5bSwipe(dx);
+  await _waitFor(want, 2500).catch(() => { throw new Error(`swipe ${dx}px → ${label}: not reached (${_wp5bState()})`); });
+};
+// Hold a state for a short time: a no-op gesture must not move the story.
+const _wp5bHold = async (ok, label, ms = 400) => {
+  const end = performance.now() + ms;
+  while (performance.now() < end) { if (!ok()) throw new Error(`${label} (${_wp5bState()})`); await _wait(40); }
+};
+// Phone size: the app reads window.innerWidth (useIsMobile, MOBILE_BP 500). A
+// transform on #root makes it the box for the fixed Present container, so the
+// layout is really 390 px wide. Everything is restored after the body.
+const _wp5bPhone = async (body) => {
+  const root = document.getElementById("root"); if (!root) throw new Error("no #root");
+  const W = 390, H = Math.min(window.innerHeight, 844);
+  const dW = Object.getOwnPropertyDescriptor(window, "innerWidth"), dH = Object.getOwnPropertyDescriptor(window, "innerHeight");
+  const css = root.getAttribute("style");
+  const put = (k, d) => { if (d) Object.defineProperty(window, k, d); else delete window[k]; };
+  Object.defineProperty(window, "innerWidth", { configurable: true, get: () => W });
+  Object.defineProperty(window, "innerHeight", { configurable: true, get: () => H });
+  root.style.width = `${W}px`; root.style.height = `${H}px`; root.style.overflow = "hidden"; root.style.transform = "translateZ(0)";
+  window.dispatchEvent(new Event("resize"));
+  try {
+    await _waitFor(() => _$("header")?.style.height === "40px", 2500).catch(() => { throw new Error("the app did not switch to the phone layout"); });
+    await body(root);
+  } finally {
+    put("innerWidth", dW); put("innerHeight", dH);
+    if (css == null) root.removeAttribute("style"); else root.setAttribute("style", css);
+    window.dispatchEvent(new Event("resize"));
+    await _waitFor(() => _$("header")?.style.height === "44px", 2500).catch(() => {});
+  }
+};
+const _wp5bInside = (a, b, tol = 1) => a.left >= b.left - tol && a.top >= b.top - tol && a.right <= b.right + tol && a.bottom <= b.bottom + tol;
+const _wp5bOverlap = (a, b) => Math.max(0, Math.min(a.right, b.right) - Math.max(a.left, b.left)) * Math.max(0, Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top));
+const _wp5bBox = (r) => `${Math.round(r.left)},${Math.round(r.top)} ${Math.round(r.width)}x${Math.round(r.height)}`;
+// A 1600x900 JPEG with a gradient, a number and many small squares, so the
+// file is not trivial to decode.
+const _wp5bBig = (k) => {
+  const cv = document.createElement("canvas"); cv.width = 1600; cv.height = 900;
+  const g = cv.getContext("2d");
+  const gr = g.createLinearGradient(0, 0, 1600, 900);
+  gr.addColorStop(0, _tlColors[k % 5]); gr.addColorStop(1, `hsl(${(k * 36) % 360},70%,35%)`);
+  g.fillStyle = gr; g.fillRect(0, 0, 1600, 900);
+  for (let i = 0; i < 400; i++) { g.fillStyle = `hsla(${(i * 37 + k * 11) % 360},80%,60%,0.5)`; g.fillRect((i * 97 + k * 13) % 1560, (i * 53 + k * 7) % 860, 40, 40); }
+  g.fillStyle = "#fff"; g.font = "bold 360px sans-serif"; g.fillText(String(k + 1), 560, 600);
+  return cv.toDataURL("image/jpeg", 0.92);
+};
+const _wp5bLayerImg = () => { const l = _wp5Layer(); return l ? _$("[data-story-image] img", l) : null; };
+
+uiSuite("wp5b-story-gaps", [
+  { name: "wheel down steps the story like ArrowRight, then leaves the slide", fn: async () => {
+    await _wp5OnSlide("WP5b wheel fwd", 4, { story: true }, async () => {
+      const here = _wp5Key();
+      await _wp5Enter();
+      if (_wp5Layer()) throw new Error("the story slide opened zoomed, expected the grid");
+      for (let k = 1; k <= 4; k++) {
+        await _wp5bWheelStep(120, () => _wp5ZoomedAt(k), `image ${k}`);
+        if (_wp5Key() !== here) throw new Error(`left the slide at image ${k}`);
+      }
+      await _wp5bWheelStep(120, _wp5Grid, "grid after image 4");
+      if (_wp5Key() !== here) throw new Error("left the slide before the final grid");
+      await _wp5bWheelStep(120, () => _wp5Key() !== here, "next slide");
+    });
+  }},
+  { name: "wheel up steps the story back like ArrowLeft, then leaves the slide", fn: async () => {
+    await _wp5OnSlide("WP5b wheel back", 4, { story: true }, async () => {
+      const here = _wp5Key();
+      await _wp5Enter();
+      await _wp5bWheelStep(120, () => _wp5ZoomedAt(1), "image 1");
+      await _wp5bWheelStep(120, () => _wp5ZoomedAt(2), "image 2");
+      await _wp5bWheelStep(-120, () => _wp5ZoomedAt(1), "image 1 (back)");
+      await _wp5bWheelStep(-120, _wp5Grid, "grid before image 1");
+      if (_wp5Key() !== here) throw new Error("left the slide at the first grid");
+      await _wp5bWheelStep(-120, () => _wp5Key() !== here, "previous slide");
+      // Back onto the story slide from the previous slide: it starts at the grid.
+      await _wp5bWheelStep(120, () => _wp5Key() === here && _wp5Grid(), "story slide grid");
+    });
+  }},
+  { name: "wheel threshold: a small delta does nothing, deltas add up, one notch is one step", fn: async () => {
+    await _wp5OnSlide("WP5b wheel debounce", 4, { story: true }, async () => {
+      const here = _wp5Key();
+      await _wp5Enter();
+      document.activeElement?.blur?.();
+      // 60 < SCROLL_THRESHOLD (120): no step, and the sum resets after 200 ms.
+      _wp5bWheel(60);
+      await _wp5bHold(() => _wp5Grid() && _wp5Key() === here, "a 60 px wheel moved the story");
+      _wp5bWheel(60);
+      await _wp5bHold(() => _wp5Grid() && _wp5Key() === here, "two 60 px wheels 400 ms apart moved the story");
+      // Two halves inside the 200 ms window add up to one step.
+      _wp5bWheel(60); await _wait(30); _wp5bWheel(60);
+      await _waitFor(() => _wp5ZoomedAt(1), 2000).catch(() => { throw new Error(`60+60 px did not step to image 1 (${_wp5bState()})`); });
+      // One large delta is one step, not three.
+      await _wait(260); _wp5bWheel(360);
+      await _waitFor(() => _wp5ZoomedAt(2), 2000).catch(() => { throw new Error(`a 360 px wheel did not step to image 2 (${_wp5bState()})`); });
+      await _wp5bHold(() => _wp5ZoomedAt(2), "a 360 px wheel did more than one step");
+    });
+  }},
+  { name: "touch swipe left steps forward, swipe right steps back; short or vertical swipes do nothing", fn: async () => {
+    await _wp5OnSlide("WP5b swipe", 4, { story: true }, async () => {
+      const here = _wp5Key();
+      await _wp5Enter();
+      await _wp5bSwipeStep(-200, () => _wp5ZoomedAt(1), "image 1");
+      await _wp5bSwipeStep(-200, () => _wp5ZoomedAt(2), "image 2");
+      await _wp5bSwipeStep(200, () => _wp5ZoomedAt(1), "image 1 (back)");
+      // Under the 50 px threshold: no step.
+      await _wp5bSwipe(-30);
+      await _wp5bHold(() => _wp5ZoomedAt(1), "a 30 px swipe moved the story");
+      // Mostly vertical: no step.
+      await _wp5bSwipe(-60, 220);
+      await _wp5bHold(() => _wp5ZoomedAt(1), "a vertical swipe moved the story");
+      await _wp5bSwipeStep(200, _wp5Grid, "grid before image 1");
+      if (_wp5Key() !== here) throw new Error("left the slide at the first grid");
+      await _wp5bSwipeStep(200, () => _wp5Key() !== here, "previous slide");
+    });
+  }},
+  { name: "▶ Preview opens Present on this slide at the grid; Esc returns to the editor on the same slide", fn: async () => {
+    await _wp5OnSlide("WP5b preview", 3, { story: true }, async () => {
+      const here = _wp5Key();
+      const btn = await _waitFor(() => _$("[data-testid='story-preview']"), 2000).catch(() => { throw new Error("no ▶ Preview button on a story slide"); });
+      _click(btn);
+      await _waitFor(() => _wp5Fs() && !_$("header"), 2500).catch(() => { throw new Error("▶ Preview did not open Present"); });
+      await _mrdFrame();
+      if (_wp5Key() !== here) throw new Error(`Present opened on ${_wp5Key()}, expected ${here}`);
+      if (_wp5Layer()) throw new Error("Preview opened zoomed, expected the grid (step 0)");
+      await _wp5Step("ArrowRight", () => _wp5ZoomedAt(1), "image 1");
+      await _wp5Step("Escape", _wp5Grid, "grid after Esc");
+      if (!_wp5Fs()) throw new Error("Esc while zoomed left Present");
+      document.activeElement?.blur?.(); _key("Escape");
+      await _waitFor(() => !_wp5Fs() && _$("header"), 2500).catch(() => { throw new Error("Esc on the grid did not return to the editor"); });
+      if (_wp5Key() !== here) throw new Error(`editor is on ${_wp5Key()} after Esc, expected ${here}`);
+      await _waitFor(() => _$("[data-testid='story-preview']"), 2000).catch(() => { throw new Error("the editor toolbar did not come back"); });
+    });
+  }},
+  { name: "phone size: toolbar shows story icons only; zoomed rail stays on screen and clear of the image", fn: async () => {
+    await _wp5OnSlide("WP5b phone", 4, { story: true }, async () => {
+      const here = _wp5Key();
+      await _wp5bPhone(async (root) => {
+        const tog = await _waitFor(() => _$("[data-testid='story-toggle']"), 2500).catch(() => { throw new Error("no story toggle in the phone layout"); });
+        const pre = _$("[data-testid='story-preview']");
+        if (!pre) throw new Error("no ▶ Preview button in the phone layout");
+        for (const [b, icon] of [[tog, "🎞"], [pre, "▶"]]) {
+          const txt = (b.textContent || "").trim();
+          if (txt !== icon || b.querySelector("span")) throw new Error(`phone toolbar button shows ${JSON.stringify(txt)}, expected the icon ${icon} only`);
+        }
+        if (_wp5Key() !== here) throw new Error("the phone layout changed the slide");
+        _click(pre);
+        await _waitFor(() => _wp5Fs(), 2500).catch(() => { throw new Error("▶ Preview did not open Present in the phone layout"); });
+        await _mrdFrame();
+        const R = root.getBoundingClientRect();
+        if (R.width > 391) throw new Error(`phone box is ${Math.round(R.width)} px wide`);
+        for (let k = 1; k <= 4; k++) {
+          await _wp5Step("ArrowRight", () => _wp5ZoomedAt(k), `image ${k}`);
+          await _wait(420); await _mrdFrame(); // let the 350 ms zoom finish
+          const rail = _$("[data-story-rail]", _wp5Layer()).getBoundingClientRect();
+          const box = _$("[data-story-image]", _wp5Layer()).getBoundingClientRect();
+          const img = _wp5bLayerImg()?.getBoundingClientRect();
+          if (!(rail.width > 0 && rail.height > 0)) throw new Error(`image ${k}: the rail has no size (${_wp5bBox(rail)})`);
+          if (!(box.width > 20 && box.height > 20)) throw new Error(`image ${k}: the zoomed image box is too small (${_wp5bBox(box)})`);
+          if (!_wp5bInside(rail, R)) throw new Error(`image ${k}: rail ${_wp5bBox(rail)} is outside the phone box ${_wp5bBox(R)}`);
+          if (!_wp5bInside(box, R)) throw new Error(`image ${k}: image box ${_wp5bBox(box)} is outside the phone box ${_wp5bBox(R)}`);
+          if (img && !_wp5bInside(img, box)) throw new Error(`image ${k}: the zoomed img ${_wp5bBox(img)} spills out of its box ${_wp5bBox(box)}`);
+          if (_wp5bOverlap(rail, box) > 1) throw new Error(`image ${k}: rail ${_wp5bBox(rail)} overlaps the image box ${_wp5bBox(box)}`);
+          const thumbs = _$$("[data-story-rail] > *", _wp5Layer()).map((t) => t.getBoundingClientRect());
+          if (thumbs.length !== 4) throw new Error(`image ${k}: rail has ${thumbs.length} thumbs, expected 4`);
+          thumbs.forEach((t, i) => {
+            if (!(t.width > 0 && t.height > 0)) throw new Error(`image ${k}: thumb ${i + 1} has no size`);
+            if (!_wp5bInside(t, rail)) throw new Error(`image ${k}: thumb ${i + 1} ${_wp5bBox(t)} is outside the rail ${_wp5bBox(rail)}`);
+            if (_wp5bOverlap(t, box) > 1) throw new Error(`image ${k}: thumb ${i + 1} overlaps the image box`);
+            if (i > 0 && t.top < thumbs[i - 1].bottom - 1) throw new Error(`image ${k}: thumbs ${i} and ${i + 1} overlap`);
+          });
+        }
+        await _wp5Exit();
+      });
+    });
+  }},
+  { name: "10 large images (1600x900): every Present step shows the right image in time, no console errors", fn: async () => {
+    const big = Array.from({ length: 10 }, (_, k) => _wp5bBig(k));
+    const errs = [];
+    const ce = console.error;
+    const onErr = (e) => errs.push(String(e?.message || e?.reason || e).slice(0, 160));
+    console.error = (...a) => { errs.push(a.map((x) => String(x)).join(" ").slice(0, 160)); ce.apply(console, a); };
+    window.addEventListener("error", onErr); window.addEventListener("unhandledrejection", onErr);
+    try {
+      await _wp5OnSlide("WP5b big", 2, { story: true }, async () => {
+        const mark = "WP5b ten big";
+        await _mrdInject([{ type: "heading", text: mark }, ...big.map((src) => ({ type: "image", src }))], { imageCols: undefined, story: true },
+          (vp) => vp?.textContent.includes(mark) && vp.querySelectorAll("img").length >= 10 ? vp : null);
+        const srcs = _wp5ImgSrcs();
+        if (srcs.length !== 10 || new Set(srcs).size !== 10) throw new Error(`deck has ${srcs.length} images (${new Set(srcs).size} distinct), expected 10`);
+        if (srcs.some((s, i) => s !== big[i])) throw new Error("the deck changed an image src on load");
+        const here = _wp5Key();
+        await _wp5Enter();
+        const times = [];
+        for (let k = 1; k <= 10; k++) {
+          document.activeElement?.blur?.();
+          const t0 = performance.now();
+          _key("ArrowRight");
+          await _waitFor(() => { const im = _wp5bLayerImg(); return _wp5ZoomedAt(k) && im && im.getAttribute("src") === srcs[k - 1] && im.complete && im.naturalWidth === 1600 && im.naturalHeight === 900; }, 3000)
+            .catch(() => { const im = _wp5bLayerImg(); throw new Error(`image ${k}: not shown (${_wp5bState()}, src ok=${im?.getAttribute("src") === srcs[k - 1]}, size=${im?.naturalWidth}x${im?.naturalHeight})`); });
+          times.push(Math.round(performance.now() - t0));
+          if (times[k - 1] > 1500) throw new Error(`image ${k} took ${times[k - 1]} ms (limit 1500); times ${times.join(",")}`);
+          if (_wp5Key() !== here) throw new Error(`left the slide at image ${k}`);
+        }
+        await _wp5Step("ArrowRight", _wp5Grid, "grid after image 10");
+      });
+    } finally {
+      console.error = ce;
+      window.removeEventListener("error", onErr); window.removeEventListener("unhandledrejection", onErr);
+    }
+    if (errs.length) throw new Error(`console errors: ${errs.slice(0, 3).join(" | ")}`);
+  }},
+]);
+
 uiSuite("wp5-image-drop", [
   { name: "OS drop keeps file order; stored src is a safe JPEG data URI; no blob:", fn: async () => {
     await _wp5OnSlide("WP5 drop", 0, {}, async (vp) => {
