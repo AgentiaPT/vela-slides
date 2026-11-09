@@ -650,5 +650,25 @@ if (/href="#sym"/.test(keepImg)) {
   passed++; console.log("  ✅ <image href=#fragment> preserved");
 } else { failed++; console.log("  ❌ <image href=#fragment> preserved — output:", keepImg); }
 
+// UI integrity: the app queries its own data-* markers (open modal, zoom
+// overlay, editor overlay, export plumbing). Deck SVG must not carry any data-*
+// attribute, in either spelling, on the root <svg> or on a child. The element
+// itself must survive (a dropped element would make this check vacuous).
+{
+  const cases = [
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10" data-vela-modal=""><rect data-vela-zoom="" data-editor-overlay="x" width="5" height="5"/></svg>',
+    '<g data-block-type="text" data-pdf-link="https://example.com/"><rect width="1" height="1"/></g>',
+    '<rect xmlns:q="urn:q" q:data-vela-modal="" width="1" height="1"/>',
+  ];
+  const leaked = cases.filter((p) => {
+    const out = sanitizeSvgMarkup(p);
+    if (!/<rect/i.test(out)) return true;
+    const d = new JSDOM(`<!doctype html><body><div>${out}</div></body>`).window.document;
+    return Array.from(d.querySelectorAll("*")).some((el) => Array.from(el.attributes).some((a) => /(^|:)data-/i.test(a.name)));
+  });
+  if (leaked.length === 0) { passed++; console.log("  ✅ data-* attributes dropped from deck SVG (app marker forgery)"); }
+  else { failed++; console.log("  ❌ data-* attribute survived: " + JSON.stringify(leaked.map((c) => sanitizeSvgMarkup(c)))); }
+}
+
 console.log(`\n  ${passed} passed, ${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);

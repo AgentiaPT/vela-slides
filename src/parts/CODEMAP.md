@@ -42,7 +42,7 @@ that symbol in the named part for the line. No line numbers here — they rot.
 - Bullet Item (per-item link + delete): BulletItem
 - Grid Cell Block (with per-block link editing): GridCellBlock
 - Grid-cell image (capped upscale): GRID_IMG_MAX_UPSCALE IMAGE_NATURAL_SIZE GridCellImage
-- Zoomable Block Wrapper: ZoomWrap
+- Zoomable Block Wrapper: VELA_OPEN_CHROME ZoomWrap
 - Code Block (sub-component for useState copy feedback): CodeBlock
 - Callout Block (sub-component for useState reveal toggle): CalloutBlock
 - Block Renderer: RenderBlock
@@ -126,7 +126,8 @@ that symbol in the named part for the line. No line numbers here — they rot.
 - meridian-CR10 / meridian-CR11: fullscreen nav icons keep a visible chip: _mrdIsLightTheme _mrdCheckNavGlyphs
 - meridian-CR13: editor|presenter|gallery view switcher next to Present: _mrdSeg _mrdActive _mrdOnTop _mrdSwitchTo _mrdGalleryOpen
 - Sprint meridian (C3): split image alignment, accent 0, docked branding: _mrdSvg _mrdViewport _mrdFrame _mrdInject _mrdSetRange _mrdOpenBranding _mrdCloseBranding _mrdUndoTo _mrdHover _mrdUnhover _mrdCr15Clear _meridianF8SlowSave _tlEditNode _tlEdit _tidelineTocDrag _tidelineFire _tidelineHold _tidelineRows _tidelineTitle
-- Sprint tideline (CR22-CR25): image paste placement stress test: _tlAspects _tlBases _tlPaste _tlMeasure _tlCase _tlColors _tlCanvas _tlPasteCanvas _tlPasteBig _tlLoaded _tlStressMeasure _tlStressCase
+- Sprint tideline (CR22-CR25): image paste placement stress test: _tlAspects _tlBases _tlPaste _tlMeasure _tlCase
+- Review fixes: app markers, inline paste, cols AI edit, review cycle,: _rfxPast _rfxPlant _tlColors _tlCanvas _tlPasteCanvas _tlPasteBig _tlLoaded _tlStressMeasure _tlStressCase
 - UI TEST RUNNER COMPONENT: computeDeckFingerprint DEMO_DECK_FP_TITLE VelaUITestRunner
 
 ### part-demo.jsx
@@ -278,7 +279,7 @@ keyboard ternaries) or are currently unused — check before assuming a UI exist
 - TEACHER_CLEAR: part-app.jsx part-slides.jsx
 - TEACHER_LOADING: part-slides.jsx
 - TEACHER_MSG: part-app.jsx part-slides.jsx
-- TOGGLE_LANE: (no direct dispatch site)
+- TOGGLE_LANE: part-app.jsx
 - TOGGLE_PRESENT_CARD: part-list.jsx
 - TOGGLE_SECTION_COLLAPSE: part-list.jsx
 - TOGGLE_SLIDE_HIDDEN: part-list.jsx part-slides.jsx
@@ -322,11 +323,11 @@ add_lane add_item batch_add_items remove_item remove_lane rename_item rename_lan
 
 ## Navigability debt (WARN — candidates for banners or splits)
 
-- part-imports.jsx: 874-line unbannered stretch after line 515
-- part-blocks.jsx: 779-line unbannered stretch after line 1007
-- part-canvas.jsx: 497-line unbannered stretch after line 24
-- part-slidepanel.jsx: 521-line unbannered stretch after line 241
-- part-slidepanel.jsx: 411-line unbannered stretch after line 1078
+- part-imports.jsx: 879-line unbannered stretch after line 515
+- part-blocks.jsx: 781-line unbannered stretch after line 1030
+- part-canvas.jsx: 499-line unbannered stretch after line 24
+- part-slidepanel.jsx: 522-line unbannered stretch after line 241
+- part-slidepanel.jsx: 411-line unbannered stretch after line 1083
 - part-uitest.jsx: 616-line unbannered stretch after line 1230
 - part-uitest2.jsx: 448-line unbannered stretch after line 2
 - part-uitest2.jsx: 593-line unbannered stretch after line 1457

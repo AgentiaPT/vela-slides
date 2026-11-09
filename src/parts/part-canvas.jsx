@@ -146,9 +146,11 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
       // The editor overlay chrome (reviewed toggle, comment count, before/after
       // bar — marked data-editor-overlay in part-slidepanel.jsx) paints above the
       // slide. A toolbar under it cannot be clicked, so move the toolbar (and its
-      // popups) left until it is clear of every overlay it would touch.
+      // popups) left until it is clear of every overlay it would touch. The real
+      // overlays sit outside the slide content; skip any match inside it (that is
+      // deck content, which must not move the app's toolbar).
       const fx = el.closest("[data-testid='slide-fx-wrapper']");
-      const overlays = fx && fx.parentElement ? Array.from(fx.parentElement.querySelectorAll("[data-editor-overlay]")).map((o) => o.getBoundingClientRect()).filter((q) => q.width > 0) : [];
+      const overlays = fx && fx.parentElement ? Array.from(fx.parentElement.querySelectorAll("[data-editor-overlay]")).filter((o) => !o.closest("[data-vela-slide-content]")).map((o) => o.getBoundingClientRect()).filter((q) => q.width > 0) : [];
       if (overlays.length) {
         const n = 3 + (onBlockEdit ? 1 : 0) + (externalDispatch ? 1 : 0);
         const barW = n * 18 + (n - 1) * 3, edge = next.bar ? 6 : -8;
@@ -173,7 +175,7 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
 
   // Block indices run through blocks, then the cols L column, then R (see
   // renderColumnBlocks offsets). Map an index to the array that holds it, so an
-  // edit to a column block (text, link, hide, delete) changes L/R, not nothing.
+  // edit to a column block (text, link, hide, delete, AI edit) changes L/R, not nothing.
   const blockSlot = (idx) => idx < blocks.length ? ["blocks", blocks, idx]
     : idx < blocks.length + colsL.length ? ["L", colsL, idx - blocks.length]
     : ["R", colsR, idx - blocks.length - colsL.length];
@@ -547,13 +549,13 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
       {editingBlockIdx === i && !presenting && <div data-testid="block-ai-popup" onClick={(e) => e.stopPropagation()} style={{ position: "absolute", top: (chromeFlip[i]?.pop ? (chromeFlip[i]?.bar ? 30 : 14) : -36), right: chromeFlip[i]?.shift || 0, zIndex: 12, display: "flex", gap: 4, alignItems: "center", background: "rgba(10,15,28,0.95)", border: `1px solid ${st.accent}50`, borderRadius: 8, padding: "4px 8px", boxShadow: `0 4px 16px rgba(0,0,0,0.6), 0 0 0 1px ${st.accent}20`, backdropFilter: "blur(12px)" }}>
         <span style={{ fontSize: 9, color: st.accent, flexShrink: 0 }}>🎯</span>
         <input autoFocus value={blockPrompt} onChange={(e) => setBlockPrompt(e.target.value)}
-          onKeyDown={(e) => { e.stopPropagation(); if (e.key === "Enter" && blockPrompt.trim() && !blockEditing) { e.preventDefault(); onBlockEdit(i, blockPrompt.trim()); } if (e.key === "Escape") { setEditingBlockIdx(null); setBlockPrompt(""); } }}
+          onKeyDown={(e) => { e.stopPropagation(); if (e.key === "Enter" && blockPrompt.trim() && !blockEditing) { e.preventDefault(); onBlockEdit(i, blockPrompt.trim(), blockSlot(i)); } if (e.key === "Escape") { setEditingBlockIdx(null); setBlockPrompt(""); } }}
           disabled={blockEditing}
           placeholder="What to change..."
           style={{ width: 220, padding: "3px 6px", fontSize: 10, fontFamily: FONT.body, background: "rgba(255,255,255,0.06)", color: "#fff", border: `1px solid rgba(255,255,255,0.1)`, borderRadius: 4, outline: "none" }} />
         {blockEditing
           ? <span style={{ fontSize: 11, animation: "spin 1.5s linear infinite", display: "inline-block", flexShrink: 0 }}>✨</span>
-          : <button onClick={() => { if (blockPrompt.trim()) onBlockEdit(i, blockPrompt.trim()); }} disabled={!blockPrompt.trim()} style={{ padding: "2px 8px", fontSize: 9, fontFamily: FONT.mono, fontWeight: 700, background: blockPrompt.trim() ? st.accent : "rgba(255,255,255,0.1)", color: "#fff", border: "none", borderRadius: 4, cursor: blockPrompt.trim() ? "pointer" : "default", opacity: blockPrompt.trim() ? 1 : 0.4, flexShrink: 0 }}>Go</button>}
+          : <button onClick={() => { if (blockPrompt.trim()) onBlockEdit(i, blockPrompt.trim(), blockSlot(i)); }} disabled={!blockPrompt.trim()} style={{ padding: "2px 8px", fontSize: 9, fontFamily: FONT.mono, fontWeight: 700, background: blockPrompt.trim() ? st.accent : "rgba(255,255,255,0.1)", color: "#fff", border: "none", borderRadius: 4, cursor: blockPrompt.trim() ? "pointer" : "default", opacity: blockPrompt.trim() ? 1 : 0.4, flexShrink: 0 }}>Go</button>}
         <button onClick={() => { setEditingBlockIdx(null); setBlockPrompt(""); }} style={{ background: "none", border: "none", color: "rgba(255,255,255,0.4)", cursor: "pointer", fontSize: 10, padding: 0, flexShrink: 0 }}>✕</button>
       </div>}
       {editingLink === i && !presenting && <div data-testid="block-link-popup" onClick={(e) => e.stopPropagation()} style={{ position: "absolute", top: (chromeFlip[i]?.pop ? (chromeFlip[i]?.bar ? 30 : 14) : -32), right: chromeFlip[i]?.shift || 0, zIndex: 12, display: "flex", gap: 4, alignItems: "center", background: T.bgPanel, border: `1px solid ${T.border}`, borderRadius: 6, padding: "3px 6px", boxShadow: "0 4px 12px rgba(0,0,0,0.5)" }}>

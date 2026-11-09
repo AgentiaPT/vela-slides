@@ -275,10 +275,25 @@ function EditableText({ text, onSave, editable, style, multiline, className, pre
     if ((e.ctrlKey || e.metaKey) && e.key === "b") { e.preventDefault(); document.execCommand("bold"); }
     if ((e.ctrlKey || e.metaKey) && e.key === "i") { e.preventDefault(); document.execCommand("italic"); }
   };
+  // Paste plain text only. The browser's default rich paste puts clipboard HTML
+  // (for example a copied web image with a remote src) into the live editable
+  // DOM until commit; commit keeps only text and inline marks anyway.
+  const onPaste = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const t = e.clipboardData?.getData("text/plain") || "";
+    if (!t) return;
+    if (document.execCommand("insertText", false, t)) return;
+    const s = window.getSelection();
+    if (!s || !s.rangeCount || !ref.current?.contains(s.anchorNode)) return;
+    const r = s.getRangeAt(0); r.deleteContents();
+    const n = document.createTextNode(t); r.insertNode(n); r.setStartAfter(n); r.collapse(true);
+    s.removeAllRanges(); s.addRange(r);
+  };
 
   if (editing) return (
     <div key="editing" ref={ref} contentEditable suppressContentEditableWarning
-      onBlur={commit} onKeyDown={onKey}
+      onBlur={commit} onKeyDown={onKey} onPaste={onPaste}
       onClick={(e) => e.stopPropagation()}
       onMouseDown={(e) => e.stopPropagation()}
       className={className}
@@ -860,6 +875,13 @@ function GridCellImage({ src, alt, style }) {
 }
 
 // ━━━ Zoomable Block Wrapper ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// App-owned record of the open modal dialogs and zoom overlays. Esc and the
+// fullscreen-exit handler decide from this, never from a page-wide marker
+// query: deck SVG markup is in the same document (and a zoom clones it onto
+// <body>), so a marker attribute is not proof that app chrome is open (UI
+// integrity — a deck must not change what Esc does).
+const VELA_OPEN_CHROME = { modals: new Set(), zooms: new Set() };
+
 function ZoomWrap({ children, enabled, link, fill }) {
   const [zoomed, setZoomed] = useState(false);
   const [hovered, setHovered] = useState(false);
@@ -928,8 +950,9 @@ function ZoomWrap({ children, enabled, link, fill }) {
     // SlidePanel asks an open zoom to close when the browser leaves fullscreen on Esc.
     window.addEventListener("vela-close-zoom", close);
     host.appendChild(overlay);
+    VELA_OPEN_CHROME.zooms.add(overlay);
     overlay.focus();
-    return () => { window.removeEventListener("vela-close-zoom", close); overlay.remove(); };
+    return () => { window.removeEventListener("vela-close-zoom", close); VELA_OPEN_CHROME.zooms.delete(overlay); overlay.remove(); };
   }, [zoomed]);
 
   // Arrow keys in another block's zoom open this block's zoom.
@@ -1745,6 +1768,9 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
         pending: { bg: "transparent", icon: null, label: "PENDING", textColor: st.muted },
         blocked: { bg: `#ef444425`, icon: "X", label: "BLOCKED", textColor: "#fca5a5" },
       };
+      // A plain-string item is edited as { text }: only the edited item changes
+      // form (patchItemAt would spread the string), so untouched decks keep theirs.
+      const patchCheck = (i, patch) => patchItemAt({ ...block, items: items.map((it, j) => j === i && typeof it === "string" ? { text: it } : it) }, onChange, i, patch);
       return <div className={cls} style={{ display: "flex", flexDirection: "column", gap: 6, width: "100%", ...block.style }}>
         {items.map((item, i) => {
           const status = item.status || "pending";
@@ -1761,18 +1787,17 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
               {cfg.icon && <span style={{ display: "flex", zIndex: 1 }}>{getIcon(cfg.icon, { size: 12, color: status === "done" ? "#fff" : "#ef4444", strokeWidth: 3 })}</span>}
             </div>
             {typeof item === "string"
-              ? <span style={{ fontFamily: FONT.body, fontSize: SIZES[block.size || "sm"], color: cfg.textColor, flex: 1 }}>{item}</span>
+              ? <EditableText text={item} editable={textEditable} onSave={(v) => patchCheck(i, { text: v })} style={{ fontFamily: FONT.body, fontSize: SIZES[block.size || "sm"], color: cfg.textColor, flex: 1 }} />
               : <ItemText block={block} onChange={onChange} editable={textEditable} idx={i} prop="text" style={{ fontFamily: FONT.body, fontSize: SIZES[block.size || "sm"], color: cfg.textColor, flex: 1 }} />}
-            {block.showLabels !== false && (typeof item === "string"
-              ? <span style={{ marginLeft: "auto", fontFamily: FONT.mono, fontSize: SIZES.xs, fontWeight: 600, color: labelColor }}>{cfg.label}</span>
-              : <EditableText text={item.label || cfg.label} editable={textEditable} onSave={(v) => {
+            {block.showLabels !== false && (
+              <EditableText text={item.label || cfg.label} editable={textEditable} onSave={(v) => {
                   // A typed status name (key or default label) switches the status;
                   // any other text is a custom label; empty text restores the default.
                   // Case, "_", "-" and runs of spaces do not matter ("in_progress").
                   const norm = (t) => String(t).trim().toLowerCase().replace(/[\s_-]+/g, " ");
                   const key = norm(v);
                   const hit = Object.keys(statusConfig).find((k) => k === key || norm(statusConfig[k].label) === key);
-                  patchItemAt(block, onChange, i, hit ? { status: hit, label: undefined } : { label: v || undefined });
+                  patchCheck(i, hit ? { status: hit, label: undefined } : { label: v || undefined });
                 }} controlled style={{ marginLeft: "auto", fontFamily: FONT.mono, fontSize: SIZES.xs, fontWeight: 600, color: labelColor, textTransform: "uppercase" }} />)}
           </ItemChrome>;
         })}

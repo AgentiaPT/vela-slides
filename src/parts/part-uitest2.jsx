@@ -3415,6 +3415,150 @@ uiSuite("tideline-CR22-CR25 image placement", [
   }},
 ], { setup: _selectFirstModule });
 
+// ── Review fixes: app markers, inline paste, cols AI edit, review cycle,
+// string checklist items ──
+const _rfxPast = () => (_hooks().getHistoryCounts ? _hooks().getHistoryCounts().past : 0);
+// A node inside the slide content with an app marker stands in for deck markup
+// that carries one (the sanitizer drops them; this checks the app does not trust them).
+const _rfxPlant = (attrs, style) => {
+  const host = _$("[data-vela-slide-content]");
+  if (!host) throw new Error("no slide content to plant a marker in");
+  const n = document.createElement("div");
+  for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v);
+  if (style) n.style.cssText = style;
+  host.appendChild(n);
+  return n;
+};
+uiSuite("review-fix-editor", [
+  { name: "S1: app markers inside slide content do not change Esc or fullscreen exit in Present", fn: async () => {
+    const planted = [];
+    try {
+      document.activeElement?.blur?.(); _key("f");
+      await _waitFor(() => !_$("header"), 2000);
+      planted.push(_rfxPlant({ "data-vela-modal": "" }), _rfxPlant({ "data-vela-zoom": "" }));
+      _key("Escape");
+      await _waitFor(() => _$("header"), 2000).catch(() => { throw new Error("Esc did not leave Present (a deck marker read as an open modal)"); });
+      planted.forEach((n) => n.remove()); planted.length = 0;
+      document.activeElement?.blur?.(); _key("f");
+      await _waitFor(() => !_$("header"), 2000);
+      planted.push(_rfxPlant({ "data-vela-zoom": "" }));
+      document.dispatchEvent(new Event("fullscreenchange"));
+      await _waitFor(() => _$("header"), 2000).catch(() => { throw new Error("browser fullscreen exit kept Present (a deck marker read as an open zoom)"); });
+    } finally {
+      planted.forEach((n) => n.remove());
+      await _exitFullscreen();
+    }
+  }},
+  { name: "S1: an editor-overlay marker inside slide content does not move the block toolbar", fn: async () => {
+    const past = _rfxPast();
+    let plant = null;
+    try {
+      const el = await _mrdInject([{ type: "heading", text: "RFX toolbar", size: "2xl" }], null, (vp) => vp && vp.querySelector("[data-block-type='heading']"));
+      const barRect = async () => {
+        await _mrdHover(el);
+        const bar = await _waitFor(() => el.querySelector("[data-testid='block-hover-toolbar']"), 1500);
+        await _mrdFrame();
+        const r = bar.getBoundingClientRect();
+        await _mrdUnhover(el);
+        return r;
+      };
+      const before = await barRect();
+      plant = _rfxPlant({ "data-editor-overlay": "deck" }, "position:absolute;inset:0;pointer-events:none");
+      const after = await barRect();
+      if (Math.abs(after.left - before.left) > 1) throw new Error(`toolbar moved ${Math.round(before.left - after.left)}px for a marker in slide content`);
+    } finally {
+      plant?.remove();
+      await _mrdUndoTo(past);
+    }
+  }},
+  { name: "S3: paste into an inline text editor inserts plain text only", fn: async () => {
+    const past = _rfxPast();
+    try {
+      await _mrdInject([{ type: "heading", text: "RFX paste", size: "2xl" }], null, (vp) => vp?.textContent.includes("RFX paste") ? vp : null);
+      _click(await _waitFor(() => _tlEditNode("RFX paste"), 2000));
+      const ed = await _waitFor(() => _$("[contenteditable='true']", _mrdViewport()), 1500);
+      const dt = new DataTransfer();
+      dt.setData("text/html", "<b>RFX-RICH</b><img src='data:image/gif;base64,R0lGODlhAQABAAAAACw='>");
+      dt.setData("text/plain", "RFX-PLAIN");
+      const ev = new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true });
+      ed.dispatchEvent(ev);
+      await _mrdFrame();
+      if (!ev.defaultPrevented) throw new Error("the inline editor left the paste to the browser (rich paste)");
+      if (ed.querySelector("img, b")) throw new Error("rich markup reached the inline editor");
+      if (!ed.textContent.includes("RFX-PLAIN")) throw new Error(`plain text was not inserted (got "${ed.textContent}")`);
+      _key("Escape");
+    } finally {
+      document.activeElement?.blur?.();
+      await _mrdUndoTo(past);
+    }
+  }},
+  { name: "E1: AI block edit on a two-column block writes back to that column", fn: async () => {
+    const past = _rfxPast();
+    const orig = { ready: window.__velaAgentReady, send: window.__velaAgentSend, gate: window.__velaTrustGate };
+    try {
+      window.__velaAgentReady = true;
+      window.__velaTrustGate = null;
+      window.__velaAgentSend = async () => JSON.stringify({ type: "text", text: "RFX-AI-LEFT" });
+      const sel = "[data-cols-side='left'] [data-block-type='text']";
+      const el = await _mrdInject([], { layout: "cols", L: [{ type: "text", text: "RFX left" }], R: [{ type: "text", text: "RFX right" }] }, (vp) => vp && vp.querySelector(sel));
+      await _mrdHover(el);
+      _click(await _waitFor(() => el.querySelector("[data-testid='block-hover-toolbar'] button[title='Edit this block with AI']"), 2000));
+      const inp = await _waitFor(() => _$("[data-testid='block-ai-popup'] input", _mrdViewport()), 2000);
+      _mrdSetRange(inp, "make it say RFX-AI-LEFT");
+      await _mrdFrame();
+      inp.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+      await _waitFor(() => _hooks().getCurrentSlideForTest?.()?.L?.[0]?.text === "RFX-AI-LEFT", 4000)
+        .catch(() => { throw new Error("the AI edit did not reach the left column block"); });
+      const s = _hooks().getCurrentSlideForTest();
+      if ((s.blocks || []).length) throw new Error("the AI edit added a block to the main blocks list");
+      if (s.R?.[0]?.text !== "RFX right") throw new Error("the AI edit changed the right column");
+    } finally {
+      window.__velaAgentReady = orig.ready; window.__velaAgentSend = orig.send; window.__velaTrustGate = orig.gate;
+      await _wait(300);
+      await _mrdUndoTo(past);
+    }
+  }},
+  { name: "E6: review cycle steps within the current module when its lane is collapsed", fn: async () => {
+    if (_tocRows().length < 2) throw new Error("need >=2 slide rows");
+    const hooks = _hooks();
+    if (typeof hooks.toggleSelectedLaneForTest !== "function") throw new Error("toggleSelectedLaneForTest hook missing");
+    const cyc = () => _$("[data-testid='review-cycle-toggle']");
+    let collapsed = false;
+    try {
+      await _m1ClickRow(0);
+      const start = hooks.getSelection();
+      const reviewed = hooks.getCurrentSlideForTest?.();
+      if (!start || start.slideIdx !== 0 || !reviewed) throw new Error("could not select slide 1");
+      collapsed = hooks.toggleSelectedLaneForTest(); await _mrdFrame();
+      _click(cyc());
+      await _waitFor(() => cyc()?.getAttribute("aria-pressed") === "true", 1500);
+      document.activeElement?.blur?.();
+      _key("ArrowRight");
+      await _waitFor(() => { const s = hooks.getSelection(); return s && s.itemId === start.itemId && s.slideIdx === 1; }, 1500)
+        .catch(() => { const s = hooks.getSelection(); throw new Error(`ArrowRight left the module or jumped (now ${s?.itemId === start.itemId ? "same" : "other"} module, slide ${s?.slideIdx})`); });
+    } finally {
+      if (cyc()?.getAttribute("aria-pressed") === "true") _click(cyc());
+      if (collapsed) hooks.toggleSelectedLaneForTest();
+      await _mrdFrame();
+      await _m1ClickRow(0).catch(() => {});
+    }
+  }},
+  { name: "E10: string checklist items edit inline; untouched items stay strings", fn: async () => {
+    const past = _rfxPast();
+    try {
+      await _mrdInject([{ type: "checklist", items: ["RFX alpha", "RFX beta", "RFX gamma"] }], null, (vp) => vp?.textContent.includes("RFX gamma") ? vp : null);
+      await _tlEdit("PENDING", "done", "DONE");
+      await _tlEdit("RFX beta", "RFX beta edited");
+      const items = _hooks().getCurrentSlideForTest()?.blocks?.[0]?.items || [];
+      if (items[0]?.text !== "RFX alpha" || items[0]?.status !== "done") throw new Error(`label edit on a string item gave ${JSON.stringify(items[0])}`);
+      if (items[1]?.text !== "RFX beta edited") throw new Error(`text edit on a string item gave ${JSON.stringify(items[1])}`);
+      if (items[2] !== "RFX gamma") throw new Error(`an untouched item changed form: ${JSON.stringify(items[2])}`);
+    } finally {
+      await _mrdUndoTo(past);
+    }
+  }},
+], { setup: _editorSetup });
+
 // Helpers for the CR23 stress matrix and the paste-race tests above.
 const _tlColors = ["#3b82f6", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6"];
 const _tlCanvas = (a, k) => { const cv = document.createElement("canvas"); cv.height = 300; cv.width = Math.max(1, Math.round(300 * a)); const g = cv.getContext("2d"); g.fillStyle = _tlColors[k % 5]; g.fillRect(0, 0, cv.width, cv.height); return cv; };

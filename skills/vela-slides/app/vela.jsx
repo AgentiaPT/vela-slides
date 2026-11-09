@@ -981,6 +981,11 @@ function sanitizeSvgMarkup(raw) {
           for (const a of attrs) {
             const name = a.name.toLowerCase();
             if (name.startsWith("on")) { child.removeAttribute(a.name); continue; }
+            // UI-integrity (namespace forgery, §3.13): the app marks its own chrome
+            // and export plumbing with data-* attributes and queries them. No deck
+            // feature needs data-* in SVG, so drop every one (both spellings: a
+            // prefixed name keeps "data-…" as its localName).
+            if (name.startsWith("data-") || (a.localName || "").toLowerCase().startsWith("data-")) { child.removeAttribute(a.name); continue; }
             // src/srcset never appear on legitimate SVG elements (SVG uses href/
             // xlink:href), so they survive the SVG parse inert — but the sanitized
             // string is later parsed in an HTML context (dangerouslySetInnerHTML into a
@@ -3133,10 +3138,25 @@ function EditableText({ text, onSave, editable, style, multiline, className, pre
     if ((e.ctrlKey || e.metaKey) && e.key === "b") { e.preventDefault(); document.execCommand("bold"); }
     if ((e.ctrlKey || e.metaKey) && e.key === "i") { e.preventDefault(); document.execCommand("italic"); }
   };
+  // Paste plain text only. The browser's default rich paste puts clipboard HTML
+  // (for example a copied web image with a remote src) into the live editable
+  // DOM until commit; commit keeps only text and inline marks anyway.
+  const onPaste = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const t = e.clipboardData?.getData("text/plain") || "";
+    if (!t) return;
+    if (document.execCommand("insertText", false, t)) return;
+    const s = window.getSelection();
+    if (!s || !s.rangeCount || !ref.current?.contains(s.anchorNode)) return;
+    const r = s.getRangeAt(0); r.deleteContents();
+    const n = document.createTextNode(t); r.insertNode(n); r.setStartAfter(n); r.collapse(true);
+    s.removeAllRanges(); s.addRange(r);
+  };
 
   if (editing) return (
     <div key="editing" ref={ref} contentEditable suppressContentEditableWarning
-      onBlur={commit} onKeyDown={onKey}
+      onBlur={commit} onKeyDown={onKey} onPaste={onPaste}
       onClick={(e) => e.stopPropagation()}
       onMouseDown={(e) => e.stopPropagation()}
       className={className}
@@ -3718,6 +3738,13 @@ function GridCellImage({ src, alt, style }) {
 }
 
 // ━━━ Zoomable Block Wrapper ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// App-owned record of the open modal dialogs and zoom overlays. Esc and the
+// fullscreen-exit handler decide from this, never from a page-wide marker
+// query: deck SVG markup is in the same document (and a zoom clones it onto
+// <body>), so a marker attribute is not proof that app chrome is open (UI
+// integrity — a deck must not change what Esc does).
+const VELA_OPEN_CHROME = { modals: new Set(), zooms: new Set() };
+
 function ZoomWrap({ children, enabled, link, fill }) {
   const [zoomed, setZoomed] = useState(false);
   const [hovered, setHovered] = useState(false);
@@ -3786,8 +3813,9 @@ function ZoomWrap({ children, enabled, link, fill }) {
     // SlidePanel asks an open zoom to close when the browser leaves fullscreen on Esc.
     window.addEventListener("vela-close-zoom", close);
     host.appendChild(overlay);
+    VELA_OPEN_CHROME.zooms.add(overlay);
     overlay.focus();
-    return () => { window.removeEventListener("vela-close-zoom", close); overlay.remove(); };
+    return () => { window.removeEventListener("vela-close-zoom", close); VELA_OPEN_CHROME.zooms.delete(overlay); overlay.remove(); };
   }, [zoomed]);
 
   // Arrow keys in another block's zoom open this block's zoom.
@@ -4603,6 +4631,9 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
         pending: { bg: "transparent", icon: null, label: "PENDING", textColor: st.muted },
         blocked: { bg: `#ef444425`, icon: "X", label: "BLOCKED", textColor: "#fca5a5" },
       };
+      // A plain-string item is edited as { text }: only the edited item changes
+      // form (patchItemAt would spread the string), so untouched decks keep theirs.
+      const patchCheck = (i, patch) => patchItemAt({ ...block, items: items.map((it, j) => j === i && typeof it === "string" ? { text: it } : it) }, onChange, i, patch);
       return <div className={cls} style={{ display: "flex", flexDirection: "column", gap: 6, width: "100%", ...block.style }}>
         {items.map((item, i) => {
           const status = item.status || "pending";
@@ -4619,18 +4650,17 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
               {cfg.icon && <span style={{ display: "flex", zIndex: 1 }}>{getIcon(cfg.icon, { size: 12, color: status === "done" ? "#fff" : "#ef4444", strokeWidth: 3 })}</span>}
             </div>
             {typeof item === "string"
-              ? <span style={{ fontFamily: FONT.body, fontSize: SIZES[block.size || "sm"], color: cfg.textColor, flex: 1 }}>{item}</span>
+              ? <EditableText text={item} editable={textEditable} onSave={(v) => patchCheck(i, { text: v })} style={{ fontFamily: FONT.body, fontSize: SIZES[block.size || "sm"], color: cfg.textColor, flex: 1 }} />
               : <ItemText block={block} onChange={onChange} editable={textEditable} idx={i} prop="text" style={{ fontFamily: FONT.body, fontSize: SIZES[block.size || "sm"], color: cfg.textColor, flex: 1 }} />}
-            {block.showLabels !== false && (typeof item === "string"
-              ? <span style={{ marginLeft: "auto", fontFamily: FONT.mono, fontSize: SIZES.xs, fontWeight: 600, color: labelColor }}>{cfg.label}</span>
-              : <EditableText text={item.label || cfg.label} editable={textEditable} onSave={(v) => {
+            {block.showLabels !== false && (
+              <EditableText text={item.label || cfg.label} editable={textEditable} onSave={(v) => {
                   // A typed status name (key or default label) switches the status;
                   // any other text is a custom label; empty text restores the default.
                   // Case, "_", "-" and runs of spaces do not matter ("in_progress").
                   const norm = (t) => String(t).trim().toLowerCase().replace(/[\s_-]+/g, " ");
                   const key = norm(v);
                   const hit = Object.keys(statusConfig).find((k) => k === key || norm(statusConfig[k].label) === key);
-                  patchItemAt(block, onChange, i, hit ? { status: hit, label: undefined } : { label: v || undefined });
+                  patchCheck(i, hit ? { status: hit, label: undefined } : { label: v || undefined });
                 }} controlled style={{ marginLeft: "auto", fontFamily: FONT.mono, fontSize: SIZES.xs, fontWeight: 600, color: labelColor, textTransform: "uppercase" }} />)}
           </ItemChrome>;
         })}
@@ -4843,9 +4873,11 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
       // The editor overlay chrome (reviewed toggle, comment count, before/after
       // bar — marked data-editor-overlay in part-slidepanel.jsx) paints above the
       // slide. A toolbar under it cannot be clicked, so move the toolbar (and its
-      // popups) left until it is clear of every overlay it would touch.
+      // popups) left until it is clear of every overlay it would touch. The real
+      // overlays sit outside the slide content; skip any match inside it (that is
+      // deck content, which must not move the app's toolbar).
       const fx = el.closest("[data-testid='slide-fx-wrapper']");
-      const overlays = fx && fx.parentElement ? Array.from(fx.parentElement.querySelectorAll("[data-editor-overlay]")).map((o) => o.getBoundingClientRect()).filter((q) => q.width > 0) : [];
+      const overlays = fx && fx.parentElement ? Array.from(fx.parentElement.querySelectorAll("[data-editor-overlay]")).filter((o) => !o.closest("[data-vela-slide-content]")).map((o) => o.getBoundingClientRect()).filter((q) => q.width > 0) : [];
       if (overlays.length) {
         const n = 3 + (onBlockEdit ? 1 : 0) + (externalDispatch ? 1 : 0);
         const barW = n * 18 + (n - 1) * 3, edge = next.bar ? 6 : -8;
@@ -4870,7 +4902,7 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
 
   // Block indices run through blocks, then the cols L column, then R (see
   // renderColumnBlocks offsets). Map an index to the array that holds it, so an
-  // edit to a column block (text, link, hide, delete) changes L/R, not nothing.
+  // edit to a column block (text, link, hide, delete, AI edit) changes L/R, not nothing.
   const blockSlot = (idx) => idx < blocks.length ? ["blocks", blocks, idx]
     : idx < blocks.length + colsL.length ? ["L", colsL, idx - blocks.length]
     : ["R", colsR, idx - blocks.length - colsL.length];
@@ -5244,13 +5276,13 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
       {editingBlockIdx === i && !presenting && <div data-testid="block-ai-popup" onClick={(e) => e.stopPropagation()} style={{ position: "absolute", top: (chromeFlip[i]?.pop ? (chromeFlip[i]?.bar ? 30 : 14) : -36), right: chromeFlip[i]?.shift || 0, zIndex: 12, display: "flex", gap: 4, alignItems: "center", background: "rgba(10,15,28,0.95)", border: `1px solid ${st.accent}50`, borderRadius: 8, padding: "4px 8px", boxShadow: `0 4px 16px rgba(0,0,0,0.6), 0 0 0 1px ${st.accent}20`, backdropFilter: "blur(12px)" }}>
         <span style={{ fontSize: 9, color: st.accent, flexShrink: 0 }}>🎯</span>
         <input autoFocus value={blockPrompt} onChange={(e) => setBlockPrompt(e.target.value)}
-          onKeyDown={(e) => { e.stopPropagation(); if (e.key === "Enter" && blockPrompt.trim() && !blockEditing) { e.preventDefault(); onBlockEdit(i, blockPrompt.trim()); } if (e.key === "Escape") { setEditingBlockIdx(null); setBlockPrompt(""); } }}
+          onKeyDown={(e) => { e.stopPropagation(); if (e.key === "Enter" && blockPrompt.trim() && !blockEditing) { e.preventDefault(); onBlockEdit(i, blockPrompt.trim(), blockSlot(i)); } if (e.key === "Escape") { setEditingBlockIdx(null); setBlockPrompt(""); } }}
           disabled={blockEditing}
           placeholder="What to change..."
           style={{ width: 220, padding: "3px 6px", fontSize: 10, fontFamily: FONT.body, background: "rgba(255,255,255,0.06)", color: "#fff", border: `1px solid rgba(255,255,255,0.1)`, borderRadius: 4, outline: "none" }} />
         {blockEditing
           ? <span style={{ fontSize: 11, animation: "spin 1.5s linear infinite", display: "inline-block", flexShrink: 0 }}>✨</span>
-          : <button onClick={() => { if (blockPrompt.trim()) onBlockEdit(i, blockPrompt.trim()); }} disabled={!blockPrompt.trim()} style={{ padding: "2px 8px", fontSize: 9, fontFamily: FONT.mono, fontWeight: 700, background: blockPrompt.trim() ? st.accent : "rgba(255,255,255,0.1)", color: "#fff", border: "none", borderRadius: 4, cursor: blockPrompt.trim() ? "pointer" : "default", opacity: blockPrompt.trim() ? 1 : 0.4, flexShrink: 0 }}>Go</button>}
+          : <button onClick={() => { if (blockPrompt.trim()) onBlockEdit(i, blockPrompt.trim(), blockSlot(i)); }} disabled={!blockPrompt.trim()} style={{ padding: "2px 8px", fontSize: 9, fontFamily: FONT.mono, fontWeight: 700, background: blockPrompt.trim() ? st.accent : "rgba(255,255,255,0.1)", color: "#fff", border: "none", borderRadius: 4, cursor: blockPrompt.trim() ? "pointer" : "default", opacity: blockPrompt.trim() ? 1 : 0.4, flexShrink: 0 }}>Go</button>}
         <button onClick={() => { setEditingBlockIdx(null); setBlockPrompt(""); }} style={{ background: "none", border: "none", color: "rgba(255,255,255,0.4)", cursor: "pointer", fontSize: 10, padding: 0, flexShrink: 0 }}>✕</button>
       </div>}
       {editingLink === i && !presenting && <div data-testid="block-link-popup" onClick={(e) => e.stopPropagation()} style={{ position: "absolute", top: (chromeFlip[i]?.pop ? (chromeFlip[i]?.bar ? 30 : 14) : -32), right: chromeFlip[i]?.shift || 0, zIndex: 12, display: "flex", gap: 4, alignItems: "center", background: T.bgPanel, border: `1px solid ${T.border}`, borderRadius: 6, padding: "3px 6px", boxShadow: "0 4px 12px rgba(0,0,0,0.5)" }}>
@@ -6768,9 +6800,10 @@ ${DESIGN_PROMPT_FOOTER}`;
   return result;
 }
 
-async function blockEditSlide(slideJson, blockIndex, userPrompt, conceptTitle, slideNum, totalSlides, branding, guidelines) {
+// key: the slide array that holds the block — "blocks", or "L"/"R" for a cols slide.
+async function blockEditSlide(slideJson, blockIndex, userPrompt, conceptTitle, slideNum, totalSlides, branding, guidelines, key = "blocks") {
   const { brandingCtx, guidelinesCtx } = buildDesignCtx(branding, guidelines);
-  const block = slideJson.blocks[blockIndex];
+  const block = slideJson[key][blockIndex];
   const blockDesc = block.type + (block.text ? `: "${block.text.slice(0, 60)}"` : block.title ? `: "${block.title.slice(0, 60)}"` : block.label ? `: "${block.label.slice(0, 60)}"` : "");
   const sysPrompt = `You are Vera, an expert slide block editor.
 
@@ -6778,7 +6811,7 @@ async function blockEditSlide(slideJson, blockIndex, userPrompt, conceptTitle, s
 Edit ONE block in a slide. Return ONLY that block's JSON — NOT the full slide.
 
 ## TARGET BLOCK
-Index ${blockIndex}, type "${block.type}" — ${blockDesc}
+${key === "blocks" ? "Index" : `Column "${key}" index`} ${blockIndex}, type "${block.type}" — ${blockDesc}
 
 ## CRITICAL RULES
 - Return ONLY the modified block object as JSON. Example: {"type":"heading","text":"New Title","size":"2xl"}
@@ -6797,10 +6830,11 @@ ${ICON_LIST}`;
   if (!result) throw new Error("Failed to parse block edit response");
 
   // Safeguard: if AI returned a full slide (has "blocks" array), extract the target block
-  if (result.blocks && Array.isArray(result.blocks) && !result.type) {
+  const fromSlide = !result.type && [result[key], result.blocks].find(Array.isArray);
+  if (fromSlide) {
     console.warn("blockEditSlide: AI returned full slide, extracting block", blockIndex);
-    const extracted = result.blocks[blockIndex];
-    if (extracted) result = extracted; else result = result.blocks[0];
+    const extracted = fromSlide[blockIndex];
+    if (extracted) result = extracted; else result = fromSlide[0];
   }
 
   // Handle single block or array of blocks (for split operations)
@@ -9297,9 +9331,10 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
         stopAlternatives();
         const dir = (e.key === "ArrowLeft" || e.key === "ArrowUp") ? -1 : 1;
         const order = [];
+        // A collapsed lane is skipped, except the current module: without the
+        // anchor, findIndex is -1 and the step jumps to the start of the deck.
         for (const lane of (lanes || [])) {
-          if (lane.collapsed) continue;
-          for (const item of lane.items) (item.slides || []).forEach((sl, i) => { if (!sl.reviewed || (item.id === concept.id && i === slideIndex)) order.push({ id: item.id, i, title: item.title }); });
+          for (const item of lane.items) if (!lane.collapsed || item.id === concept.id) (item.slides || []).forEach((sl, i) => { if (!sl.reviewed || (item.id === concept.id && i === slideIndex)) order.push({ id: item.id, i, title: item.title }); });
         }
         const t = order[order.findIndex((o) => o.id === concept.id && o.i === slideIndex) + dir];
         if (t) {
@@ -9388,7 +9423,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       // Esc leaves Present mode. Browser fullscreen normally does this itself, but in a
       // sandboxed iframe (Claude.ai artifact) requestFullscreen fails, so the key lands here.
       // An open modal takes Esc first (it closes on the same keydown).
-      if (e.key === "Escape" && fullscreen && !document.querySelector("[data-vela-modal]")) { e.preventDefault(); stopAlternatives(); dispatch({ type: "SET_FULLSCREEN", value: false }); return; }
+      if (e.key === "Escape" && fullscreen && VELA_OPEN_CHROME.modals.size === 0) { e.preventDefault(); stopAlternatives(); dispatch({ type: "SET_FULLSCREEN", value: false }); return; }
       // Ctrl+C → copy ALL selected slides (multi-select) to system clipboard,
       // in slide order. Falls back to the active slide when nothing is multi-selected.
       if ((e.ctrlKey || e.metaKey) && e.key === "c" && slidesRef.current.length > 0 && !["INPUT", "TEXTAREA"].includes(document.activeElement?.tagName) && !window.getSelection()?.toString()) {
@@ -9456,7 +9491,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
     // layering here: a zoom, gallery or presenter view closes first and Present stays.
     const onFsChange = () => {
       if (document.fullscreenElement || !fullscreen) return;
-      if (document.querySelector("[data-vela-zoom]")) { window.dispatchEvent(new Event("vela-close-zoom")); return; }
+      if (VELA_OPEN_CHROME.zooms.size > 0) { window.dispatchEvent(new Event("vela-close-zoom")); return; }
       if (showGalleryRef.current) { setGallery(false); return; }
       if (showPresenterViewRef.current) { setPresenterView(false); return; }
       dispatch({ type: "SET_FULLSCREEN", value: false });
@@ -9560,8 +9595,12 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
   };
 
   // ── Block-Targeted Edit (single block, prompt-based) ──
-  const runBlockEdit = async (blockIndex, prompt) => {
-    if (!prompt || blockEditing || !slides[slideIndex]?.blocks?.[blockIndex]) return;
+  // slot = [key, array, index] from SlideContent's blockSlot: a cols slide
+  // numbers its L/R column blocks after `blocks`, so the edit goes to that array.
+  const runBlockEdit = async (blockIndex, prompt, slot) => {
+    const key = slot && (slot[0] === "L" || slot[0] === "R") ? slot[0] : "blocks";
+    const j = key === "blocks" ? blockIndex : slot[2];
+    if (!prompt || blockEditing || !slides[slideIndex]?.[key]?.[j]) return;
     const operationEpoch = state._deckEpoch;
     const operationOwner = claimOperation("blockEdit");
     const operationIsCurrent = () => ownsOperation("blockEdit", operationOwner, operationEpoch);
@@ -9569,18 +9608,18 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
     dispatch({ type: "SET_AI_WORK", value: { itemId: concept.id, slideIdx: slideIndex } }); // CR5
     try {
       const newBlocks = await blockEditSlide(
-        slides[slideIndex], blockIndex, prompt,
-        concept.title, slideIndex + 1, slides.length, branding, guidelines
+        slides[slideIndex], j, prompt,
+        concept.title, slideIndex + 1, slides.length, branding, guidelines, key
       );
       if (!operationIsCurrent()) return;
       if (newBlocks && newBlocks.length > 0) {
-        const curBlocks = [...(slides[slideIndex].blocks || [])];
-        curBlocks.splice(blockIndex, 1, ...newBlocks);
+        const curBlocks = [...(slides[slideIndex][key] || [])];
+        curBlocks.splice(j, 1, ...newBlocks);
         const ts = new Date().toLocaleString("en-GB", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
-        const logEntry = `[🎯 ${ts}] block[${blockIndex}] "${prompt}"`;
+        const logEntry = `[🎯 ${ts}] ${key === "blocks" ? "block" : key}[${j}] "${prompt}"`;
         const existing = slides[slideIndex]?.notes?.trim() || "";
         setRevealKey(`be-${Date.now()}`);
-        dispatch({ type: "UPDATE_SLIDE", id: concept.id, index: slideIndex, patch: { blocks: curBlocks, notes: existing ? `${existing}\n${logEntry}` : logEntry }, merge: true });
+        dispatch({ type: "UPDATE_SLIDE", id: concept.id, index: slideIndex, patch: { [key]: curBlocks, notes: existing ? `${existing}\n${logEntry}` : logEntry }, merge: true });
       }
     } catch (e) {
       console.error("Block edit failed:", e);
@@ -17789,6 +17828,150 @@ uiSuite("tideline-CR22-CR25 image placement", [
   }},
 ], { setup: _selectFirstModule });
 
+// ── Review fixes: app markers, inline paste, cols AI edit, review cycle,
+// string checklist items ──
+const _rfxPast = () => (_hooks().getHistoryCounts ? _hooks().getHistoryCounts().past : 0);
+// A node inside the slide content with an app marker stands in for deck markup
+// that carries one (the sanitizer drops them; this checks the app does not trust them).
+const _rfxPlant = (attrs, style) => {
+  const host = _$("[data-vela-slide-content]");
+  if (!host) throw new Error("no slide content to plant a marker in");
+  const n = document.createElement("div");
+  for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v);
+  if (style) n.style.cssText = style;
+  host.appendChild(n);
+  return n;
+};
+uiSuite("review-fix-editor", [
+  { name: "S1: app markers inside slide content do not change Esc or fullscreen exit in Present", fn: async () => {
+    const planted = [];
+    try {
+      document.activeElement?.blur?.(); _key("f");
+      await _waitFor(() => !_$("header"), 2000);
+      planted.push(_rfxPlant({ "data-vela-modal": "" }), _rfxPlant({ "data-vela-zoom": "" }));
+      _key("Escape");
+      await _waitFor(() => _$("header"), 2000).catch(() => { throw new Error("Esc did not leave Present (a deck marker read as an open modal)"); });
+      planted.forEach((n) => n.remove()); planted.length = 0;
+      document.activeElement?.blur?.(); _key("f");
+      await _waitFor(() => !_$("header"), 2000);
+      planted.push(_rfxPlant({ "data-vela-zoom": "" }));
+      document.dispatchEvent(new Event("fullscreenchange"));
+      await _waitFor(() => _$("header"), 2000).catch(() => { throw new Error("browser fullscreen exit kept Present (a deck marker read as an open zoom)"); });
+    } finally {
+      planted.forEach((n) => n.remove());
+      await _exitFullscreen();
+    }
+  }},
+  { name: "S1: an editor-overlay marker inside slide content does not move the block toolbar", fn: async () => {
+    const past = _rfxPast();
+    let plant = null;
+    try {
+      const el = await _mrdInject([{ type: "heading", text: "RFX toolbar", size: "2xl" }], null, (vp) => vp && vp.querySelector("[data-block-type='heading']"));
+      const barRect = async () => {
+        await _mrdHover(el);
+        const bar = await _waitFor(() => el.querySelector("[data-testid='block-hover-toolbar']"), 1500);
+        await _mrdFrame();
+        const r = bar.getBoundingClientRect();
+        await _mrdUnhover(el);
+        return r;
+      };
+      const before = await barRect();
+      plant = _rfxPlant({ "data-editor-overlay": "deck" }, "position:absolute;inset:0;pointer-events:none");
+      const after = await barRect();
+      if (Math.abs(after.left - before.left) > 1) throw new Error(`toolbar moved ${Math.round(before.left - after.left)}px for a marker in slide content`);
+    } finally {
+      plant?.remove();
+      await _mrdUndoTo(past);
+    }
+  }},
+  { name: "S3: paste into an inline text editor inserts plain text only", fn: async () => {
+    const past = _rfxPast();
+    try {
+      await _mrdInject([{ type: "heading", text: "RFX paste", size: "2xl" }], null, (vp) => vp?.textContent.includes("RFX paste") ? vp : null);
+      _click(await _waitFor(() => _tlEditNode("RFX paste"), 2000));
+      const ed = await _waitFor(() => _$("[contenteditable='true']", _mrdViewport()), 1500);
+      const dt = new DataTransfer();
+      dt.setData("text/html", "<b>RFX-RICH</b><img src='data:image/gif;base64,R0lGODlhAQABAAAAACw='>");
+      dt.setData("text/plain", "RFX-PLAIN");
+      const ev = new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true });
+      ed.dispatchEvent(ev);
+      await _mrdFrame();
+      if (!ev.defaultPrevented) throw new Error("the inline editor left the paste to the browser (rich paste)");
+      if (ed.querySelector("img, b")) throw new Error("rich markup reached the inline editor");
+      if (!ed.textContent.includes("RFX-PLAIN")) throw new Error(`plain text was not inserted (got "${ed.textContent}")`);
+      _key("Escape");
+    } finally {
+      document.activeElement?.blur?.();
+      await _mrdUndoTo(past);
+    }
+  }},
+  { name: "E1: AI block edit on a two-column block writes back to that column", fn: async () => {
+    const past = _rfxPast();
+    const orig = { ready: window.__velaAgentReady, send: window.__velaAgentSend, gate: window.__velaTrustGate };
+    try {
+      window.__velaAgentReady = true;
+      window.__velaTrustGate = null;
+      window.__velaAgentSend = async () => JSON.stringify({ type: "text", text: "RFX-AI-LEFT" });
+      const sel = "[data-cols-side='left'] [data-block-type='text']";
+      const el = await _mrdInject([], { layout: "cols", L: [{ type: "text", text: "RFX left" }], R: [{ type: "text", text: "RFX right" }] }, (vp) => vp && vp.querySelector(sel));
+      await _mrdHover(el);
+      _click(await _waitFor(() => el.querySelector("[data-testid='block-hover-toolbar'] button[title='Edit this block with AI']"), 2000));
+      const inp = await _waitFor(() => _$("[data-testid='block-ai-popup'] input", _mrdViewport()), 2000);
+      _mrdSetRange(inp, "make it say RFX-AI-LEFT");
+      await _mrdFrame();
+      inp.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+      await _waitFor(() => _hooks().getCurrentSlideForTest?.()?.L?.[0]?.text === "RFX-AI-LEFT", 4000)
+        .catch(() => { throw new Error("the AI edit did not reach the left column block"); });
+      const s = _hooks().getCurrentSlideForTest();
+      if ((s.blocks || []).length) throw new Error("the AI edit added a block to the main blocks list");
+      if (s.R?.[0]?.text !== "RFX right") throw new Error("the AI edit changed the right column");
+    } finally {
+      window.__velaAgentReady = orig.ready; window.__velaAgentSend = orig.send; window.__velaTrustGate = orig.gate;
+      await _wait(300);
+      await _mrdUndoTo(past);
+    }
+  }},
+  { name: "E6: review cycle steps within the current module when its lane is collapsed", fn: async () => {
+    if (_tocRows().length < 2) throw new Error("need >=2 slide rows");
+    const hooks = _hooks();
+    if (typeof hooks.toggleSelectedLaneForTest !== "function") throw new Error("toggleSelectedLaneForTest hook missing");
+    const cyc = () => _$("[data-testid='review-cycle-toggle']");
+    let collapsed = false;
+    try {
+      await _m1ClickRow(0);
+      const start = hooks.getSelection();
+      const reviewed = hooks.getCurrentSlideForTest?.();
+      if (!start || start.slideIdx !== 0 || !reviewed) throw new Error("could not select slide 1");
+      collapsed = hooks.toggleSelectedLaneForTest(); await _mrdFrame();
+      _click(cyc());
+      await _waitFor(() => cyc()?.getAttribute("aria-pressed") === "true", 1500);
+      document.activeElement?.blur?.();
+      _key("ArrowRight");
+      await _waitFor(() => { const s = hooks.getSelection(); return s && s.itemId === start.itemId && s.slideIdx === 1; }, 1500)
+        .catch(() => { const s = hooks.getSelection(); throw new Error(`ArrowRight left the module or jumped (now ${s?.itemId === start.itemId ? "same" : "other"} module, slide ${s?.slideIdx})`); });
+    } finally {
+      if (cyc()?.getAttribute("aria-pressed") === "true") _click(cyc());
+      if (collapsed) hooks.toggleSelectedLaneForTest();
+      await _mrdFrame();
+      await _m1ClickRow(0).catch(() => {});
+    }
+  }},
+  { name: "E10: string checklist items edit inline; untouched items stay strings", fn: async () => {
+    const past = _rfxPast();
+    try {
+      await _mrdInject([{ type: "checklist", items: ["RFX alpha", "RFX beta", "RFX gamma"] }], null, (vp) => vp?.textContent.includes("RFX gamma") ? vp : null);
+      await _tlEdit("PENDING", "done", "DONE");
+      await _tlEdit("RFX beta", "RFX beta edited");
+      const items = _hooks().getCurrentSlideForTest()?.blocks?.[0]?.items || [];
+      if (items[0]?.text !== "RFX alpha" || items[0]?.status !== "done") throw new Error(`label edit on a string item gave ${JSON.stringify(items[0])}`);
+      if (items[1]?.text !== "RFX beta edited") throw new Error(`text edit on a string item gave ${JSON.stringify(items[1])}`);
+      if (items[2] !== "RFX gamma") throw new Error(`an untouched item changed form: ${JSON.stringify(items[2])}`);
+    } finally {
+      await _mrdUndoTo(past);
+    }
+  }},
+], { setup: _editorSetup });
+
 // Helpers for the CR23 stress matrix and the paste-race tests above.
 const _tlColors = ["#3b82f6", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6"];
 const _tlCanvas = (a, k) => { const cv = document.createElement("canvas"); cv.height = 300; cv.width = Math.max(1, Math.round(300 * a)); const g = cv.getContext("2d"); g.fillStyle = _tlColors[k % 5]; g.fillRect(0, 0, cv.width, cv.height); return cv; };
@@ -24637,6 +24820,8 @@ function pptxExtractSlidePage(el, containerRect, slide) {
 // © 2025-present Rui Quintino. Vela Slides — licensed under ELv2. See LICENSE.
 // ━━━ Modal Backdrop (shared) ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 function ModalBackdrop({ onClose, onEnter, extraKeys, children }) {
+  // Registered for SlidePanel's Esc check (see VELA_OPEN_CHROME in part-blocks.jsx).
+  useEffect(() => { const t = {}; VELA_OPEN_CHROME.modals.add(t); return () => { VELA_OPEN_CHROME.modals.delete(t); }; }, []);
   useEffect(() => {
     const h = (e) => {
       if (e.key === "Escape") { e.preventDefault(); onClose(); return; }
@@ -26010,6 +26195,20 @@ export default function App() {
         } : null;
       },
       getVeraMode: () => _localSyncState.current?.veraMode || null,
+      // A copy of the current slide, and a lane collapse for the selected module
+      // (TOGGLE_LANE has no UI path; a deck can arrive with a collapsed lane).
+      getCurrentSlideForTest: () => {
+        const s = _localSyncState.current;
+        for (const l of (s?.lanes || [])) { const it = (l.items || []).find((i) => i.id === s.selectedId); if (it) return JSON.parse(JSON.stringify(it.slides?.[s.slideIndex] || null)); }
+        return null;
+      },
+      toggleSelectedLaneForTest: () => {
+        const s = _localSyncState.current;
+        const lane = (s?.lanes || []).find((l) => (l.items || []).some((i) => i.id === s.selectedId));
+        if (!lane) return false;
+        dispatch({ type: "TOGGLE_LANE", id: lane.id });
+        return true;
+      },
       restoreStartupDeck: () => {
         if (!VELA_TEST_STARTUP_PATCH) return false;
         const raw = JSON.parse(JSON.stringify(VELA_TEST_STARTUP_PATCH));
