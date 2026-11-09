@@ -23,7 +23,7 @@ that symbol in the named part for the line. No line numbers here — they rot.
 - Themes: themes T statusColor FONT buildTitleCardSlide
 - Vela Logo Icon: VelaIcon BASE_SIZES
 - Style Factories & Helpers: saveKV delKV extractSave extractMaster collectComments formatCommentsForAgent allItemIds findItem fmtSize fmtTime fmtTimeMin visibleSlides sumDurations sumVisibleDurations
-- Session end: pure pace helpers (v13.80): liveSession presentSequence sessionSeqIndex sessionEstimates SESSION_PACE_COLORS pad2 fmtClock fmtCountdown computeSessionPace SESSION_HHMM resolveSessionTimes S
+- Session end: pure pace helpers (v13.80): liveSession presentSequence sessionSeqIndex sessionEstimates SESSION_PACE_COLORS pad2 fmtClock fmtCountdown computeSessionPace sessionBarGeom SESSION_HHMM resolveSessionTimes S
 - CSS Generator: getCss
 - Mobile Detection: MOBILE_BP useIsMobile useSwipe
 - Shared Prompt Constants (deduped from 3 system prompts): BLOCK_REFERENCE ICON_LIST DESIGN_RULES
@@ -138,6 +138,7 @@ that symbol in the named part for the line. No line numbers here — they rot.
 - WP5b: story steps by wheel and swipe, Preview, phone layout, large images: _wp5bFsEl _wp5bWheel _wp5bState _wp5bWheelStep _wp5bTouch _wp5bSwipe _wp5bSwipeStep _wp5bHold _wp5bPhone _wp5bInside _wp5bOverlap _wp5bBox _wp5bBig _wp5bLayerImg _tbEl _tbButtons _tbOneRow _tbAtWidth _pdSel _pdOnSlide _pdSame _pdPrepare _pdEnterPresent _pdJump
 - Session end (v13.80): sanitizer, pace math, deck ingress: _SS_T0 _ssEq _ssNoNaN _ssSeq _ssSes
 - Session end: Present-side UI (v13.80, P2): _sesUiRoot _sesUiPresent _sesUiLeave _sesUiSet _sesUiOpenPresenter _sesUiNeedHooks
+- Session end: editor toolbar, dialog, live ingress, bar geometry (v13.80, P3): _sesTbBtn _sesTbOpen _sesSecs _sesShape _sesRgb _sesImport
 - UI TEST RUNNER COMPONENT: computeDeckFingerprint DEMO_DECK_FP_TITLE VelaUITestRunner
 
 ### part-demo.jsx
@@ -338,7 +339,7 @@ add_lane add_item batch_add_items remove_item remove_lane rename_item rename_lan
 - part-imports.jsx: 929-line unbannered stretch after line 518
 - part-blocks.jsx: 806-line unbannered stretch after line 1265
 - part-canvas.jsx: 581-line unbannered stretch after line 150
-- part-slidepanel.jsx: 451-line unbannered stretch after line 1442
+- part-slidepanel.jsx: 459-line unbannered stretch after line 1442
 - part-uitest.jsx: 616-line unbannered stretch after line 1230
 - part-uitest2.jsx: 448-line unbannered stretch after line 2
 - part-uitest2.jsx: 593-line unbannered stretch after line 1457
@@ -352,3 +353,4 @@ add_lane add_item batch_add_items remove_item remove_lane rename_item rename_lan
 - part-pdf-vector.jsx: 490-line unbannered stretch after line 459
 - part-pdf-vector.jsx: 551-line unbannered stretch after line 1214
 - part-pptx.jsx: no level-1 banners (1191 lines)
+- part-app.jsx: 355-line unbannered stretch after line 1043

@@ -808,7 +808,10 @@ function PresenterSessionCard({ nowMs, session, pace, estimated, youNum, shouldN
   const paceColor = SESSION_PACE_COLORS[pace.paceKey] || SESSION_PACE_COLORS.white;
   const leftColor = SESSION_PACE_COLORS[pace.timeLeftKey] || SESSION_PACE_COLORS.white;
   const leftText = `${pace.over ? "+" : ""}${fmtCountdown(pace.timeLeftSec)}`;
-  const you = pc(pace.youFrac), should = pc(pace.shouldFrac);
+  // Pace track: same geometry as the fullscreen edge bar (sessionBarGeom).
+  const geom = sessionBarGeom(pace);
+  const barColor = SESSION_PACE_COLORS[geom.key];
+  const you = `${geom.you}%`, should = `${geom.should}%`;
   const tag = (frac, extra) => ({ position: "absolute", left: frac, transform: `translateX(-${frac})`, whiteSpace: "nowrap", fontFamily: FONT.mono, fontSize: 13, fontWeight: 700, ...extra });
   return (
     <div data-testid="presenter-session-panel" style={card}>
@@ -830,8 +833,9 @@ function PresenterSessionCard({ nowMs, session, pace, estimated, youNum, shouldN
           <span style={tag(you, { top: 0, color: "#fff" })}>YOU · slide {youNum ?? "–"}</span>
         </span>
         <span data-testid="presenter-pace-track" style={{ display: "block", position: "relative", height: 8, marginTop: 4, borderRadius: 4, background: "rgba(255,255,255,0.12)" }}>
-          <span data-testid="presenter-pace-should" style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: should, background: paceColor, borderRadius: 4 }} />
-          <span aria-hidden="true" style={{ position: "absolute", top: -5, bottom: -5, width: 3, left: should, transform: `translateX(-${should})`, background: paceColor, borderRadius: 1 }} />
+          <span style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: `${geom.lo}%`, background: "rgba(255,255,255,0.45)", borderRadius: 4 }} />
+          <span data-testid="presenter-pace-gap" style={{ position: "absolute", top: 0, bottom: 0, left: `min(${geom.lo}%, calc(100% - 6px))`, width: `max(6px, ${geom.gap}%)`, background: barColor, borderRadius: 4 }} />
+          <span data-testid="presenter-pace-should" style={{ position: "absolute", top: -5, bottom: -5, width: 3, left: should, transform: `translateX(-${should})`, background: barColor, borderRadius: 1 }} />
           <span data-testid="presenter-pace-you" style={{ position: "absolute", top: -5, bottom: -5, width: 3, left: you, transform: `translateX(-${you})`, background: "#fff", borderRadius: 1 }} />
         </span>
         <span style={{ display: "block", position: "relative", height: 18, marginTop: 6 }}>

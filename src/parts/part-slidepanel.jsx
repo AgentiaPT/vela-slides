@@ -1555,13 +1555,21 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
         <div key={slideIndex} className="slide-transition-fade" style={{ position: "relative", width: "100%", height: "100%" }}>
           <FullscreenSlide key={`deck-${state._deckEpoch}`} slide={presSlides[slideIndex]} index={slideIndex} total={presSlides.length} innerRef={slideRef} branding={presSlides[slideIndex]?._virtual ? null : branding} editable={!isStudent && !presSlides[slideIndex]?._virtual} onEdit={isStudent || presSlides[slideIndex]?._virtual ? undefined : handleSlideEdit} onBlockEdit={isStudent || presSlides[slideIndex]?._virtual ? undefined : runBlockEdit} blockEditing={isStudent ? null : blockEditing} fontScale={fontScale} mode="fill" forceEdit={presentEdit && !isStudent} displayIndex={globalSlideIndex - presOffset} displayTotal={globalSlideTotal} hideSlideNumber={!!detour} story={story} onStoryJump={story ? onStoryJump : undefined} onStoryZoomOut={story ? onStoryZoomOut : undefined} />
         </div>
-        {/* Session edge bar (v13.80): fill = SHOULD BE, white tick = YOU, colour =
-            pace verdict. Numbers are clamped fractions; colours are static. It
+        {/* Session edge bar (v13.80): neutral fill up to the first of YOU / SHOULD
+            BE, pace-colour gap between them, white tick = YOU (sessionBarGeom).
+            Numbers are clamped percents; colours are static. It
             takes no clicks and hides under the presenter view and the gallery. */}
-        {sessionPace && !sessionBarHidden && !showPresenterView && !showGallery && <div data-testid="present-session-bar" aria-hidden="true" style={{ position: "absolute", left: 0, right: 0, bottom: 0, height: 5, zIndex: 15, pointerEvents: "none", background: "rgba(255,255,255,0.14)" }}>
-          <div style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: `${(Math.max(0, Math.min(1, sessionPace.shouldFrac)) * 100).toFixed(2)}%`, background: SESSION_PACE_COLORS[sessionPace.paceKey] || SESSION_PACE_COLORS.white, pointerEvents: "none" }} />
-          <div style={{ position: "absolute", top: 0, bottom: 0, width: 3, left: `${(Math.max(0, Math.min(1, sessionPace.youFrac)) * 100).toFixed(2)}%`, transform: `translateX(-${(Math.max(0, Math.min(1, sessionPace.youFrac)) * 100).toFixed(2)}%)`, background: "#fff", pointerEvents: "none" }} />
-        </div>}
+        {sessionPace && !sessionBarHidden && !showPresenterView && !showGallery && (() => {
+          // sessionBarGeom: clamped percent numbers + a static colour key. A dark
+          // backing keeps the neutral parts visible on light and dark slides.
+          const g = sessionBarGeom(sessionPace);
+          if (!g) return null;
+          return <div data-testid="present-session-bar" data-pace={g.key} aria-hidden="true" style={{ position: "absolute", left: 0, right: 0, bottom: 0, height: 5, zIndex: 15, pointerEvents: "none", background: "rgba(0,0,0,0.35)" }}>
+            <div style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: `${g.lo}%`, background: "rgba(255,255,255,0.45)", pointerEvents: "none" }} />
+            <div data-testid="present-session-gap" style={{ position: "absolute", top: 0, bottom: 0, left: `min(${g.lo}%, calc(100% - 6px))`, width: `max(6px, ${g.gap}%)`, background: SESSION_PACE_COLORS[g.key], pointerEvents: "none" }} />
+            <div data-testid="present-session-you" style={{ position: "absolute", bottom: 0, height: 12, width: 4, boxSizing: "border-box", left: `${g.you}%`, transform: `translateX(-${g.you}%)`, background: "#fff", border: "1px solid rgba(0,0,0,0.75)", pointerEvents: "none" }} />
+          </div>;
+        })()}
         {!isMobile && <PresenterTOC slides={presSlides} slideIndex={slideIndex} onJump={(i) => dispatch({ type: "SET_SLIDE_INDEX", index: i })} lanes={lanes} currentConceptId={concept.id} dispatch={dispatch} onDetour={onDetour} />}
                 {fontScale !== 1 && <div style={{ position: "absolute", top: 12, right: 16, fontFamily: FONT.mono, fontSize: 13, fontWeight: 700, color: T.accent, background: T.bgPanel + "e0", padding: "3px 10px", borderRadius: 4, border: `1px solid ${T.accent}40`, zIndex: 20, letterSpacing: "0.05em", pointerEvents: "none" }}>FONT {Math.round(fontScale * 100)}%</div>}
         {improving && <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, padding: "10px 20px", background: "rgba(0,0,0,0.82)", backdropFilter: "blur(6px)", display: "flex", alignItems: "center", gap: 12, zIndex: 20 }}>

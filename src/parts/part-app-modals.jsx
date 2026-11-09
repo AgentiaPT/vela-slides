@@ -626,7 +626,10 @@ function SessionEndDialog({ session, stored, lanes, onSet, onClear, onClose }) {
   };
   const onEnd = (v) => { setEnd(v); setMinutes(minFor(start, v)); };
   const onMinutes = (v) => { setMinutes(v); const e = endFor(start, parseMin(v)); if (e) setEnd(e); };
-  const set = () => { const r = resolveSessionTimes(start, end, base); if (r) onSet(r); };
+  // Set needs a valid End AND a valid Minutes field (1..1440): an invalid
+  // Minutes value (0, 1441) leaves End unchanged, so End alone is not enough.
+  const canSet = !!resolved && parseMin(minutes) != null;
+  const set = () => { const r = resolveSessionTimes(start, end, base); if (r && parseMin(minutes) != null) onSet(r); };
   const needMin = Math.round(sessionEstimates(presentSequence(lanes)).total / 60);
   const lenMin = resolved ? Math.round((resolved.end - resolved.start) / 60000) : null;
   useEffect(() => {
@@ -650,7 +653,7 @@ function SessionEndDialog({ session, stored, lanes, onSet, onClear, onClose }) {
     e.stopPropagation();
     if (e.key === "Escape") { e.preventDefault(); onClose(); return; }
     // Enter = Set; on a focused button Enter keeps its normal click.
-    if (e.key === "Enter" && !e.shiftKey && !(e.target && e.target.tagName === "BUTTON")) { e.preventDefault(); if (resolved) set(); }
+    if (e.key === "Enter" && !e.shiftKey && !(e.target && e.target.tagName === "BUTTON")) { e.preventDefault(); if (canSet) set(); }
   };
   const lbl = { fontFamily: FONT.mono, fontSize: 13, fontWeight: 600, color: T.textMuted, display: "block", marginBottom: 5 };
   const inp = { width: "100%", padding: "8px 10px", fontSize: 15, fontFamily: FONT.mono, color: T.text, background: T.bgInput, border: `1px solid ${T.border}`, borderRadius: 8, outline: "none", boxSizing: "border-box" };
@@ -676,8 +679,8 @@ function SessionEndDialog({ session, stored, lanes, onSet, onClear, onClose }) {
               style={{ padding: "6px 12px", fontSize: 13, fontFamily: FONT.mono, fontWeight: 600, color: curMin === n ? "#fff" : T.textMuted, background: curMin === n ? T.accent : T.bgInput, border: `1px solid ${curMin === n ? T.accent : T.border}`, borderRadius: 6, cursor: "pointer" }}>{n} min</button>
           ))}
         </div>
-        <div data-testid="session-summary" style={{ fontFamily: FONT.mono, fontSize: 13, color: resolved ? T.text : T.red, marginBottom: 6 }}>
-          {resolved ? `Now ${fmtClock(Date.now())} → ends ${fmtClock(resolved.end)} (${lenMin} min)` : "Enter a start and an end (1 min to 24 h)"}
+        <div data-testid="session-summary" style={{ fontFamily: FONT.mono, fontSize: 13, color: canSet ? T.text : T.red, marginBottom: 6 }}>
+          {canSet ? `Now ${fmtClock(Date.now())} → ends ${fmtClock(resolved.end)} (${lenMin} min)` : "Enter a start and an end (1 min to 24 h)"}
         </div>
         <div data-testid="session-precheck" style={{ fontFamily: FONT.mono, fontSize: 13, color: T.textMuted, marginBottom: 18 }}>
           {`Deck needs ~${needMin} min`}{lenMin != null ? ` · session is ${lenMin} min` : ""}
@@ -686,8 +689,8 @@ function SessionEndDialog({ session, stored, lanes, onSet, onClear, onClose }) {
           {hasStored && <button type="button" data-testid="session-clear" onClick={onClear} style={S.btn({ padding: "8px 14px", fontSize: 14, color: T.red, borderRadius: 6 })}>Clear</button>}
           <span style={{ flex: 1 }} />
           <button type="button" data-testid="session-cancel" onClick={onClose} style={S.btn({ padding: "8px 16px", fontSize: 14, color: T.textMuted, borderRadius: 6 })}>Cancel</button>
-          <button type="button" data-testid="session-set" onClick={set} disabled={!resolved}
-            style={{ padding: "8px 20px", fontSize: 14, fontFamily: FONT.body, fontWeight: 600, color: "#fff", background: T.accent, border: "none", borderRadius: 6, cursor: resolved ? "pointer" : "not-allowed", opacity: resolved ? 1 : 0.45 }}>Set</button>
+          <button type="button" data-testid="session-set" onClick={set} disabled={!canSet}
+            style={{ padding: "8px 20px", fontSize: 14, fontFamily: FONT.body, fontWeight: 600, color: "#fff", background: T.accent, border: "none", borderRadius: 6, cursor: canSet ? "pointer" : "not-allowed", opacity: canSet ? 1 : 0.45 }}>Set</button>
         </div>
       </div>
     </ModalBackdrop>

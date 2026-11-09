@@ -34,6 +34,10 @@ export default function App() {
     try { return sessionStorage.getItem("vela-storage-warning-dismissed") === "1"; } catch { return false; }
   });
   const [newDeckDialog, setNewDeckDialog] = useState(false);
+  // Session end (v13.80): editor dialog. Present has its own instance inside
+  // the fullscreen root (SlidePanel), so this one closes on Present entry.
+  const [sessionDialog, setSessionDialog] = useState(false);
+  const [sessionTick, setSessionTick] = useState(0);
   const [pdfExport, setPdfExport] = useState(false);
   const [pptxExport, setPptxExport] = useState(false);
   const [standaloneExport, setStandaloneExport] = useState(false);
@@ -558,6 +562,13 @@ export default function App() {
   // that fits wins. No memory of past widths, so a window that grows gets its
   // labels back at once, and the same width always gives the same level.
   const HDR_TITLE_MIN = 120, HDR_TOP = 4, HDR_LABEL_GAP = 4;
+  // The session end button shows only from this header width (px). The rule
+  // reads only the header's own width (set by the window, not by its content),
+  // so the button cannot make the bar oscillate.
+  const HDR_SESSION_MIN = 1100;
+  const [hdrWide, setHdrWide] = useState(true);
+  const hdrWideRef = useRef(true);
+  hdrWideRef.current = hdrWide;
   const hdrGap = (lvl) => (lvl < 3 ? 8 : 10);
   const [hdrSize, setHdrSize] = useState(1);
   const hdrSizeRef = useRef(1);
@@ -568,6 +579,9 @@ export default function App() {
     const h = hdrRef.current, box = hdrBoxRef.current, sp = hdrSpacerRef.current;
     if (!h || !box || !sp) return;
     const ti = hdrTitleRef.current, lvl = hdrSizeRef.current;
+    // Before the signature check, so the button always follows the width.
+    const wide = h.getBoundingClientRect().width >= HDR_SESSION_MIN;
+    if (wide !== hdrWideRef.current) { hdrWideRef.current = wide; setHdrWide(wide); }
     // Skip the measurement when nothing that decides the level has changed.
     const sig = [h.clientWidth, h.scrollWidth, box.scrollWidth, sp.offsetWidth, ti ? ti.scrollWidth : -1, ti ? ti.offsetWidth : -1, lvl].join("|");
     if (hdrSigRef.current === sig) return;
@@ -600,6 +614,18 @@ export default function App() {
     if (next !== lvl) { hdrSizeRef.current = next; setHdrSize(next); }
   }, []);
   useLayoutEffect(() => { fitHeader(); });
+  // Session end button expiry: no interval. One timeout re-renders the editor
+  // when the live session becomes stale (end + 3 h), so the label goes back to
+  // "Set end". The delay is capped at the setTimeout maximum; an early fire
+  // bumps sessionTick, which re-arms the effect.
+  useEffect(() => {
+    const s = liveSession(state.session, Date.now());
+    if (!s) return undefined;
+    const ms = Math.max(0, Math.min(2147483647, s.end + SESSION_STALE_MS - Date.now() + 1000));
+    const t = setTimeout(() => setSessionTick((n) => n + 1), ms);
+    return () => clearTimeout(t);
+  }, [state.session, sessionTick]);
+  useEffect(() => { if (state.fullscreen) setSessionDialog(false); }, [state.fullscreen]);
   useEffect(() => {
     if (typeof ResizeObserver === "undefined") return;
     // Web fonts change label widths without resizing the bar: measure again.
@@ -1133,6 +1159,13 @@ export default function App() {
                   gallery is no longer reachable only from the Overview button below
                   the slide. */}
               <ViewSwitch mode={sa?.viewMode || "editor"} onSet={(m) => sa?.setView?.(m)} disabled={!has} compact={hdrSize < HDR_TOP} />
+              {hdrWide && (() => {
+                // Session end (v13.80): the label is fmtClock of a sanitized
+                // number; a stale session (end + 3 h) shows as not set.
+                const live = liveSession(state.session, Date.now());
+                const tip = live ? `Session ends ${fmtClock(live.end)} — click to change` : "Set session end";
+                return <button data-testid="session-end-btn" onClick={() => setSessionDialog(true)} disabled={!has} title={tip} aria-label={tip} style={S.btn({ padding: "4px 10px", fontSize: 14, color: live ? T.accent : T.textDim, background: live ? T.accent + "20" : "transparent", borderRadius: 4, opacity: has ? 1 : 0.4, display: "flex", alignItems: "center", gap: 4 })}>{"🕒"}{hdrLabel(live ? ` ends ${fmtClock(live.end)}` : " Set end")}</button>;
+              })()}
               <button data-testid="present-btn" onClick={() => sa?.present?.()} disabled={!has} style={{ display: "flex", alignItems: "center", gap: 5, padding: "5px 14px", background: has ? T.green : T.border, color: has ? "#fff" : T.textDim, border: "none", borderRadius: 6, cursor: has ? "pointer" : "default", opacity: has ? 1 : 0.5, fontFamily: FONT.mono, fontSize: 14, fontWeight: 700 }} title="Present">{"▶"}{hdrLabel(" Present", 2)}</button>
             </>;
           })()}
@@ -1320,6 +1353,10 @@ export default function App() {
       {!isMobile && showShortcuts && <ShortcutHelp onClose={() => setShowShortcuts(false)} />}
       {showChangelog && <ChangelogDialog onClose={() => setShowChangelog(false)} />}
       {showStats && <StatsDialog state={state} onClose={() => setShowStats(false)} />}
+      {sessionDialog && !state.fullscreen && <SessionEndDialog session={liveSession(state.session, Date.now())} stored={!!sanitizeSession(state.session)} lanes={state.lanes}
+        onSet={(s) => { const v = sanitizeSession(s); if (v) dispatch({ type: "SET_SESSION", session: v }); setSessionDialog(false); }}
+        onClear={() => { dispatch({ type: "SET_SESSION", session: null }); setSessionDialog(false); }}
+        onClose={() => setSessionDialog(false)} />}
       {newDeckDialog && <NewDeckDialog onClose={() => setNewDeckDialog(false)} onSubmit={async ({ title, prompt, images }) => {
         // Desktop: allocate a NEW file in the same folder first, so creating a
         // deck never overwrites the one currently open (CR). If allocation FAILS

@@ -2711,6 +2711,22 @@ function computeSessionPace(estimates, idx, onSlideSec, session, now) {
   return { need, have, delta, before, over, paceKey, verdict, timeLeftSec, timeLeftKey, elapsedFrac, shouldFrac, youFrac, shouldIdx };
 }
 
+// Pace bar geometry, shared by the fullscreen edge bar and the Presenter View
+// pace track. Percent numbers (0..100, 2 decimals), never NaN. base = neutral
+// fill 0..lo; gap = lo..hi in the pace colour (the lead when ahead, the lag
+// when behind; the renderer gives it a minimum width, so the colour always
+// shows); you / should = tick positions. Over: the whole bar is red.
+// key is always a SESSION_PACE_COLORS key (static colour lookup only).
+const sessionBarGeom = (pace) => {
+  if (!pace || typeof pace !== "object") return null;
+  const pct = (f) => Math.round((typeof f === "number" && Number.isFinite(f) ? Math.max(0, Math.min(1, f)) : 0) * 10000) / 100;
+  const you = pct(pace.youFrac), should = pct(pace.shouldFrac);
+  if (pace.over === true) return { over: true, key: "red", lo: 0, hi: 100, gap: 100, you, should };
+  const key = Object.prototype.hasOwnProperty.call(SESSION_PACE_COLORS, pace.paceKey) ? pace.paceKey : "white";
+  const lo = Math.min(you, should), hi = Math.max(you, should);
+  return { over: false, key, lo, hi, gap: Math.round((hi - lo) * 100) / 100, you, should };
+};
+
 // Dialog: "HH:MM" strings (input type=time) -> { start, end } or null.
 // Both on the local date of `now`; end <= start (time of day) -> next day.
 // new Date(y, m, d+1, hh, mm) keeps local wall time across DST.

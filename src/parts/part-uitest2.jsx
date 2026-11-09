@@ -5431,6 +5431,278 @@ uiSuite("session-edge-bar", [
   }},
 ]);
 
+// ── Session end: editor toolbar, dialog, live ingress, bar geometry (v13.80, P3)
+const _sesTbBtn = () => _$("[data-testid='session-end-btn']");
+const _sesTbOpen = async () => {
+  _click(_sesTbBtn());
+  return _waitFor(() => _$("[data-testid='session-dialog']"), 1500);
+};
+// "M:SS" / "H:MM:SS" groups in a string -> seconds; non-numeric rest -> "#".
+const _sesSecs = (t) => (String(t).match(/\d+(?::\d\d)+/g) || []).map((x) => x.split(":").reduce((a, b) => a * 60 + +b, 0));
+const _sesShape = (t) => String(t).replace(/\d+(?::\d\d)+/g, "#");
+const _sesRgb = (hex) => `rgb(${parseInt(hex.slice(1, 3), 16)}, ${parseInt(hex.slice(3, 5), 16)}, ${parseInt(hex.slice(5, 7), 16)})`;
+// Import a deck through the real Import button path (hidden file input -> loadDeckFile).
+const _sesImport = async (deck) => {
+  const input = _$("input[type='file'][accept='.json,.vela']");
+  if (!input) throw new Error("import file input missing");
+  const dt = new DataTransfer();
+  dt.items.add(new File([JSON.stringify(deck)], "session-test.vela", { type: "application/json" }));
+  input.files = dt.files;
+  input.dispatchEvent(new Event("change", { bubbles: true }));
+};
+
+uiSuite("session-editor-dialog", [
+  { name: "SD1: End typed directly updates Minutes and the summary; Set stores { start, end }", fn: async () => {
+    const hooks = _sesUiNeedHooks();
+    try {
+      hooks.setSessionForTest(null);
+      await _editorSetup();
+      await _sesTbOpen();
+      _sesUiSet(_$("[data-testid='session-start-input']"), "09:00");
+      _sesUiSet(_$("[data-testid='session-end-input']"), "10:15");
+      await _wait(80);
+      if (_$("[data-testid='session-minutes-input']").value !== "75") throw new Error("minutes not 75: " + _$("[data-testid='session-minutes-input']").value);
+      if (!/ends 10:15 \(75 min\)/.test(_$("[data-testid='session-summary']").textContent)) throw new Error("summary: " + _$("[data-testid='session-summary']").textContent);
+      if (_$("[data-testid='session-set']").disabled) throw new Error("Set disabled for a valid End");
+      const want = resolveSessionTimes("09:00", "10:15", Date.now());
+      _click("[data-testid='session-set']");
+      await _waitFor(() => !_$("[data-testid='session-dialog']"), 1500);
+      _ssEq(hooks.getSessionForTest(), want, "stored session");
+    } finally { await _sesUiLeave(); }
+  }},
+  { name: "SD2: End equal to Start is the next day (24 h) and is accepted", fn: async () => {
+    const hooks = _sesUiNeedHooks();
+    try {
+      hooks.setSessionForTest(null);
+      await _editorSetup();
+      await _sesTbOpen();
+      _sesUiSet(_$("[data-testid='session-start-input']"), "14:20");
+      _sesUiSet(_$("[data-testid='session-end-input']"), "14:20");
+      await _wait(80);
+      if (_$("[data-testid='session-minutes-input']").value !== "1440") throw new Error("minutes not 1440");
+      if (_$("[data-testid='session-set']").disabled) throw new Error("Set disabled for a 24 h session");
+      _click("[data-testid='session-set']");
+      await _waitFor(() => !_$("[data-testid='session-dialog']"), 1500);
+      const s = hooks.getSessionForTest();
+      if (!s || s.end - s.start !== 86400000) throw new Error("stored session is not 24 h: " + JSON.stringify(s));
+    } finally { await _sesUiLeave(); }
+  }},
+  { name: "SD3: Minutes 0 and 1441 disable Set; a valid value enables it again", fn: async () => {
+    const hooks = _sesUiNeedHooks();
+    try {
+      hooks.setSessionForTest(null);
+      await _editorSetup();
+      await _sesTbOpen();
+      _click("[data-testid='session-chip-30']"); await _wait(60);
+      if (_$("[data-testid='session-set']").disabled) throw new Error("Set disabled after chip 30");
+      const mi = _$("[data-testid='session-minutes-input']");
+      for (const v of ["0", "1441"]) {
+        _sesUiSet(mi, v); await _wait(60);
+        if (!_$("[data-testid='session-set']").disabled) throw new Error(`Set enabled with Minutes ${v}`);
+        mi.focus(); _key("Enter"); await _wait(80);
+        if (hooks.getSessionForTest() !== null) throw new Error(`Enter stored a session with Minutes ${v}`);
+      }
+      _sesUiSet(mi, "45"); await _wait(60);
+      if (_$("[data-testid='session-set']").disabled) throw new Error("Set disabled with Minutes 45");
+      _click("[data-testid='session-cancel']");
+      await _waitFor(() => !_$("[data-testid='session-dialog']"), 1500);
+      if (hooks.getSessionForTest() !== null) throw new Error("Cancel stored a session");
+    } finally { await _sesUiLeave(); }
+  }},
+]);
+
+uiSuite("session-panel-verdict", [
+  { name: "SV1: in-progress verdict (ahead, on pace, behind) equals computeSessionPace for the same deck and slide", fn: async () => {
+    const hooks = _sesUiNeedHooks();
+    if (!VELA_TEST_STARTUP_PATCH) throw new Error("startup deck fixture missing");
+    const lanes = validateAndSanitizeDeck(JSON.parse(JSON.stringify(VELA_TEST_STARTUP_PATCH)), { keepIds: true }).lanes;
+    try {
+      hooks.setSessionForTest(null);
+      await _sesUiPresent();
+      await _sesUiOpenPresenter();
+      const seq = presentSequence(lanes, hooks.getDeckStateForTest().selectedId);
+      const est = sessionEstimates(seq);
+      const youNum = () => { const m = /YOU · slide (\d+)/.exec(_$("[data-testid='presenter-session-panel']")?.textContent || ""); return m ? +m[1] : null; };
+      const check = async (label, endInSec, want) => {
+        const ses = { start: Date.now() - 60000, end: Date.now() + endInSec * 1000 };
+        hooks.setSessionForTest(ses);
+        const pv = await _waitFor(() => _$("[data-testid='presenter-pace']"), 2000);
+        await _wait(80);
+        const n = youNum();
+        const idx = seq.findIndex((e) => e.num === n);
+        if (idx < 0) throw new Error(`${label}: YOU slide ${n} not in the sequence`);
+        const exp = computeSessionPace(est, idx, 0, ses, Date.now());
+        const got = pv.textContent;
+        if (_sesShape(got) !== _sesShape(exp.verdict)) throw new Error(`${label}: verdict "${got}" vs "${exp.verdict}"`);
+        const a = _sesSecs(got), b = _sesSecs(exp.verdict);
+        if (a.length !== b.length || a.some((x, k) => Math.abs(x - b[k]) > 10)) throw new Error(`${label}: numbers "${got}" vs "${exp.verdict}"`);
+        if (getComputedStyle(pv).color !== _sesRgb(SESSION_PACE_COLORS[exp.paceKey])) throw new Error(`${label}: colour ${getComputedStyle(pv).color} vs ${exp.paceKey}`);
+        if (want && !want.test(got)) throw new Error(`${label}: unexpected verdict "${got}"`);
+        const gap = _$("[data-testid='presenter-pace-gap']");
+        if (!gap || getComputedStyle(gap).backgroundColor !== _sesRgb(SESSION_PACE_COLORS[exp.paceKey])) throw new Error(`${label}: pace gap colour`);
+        if (gap.getBoundingClientRect().width < 5.5) throw new Error(`${label}: pace gap narrower than 6 px`);
+        return exp;
+      };
+      const n0 = await (async () => { hooks.setSessionForTest({ start: Date.now() - 60000, end: Date.now() + 3600000 }); await _waitFor(() => youNum() !== null, 2000); return youNum(); })();
+      const i0 = seq.findIndex((e) => e.num === n0);
+      const need0 = computeSessionPace(est, i0, 0, { start: Date.now() - 60000, end: Date.now() + 3600000 }, Date.now()).need;
+      await check("ahead", Math.round(need0) + 900, /ahead · you can slow down$/);
+      await check("on pace", Math.round(need0), /^on pace$/);
+      await check("behind", Math.max(61, Math.round(need0) - 600), /behind · speed up$/);
+    } finally { await _sesUiLeave(); }
+  }},
+]);
+
+uiSuite("session-ingress-live", [
+  { name: "SL1: Import of a deck with a valid session sets it; hostile sessions load as null; a deck without one clears it", fn: async () => {
+    const hooks = _sesUiNeedHooks();
+    if (!VELA_TEST_STARTUP_PATCH || !hooks.restoreStartupDeck) throw new Error("startup deck fixture missing");
+    const deck = (session) => { const d = JSON.parse(JSON.stringify(VELA_TEST_STARTUP_PATCH)); delete d.session; if (session !== undefined) d.session = session; return d; };
+    const t0 = Date.now() - 60000;
+    const valid = { start: t0, end: t0 + 1800000 };
+    const hostile = [
+      { start: String(t0), end: t0 + 1800000 },
+      { start: t0, end: String(t0 + 1800000) },
+      { start: t0 + 0.5, end: t0 + 1800000 },
+      { start: t0 + 1800000, end: t0 },
+      { start: t0, end: t0 + 30 * 86400000 },
+      [t0, t0 + 1800000],
+      "x",
+    ];
+    try {
+      await _editorSetup();
+      for (const h of hostile) {
+        await _sesImport(deck(valid));
+        await _waitFor(() => JSON.stringify(hooks.getSessionForTest()) === JSON.stringify(valid), 2000).catch(() => { throw new Error("valid session not loaded by Import"); });
+        await _sesImport(deck(h));
+        await _waitFor(() => hooks.getSessionForTest() === null, 2000).catch(() => { throw new Error("hostile session kept by Import: " + JSON.stringify(h)); });
+      }
+      await _sesImport(deck(valid));
+      await _waitFor(() => hooks.getSessionForTest() !== null, 2000);
+      await _sesImport(deck(undefined));
+      await _waitFor(() => hooks.getSessionForTest() === null, 2000).catch(() => { throw new Error("deck without session kept the previous session"); });
+    } finally { hooks.restoreStartupDeck(); hooks.setSessionForTest?.(null); await _wait(150); }
+  }},
+]);
+
+uiSuite("session-toolbar", [
+  { name: "ST1: label: Set end without a session, ends HH:MM when live, Set end when stale; timer flips it at end + 3 h", fn: async () => {
+    const hooks = _sesUiNeedHooks();
+    try {
+      hooks.setSessionForTest(null);
+      await _editorSetup();
+      const btn = await _waitFor(() => _sesTbBtn(), 1500);
+      if (btn.tagName !== "BUTTON" || !btn.getAttribute("aria-label") || !btn.title) throw new Error("session-end-btn is not a labelled button");
+      const present = _$("[data-testid='present-btn']");
+      if (btn.nextElementSibling !== present) throw new Error("session-end-btn is not immediately before present-btn");
+      if (!/Set end/.test(btn.textContent)) throw new Error("no-session label: " + btn.textContent);
+      const live = { start: Date.now() - 60000, end: Date.now() + 1800000 };
+      hooks.setSessionForTest(live);
+      await _waitFor(() => _sesTbBtn().textContent.includes(`ends ${fmtClock(live.end)}`), 1500).catch(() => { throw new Error("live label: " + _sesTbBtn().textContent); });
+      const stale = { start: Date.now() - SESSION_STALE_MS - 1000 - 1800000, end: Date.now() - SESSION_STALE_MS - 1000 };
+      hooks.setSessionForTest(stale);
+      await _waitFor(() => /Set end/.test(_sesTbBtn().textContent), 1500).catch(() => { throw new Error("stale label: " + _sesTbBtn().textContent); });
+      if (hooks.getSessionForTest() === null) throw new Error("stale session not kept in state");
+      const soon = { start: Date.now() - SESSION_STALE_MS - 1800000 + 1500, end: Date.now() - SESSION_STALE_MS + 1500 };
+      hooks.setSessionForTest(soon);
+      await _waitFor(() => /ends /.test(_sesTbBtn().textContent), 1500).catch(() => { throw new Error("nearly stale label: " + _sesTbBtn().textContent); });
+      await _waitFor(() => /Set end/.test(_sesTbBtn().textContent), 5000).catch(() => { throw new Error("label did not go back to Set end at end + 3 h"); });
+    } finally { await _sesUiLeave(); }
+  }},
+  { name: "ST2: click opens one dialog; ArrowRight / Delete / f do nothing while it is open", fn: async () => {
+    const hooks = _sesUiNeedHooks();
+    try {
+      hooks.setSessionForTest(null);
+      await _editorSetup();
+      const before = JSON.stringify([hooks.getDeckStateForTest().selectedId, hooks.getDeckStateForTest().slideIndex, hooks.getHistoryCounts().past]);
+      await _sesTbOpen();
+      if (_$$("[data-testid='session-dialog']").length !== 1) throw new Error("more than one session dialog");
+      _$("[data-testid='session-chip-15']").focus();
+      for (const k of ["ArrowRight", "Delete", "f"]) { _key(k); await _wait(80); }
+      document.activeElement?.blur();
+      for (const k of ["ArrowRight", "Delete", "f"]) { _key(k); await _wait(80); }
+      await _wait(150);
+      if (!_$("[data-testid='session-dialog']")) throw new Error("a key closed the dialog");
+      if (!_$("header") || hooks.getDeckStateForTest().fullscreen) throw new Error("f entered Present");
+      const after = JSON.stringify([hooks.getDeckStateForTest().selectedId, hooks.getDeckStateForTest().slideIndex, hooks.getHistoryCounts().past]);
+      if (after !== before) throw new Error(`editor state changed: ${before} -> ${after}`);
+      _click("[data-testid='session-cancel']");
+      await _waitFor(() => !_$("[data-testid='session-dialog']"), 1500);
+    } finally { await _sesUiLeave(); }
+  }},
+  { name: "ST3: Set and Clear from the editor dialog; Ctrl+Z restores the previous session value", fn: async () => {
+    const hooks = _sesUiNeedHooks();
+    try {
+      hooks.setSessionForTest(null);
+      await _editorSetup();
+      await _wait(100);
+      await _sesTbOpen();
+      _click("[data-testid='session-chip-30']"); await _wait(60);
+      _click("[data-testid='session-set']");
+      await _waitFor(() => !_$("[data-testid='session-dialog']"), 1500);
+      const s1 = hooks.getSessionForTest();
+      if (!s1 || s1.end - s1.start !== 1800000) throw new Error("Set did not store 30 min: " + JSON.stringify(s1));
+      await _waitFor(() => _sesTbBtn().textContent.includes(`ends ${fmtClock(s1.end)}`), 1500);
+      document.activeElement?.blur(); await _wait(80);
+      _key("z", { ctrlKey: true });
+      await _waitFor(() => hooks.getSessionForTest() === null, 1500).catch(() => { throw new Error("undo did not restore the empty session"); });
+      await _waitFor(() => /Set end/.test(_sesTbBtn().textContent), 1500);
+      hooks.setSessionForTest(s1);
+      await _waitFor(() => hooks.getSessionForTest() !== null, 1500);
+      await _sesTbOpen();
+      _click("[data-testid='session-clear']");
+      await _waitFor(() => hooks.getSessionForTest() === null && !_$("[data-testid='session-dialog']"), 1500).catch(() => { throw new Error("Clear did not remove the session"); });
+      document.activeElement?.blur(); await _wait(80);
+      _key("z", { ctrlKey: true });
+      await _waitFor(() => JSON.stringify(hooks.getSessionForTest()) === JSON.stringify(s1), 1500).catch(() => { throw new Error("undo did not restore the cleared session"); });
+    } finally { await _sesUiLeave(); }
+  }},
+  { name: "ST4: button only from a 1100 px header; the top bar stays on one line below and above", fn: async () => {
+    // Forcing the header width stands in for a window resize (as meridian-CR13).
+    await _editorSetup();
+    const h = await _waitFor(() => _$("header"), 2000);
+    const frames = () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+    const prev = h.style.width;
+    const bad = [];
+    try {
+      for (const w of [1024, 1099, 1100, 1280, 1099, 1100]) {
+        h.style.width = `${w}px`;
+        for (let f = 0; f < 3; f++) await frames();
+        const btns = _$$("button", h).filter((b) => b.offsetParent && !b.closest("[role='group']"));
+        const minH = Math.min(...btns.map((b) => b.offsetHeight));
+        const wrapped = btns.filter((b) => b.offsetHeight > minH + 8).map((b) => b.title || b.textContent.trim());
+        if (!!_sesTbBtn() !== (w >= 1100)) bad.push(`${w}px: button ${_sesTbBtn() ? "present" : "absent"}`);
+        if (h.scrollWidth > h.clientWidth + 1) bad.push(`${w}px: overflow ${h.scrollWidth}>${h.clientWidth}`);
+        if (wrapped.length) bad.push(`${w}px: wrapped ${wrapped.join(", ")}`);
+      }
+    } finally {
+      h.style.width = prev;
+      await frames();
+    }
+    if (bad.length) throw new Error(bad.slice(0, 4).join(" | "));
+  }},
+]);
+
+uiSuite("session-bar-geometry", [
+  { name: "SG1: sessionBarGeom table", fn: async () => {
+    const g = (p) => { const r = sessionBarGeom(p); return r && [r.over, r.key, r.lo, r.hi, r.gap, r.you, r.should]; };
+    _ssEq(g({ youFrac: 0.6, shouldFrac: 0.25, paceKey: "green" }), [false, "green", 25, 60, 35, 60, 25], "ahead");
+    _ssEq(g({ youFrac: 0.2, shouldFrac: 0.5, paceKey: "amber" }), [false, "amber", 20, 50, 30, 20, 50], "behind amber");
+    _ssEq(g({ youFrac: 0.1, shouldFrac: 0.7, paceKey: "red" }), [false, "red", 10, 70, 60, 10, 70], "behind red");
+    _ssEq(g({ youFrac: 0.4, shouldFrac: 0.4, paceKey: "white" }), [false, "white", 40, 40, 0, 40, 40], "on pace");
+    _ssEq(g({ youFrac: 0.3, shouldFrac: 1, paceKey: "red", over: true }), [true, "red", 0, 100, 100, 30, 100], "over");
+    _ssEq(g({ youFrac: 0, shouldFrac: 0, paceKey: "green", before: true }), [false, "green", 0, 0, 0, 0, 0], "before start / both 0");
+    _ssEq(g({ youFrac: 1, shouldFrac: 1, paceKey: "white" }), [false, "white", 100, 100, 0, 100, 100], "both 1");
+    _ssEq(g({ youFrac: 0.123456, shouldFrac: 0.5, paceKey: "amber" }), [false, "amber", 12.35, 50, 37.65, 12.35, 50], "rounding");
+    _ssEq(g({ youFrac: NaN, shouldFrac: Infinity, paceKey: "url(x)" }), [false, "white", 0, 0, 0, 0, 0], "non-finite input, unknown key");
+    _ssEq(g({ youFrac: -2, shouldFrac: 7, paceKey: "__proto__" }), [false, "white", 0, 100, 100, 0, 100], "clamped, inherited key");
+    if (sessionBarGeom(null) !== null || sessionBarGeom("x") !== null) throw new Error("non-object pace must give null");
+    const live = computeSessionPace({ est: [60, 60, 60] }, 0, 0, { start: _SS_T0, end: _SS_T0 + 300000 }, _SS_T0 + 1000);
+    const lg = sessionBarGeom(live);
+    if (lg.key !== live.paceKey || lg.you !== Math.round(live.youFrac * 10000) / 100) throw new Error("geometry does not follow computeSessionPace");
+  }},
+]);
+
 // ━━━ UI TEST RUNNER COMPONENT ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 // Demo deck guard — UI tests only run against the original demo deck
