@@ -18,7 +18,7 @@ that symbol in the named part for the line. No line numbers here — they rot.
 - Deck-ingress key allowlists: SAFE_SLIDE_KEYS SAFE_BLOCK_KEYS SLIDE_NUMERIC_BOUNDS clampDeckNumber MAX_BLOCK_DEPTH sanitizeBlock VALID_COMMENT_STATUSES MAX_COMMENTS sanitizeComment
 - Offline Study Notes sanitizer: sanitizeStudyNotes sanitizeSlide stableIdFrom sanitizeItem resanitizeLoadedLanes resanitizeLoadedBranding KEEPABLE_DECK_ID isKeepableDeckId adoptPriorDeckIds localDeckPayload validateAndSanitizeDeck
 - Image Compression: PNG_KEEP_MAX compressImage IMG_SETTINGS compressSlideImage imageAspect imageNaturalSize PASTE_TITLE_BLOCKS pasteImageLayout pasteSplitFlex PASTE_TEXT_METRICS pasteBodyEstimate pasteLayoutArea pasteBodyProbe gridColsFor imageGridPlan bestImageGridCols
-- Story images (present a slide's images one by one): PASTE_MAX_IMAGES IMAGE_DROP_MIME IMAGE_DROP_MAX_BYTES IMAGE_DROP_MAX_FILES IMAGE_MAX_PIXELS storyImageList storyIsActive storyEntry storyNext storyPrev storyEsc imageDropFiles IMAGE_ASPECT_CACHE rememberImageAspect PASTE_LAYOUT_OWNED pasteLayoutSig rememberPasteLayout PASTE_SLIDE_SUCC pasteResolveTarget pasteRecordSuccessor
+- Story images (present a slide's images one by one): PASTE_MAX_IMAGES IMAGE_DROP_MIME IMAGE_DROP_MAX_BYTES IMAGE_DROP_MAX_FILES IMAGE_MAX_PIXELS storyImageList storyIsActive storyEntry storyNext storyPrev storyEsc imageDropFiles deckSlideNumber IMAGE_ASPECT_CACHE rememberImageAspect PASTE_LAYOUT_OWNED pasteLayoutSig rememberPasteLayout PASTE_SLIDE_SUCC pasteResolveTarget pasteRecordSuccessor
 - Status & Importance Meta: STATUSES STATUS_META IMP
 - Themes: themes T statusColor FONT buildTitleCardSlide
 - Vela Logo Icon: VelaIcon BASE_SIZES
@@ -33,7 +33,7 @@ that symbol in the named part for the line. No line numbers here — they rot.
 
 ### part-blocks.jsx
 - Error Boundary: SlideErrorBoundary
-- Inline Formatting: **bold**, *italic*, ***both***, ~~strike~~, ++underline++: UL_EDGE_WORD UL_SPACE ulCharBefore ulCharAt findUnderlineSpan findUnderlineSpans inlineMdToHtml UL_OPEN inlineHtmlToMd parseInline
+- Inline Formatting: **bold**, *italic*, ***both***, ~~strike~~, ++underline++: UL_EDGE_WORD UL_SPACE ulCharBefore ulCharAt findUnderlineSpan findUnderlineSpans inlineLineParts inlineMdToHtml UL_OPEN inlineHtmlToMd parseInline
 - X-Ray Glossary Link — inline popover for [term](#key) refs: GlossaryLink EDIT_PLACEHOLDER EditableText EditPlaceholder SvgEditText
 - Block Helpers: stg COL_TOOLBAR_PAD patchItemAt removeItemAt setItemLink itemLinkOf addItemAt moveItemAt _noPin reorderCtl itemReorder blankItemFor PLACEHOLDER_FIELDS cloneGridCell clonePoint newItemFor
 - Add-Item Affordance — "+ add" button shown only in edit mode: AddItem ItemText IconBubble
@@ -331,9 +331,9 @@ add_lane add_item batch_add_items remove_item remove_lane rename_item rename_lan
 ## Navigability debt (WARN — candidates for banners or splits)
 
 - part-imports.jsx: 898-line unbannered stretch after line 516
-- part-blocks.jsx: 806-line unbannered stretch after line 1236
-- part-canvas.jsx: 581-line unbannered stretch after line 148
-- part-slidepanel.jsx: 425-line unbannered stretch after line 1292
+- part-blocks.jsx: 806-line unbannered stretch after line 1265
+- part-canvas.jsx: 581-line unbannered stretch after line 150
+- part-slidepanel.jsx: 426-line unbannered stretch after line 1316
 - part-uitest.jsx: 616-line unbannered stretch after line 1230
 - part-uitest2.jsx: 448-line unbannered stretch after line 2
 - part-uitest2.jsx: 593-line unbannered stretch after line 1457

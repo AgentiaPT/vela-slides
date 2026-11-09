@@ -199,6 +199,117 @@ for (const s of ["++word++", "say ++two words++.", "(++x++)", "**++x++**", "++**
   eq("round trip " + JSON.stringify(s), inlineHtmlToMd(toEl(inlineMdToHtml(s))), s);
 for (const s of LITERAL) if (s.indexOf("[") < 0 && s.indexOf("*") < 0) eq("edit literal " + JSON.stringify(s), inlineHtmlToMd(toEl(inlineMdToHtml(s))), s);
 
+// 4b. Editor HTML = slide marks, well nested, no change on click-in/click-out.
+// A ++…++ pair that crosses a bold/italic/strike token stays literal in both
+// views (the old editor made crossing tags; the browser re-nested them and a
+// blur commit changed the deck text).
+const MARK_BITS = { STRONG: 1, B: 1, EM: 2, I: 2, S: 4, DEL: 4, STRIKE: 4, U: 8 };
+// Per-character marks of an editor DOM: each character followed by its bits.
+const domRuns = (root) => {
+  let r = "";
+  const walk = (el, bits) => {
+    for (const n of el.childNodes) {
+      if (n.nodeType === 3) { for (const c of n.textContent) r += c + bits; }
+      else if (n.nodeName === "BR") r += "\n0";
+      else walk(n, bits | (MARK_BITS[n.nodeName] || 0));
+    }
+  };
+  walk(root, 0);
+  return r.replace(/\n\d+/g, "\n0");
+};
+// Per-character marks of the slide render (parseInline spans carry inline styles).
+const slideRuns = (s) => {
+  let r = "";
+  const walk = (node, bits) => {
+    for (const n of node.childNodes) {
+      if (n.nodeType === 3) { for (const c of n.textContent) r += c + bits; continue; }
+      if (n.nodeName === "BR") { r += "\n0"; continue; }
+      const st = (n.getAttribute && n.getAttribute("style")) || "";
+      walk(n, bits | (/font-weight:700/.test(st) ? 1 : 0) | (/font-style:italic/.test(st) ? 2 : 0)
+        | (/line-through/.test(st) ? 4 : 0) | (/(^|[\s:])underline/.test(st) ? 8 : 0));
+    }
+  };
+  walk(toEl(html(s)).firstChild, 0);
+  return r.replace(/\n\d+/g, "\n0");
+};
+// Tag-stack check: every close tag matches the last open tag.
+const nested = (h) => {
+  const st = [];
+  for (const m of h.matchAll(/<(\/?)([a-z]+)[^>]*>/g)) {
+    if (m[2] === "br") continue;
+    if (!m[1]) st.push(m[2]); else if (st.pop() !== m[2]) return false;
+  }
+  return st.length === 0;
+};
+// exact: md must equal s. "_" marks are saved as "*" (by design), so for a
+// text with "_" only the editor view (nesting, marks) is checked: the "*" can
+// pair with a literal "*" next to it. That is not a nesting problem.
+const editorCheck = (s, exact) => {
+  const h = inlineMdToHtml(s);
+  if (!nested(h)) return "badly nested: " + h;
+  const el = toEl(h); // DOM normalization (jsdom parses like a browser)
+  if (el.innerHTML !== h) return "browser re-nests: " + h + " => " + el.innerHTML;
+  const sr = slideRuns(s);
+  if (domRuns(el) !== sr) return "editor marks differ from slide: " + h;
+  const md = inlineHtmlToMd(el);
+  if (exact && md !== s) return "text changed: " + JSON.stringify(md);
+  if (s.indexOf("_") < 0 && slideRuns(md) !== sr) return "slide marks changed after commit: " + JSON.stringify(md);
+  return null;
+};
+const CROSS = [
+  ["*a ++b* c++", "<em>a ++b</em> c++"], ["**a ++b** c++", "<strong>a ++b</strong> c++"],
+  ["~~a ++b~~ c++", "<s>a ++b</s> c++"], ["_a ++b_ c++ d", "<em>a ++b</em> c++ d"],
+  ["++a **b++ c**", "<u>a **b</u> c**"], ["**++a**b++", "<strong>++a</strong>b++"],
+  ["*a **b* c**", "<em>a </em><em>b</em> c**"], ["**a *b** c*", "<strong>a *b</strong> c*"],
+  ["_a_", "_a_"], ["*a ++b++ c*", "<em>a <u>b</u> c</em>"], ["++*a* b++", "<u><em>a</em> b</u>"],
+];
+for (const [s, want] of CROSS) {
+  eq("editor html " + JSON.stringify(s), inlineMdToHtml(s), want);
+  const e = editorCheck(s, s.indexOf("_") < 0);
+  if (e) bad("editor round trip " + JSON.stringify(s), e); else ok();
+}
+{
+  // Randomized property test, fixed seed (mulberry32), 3000 strings.
+  let seed = 0x5eed1234;
+  const rnd = () => { seed = (seed + 0x6D2B79F5) | 0; let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+  const ALPHA = ["a", "b", " ", "*", "_", "~", "+", "`", "<", "&", "\n"];
+  let n = 0, firstBad = null, exactN = 0;
+  for (let i = 0; i < 3000; i++) {
+    const len = 1 + Math.floor(rnd() * 16);
+    let s = "";
+    for (let j = 0; j < len; j++) s += ALPHA[Math.floor(rnd() * ALPHA.length)];
+    // Exact text identity where the serializer writes the same markers back
+    // (no "_"; the commit trims edge whitespace). Text with edge whitespace
+    // must keep the same slide marks.
+    const exact = s.indexOf("_") < 0 && s === s.trim();
+    if (exact) exactN++;
+    const e = editorCheck(s, exact);
+    if (e) { n++; if (!firstBad) firstBad = JSON.stringify(s) + " — " + e; }
+  }
+  if (n === 0) ok(); else bad(`property: ${n} of 3000 strings fail`, firstBad);
+  if (exactN >= 800) ok(); else bad("property: too few exact cases", String(exactN));
+}
+
+// 4c. Frozen render corpus: parseInline output (with and without a glossary
+// ctx) must stay identical to the renderer before the tokenizer was shared
+// with the editor (R0). The fixture holds output hashes only.
+{
+  const crypto = require("crypto");
+  const FX = path.join(REPO, "tests/fixtures/parse-inline-corpus.json");
+  const fx = JSON.parse(fs.readFileSync(FX, "utf8"));
+  const mk = (s, c) => renderToStaticMarkup(React.createElement("div", null, parseInline(s, c)));
+  const hash = (s) => crypto.createHash("sha256").update(mk(s) + "\u0001" + mk(s, fx.ctx)).digest("hex").slice(0, 16);
+  if (process.env.VELA_REGEN_PARSE_CORPUS === "1") {
+    fx.cases = fx.cases.map(([s]) => [s, hash(s)]);
+    fs.writeFileSync(FX, JSON.stringify(fx).replace(/\],\[/g, "],\n[") + "\n");
+    console.log("  regenerated " + FX);
+  }
+  let n = 0, firstBad = null;
+  for (const [s, want] of fx.cases) if (hash(s) !== want) { n++; if (!firstBad) firstBad = JSON.stringify(s); }
+  if (fx.cases.length >= 1000 && n === 0) ok(); else bad(`frozen corpus: ${n} of ${fx.cases.length} renders changed`, firstBad);
+}
+
 // 5. Linear time on hostile input (no quadratic rescans).
 {
   const big = "++a ".repeat(20000) + "**x** ".repeat(5000);

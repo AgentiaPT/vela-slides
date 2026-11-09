@@ -21,7 +21,7 @@ if (cStart < 0 || cEnd < 0) { console.error("FATAL: compressImage markers not fo
 const prelude = `var dbg = function () {};\n`;
 const body = prelude + src.slice(a, b) + "\n" + src.slice(cStart, cEnd) +
   "\n;return { gridColsFor, imageGridPlan, storyImageList, storyIsActive, storyEntry, storyNext, storyPrev, storyEsc," +
-  " imageDropFiles, compressImage, PASTE_MAX_IMAGES, IMAGE_DROP_MIME, IMAGE_DROP_MAX_BYTES, IMAGE_DROP_MAX_FILES, IMAGE_MAX_PIXELS };";
+  " imageDropFiles, deckSlideNumber, compressImage, PASTE_MAX_IMAGES, IMAGE_DROP_MIME, IMAGE_DROP_MAX_BYTES, IMAGE_DROP_MAX_FILES, IMAGE_MAX_PIXELS };";
 
 // Fake Image/document so compressImage can be driven without a browser.
 function makeEnv(imgBehaviour) {
@@ -163,6 +163,16 @@ for (const n of [2, 10]) {
   assert("compress strict: at pixel cap still encodes", (await run(makeEnv({ w: 8000, h: 5000 }), true)) === "data:image/jpeg;base64,RE9ORQ==");
   assert("compress default: over pixel cap is NOT rejected (unchanged behaviour)", (await run(makeEnv({ w: 8000, h: 8000 }), false)) === "data:image/jpeg;base64,RE9ORQ==");
   assert("compress strict: normal image encodes", (await run(makeEnv({ w: 100, h: 100 }), true)) === "data:image/jpeg;base64,RE9ORQ==");
+  {
+    // Overflow notice number = the deck-wide slide badge number (visible slides only).
+    const { deckSlideNumber } = load(makeEnv({ w: 1, h: 1 }));
+    const sl = (n, hid) => Array.from({ length: n }, (_, i) => ({ hidden: hid && hid.includes(i) || undefined }));
+    const lanes = [{ items: [{ id: "m1", slides: sl(3) }, { id: "m2", slides: sl(4, [1]) }] }, { items: [{ id: "m3", slides: sl(2) }] }];
+    assert("deck number: first module", deckSlideNumber(lanes, "m1", lanes[0].items[0].slides, 1) === 2);
+    assert("deck number: later module counts earlier visible slides", deckSlideNumber(lanes, "m2", lanes[0].items[1].slides, 3) === 6);
+    assert("deck number: other lane, spill index past the list end", deckSlideNumber(lanes, "m3", lanes[1].items[0].slides, 2) === 9);
+    assert("deck number: unknown module falls back to index+1", deckSlideNumber(lanes, "zz", [], 4) === 5);
+  }
   console.log(`\n  ${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
 })();

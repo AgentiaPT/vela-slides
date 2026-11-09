@@ -959,8 +959,9 @@ export default function App() {
   const handleGlobalDragOver = useCallback((e) => { const taken = e.isDefaultPrevented(); e.preventDefault(); e.dataTransfer.dropEffect = "copy"; setFileDragTaken(taken); }, []);
   // A drop a child took (images added to a slide) must not also load as a deck.
   const handleGlobalDrop = useCallback((e) => { const taken = e.isDefaultPrevented(); e.preventDefault(); e.stopPropagation(); dragCountRef.current = 0; setFileDragOver(false); setFileDragTaken(false); if (taken) return;
-    // Present has no slide to drop on: an images-only drop is told so, never loaded as a deck.
-    if (fullscreenRef.current && dragHasOnlyImageFiles(e.dataTransfer)) { slideActionsRef.current?.showToast?.("Exit Present to add images"); return; }
+    // An images-only drop that no slide took (Present, or the editor outside the
+    // slide panel) is told so, never loaded as a deck.
+    if (dragHasOnlyImageFiles(e.dataTransfer)) { slideActionsRef.current?.showToast?.(fullscreenRef.current ? "Exit Present to add images" : "Drop images on the slide to add them", !fullscreenRef.current); return; }
     const file = e.dataTransfer?.files?.[0]; if (file) loadDeckFile(file); }, [loadDeckFile]);
 
   // Title editing

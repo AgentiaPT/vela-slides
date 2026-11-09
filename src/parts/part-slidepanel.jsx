@@ -26,12 +26,14 @@ function ViewSwitch({ mode, onSet, disabled, compact, onDark, testid = "view-swi
   </div>;
 }
 
-// True when a drag carries only files of the drop allowlist (IMAGE_DROP_MIME).
+// True when a drag carries only image files (any image/* type, an SVG too).
+// Such a drag is an image drop, never a deck load. Only IMAGE_DROP_MIME types
+// are added: imageDropFiles() counts the others as not added.
 // Reads item kind/type only (a file name is not exposed during a drag).
 function dragHasOnlyImageFiles(dt) {
   if (!dt || !dt.types || !Array.prototype.includes.call(dt.types, "Files")) return false;
   const items = dt.items ? Array.prototype.slice.call(dt.items) : [];
-  return items.length > 0 && items.every((it) => !!it && it.kind === "file" && typeof it.type === "string" && IMAGE_DROP_MIME.has(it.type));
+  return items.length > 0 && items.every((it) => !!it && it.kind === "file" && typeof it.type === "string" && it.type.startsWith("image/"));
 }
 
 function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, branding, guidelines, isMobile, fontScale, actionsRef, onRibbonUpdate }) {
@@ -70,7 +72,24 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
   const storyList = useMemo(() => storyImageList(storySlide, true), [storySlide]);
   const storyN = storyList.length;
   const storyOn = fullscreen && state?.veraMode !== "student" && storyIsActive(storySlide, storyList);
-  const storyKey = `${state._deckEpoch}|${concept.id}|${slideIndex}|${fullscreen ? 1 : 0}`;
+  // Slide identity for the story key, so a different slide at the same
+  // position (reorder, insert, delete) starts fresh. An edit makes a new object
+  // for the same slide: a new object takes the id of the object it replaced at
+  // that index (that object left the list). Undo/redo bring back an object that
+  // already has the id. Objects that only moved keep their own id.
+  const storyIdsRef = useRef({ ids: new WeakMap(), next: 1, prev: [] });
+  const storySlideId = useMemo(() => {
+    const r = storyIdsRef.current, cur = presSlides || [];
+    const inList = new Set(cur);
+    cur.forEach((s, i) => {
+      if (!s || typeof s !== "object" || r.ids.has(s)) return;
+      const old = r.prev[i];
+      r.ids.set(s, old && !inList.has(old) && r.ids.has(old) ? r.ids.get(old) : r.next++);
+    });
+    r.prev = cur;
+    return (storySlide && typeof storySlide === "object" && r.ids.get(storySlide)) || 0;
+  }, [presSlides, storySlide]);
+  const storyKey = `${state._deckEpoch}|${concept.id}|${slideIndex}|${storySlideId}|${fullscreen ? 1 : 0}`;
   // -1 only while a back step (arrow, wheel, swipe) is about to land: a story
   // slide reached that way opens on its last image. Every other entry is forward.
   const storyEnterDirRef = useRef(1);
@@ -92,7 +111,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
   }
   useEffect(() => { storyEnterDirRef.current = 1; }, [storyKey]);
   const storyCur = storyOn && storyRaw && storyRaw.key === storyKey ? storyRaw : null;
-  const story = useMemo(() => storyCur ? { k: Math.min(storyCur.k, storyN), zoomed: storyCur.zoomed } : undefined, [storyCur, storyN]);
+  const story = useMemo(() => storyCur ? { k: Math.min(storyCur.k, storyN), zoomed: storyCur.zoomed, key: storyCur.key } : undefined, [storyCur, storyN]);
   const storyLive = () => {
     const s = storyLiveRef.current;
     return storyOn && s && s.key === storyKey ? { k: Math.min(s.k, storyN), zoomed: s.zoomed } : null;
@@ -467,7 +486,8 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       toggleBatchEdit: () => improving ? stopAll() : setShowImproveInput((v) => !v),
       toggleTiming: () => estimating ? stopEstimate() : setShowTimingScope((v) => !v),
       setPreviewRatio,
-      showToast: (msg) => showNavToast(msg, null),
+      // editor: true shows the editor notice (the plain toast renders only in Present).
+      showToast: (msg, editor) => showNavToast(msg, null, editor),
       present: () => { stopAll(); dispatch({ type: "SET_FULLSCREEN", value: true }); },
       getLayoutStats: () => computeSlideLayoutStats(slideRef.current),
       // CR13: view state read by the top-bar view switcher (editor|presenter|gallery).
@@ -558,7 +578,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
   // resolves null and is skipped (never stored as the original bytes).
   const compressImageStrict = (dataUrl) => compressImage(dataUrl, IMG_SETTINGS.maxWidth, IMG_SETTINGS.quality, { strict: true });
   // One paste or one drop. Counts what happened to its images for one notice.
-  const newImageBatch = (kind) => ({ kind, epoch: deckEpochRef.current, here: 0, spill: 0, spillAt: -1, spilled: false, failed: 0, dropped: 0, rejected: 0 });
+  const newImageBatch = (kind) => ({ kind, epoch: deckEpochRef.current, here: 0, spill: 0, spillNum: 0, spilled: false, failed: 0, dropped: 0, rejected: 0 });
   // Queue one image (getData() resolves the re-encoded data URL, or null).
   const enqueueImage = useCallback((getData, batch) => {
     // Capture the target now. The image work below is async: the user can
@@ -629,7 +649,9 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       if (curImgs >= PASTE_MAX_IMAGES) {
         dispatch({ type: "INSERT_SLIDES", id: moduleId, index: at + 1, slides: [{ blocks: [{ type: "image", src: compressed }], ...(cur.story === true ? { story: true } : {}) }] });
         if (onScreen()) dispatch({ type: "SET_SLIDE_INDEX", index: at + 1 });
-        batch.spill++; batch.spilled = true; if (batch.spillAt < 0) batch.spillAt = at + 1;
+        batch.spill++; batch.spilled = true;
+        // The deck-wide number, as the slide badge shows it (not the index in this module).
+        if (!batch.spillNum) batch.spillNum = deckSlideNumber(lanesRef.current, moduleId, before, at + 1);
         await settle(cur, before, compressed); return;
       }
       const patch = { blocks: [...(cur.blocks || []), { type: "image", src: compressed }] };
@@ -675,7 +697,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       if (deckEpochRef.current !== batch.epoch) return;
       const lost = batch.failed + batch.rejected + (batch.kind === "drop" ? batch.dropped : 0);
       let msg = null;
-      if (batch.spill > 0) msg = `Added ${batch.here} here · ${batch.spill} on new slide ${batch.spillAt + 1}` + (lost > 0 ? ` · ${lost} not added` : "");
+      if (batch.spill > 0) msg = `Added ${batch.here} here · ${batch.spill} on new slide ${batch.spillNum}` + (lost > 0 ? ` · ${lost} not added` : "");
       else if (lost > 0 && batch.kind === "paste") msg = "This image could not be pasted";
       else if (lost > 0) msg = batch.here > 0 ? `Added ${batch.here} · ${lost} not added` : `${lost} image${lost === 1 ? "" : "s"} not added`;
       if (msg) showNavToast(msg, null, true);
@@ -723,7 +745,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
   useEffect(() => { const el = containerRef.current; if (el) { el.addEventListener("paste", handlePaste); return () => el.removeEventListener("paste", handlePaste); } }, [handlePaste]);
 
   // ── OS file drop: image files dropped on the editor slide panel ──
-  // Only a drag of allowlisted raster files is taken here; anything else (a deck
+  // Only a drag of image files is taken here; anything else (a deck
   // file) bubbles to the app shell, which loads decks. Never stopPropagation:
   // the shell's drop handler must run to clear its overlay; it sees
   // isDefaultPrevented() and does not load the files as a deck.
@@ -750,13 +772,15 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
     setImageDragRect(null);
     const list = e.dataTransfer?.files;
     if (!list || !list.length) return;
+    // Only a drop of image files is ours. A drop with any other file (a deck
+    // file, also mixed with images) falls through to the shell, which loads the
+    // deck, as its "Drop deck to load" overlay said (dragover was not taken).
+    const all = Array.prototype.slice.call(list);
+    if (!all.every((f) => f && typeof f.type === "string" && f.type.startsWith("image/"))) return;
     // Type, size and count caps run before any file is read (imageDropFiles).
     const { files, rejected } = imageDropFiles(list);
     if (!files.length) {
-      // Nothing usable. A drop of image files only (an SVG, an oversize file) is
-      // still ours and is reported; any other file falls through to the shell.
-      const all = Array.prototype.slice.call(list);
-      if (!all.every((f) => f && typeof f.type === "string" && f.type.startsWith("image/"))) return;
+      // Nothing usable (an SVG, an oversize file): still ours and reported.
       e.preventDefault();
       showNavToast(`${all.length} image${all.length === 1 ? "" : "s"} not added`, null, true);
       return;
@@ -1370,7 +1394,8 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
 
   const isStudent = state?.veraMode === "student";
   // Editor toolbar: the story toggle shows only on a slide with >= 2 images.
-  const editStoryImages = fullscreen ? 0 : storyImageList(slides[slideIndex], false).length;
+  // The Present list (hidden images left out): the toggle shows only when Present can step a story.
+  const editStoryImages = fullscreen ? 0 : storyImageList(slides[slideIndex], true).length;
   const editStoryOn = slides[slideIndex]?.story === true;
 
   // Hidden offscreen host used to measure a slide's layout without disturbing the

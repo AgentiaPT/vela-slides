@@ -2356,6 +2356,24 @@ function imageDropFiles(fileList) {
   return { files, rejected };
 }
 
+// Deck-wide 1-based number of the slide at `index` of module `moduleId`, when
+// that module's slide list is `slides`: the number the on-slide badge shows
+// (visible slides only, all modules before it counted). Used by the image
+// overflow notice ("on new slide N"). `slides` can differ from the module's
+// list in `lanes` (a slide not yet inserted).
+function deckSlideNumber(lanes, moduleId, slides, index) {
+  let n = 0;
+  for (const l of (lanes || [])) {
+    for (const item of (l.items || [])) {
+      if (item.id === moduleId) {
+        return n + (slides || []).slice(0, Math.max(0, index)).filter((s) => !s.hidden).length + 1;
+      }
+      n += (item.slides || []).filter((s) => !s.hidden).length;
+    }
+  }
+  return index + 1;
+}
+
 // Bounded cache of image aspect ratios keyed by the (data:) src, filled by the
 // slide renderer via imageAspect() so bestImageGridCols() has aspects to work with.
 const IMAGE_ASPECT_CACHE = new Map();

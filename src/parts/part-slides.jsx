@@ -736,8 +736,9 @@ function PresenterView({ current, next, index, total, duration, elapsed, brandin
         <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 8, minWidth: 180, maxWidth: 320 }}>
           <div style={{ fontFamily: FONT.mono, fontSize: 10, color: "#64748b", letterSpacing: "0.05em" }}>NEXT ▸{nextInSlide && <span data-testid="presenter-next-story"> {nextStoryLabel}</span>}</div>
           <div data-testid="presenter-next" style={{ borderRadius: 8, overflow: "hidden", border: "1px solid rgba(255,255,255,0.15)", opacity: 0.85 }}>
-            {nextInSlide ? <GalleryThumb key="next-story" slide={current} slideIdx={index} total={total} branding={branding} story={nextStory} />
-              : next ? <GalleryThumb slide={next} slideIdx={index + 1} total={total} branding={branding} /> : <div style={{ aspectRatio: "16/9", display: "flex", alignItems: "center", justifyContent: "center", color: "#64748b", fontFamily: FONT.mono, fontSize: 13, background: "rgba(255,255,255,0.03)", borderRadius: 8 }}>End</div>}
+            {/* One key for both NEXT thumbs: no remount (shimmer) when the story ends. */}
+            {nextInSlide ? <GalleryThumb key="next" slide={current} slideIdx={index} total={total} branding={branding} story={nextStory} />
+              : next ? <GalleryThumb key="next" slide={next} slideIdx={index + 1} total={total} branding={branding} /> : <div style={{ aspectRatio: "16/9", display: "flex", alignItems: "center", justifyContent: "center", color: "#64748b", fontFamily: FONT.mono, fontSize: 13, background: "rgba(255,255,255,0.03)", borderRadius: 8 }}>End</div>}
           </div>
         </div>
       </div>

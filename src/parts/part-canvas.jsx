@@ -122,10 +122,12 @@ function StoryZoomLayer({ items, story, animate, onJump, onZoomOut, hostRef, pad
   if (!item) return null;
   const live = zoomed;
   return (
-    <div data-story-layer="" onClick={live && onZoomOut ? (e) => { e.stopPropagation(); onZoomOut(); } : undefined}
+    <div data-story-layer="" role="group" aria-label={`Image ${displayK} of ${n}`} onClick={live && onZoomOut ? (e) => { e.stopPropagation(); onZoomOut(); } : undefined}
       style={{ position: "absolute", inset: 0, padding: pad, boxSizing: "border-box", zIndex: 4, display: "flex", flexDirection: "row", gap: 8, cursor: live && onZoomOut ? "zoom-out" : "default", pointerEvents: live ? "auto" : "none" }}>
       <div ref={boxRef} data-story-image="" style={{ flex: 1, minWidth: 0, minHeight: 0, position: "relative" }}>
-        <img key={displayK} ref={imgRef} src={item.src} alt={item.alt} draggable={false} style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "contain", display: "block" }} />
+        <img key={displayK} ref={imgRef} src={item.src} alt={item.alt || `Image ${displayK} of ${n}`} draggable={false} style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "contain", display: "block" }} />
+        {/* Screen readers hear the step; no visual change (clipped 1px box). */}
+        <span aria-live="polite" style={{ position: "absolute", width: 1, height: 1, overflow: "hidden", clip: "rect(0 0 0 0)", whiteSpace: "nowrap" }}>{`Image ${displayK} of ${n}`}</span>
       </div>
       <div ref={railRef} data-story-rail="" style={{ width: STORY_RAIL_W + 6, flexShrink: 0, padding: 3, boxSizing: "border-box", display: "flex", flexDirection: "column", justifyContent: "center", gap: 6, minHeight: 0, overflow: "hidden" }}>
         {items.map((it, j) => {
@@ -1035,7 +1037,7 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
             {renderBlocks()}
           </ItemHoverContext.Provider>
         </div>
-        {storyActive && story && <StoryZoomLayer items={storyList} story={story} animate={!!storyAnimate} onJump={onStoryJump} onZoomOut={onStoryZoomOut} hostRef={outerRef} pad={pad} accent={cssColor(slide.accent) || T.accent} />}
+        {storyActive && story && <StoryZoomLayer key={story.key} items={storyList} story={story} animate={!!storyAnimate} onJump={onStoryJump} onZoomOut={onStoryZoomOut} hostRef={outerRef} pad={pad} accent={cssColor(slide.accent) || T.accent} />}
         {/* Slide-level comments (no blockIndex) — top-right */}
         {reviewMode && externalDispatch && (() => {
           const unanchored = slideComments.filter((c) => c.blockIndex == null);

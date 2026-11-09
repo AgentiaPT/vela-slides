@@ -64,24 +64,119 @@ function findUnderlineSpans(s) {
   return spans;
 }
 
+// One inline tokenizer for the slide (parseInline) and the editor HTML
+// (inlineMdToHtml), so the editor shows the same marks as the slide. Returns
+// null (no marks, no links: the line renders as is) or { working, linkTokens,
+// parts }. A part is a string or { text, bold?, italic?, strike?, underline?,
+// tok?, ulg? }: tok = id of the bold/italic/strike token it came from, ulg = id
+// of the ++…++ span it is in. The editor nests its tags from these ids, so its
+// HTML is always well formed: two separate passes of tag regexes could make a
+// pair that crosses another pair, the browser re-nests it, and a blur commit
+// then changes the deck text.
+function inlineLineParts(line) {
+  const hasLink = line.includes("[") && line.includes("](");
+  const hasFmt = line.includes("*") || line.includes("__") || line.includes("~~") || line.includes("++");
+  if (!hasLink && !hasFmt) return null;
+
+  // Pass 1: extract [label](target) link spans into sentinel placeholders
+  let working = line;
+  const linkTokens = [];
+  if (hasLink) {
+    const linkRe = /\[([^\[\]\n]+?)\]\(([^\s\)\n]+?)\)/g;
+    working = line.replace(linkRe, (raw, label, target) => {
+      const idx = linkTokens.length;
+      linkTokens.push({ label, target, raw });
+      return `\u0000LINK${idx}\u0000`;
+    });
+  }
+  if (!hasFmt) return { working, linkTokens, parts: [working] };
+
+  // Pass 2: existing bold/italic/strike tokenizer on the sentinel-bearing string,
+  // plus strict ++underline++ (findUnderlineSpan). Underline is ONE level deep and
+  // combines with the other marks: a ++…++ span's content runs through the
+  // bold/italic/strike tokenizer ("++**x**++"), and a bold/italic/strike token's
+  // text is split into underline spans ("**++x++**"). (Unlike ~~, which does not
+  // nest with the other marks in this renderer.) A line with no strict ++ pair
+  // tokenizes exactly as before.
+  const parts = [];
+  let ids = 0;
+  const re = /(\*\*\*(.+?)\*\*\*|\*\*(.+?)\*\*|\*(.+?)\*|___(.+?)___|__(.+?)__|_(.+?)_|~~(.+?)~~)/g;
+  const toPart = (m) => m[2] ? { text: m[2], bold: true, italic: true }
+    : m[3] ? { text: m[3], bold: true }
+    : m[4] ? { text: m[4], italic: true }
+    : m[5] ? { text: m[5], bold: true, italic: true }
+    : m[6] ? { text: m[6], bold: true }
+    : m[7] ? { text: m[7], italic: true }
+    : m[8] ? { text: m[8], strike: true } : null;
+  const splitUl = (p, out) => {
+    let at = 0;
+    for (const [a, b] of findUnderlineSpans(p.text)) {
+      if (a > at) out.push({ ...p, text: p.text.slice(at, a) });
+      out.push({ ...p, text: p.text.slice(a + 2, b - 2), underline: true });
+      at = b;
+    }
+    if (at === 0) out.push(p);
+    else if (at < p.text.length) out.push({ ...p, text: p.text.slice(at) });
+  };
+  // ul=false for underline content: depth stays one level.
+  const tokenize = (str, ul, out) => {
+    let last = 0, u = null, uDone = !ul;
+    for (;;) {
+      if (!uDone && (!u || u[0] < last)) { u = findUnderlineSpan(str, last); if (!u) uDone = true; }
+      re.lastIndex = last; // the recursive call below reuses `re`
+      const m = re.exec(str);
+      if (u && !uDone && (!m || u[0] < m.index)) {
+        if (u[0] > last) out.push(str.slice(last, u[0]));
+        const inner = [], ulg = ++ids;
+        tokenize(str.slice(u[0] + 2, u[1] - 2), false, inner);
+        for (const q of inner) out.push(typeof q === "string" ? { text: q, underline: true, ulg } : { ...q, underline: true, ulg });
+        last = u[1];
+        continue;
+      }
+      if (!m) break;
+      if (m.index > last) out.push(str.slice(last, m.index));
+      const p = toPart(m);
+      if (p) { p.tok = ++ids; if (ul) splitUl(p, out); else out.push(p); }
+      last = m.index + m[0].length;
+    }
+    if (last < str.length) out.push(str.slice(last));
+  };
+  tokenize(working, working.includes("++"), parts);
+  return { working, linkTokens, parts };
+}
+
 // Markdown inline -> HTML for the contentEditable editor. Escape FIRST, then add
-// only code-generated tags: deck text can never become live markup here (a deck
-// "<u ...>" string stays literal text). Underline runs last, on the escaped
-// string (entities start with "&" and end with ";", so flanking is unchanged).
+// only code-generated tags (no attributes): deck text can never become live
+// markup here (a deck "<u ...>" string stays literal text). The tokens come
+// from the escaped string; an entity starts with "&" and ends with ";", which
+// no mark uses and which flank "++" like the raw "&", "<" and ">", so the marks
+// are the same as parseInline finds in the raw text. Links stay literal text.
 function inlineMdToHtml(t) {
   if (!t) return "";
-  const h = t
-    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
-    .replace(/\*\*\*(.+?)\*\*\*/g, "<strong><em>$1</em></strong>")
-    .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
-    .replace(/\*(.+?)\*/g, "<em>$1</em>")
-    .replace(/___(.+?)___/g, "<strong><em>$1</em></strong>")
-    .replace(/__(.+?)__/g, "<strong>$1</strong>")
-    .replace(/_(.+?)_/g, "<em>$1</em>")
-    .replace(/~~(.+?)~~/g, "<s>$1</s>");
-  let out = "", at = 0;
-  for (const [a, b] of findUnderlineSpans(h)) { out += h.slice(at, a) + "<u>" + h.slice(a + 2, b - 2) + "</u>"; at = b; }
-  return (out + h.slice(at)).replace(/\n/g, "<br>");
+  const h = t.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  return h.split("\n").map((line) => {
+    const lp = inlineLineParts(line);
+    if (!lp) return line;
+    const lit = (x) => x.replace(/\u0000LINK(\d+)\u0000/g, (m, i) => (lp.linkTokens[i] ? lp.linkTokens[i].raw : m));
+    let out = "", ulg = 0, tok = 0, tokClose = "";
+    const endTok = () => { out += tokClose; tok = 0; tokClose = ""; };
+    const endUl = () => { endTok(); if (ulg) out += "</u>"; ulg = 0; };
+    for (const p of lp.parts) {
+      if (typeof p === "string") { endUl(); out += lit(p); continue; }
+      if ((p.ulg || 0) !== ulg) { endUl(); if (p.ulg) { out += "<u>"; ulg = p.ulg; } }
+      if ((p.tok || 0) !== tok) {
+        endTok();
+        if (p.tok) {
+          tok = p.tok;
+          out += (p.bold ? "<strong>" : "") + (p.italic ? "<em>" : "") + (p.strike ? "<s>" : "");
+          tokClose = (p.strike ? "</s>" : "") + (p.italic ? "</em>" : "") + (p.bold ? "</strong>" : "");
+        }
+      }
+      out += p.underline && !p.ulg ? "<u>" + lit(p.text) + "</u>" : lit(p.text);
+    }
+    endUl();
+    return out;
+  }).join("<br>");
 }
 
 // contentEditable HTML -> markdown inline. Only real U elements become ++…++
@@ -201,77 +296,11 @@ function parseInline(text, ctx) {
 
   const parseLine = (line, lineKey) => {
     // Fast path: no link, no formatting → return untouched
-    const hasLink = line.includes("[") && line.includes("](");
-    const hasFmt = line.includes("*") || line.includes("__") || line.includes("~~") || line.includes("++");
-    if (!hasLink && !hasFmt) return line;
+    const lp = inlineLineParts(line);
+    if (!lp) return line;
 
-    // Pass 1: extract [label](target) link spans into sentinel placeholders
-    let working = line;
-    const linkTokens = [];
-    if (hasLink) {
-      const linkRe = /\[([^\[\]\n]+?)\]\(([^\s\)\n]+?)\)/g;
-      working = line.replace(linkRe, (_, label, target) => {
-        const idx = linkTokens.length;
-        linkTokens.push({ label, target });
-        return `\u0000LINK${idx}\u0000`;
-      });
-    }
-
-    // Pass 2: existing bold/italic/strike tokenizer on the sentinel-bearing string,
-    // plus strict ++underline++ (findUnderlineSpan). Underline is ONE level deep and
-    // combines with the other marks: a ++…++ span's content runs through the
-    // bold/italic/strike tokenizer ("++**x**++"), and a bold/italic/strike token's
-    // text is split into underline spans ("**++x++**"). (Unlike ~~, which does not
-    // nest with the other marks in this renderer.) A line with no strict ++ pair
-    // tokenizes exactly as before.
-    if (!hasFmt && linkTokens.length === 0) return working;
-    const parts = [];
-    if (hasFmt) {
-      const re = /(\*\*\*(.+?)\*\*\*|\*\*(.+?)\*\*|\*(.+?)\*|___(.+?)___|__(.+?)__|_(.+?)_|~~(.+?)~~)/g;
-      const toPart = (m) => m[2] ? { text: m[2], bold: true, italic: true }
-        : m[3] ? { text: m[3], bold: true }
-        : m[4] ? { text: m[4], italic: true }
-        : m[5] ? { text: m[5], bold: true, italic: true }
-        : m[6] ? { text: m[6], bold: true }
-        : m[7] ? { text: m[7], italic: true }
-        : m[8] ? { text: m[8], strike: true } : null;
-      const splitUl = (p, out) => {
-        let at = 0;
-        for (const [a, b] of findUnderlineSpans(p.text)) {
-          if (a > at) out.push({ ...p, text: p.text.slice(at, a) });
-          out.push({ ...p, text: p.text.slice(a + 2, b - 2), underline: true });
-          at = b;
-        }
-        if (at === 0) out.push(p);
-        else if (at < p.text.length) out.push({ ...p, text: p.text.slice(at) });
-      };
-      // ul=false for underline content: depth stays one level.
-      const tokenize = (str, ul, out) => {
-        let last = 0, u = null, uDone = !ul;
-        for (;;) {
-          if (!uDone && (!u || u[0] < last)) { u = findUnderlineSpan(str, last); if (!u) uDone = true; }
-          re.lastIndex = last; // the recursive call below reuses `re`
-          const m = re.exec(str);
-          if (u && !uDone && (!m || u[0] < m.index)) {
-            if (u[0] > last) out.push(str.slice(last, u[0]));
-            const inner = [];
-            tokenize(str.slice(u[0] + 2, u[1] - 2), false, inner);
-            for (const q of inner) out.push(typeof q === "string" ? { text: q, underline: true } : { ...q, underline: true });
-            last = u[1];
-            continue;
-          }
-          if (!m) break;
-          if (m.index > last) out.push(str.slice(last, m.index));
-          const p = toPart(m);
-          if (p) { if (ul) splitUl(p, out); else out.push(p); }
-          last = m.index + m[0].length;
-        }
-        if (last < str.length) out.push(str.slice(last));
-      };
-      tokenize(working, working.includes("++"), parts);
-    } else {
-      parts.push(working);
-    }
+    // Pass 1 + 2 (shared with the editor HTML): inlineLineParts.
+    const { working, linkTokens, parts } = lp;
 
     // Pass 3: rehydrate link sentinels inside both plain runs and styled spans
     if (parts.length === 1 && typeof parts[0] === "string" && linkTokens.length === 0) return working;

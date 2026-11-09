@@ -2356,6 +2356,24 @@ function imageDropFiles(fileList) {
   return { files, rejected };
 }
 
+// Deck-wide 1-based number of the slide at `index` of module `moduleId`, when
+// that module's slide list is `slides`: the number the on-slide badge shows
+// (visible slides only, all modules before it counted). Used by the image
+// overflow notice ("on new slide N"). `slides` can differ from the module's
+// list in `lanes` (a slide not yet inserted).
+function deckSlideNumber(lanes, moduleId, slides, index) {
+  let n = 0;
+  for (const l of (lanes || [])) {
+    for (const item of (l.items || [])) {
+      if (item.id === moduleId) {
+        return n + (slides || []).slice(0, Math.max(0, index)).filter((s) => !s.hidden).length + 1;
+      }
+      n += (item.slides || []).filter((s) => !s.hidden).length;
+    }
+  }
+  return index + 1;
+}
+
 // Bounded cache of image aspect ratios keyed by the (data:) src, filled by the
 // slide renderer via imageAspect() so bestImageGridCols() has aspects to work with.
 const IMAGE_ASPECT_CACHE = new Map();
@@ -3078,24 +3096,119 @@ function findUnderlineSpans(s) {
   return spans;
 }
 
+// One inline tokenizer for the slide (parseInline) and the editor HTML
+// (inlineMdToHtml), so the editor shows the same marks as the slide. Returns
+// null (no marks, no links: the line renders as is) or { working, linkTokens,
+// parts }. A part is a string or { text, bold?, italic?, strike?, underline?,
+// tok?, ulg? }: tok = id of the bold/italic/strike token it came from, ulg = id
+// of the ++…++ span it is in. The editor nests its tags from these ids, so its
+// HTML is always well formed: two separate passes of tag regexes could make a
+// pair that crosses another pair, the browser re-nests it, and a blur commit
+// then changes the deck text.
+function inlineLineParts(line) {
+  const hasLink = line.includes("[") && line.includes("](");
+  const hasFmt = line.includes("*") || line.includes("__") || line.includes("~~") || line.includes("++");
+  if (!hasLink && !hasFmt) return null;
+
+  // Pass 1: extract [label](target) link spans into sentinel placeholders
+  let working = line;
+  const linkTokens = [];
+  if (hasLink) {
+    const linkRe = /\[([^\[\]\n]+?)\]\(([^\s\)\n]+?)\)/g;
+    working = line.replace(linkRe, (raw, label, target) => {
+      const idx = linkTokens.length;
+      linkTokens.push({ label, target, raw });
+      return `\u0000LINK${idx}\u0000`;
+    });
+  }
+  if (!hasFmt) return { working, linkTokens, parts: [working] };
+
+  // Pass 2: existing bold/italic/strike tokenizer on the sentinel-bearing string,
+  // plus strict ++underline++ (findUnderlineSpan). Underline is ONE level deep and
+  // combines with the other marks: a ++…++ span's content runs through the
+  // bold/italic/strike tokenizer ("++**x**++"), and a bold/italic/strike token's
+  // text is split into underline spans ("**++x++**"). (Unlike ~~, which does not
+  // nest with the other marks in this renderer.) A line with no strict ++ pair
+  // tokenizes exactly as before.
+  const parts = [];
+  let ids = 0;
+  const re = /(\*\*\*(.+?)\*\*\*|\*\*(.+?)\*\*|\*(.+?)\*|___(.+?)___|__(.+?)__|_(.+?)_|~~(.+?)~~)/g;
+  const toPart = (m) => m[2] ? { text: m[2], bold: true, italic: true }
+    : m[3] ? { text: m[3], bold: true }
+    : m[4] ? { text: m[4], italic: true }
+    : m[5] ? { text: m[5], bold: true, italic: true }
+    : m[6] ? { text: m[6], bold: true }
+    : m[7] ? { text: m[7], italic: true }
+    : m[8] ? { text: m[8], strike: true } : null;
+  const splitUl = (p, out) => {
+    let at = 0;
+    for (const [a, b] of findUnderlineSpans(p.text)) {
+      if (a > at) out.push({ ...p, text: p.text.slice(at, a) });
+      out.push({ ...p, text: p.text.slice(a + 2, b - 2), underline: true });
+      at = b;
+    }
+    if (at === 0) out.push(p);
+    else if (at < p.text.length) out.push({ ...p, text: p.text.slice(at) });
+  };
+  // ul=false for underline content: depth stays one level.
+  const tokenize = (str, ul, out) => {
+    let last = 0, u = null, uDone = !ul;
+    for (;;) {
+      if (!uDone && (!u || u[0] < last)) { u = findUnderlineSpan(str, last); if (!u) uDone = true; }
+      re.lastIndex = last; // the recursive call below reuses `re`
+      const m = re.exec(str);
+      if (u && !uDone && (!m || u[0] < m.index)) {
+        if (u[0] > last) out.push(str.slice(last, u[0]));
+        const inner = [], ulg = ++ids;
+        tokenize(str.slice(u[0] + 2, u[1] - 2), false, inner);
+        for (const q of inner) out.push(typeof q === "string" ? { text: q, underline: true, ulg } : { ...q, underline: true, ulg });
+        last = u[1];
+        continue;
+      }
+      if (!m) break;
+      if (m.index > last) out.push(str.slice(last, m.index));
+      const p = toPart(m);
+      if (p) { p.tok = ++ids; if (ul) splitUl(p, out); else out.push(p); }
+      last = m.index + m[0].length;
+    }
+    if (last < str.length) out.push(str.slice(last));
+  };
+  tokenize(working, working.includes("++"), parts);
+  return { working, linkTokens, parts };
+}
+
 // Markdown inline -> HTML for the contentEditable editor. Escape FIRST, then add
-// only code-generated tags: deck text can never become live markup here (a deck
-// "<u ...>" string stays literal text). Underline runs last, on the escaped
-// string (entities start with "&" and end with ";", so flanking is unchanged).
+// only code-generated tags (no attributes): deck text can never become live
+// markup here (a deck "<u ...>" string stays literal text). The tokens come
+// from the escaped string; an entity starts with "&" and ends with ";", which
+// no mark uses and which flank "++" like the raw "&", "<" and ">", so the marks
+// are the same as parseInline finds in the raw text. Links stay literal text.
 function inlineMdToHtml(t) {
   if (!t) return "";
-  const h = t
-    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
-    .replace(/\*\*\*(.+?)\*\*\*/g, "<strong><em>$1</em></strong>")
-    .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
-    .replace(/\*(.+?)\*/g, "<em>$1</em>")
-    .replace(/___(.+?)___/g, "<strong><em>$1</em></strong>")
-    .replace(/__(.+?)__/g, "<strong>$1</strong>")
-    .replace(/_(.+?)_/g, "<em>$1</em>")
-    .replace(/~~(.+?)~~/g, "<s>$1</s>");
-  let out = "", at = 0;
-  for (const [a, b] of findUnderlineSpans(h)) { out += h.slice(at, a) + "<u>" + h.slice(a + 2, b - 2) + "</u>"; at = b; }
-  return (out + h.slice(at)).replace(/\n/g, "<br>");
+  const h = t.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  return h.split("\n").map((line) => {
+    const lp = inlineLineParts(line);
+    if (!lp) return line;
+    const lit = (x) => x.replace(/\u0000LINK(\d+)\u0000/g, (m, i) => (lp.linkTokens[i] ? lp.linkTokens[i].raw : m));
+    let out = "", ulg = 0, tok = 0, tokClose = "";
+    const endTok = () => { out += tokClose; tok = 0; tokClose = ""; };
+    const endUl = () => { endTok(); if (ulg) out += "</u>"; ulg = 0; };
+    for (const p of lp.parts) {
+      if (typeof p === "string") { endUl(); out += lit(p); continue; }
+      if ((p.ulg || 0) !== ulg) { endUl(); if (p.ulg) { out += "<u>"; ulg = p.ulg; } }
+      if ((p.tok || 0) !== tok) {
+        endTok();
+        if (p.tok) {
+          tok = p.tok;
+          out += (p.bold ? "<strong>" : "") + (p.italic ? "<em>" : "") + (p.strike ? "<s>" : "");
+          tokClose = (p.strike ? "</s>" : "") + (p.italic ? "</em>" : "") + (p.bold ? "</strong>" : "");
+        }
+      }
+      out += p.underline && !p.ulg ? "<u>" + lit(p.text) + "</u>" : lit(p.text);
+    }
+    endUl();
+    return out;
+  }).join("<br>");
 }
 
 // contentEditable HTML -> markdown inline. Only real U elements become ++…++
@@ -3215,77 +3328,11 @@ function parseInline(text, ctx) {
 
   const parseLine = (line, lineKey) => {
     // Fast path: no link, no formatting → return untouched
-    const hasLink = line.includes("[") && line.includes("](");
-    const hasFmt = line.includes("*") || line.includes("__") || line.includes("~~") || line.includes("++");
-    if (!hasLink && !hasFmt) return line;
+    const lp = inlineLineParts(line);
+    if (!lp) return line;
 
-    // Pass 1: extract [label](target) link spans into sentinel placeholders
-    let working = line;
-    const linkTokens = [];
-    if (hasLink) {
-      const linkRe = /\[([^\[\]\n]+?)\]\(([^\s\)\n]+?)\)/g;
-      working = line.replace(linkRe, (_, label, target) => {
-        const idx = linkTokens.length;
-        linkTokens.push({ label, target });
-        return `\u0000LINK${idx}\u0000`;
-      });
-    }
-
-    // Pass 2: existing bold/italic/strike tokenizer on the sentinel-bearing string,
-    // plus strict ++underline++ (findUnderlineSpan). Underline is ONE level deep and
-    // combines with the other marks: a ++…++ span's content runs through the
-    // bold/italic/strike tokenizer ("++**x**++"), and a bold/italic/strike token's
-    // text is split into underline spans ("**++x++**"). (Unlike ~~, which does not
-    // nest with the other marks in this renderer.) A line with no strict ++ pair
-    // tokenizes exactly as before.
-    if (!hasFmt && linkTokens.length === 0) return working;
-    const parts = [];
-    if (hasFmt) {
-      const re = /(\*\*\*(.+?)\*\*\*|\*\*(.+?)\*\*|\*(.+?)\*|___(.+?)___|__(.+?)__|_(.+?)_|~~(.+?)~~)/g;
-      const toPart = (m) => m[2] ? { text: m[2], bold: true, italic: true }
-        : m[3] ? { text: m[3], bold: true }
-        : m[4] ? { text: m[4], italic: true }
-        : m[5] ? { text: m[5], bold: true, italic: true }
-        : m[6] ? { text: m[6], bold: true }
-        : m[7] ? { text: m[7], italic: true }
-        : m[8] ? { text: m[8], strike: true } : null;
-      const splitUl = (p, out) => {
-        let at = 0;
-        for (const [a, b] of findUnderlineSpans(p.text)) {
-          if (a > at) out.push({ ...p, text: p.text.slice(at, a) });
-          out.push({ ...p, text: p.text.slice(a + 2, b - 2), underline: true });
-          at = b;
-        }
-        if (at === 0) out.push(p);
-        else if (at < p.text.length) out.push({ ...p, text: p.text.slice(at) });
-      };
-      // ul=false for underline content: depth stays one level.
-      const tokenize = (str, ul, out) => {
-        let last = 0, u = null, uDone = !ul;
-        for (;;) {
-          if (!uDone && (!u || u[0] < last)) { u = findUnderlineSpan(str, last); if (!u) uDone = true; }
-          re.lastIndex = last; // the recursive call below reuses `re`
-          const m = re.exec(str);
-          if (u && !uDone && (!m || u[0] < m.index)) {
-            if (u[0] > last) out.push(str.slice(last, u[0]));
-            const inner = [];
-            tokenize(str.slice(u[0] + 2, u[1] - 2), false, inner);
-            for (const q of inner) out.push(typeof q === "string" ? { text: q, underline: true } : { ...q, underline: true });
-            last = u[1];
-            continue;
-          }
-          if (!m) break;
-          if (m.index > last) out.push(str.slice(last, m.index));
-          const p = toPart(m);
-          if (p) { if (ul) splitUl(p, out); else out.push(p); }
-          last = m.index + m[0].length;
-        }
-        if (last < str.length) out.push(str.slice(last));
-      };
-      tokenize(working, working.includes("++"), parts);
-    } else {
-      parts.push(working);
-    }
+    // Pass 1 + 2 (shared with the editor HTML): inlineLineParts.
+    const { working, linkTokens, parts } = lp;
 
     // Pass 3: rehydrate link sentinels inside both plain runs and styled spans
     if (parts.length === 1 && typeof parts[0] === "string" && linkTokens.length === 0) return working;
@@ -5231,10 +5278,12 @@ function StoryZoomLayer({ items, story, animate, onJump, onZoomOut, hostRef, pad
   if (!item) return null;
   const live = zoomed;
   return (
-    <div data-story-layer="" onClick={live && onZoomOut ? (e) => { e.stopPropagation(); onZoomOut(); } : undefined}
+    <div data-story-layer="" role="group" aria-label={`Image ${displayK} of ${n}`} onClick={live && onZoomOut ? (e) => { e.stopPropagation(); onZoomOut(); } : undefined}
       style={{ position: "absolute", inset: 0, padding: pad, boxSizing: "border-box", zIndex: 4, display: "flex", flexDirection: "row", gap: 8, cursor: live && onZoomOut ? "zoom-out" : "default", pointerEvents: live ? "auto" : "none" }}>
       <div ref={boxRef} data-story-image="" style={{ flex: 1, minWidth: 0, minHeight: 0, position: "relative" }}>
-        <img key={displayK} ref={imgRef} src={item.src} alt={item.alt} draggable={false} style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "contain", display: "block" }} />
+        <img key={displayK} ref={imgRef} src={item.src} alt={item.alt || `Image ${displayK} of ${n}`} draggable={false} style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "contain", display: "block" }} />
+        {/* Screen readers hear the step; no visual change (clipped 1px box). */}
+        <span aria-live="polite" style={{ position: "absolute", width: 1, height: 1, overflow: "hidden", clip: "rect(0 0 0 0)", whiteSpace: "nowrap" }}>{`Image ${displayK} of ${n}`}</span>
       </div>
       <div ref={railRef} data-story-rail="" style={{ width: STORY_RAIL_W + 6, flexShrink: 0, padding: 3, boxSizing: "border-box", display: "flex", flexDirection: "column", justifyContent: "center", gap: 6, minHeight: 0, overflow: "hidden" }}>
         {items.map((it, j) => {
@@ -6144,7 +6193,7 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
             {renderBlocks()}
           </ItemHoverContext.Provider>
         </div>
-        {storyActive && story && <StoryZoomLayer items={storyList} story={story} animate={!!storyAnimate} onJump={onStoryJump} onZoomOut={onStoryZoomOut} hostRef={outerRef} pad={pad} accent={cssColor(slide.accent) || T.accent} />}
+        {storyActive && story && <StoryZoomLayer key={story.key} items={storyList} story={story} animate={!!storyAnimate} onJump={onStoryJump} onZoomOut={onStoryZoomOut} hostRef={outerRef} pad={pad} accent={cssColor(slide.accent) || T.accent} />}
         {/* Slide-level comments (no blockIndex) — top-right */}
         {reviewMode && externalDispatch && (() => {
           const unanchored = slideComments.filter((c) => c.blockIndex == null);
@@ -8698,8 +8747,9 @@ function PresenterView({ current, next, index, total, duration, elapsed, brandin
         <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 8, minWidth: 180, maxWidth: 320 }}>
           <div style={{ fontFamily: FONT.mono, fontSize: 10, color: "#64748b", letterSpacing: "0.05em" }}>NEXT ▸{nextInSlide && <span data-testid="presenter-next-story"> {nextStoryLabel}</span>}</div>
           <div data-testid="presenter-next" style={{ borderRadius: 8, overflow: "hidden", border: "1px solid rgba(255,255,255,0.15)", opacity: 0.85 }}>
-            {nextInSlide ? <GalleryThumb key="next-story" slide={current} slideIdx={index} total={total} branding={branding} story={nextStory} />
-              : next ? <GalleryThumb slide={next} slideIdx={index + 1} total={total} branding={branding} /> : <div style={{ aspectRatio: "16/9", display: "flex", alignItems: "center", justifyContent: "center", color: "#64748b", fontFamily: FONT.mono, fontSize: 13, background: "rgba(255,255,255,0.03)", borderRadius: 8 }}>End</div>}
+            {/* One key for both NEXT thumbs: no remount (shimmer) when the story ends. */}
+            {nextInSlide ? <GalleryThumb key="next" slide={current} slideIdx={index} total={total} branding={branding} story={nextStory} />
+              : next ? <GalleryThumb key="next" slide={next} slideIdx={index + 1} total={total} branding={branding} /> : <div style={{ aspectRatio: "16/9", display: "flex", alignItems: "center", justifyContent: "center", color: "#64748b", fontFamily: FONT.mono, fontSize: 13, background: "rgba(255,255,255,0.03)", borderRadius: 8 }}>End</div>}
           </div>
         </div>
       </div>
@@ -9391,12 +9441,14 @@ function ViewSwitch({ mode, onSet, disabled, compact, onDark, testid = "view-swi
   </div>;
 }
 
-// True when a drag carries only files of the drop allowlist (IMAGE_DROP_MIME).
+// True when a drag carries only image files (any image/* type, an SVG too).
+// Such a drag is an image drop, never a deck load. Only IMAGE_DROP_MIME types
+// are added: imageDropFiles() counts the others as not added.
 // Reads item kind/type only (a file name is not exposed during a drag).
 function dragHasOnlyImageFiles(dt) {
   if (!dt || !dt.types || !Array.prototype.includes.call(dt.types, "Files")) return false;
   const items = dt.items ? Array.prototype.slice.call(dt.items) : [];
-  return items.length > 0 && items.every((it) => !!it && it.kind === "file" && typeof it.type === "string" && IMAGE_DROP_MIME.has(it.type));
+  return items.length > 0 && items.every((it) => !!it && it.kind === "file" && typeof it.type === "string" && it.type.startsWith("image/"));
 }
 
 function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, branding, guidelines, isMobile, fontScale, actionsRef, onRibbonUpdate }) {
@@ -9435,7 +9487,24 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
   const storyList = useMemo(() => storyImageList(storySlide, true), [storySlide]);
   const storyN = storyList.length;
   const storyOn = fullscreen && state?.veraMode !== "student" && storyIsActive(storySlide, storyList);
-  const storyKey = `${state._deckEpoch}|${concept.id}|${slideIndex}|${fullscreen ? 1 : 0}`;
+  // Slide identity for the story key, so a different slide at the same
+  // position (reorder, insert, delete) starts fresh. An edit makes a new object
+  // for the same slide: a new object takes the id of the object it replaced at
+  // that index (that object left the list). Undo/redo bring back an object that
+  // already has the id. Objects that only moved keep their own id.
+  const storyIdsRef = useRef({ ids: new WeakMap(), next: 1, prev: [] });
+  const storySlideId = useMemo(() => {
+    const r = storyIdsRef.current, cur = presSlides || [];
+    const inList = new Set(cur);
+    cur.forEach((s, i) => {
+      if (!s || typeof s !== "object" || r.ids.has(s)) return;
+      const old = r.prev[i];
+      r.ids.set(s, old && !inList.has(old) && r.ids.has(old) ? r.ids.get(old) : r.next++);
+    });
+    r.prev = cur;
+    return (storySlide && typeof storySlide === "object" && r.ids.get(storySlide)) || 0;
+  }, [presSlides, storySlide]);
+  const storyKey = `${state._deckEpoch}|${concept.id}|${slideIndex}|${storySlideId}|${fullscreen ? 1 : 0}`;
   // -1 only while a back step (arrow, wheel, swipe) is about to land: a story
   // slide reached that way opens on its last image. Every other entry is forward.
   const storyEnterDirRef = useRef(1);
@@ -9457,7 +9526,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
   }
   useEffect(() => { storyEnterDirRef.current = 1; }, [storyKey]);
   const storyCur = storyOn && storyRaw && storyRaw.key === storyKey ? storyRaw : null;
-  const story = useMemo(() => storyCur ? { k: Math.min(storyCur.k, storyN), zoomed: storyCur.zoomed } : undefined, [storyCur, storyN]);
+  const story = useMemo(() => storyCur ? { k: Math.min(storyCur.k, storyN), zoomed: storyCur.zoomed, key: storyCur.key } : undefined, [storyCur, storyN]);
   const storyLive = () => {
     const s = storyLiveRef.current;
     return storyOn && s && s.key === storyKey ? { k: Math.min(s.k, storyN), zoomed: s.zoomed } : null;
@@ -9832,7 +9901,8 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       toggleBatchEdit: () => improving ? stopAll() : setShowImproveInput((v) => !v),
       toggleTiming: () => estimating ? stopEstimate() : setShowTimingScope((v) => !v),
       setPreviewRatio,
-      showToast: (msg) => showNavToast(msg, null),
+      // editor: true shows the editor notice (the plain toast renders only in Present).
+      showToast: (msg, editor) => showNavToast(msg, null, editor),
       present: () => { stopAll(); dispatch({ type: "SET_FULLSCREEN", value: true }); },
       getLayoutStats: () => computeSlideLayoutStats(slideRef.current),
       // CR13: view state read by the top-bar view switcher (editor|presenter|gallery).
@@ -9923,7 +9993,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
   // resolves null and is skipped (never stored as the original bytes).
   const compressImageStrict = (dataUrl) => compressImage(dataUrl, IMG_SETTINGS.maxWidth, IMG_SETTINGS.quality, { strict: true });
   // One paste or one drop. Counts what happened to its images for one notice.
-  const newImageBatch = (kind) => ({ kind, epoch: deckEpochRef.current, here: 0, spill: 0, spillAt: -1, spilled: false, failed: 0, dropped: 0, rejected: 0 });
+  const newImageBatch = (kind) => ({ kind, epoch: deckEpochRef.current, here: 0, spill: 0, spillNum: 0, spilled: false, failed: 0, dropped: 0, rejected: 0 });
   // Queue one image (getData() resolves the re-encoded data URL, or null).
   const enqueueImage = useCallback((getData, batch) => {
     // Capture the target now. The image work below is async: the user can
@@ -9994,7 +10064,9 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       if (curImgs >= PASTE_MAX_IMAGES) {
         dispatch({ type: "INSERT_SLIDES", id: moduleId, index: at + 1, slides: [{ blocks: [{ type: "image", src: compressed }], ...(cur.story === true ? { story: true } : {}) }] });
         if (onScreen()) dispatch({ type: "SET_SLIDE_INDEX", index: at + 1 });
-        batch.spill++; batch.spilled = true; if (batch.spillAt < 0) batch.spillAt = at + 1;
+        batch.spill++; batch.spilled = true;
+        // The deck-wide number, as the slide badge shows it (not the index in this module).
+        if (!batch.spillNum) batch.spillNum = deckSlideNumber(lanesRef.current, moduleId, before, at + 1);
         await settle(cur, before, compressed); return;
       }
       const patch = { blocks: [...(cur.blocks || []), { type: "image", src: compressed }] };
@@ -10040,7 +10112,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       if (deckEpochRef.current !== batch.epoch) return;
       const lost = batch.failed + batch.rejected + (batch.kind === "drop" ? batch.dropped : 0);
       let msg = null;
-      if (batch.spill > 0) msg = `Added ${batch.here} here · ${batch.spill} on new slide ${batch.spillAt + 1}` + (lost > 0 ? ` · ${lost} not added` : "");
+      if (batch.spill > 0) msg = `Added ${batch.here} here · ${batch.spill} on new slide ${batch.spillNum}` + (lost > 0 ? ` · ${lost} not added` : "");
       else if (lost > 0 && batch.kind === "paste") msg = "This image could not be pasted";
       else if (lost > 0) msg = batch.here > 0 ? `Added ${batch.here} · ${lost} not added` : `${lost} image${lost === 1 ? "" : "s"} not added`;
       if (msg) showNavToast(msg, null, true);
@@ -10088,7 +10160,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
   useEffect(() => { const el = containerRef.current; if (el) { el.addEventListener("paste", handlePaste); return () => el.removeEventListener("paste", handlePaste); } }, [handlePaste]);
 
   // ── OS file drop: image files dropped on the editor slide panel ──
-  // Only a drag of allowlisted raster files is taken here; anything else (a deck
+  // Only a drag of image files is taken here; anything else (a deck
   // file) bubbles to the app shell, which loads decks. Never stopPropagation:
   // the shell's drop handler must run to clear its overlay; it sees
   // isDefaultPrevented() and does not load the files as a deck.
@@ -10115,13 +10187,15 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
     setImageDragRect(null);
     const list = e.dataTransfer?.files;
     if (!list || !list.length) return;
+    // Only a drop of image files is ours. A drop with any other file (a deck
+    // file, also mixed with images) falls through to the shell, which loads the
+    // deck, as its "Drop deck to load" overlay said (dragover was not taken).
+    const all = Array.prototype.slice.call(list);
+    if (!all.every((f) => f && typeof f.type === "string" && f.type.startsWith("image/"))) return;
     // Type, size and count caps run before any file is read (imageDropFiles).
     const { files, rejected } = imageDropFiles(list);
     if (!files.length) {
-      // Nothing usable. A drop of image files only (an SVG, an oversize file) is
-      // still ours and is reported; any other file falls through to the shell.
-      const all = Array.prototype.slice.call(list);
-      if (!all.every((f) => f && typeof f.type === "string" && f.type.startsWith("image/"))) return;
+      // Nothing usable (an SVG, an oversize file): still ours and reported.
       e.preventDefault();
       showNavToast(`${all.length} image${all.length === 1 ? "" : "s"} not added`, null, true);
       return;
@@ -10735,7 +10809,8 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
 
   const isStudent = state?.veraMode === "student";
   // Editor toolbar: the story toggle shows only on a slide with >= 2 images.
-  const editStoryImages = fullscreen ? 0 : storyImageList(slides[slideIndex], false).length;
+  // The Present list (hidden images left out): the toggle shows only when Present can step a story.
+  const editStoryImages = fullscreen ? 0 : storyImageList(slides[slideIndex], true).length;
   const editStoryOn = slides[slideIndex]?.story === true;
 
   // Hidden offscreen host used to measure a slide's layout without disturbing the
@@ -29090,8 +29165,9 @@ export default function App() {
   const handleGlobalDragOver = useCallback((e) => { const taken = e.isDefaultPrevented(); e.preventDefault(); e.dataTransfer.dropEffect = "copy"; setFileDragTaken(taken); }, []);
   // A drop a child took (images added to a slide) must not also load as a deck.
   const handleGlobalDrop = useCallback((e) => { const taken = e.isDefaultPrevented(); e.preventDefault(); e.stopPropagation(); dragCountRef.current = 0; setFileDragOver(false); setFileDragTaken(false); if (taken) return;
-    // Present has no slide to drop on: an images-only drop is told so, never loaded as a deck.
-    if (fullscreenRef.current && dragHasOnlyImageFiles(e.dataTransfer)) { slideActionsRef.current?.showToast?.("Exit Present to add images"); return; }
+    // An images-only drop that no slide took (Present, or the editor outside the
+    // slide panel) is told so, never loaded as a deck.
+    if (dragHasOnlyImageFiles(e.dataTransfer)) { slideActionsRef.current?.showToast?.(fullscreenRef.current ? "Exit Present to add images" : "Drop images on the slide to add them", !fullscreenRef.current); return; }
     const file = e.dataTransfer?.files?.[0]; if (file) loadDeckFile(file); }, [loadDeckFile]);
 
   // Title editing
