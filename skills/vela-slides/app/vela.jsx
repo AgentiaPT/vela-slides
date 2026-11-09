@@ -140,7 +140,7 @@ const velaClipboardReadSlides = async () => {
 
 const VELA_VERSION = "13.77";
 const VELA_CHANGELOG = [
-  { v: "13.77", d: ["Two-column slides: edits to a column block (link, text, hide, delete) are saved; before, they were lost.", "Link boxes accept a bare domain (example.com) or an email address; before, these were saved as an empty link.", "Desktop: outside edits to decks up to 50 MB now reload live (was 5 MB).", "Present: Esc exits fullscreen, also inside Claude.ai artifacts.", "Esc closes the gallery, presenter view, image zoom or an open dialog first.", "Present toolbar: removed the duplicate gallery icon; presenter view uses a notes icon.", "Image zoom fills the window again (it was limited to the scaled slide).", "Zoom: arrow keys step through the images on the slide; past the first or last image they close the zoom.", "Present toolbar stays faint until you point at it."] },
+  { v: "13.77", d: ["Two-column slides: edits to a column block (link, text, hide, delete) are saved; before, they were lost.", "Link boxes accept a bare domain (example.com) or an email address; before, these were saved as an empty link.", "Desktop: outside edits to decks up to 50 MB now reload live (was 5 MB).", "Present: Esc exits fullscreen, also inside Claude.ai artifacts.", "Esc closes the gallery, presenter view, image zoom or an open dialog first.", "Present toolbar: removed the duplicate gallery icon; presenter view uses a notes icon.", "Image zoom fills the window again (it was limited to the scaled slide).", "Zoom: arrow keys step through the images on the slide; past the first or last image they close the zoom.", "Present toolbar stays faint until you point at it.", "Editor: Ctrl+E toggles the TOC (as in present mode); [ also works with AltGr keyboards."] },
   { v: "13.76", d: ["TOC: dragging a slide or section near the list edge auto-scrolls the list.", "TOC: moving a slide to a section in an earlier lane no longer loses the slide.", "Images: a pasted image on an empty slide fills the slide, not one half.", "Images: grids pick rows and columns by image aspect ratio.", "Images: solo and wide images fill the free slide area.", "Images: images shrink to fit, so text below an image stays on the slide.", "Editing: all text in checklist, comparison, matrix, number-row, progress and flow blocks is editable inline.", "Checklist: type a status name to change the status; custom status labels survive compact/turbo formats."] },
   { v: "13.75", d: ["Editor: mark slides reviewed (✓); Review cycle makes arrow keys skip reviewed slides.", "View switch (editor | presenter | gallery) next to Present.", "Gallery: hide/unhide a slide beside delete; TOC: delete icon on slide rows (undoable).", "Fullscreen nav icons stay visible on any slide background.", "Branding: right-side settings pane; accent line removable at 0px.", "Block toolbar stays visible on full-bleed images; link badges sit right after the text.", "Vector PDF: € and other WinAnsi symbols render as text at correct size.", "validate: reports a gradient in solid-color bg fields (use bgGradient).", "Opening or switching a deck keeps lane/module ids.", "Desktop: window title shows the deck title; keyboard works after alt-tab; AI agents detected on first start; HTML export fixed."] },
   { v: "13.74", d: ["Security: CLI output now neutralizes terminal control sequences in deck text (CWE-150 class), closing a display-spoofing channel.", "Security: the machine-readable --json output is fully escaped for the same class.", "Added one canonical output encoder, a CI gate keeping every CLI output path routed through it, and regression tests."] },
@@ -16889,7 +16889,7 @@ uiSuite("Link box input normalization", [
   { name: "bare domain, email and host:port get a scheme; unsafe schemes stay rejected", fn: async () => {
     const cases = [
       ["example.com", "https://example.com/"], ["  www.example.com/a ", "https://www.example.com/a"],
-      ["me@example.com", "mailto:me@example.com"], ["localhost:3000/x", "https://localhost:3000/x"],
+      ["me@example.com", "mailto:me@example.com"], ["example.com:8080/x", "https://example.com:8080/x"],
       ["https://example.org/p", "https://example.org/p"], ["", undefined], ["   ", undefined],
       ["javascript:alert(1)", undefined], ["data:text/html,x", undefined], ["\\\\host\\share", undefined],
     ];
@@ -16899,6 +16899,20 @@ uiSuite("Link box input normalization", [
     }
   }},
 ]);
+
+uiSuite("Editor TOC toggle keys", [
+  { name: "Ctrl+E and AltGr+[ toggle the TOC in the editor", fn: async () => {
+    try { document.activeElement?.blur?.(); } catch {}
+    const tocShown = () => _$$(".concept-row").length > 0;
+    if (!tocShown()) throw new Error("TOC not shown at start");
+    for (const [key, opts, label] of [["e", { ctrlKey: true }, "Ctrl+E"], ["[", { ctrlKey: true, altKey: true }, "AltGr+["]]) {
+      _key(key, opts);
+      await _waitFor(() => !tocShown(), 2000).catch(() => { throw new Error(label + " did not hide the TOC"); });
+      _key(key, opts);
+      await _waitFor(tocShown, 2000).catch(() => { throw new Error(label + " did not show the TOC again"); });
+    }
+  }},
+], { setup: _selectFirstModule });
 
 uiSuite("Cols layout block edits", [
   { name: "a link added to a right-column block is saved on that block", fn: async () => {
@@ -25190,7 +25204,7 @@ function ShortcutHelp({ onClose }) {
       ["Space", "Next slide (same as →)"],
       ["↑ ↓", "Previous / next module"],
       ["", "Auto-crosses lane boundaries"],
-      ["[", "Toggle navigator panel"],
+      ["[ / Ctrl+E", "Toggle navigator panel"],
       ["G", "Toggle gallery view"],
     ]},
     { title: "Presentation", items: [
@@ -26324,13 +26338,20 @@ export default function App() {
     prevSelectedRef.current = state.selectedId;
   }, [state.selectedId, isMobile]);
 
-  // TOC toggle shortcut: [
+  // TOC toggle shortcuts: [ (not while typing) and Ctrl/Cmd+E (editor only —
+  // in fullscreen, PresenterTOC owns Ctrl+E). AltGr arrives as Ctrl+Alt, and
+  // PT/ES/DE layouts need AltGr for "[", so Ctrl+Alt+[ still counts as "[".
   useEffect(() => {
     if (isMobile) return;
-    const h = (e) => { if (e.key === "[" && !e.ctrlKey && !e.metaKey && !["INPUT","TEXTAREA","SELECT"].includes(e.target.tagName) && !e.target.isContentEditable) { e.preventDefault(); setTocCollapsed((c) => !c); } };
+    const h = (e) => {
+      const typing = ["INPUT","TEXTAREA","SELECT"].includes(e.target.tagName) || e.target.isContentEditable;
+      const bracket = e.key === "[" && !e.metaKey && (!e.ctrlKey || e.altKey) && !typing;
+      const ctrlE = (e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && (e.key === "e" || e.key === "E") && !state.fullscreen;
+      if (bracket || ctrlE) { e.preventDefault(); setTocCollapsed((c) => !c); }
+    };
     window.addEventListener("keydown", h);
     return () => window.removeEventListener("keydown", h);
-  }, [isMobile]);
+  }, [isMobile, state.fullscreen]);
 
   // Theme toggle shortcut: D
   useEffect(() => {

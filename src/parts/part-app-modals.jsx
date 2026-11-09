@@ -568,7 +568,7 @@ function ShortcutHelp({ onClose }) {
       ["Space", "Next slide (same as →)"],
       ["↑ ↓", "Previous / next module"],
       ["", "Auto-crosses lane boundaries"],
-      ["[", "Toggle navigator panel"],
+      ["[ / Ctrl+E", "Toggle navigator panel"],
       ["G", "Toggle gallery view"],
     ]},
     { title: "Presentation", items: [

@@ -606,13 +606,20 @@ export default function App() {
     prevSelectedRef.current = state.selectedId;
   }, [state.selectedId, isMobile]);
 
-  // TOC toggle shortcut: [
+  // TOC toggle shortcuts: [ (not while typing) and Ctrl/Cmd+E (editor only —
+  // in fullscreen, PresenterTOC owns Ctrl+E). AltGr arrives as Ctrl+Alt, and
+  // PT/ES/DE layouts need AltGr for "[", so Ctrl+Alt+[ still counts as "[".
   useEffect(() => {
     if (isMobile) return;
-    const h = (e) => { if (e.key === "[" && !e.ctrlKey && !e.metaKey && !["INPUT","TEXTAREA","SELECT"].includes(e.target.tagName) && !e.target.isContentEditable) { e.preventDefault(); setTocCollapsed((c) => !c); } };
+    const h = (e) => {
+      const typing = ["INPUT","TEXTAREA","SELECT"].includes(e.target.tagName) || e.target.isContentEditable;
+      const bracket = e.key === "[" && !e.metaKey && (!e.ctrlKey || e.altKey) && !typing;
+      const ctrlE = (e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && (e.key === "e" || e.key === "E") && !state.fullscreen;
+      if (bracket || ctrlE) { e.preventDefault(); setTocCollapsed((c) => !c); }
+    };
     window.addEventListener("keydown", h);
     return () => window.removeEventListener("keydown", h);
-  }, [isMobile]);
+  }, [isMobile, state.fullscreen]);
 
   // Theme toggle shortcut: D
   useEffect(() => {

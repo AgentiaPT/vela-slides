@@ -2515,7 +2515,7 @@ uiSuite("Link box input normalization", [
   { name: "bare domain, email and host:port get a scheme; unsafe schemes stay rejected", fn: async () => {
     const cases = [
       ["example.com", "https://example.com/"], ["  www.example.com/a ", "https://www.example.com/a"],
-      ["me@example.com", "mailto:me@example.com"], ["localhost:3000/x", "https://localhost:3000/x"],
+      ["me@example.com", "mailto:me@example.com"], ["example.com:8080/x", "https://example.com:8080/x"],
       ["https://example.org/p", "https://example.org/p"], ["", undefined], ["   ", undefined],
       ["javascript:alert(1)", undefined], ["data:text/html,x", undefined], ["\\\\host\\share", undefined],
     ];
@@ -2525,6 +2525,20 @@ uiSuite("Link box input normalization", [
     }
   }},
 ]);
+
+uiSuite("Editor TOC toggle keys", [
+  { name: "Ctrl+E and AltGr+[ toggle the TOC in the editor", fn: async () => {
+    try { document.activeElement?.blur?.(); } catch {}
+    const tocShown = () => _$$(".concept-row").length > 0;
+    if (!tocShown()) throw new Error("TOC not shown at start");
+    for (const [key, opts, label] of [["e", { ctrlKey: true }, "Ctrl+E"], ["[", { ctrlKey: true, altKey: true }, "AltGr+["]]) {
+      _key(key, opts);
+      await _waitFor(() => !tocShown(), 2000).catch(() => { throw new Error(label + " did not hide the TOC"); });
+      _key(key, opts);
+      await _waitFor(tocShown, 2000).catch(() => { throw new Error(label + " did not show the TOC again"); });
+    }
+  }},
+], { setup: _selectFirstModule });
 
 uiSuite("Cols layout block edits", [
   { name: "a link added to a right-column block is saved on that block", fn: async () => {
