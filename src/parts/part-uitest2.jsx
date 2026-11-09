@@ -4922,6 +4922,253 @@ uiSuite("present-detour-search", [
   }},
 ], { setup: _selectFirstModule });
 
+// ━━━ Session end (v13.80): sanitizer, pace math, deck ingress ━━━━━━━
+const _SS_T0 = 1700000000000;
+const _ssEq = (got, want, what) => { const g = JSON.stringify(got), w = JSON.stringify(want); if (g !== w) throw new Error(`${what}: got ${g}, want ${w}`); };
+const _ssNoNaN = (o, what) => { for (const [k, v] of Object.entries(o || {})) if (typeof v === "number" && !Number.isFinite(v)) throw new Error(`${what}: ${k} = ${v}`); };
+const _ssSeq = (durs) => durs.map((d, i) => ({ s: { duration: d }, num: i + 1, itemId: "m", rawIdx: i }));
+const _ssSes = (lenSec) => ({ start: _SS_T0, end: _SS_T0 + lenSec * 1000 });
+
+uiSuite("session-sanitizer", [
+  { name: "SS1: valid sessions are accepted as fresh 2-key objects; extra keys are dropped", fn: async () => {
+    _ssEq(sanitizeSession({ start: _SS_T0, end: _SS_T0 + 60000 }), { start: _SS_T0, end: _SS_T0 + 60000 }, "1 min");
+    _ssEq(sanitizeSession({ start: _SS_T0, end: _SS_T0 + 86400000 }), { start: _SS_T0, end: _SS_T0 + 86400000 }, "24 h");
+    const raw = { start: _SS_T0, end: _SS_T0 + 600000, x: 1, _private: true, style: "color:red" };
+    const out = sanitizeSession(raw);
+    _ssEq(Object.keys(out), ["start", "end"], "keys");
+    if (out === raw) throw new Error("result is the raw object, not a fresh one");
+    _ssEq(sanitizeSession({ start: SESSION_EPOCH_MIN, end: SESSION_EPOCH_MIN + 60000 }), { start: SESSION_EPOCH_MIN, end: SESSION_EPOCH_MIN + 60000 }, "epoch min");
+    _ssEq(sanitizeSession({ start: SESSION_EPOCH_MAX - 60000, end: SESSION_EPOCH_MAX }), { start: SESSION_EPOCH_MAX - 60000, end: SESSION_EPOCH_MAX }, "epoch max");
+  }},
+  { name: "SS2: every malformed value is rejected (null, never coerced)", fn: async () => {
+    const T = _SS_T0, E = T + 600000;
+    const bad = [
+      ["null", null], ["undefined", undefined], ["array", [T, E]], ["array with props", Object.assign([], { start: T, end: E })],
+      ["string", "x"], ["number", 5], ["true", true], ["function", Object.assign(() => 0, { start: T, end: E })], ["{}", {}],
+      ["missing end", { start: T }], ["missing start", { end: E }],
+      ["numeric string start", { start: String(T), end: E }], ["numeric string end", { start: T, end: String(E) }],
+      ["bool start", { start: true, end: E }], ["float start", { start: T + 0.5, end: E }], ["float end", { start: T, end: E + 0.5 }],
+      ["NaN", { start: NaN, end: E }], ["Infinity end", { start: T, end: Infinity }], ["-Infinity start", { start: -Infinity, end: E }],
+      ["1e300", { start: T, end: 1e300 }], ["negative", { start: -1, end: E }], ["unsafe integer", { start: T, end: 2 ** 53 }],
+      ["Number object", { start: new Number(T), end: E }], ["null start", { start: null, end: E }],
+      ["end == start", { start: T, end: T }], ["end < start", { start: E, end: T }],
+      ["length 59999", { start: T, end: T + 59999 }], ["length 86400001", { start: T, end: T + 86400001 }],
+      ["start before 2000", { start: SESSION_EPOCH_MIN - 1, end: SESSION_EPOCH_MIN + 60000 }],
+      ["end after 2100", { start: SESSION_EPOCH_MAX - 60000, end: SESSION_EPOCH_MAX + 1 }],
+      ["inherited start/end", Object.create({ start: T, end: E })],
+      ["inherited end only", Object.assign(Object.create({ end: E }), { start: T })],
+    ];
+    for (const [label, v] of bad) { const r = sanitizeSession(v); if (r !== null) throw new Error(`${label} accepted: ${JSON.stringify(r)}`); }
+  }},
+  { name: "SS3: getters are read once; the checked value is the stored value", fn: async () => {
+    let rs = 0, re = 0;
+    const g = {};
+    Object.defineProperty(g, "start", { enumerable: true, get: () => (++rs === 1 ? _SS_T0 : "x") });
+    Object.defineProperty(g, "end", { enumerable: true, get: () => (++re === 1 ? _SS_T0 + 60000 : 1e300) });
+    const out = sanitizeSession(g);
+    if (rs !== 1 || re !== 1) throw new Error(`getter reads: start ${rs}, end ${re}`);
+    _ssEq(out, { start: _SS_T0, end: _SS_T0 + 60000 }, "getter result");
+    let n = 0;
+    const h = {};
+    Object.defineProperty(h, "start", { get: () => (++n === 1 ? "1700000000000" : _SS_T0) });
+    Object.defineProperty(h, "end", { get: () => _SS_T0 + 60000 });
+    if (sanitizeSession(h) !== null) throw new Error("getter that first returns a string was accepted");
+  }},
+  { name: "SS4: liveSession treats a session as not set from end + 3 h + 1 ms", fn: async () => {
+    const s = _ssSes(600);
+    if (!liveSession(s, s.start - 86400000)) throw new Error("future session not live");
+    if (!liveSession(s, s.end + SESSION_STALE_MS)) throw new Error("end + 3 h not live");
+    if (liveSession(s, s.end + SESSION_STALE_MS + 1) !== null) throw new Error("end + 3 h + 1 ms still live");
+    if (liveSession({ start: "x", end: 1 }, s.start) !== null) throw new Error("invalid session live");
+    if (liveSession(s, NaN) !== null) throw new Error("NaN now gave a live session");
+  }},
+  { name: "SS5: SET_SESSION re-sanitizes; invalid and unchanged values return the same state", fn: async () => {
+    const st = { ...init, session: null };
+    const valid = { start: _SS_T0, end: _SS_T0 + 600000, evil: 1 };
+    const s1 = innerReducer(st, { type: "SET_SESSION", session: valid });
+    _ssEq(s1.session, { start: _SS_T0, end: _SS_T0 + 600000 }, "set");
+    if (innerReducer(s1, { type: "SET_SESSION", session: { start: "1", end: 2 } }) !== s1) throw new Error("invalid payload changed state");
+    if (innerReducer(s1, { type: "SET_SESSION", session: { start: _SS_T0, end: _SS_T0 + 600000 } }) !== s1) throw new Error("unchanged payload changed state");
+    if (innerReducer(st, { type: "SET_SESSION", session: null }) !== st) throw new Error("null on null changed state");
+    const s2 = innerReducer(s1, { type: "SET_SESSION", session: null });
+    if (s2.session !== null) throw new Error("null did not clear");
+  }},
+]);
+
+uiSuite("session-pace-math", [
+  { name: "SP1: verdict thresholds at delta 61 / 60 / -60 / -61 / -180 / -181", fn: async () => {
+    // est [60,60,60,820] = need 1000 s at idx 0, onSlide 0; a 2000 s session keeps
+    // every row inside the session (have = 1000 + delta > 0); now = end - have.
+    const est = sessionEstimates(_ssSeq([60, 60, 60, 820]));
+    const at = (delta) => { const ses = _ssSes(2000); const have = 1000 + delta; return computeSessionPace(est, 0, 0, ses, ses.end - have * 1000); };
+    const rows = [[61, "green", "1:01 ahead · you can slow down"], [60, "white", "on pace"], [0, "white", "on pace"], [-60, "white", "on pace"],
+      [-61, "amber", "1:01 behind · speed up"], [-180, "amber", "3:00 behind · speed up"], [-181, "red", "3:01 behind · speed up"]];
+    for (const [d, key, text] of rows) {
+      const p = at(d);
+      if (p.delta !== d) throw new Error(`delta ${d}: got ${p.delta}`);
+      if (p.paceKey !== key || p.verdict !== text) throw new Error(`delta ${d}: ${p.paceKey} "${p.verdict}"`);
+      _ssNoNaN(p, `delta ${d}`);
+    }
+  }},
+  { name: "SP2: before start, over, onSlideSec, fractions and shouldIdx", fn: async () => {
+    const est = sessionEstimates(_ssSeq([60, 60, 60]));
+    const ses = _ssSes(180);
+    const b = computeSessionPace(est, 0, 0, ses, ses.start - 60000);
+    if (!b.before || b.over || b.verdict !== "starts in 1:00" || b.timeLeftSec !== 180 || b.elapsedFrac !== 0 || b.delta !== 0) throw new Error(`before: ${JSON.stringify(b)}`);
+    const o = computeSessionPace(est, 2, 0, ses, ses.end + 10000);
+    if (!o.over || o.paceKey !== "red" || o.timeLeftKey !== "red" || o.verdict !== "+0:10 over · wrap up" || o.timeLeftSec !== 10 || o.elapsedFrac !== 1) throw new Error(`over: ${JSON.stringify(o)}`);
+    const m = computeSessionPace(est, 1, 30, ses, ses.start + 90000);
+    if (m.need !== 90 || m.have !== 90 || m.paceKey !== "white") throw new Error(`mid: ${JSON.stringify(m)}`);
+    const f = computeSessionPace(est, 0, 500, ses, ses.start);
+    if (f.need !== 120) throw new Error(`onSlideSec floor: need ${f.need}`);
+    if (computeSessionPace(est, 0, -50, ses, ses.start).need !== 180) throw new Error("negative onSlideSec changed need");
+    // shouldIdx: t = total - have; first k with cumulative est > t.
+    const sAt = (sec) => computeSessionPace(est, 0, 0, ses, ses.start + sec * 1000).shouldIdx;
+    _ssEq([sAt(0), sAt(59), sAt(60), sAt(119), sAt(120), sAt(180)], [0, 0, 1, 1, 2, 2], "shouldIdx");
+    _ssEq(computeSessionPace(est, 0, 0, ses, ses.end + 999999).shouldIdx, 2, "shouldIdx over");
+    const big = computeSessionPace(est, 0, 0, _ssSes(3600), _SS_T0);
+    if (big.shouldFrac !== 0 || big.youFrac !== 0) throw new Error(`fracs clamp low: ${big.shouldFrac} ${big.youFrac}`);
+    const late = computeSessionPace(est, 2, 0, ses, ses.end + 5000);
+    if (late.shouldFrac !== 1 || !(late.youFrac >= 0 && late.youFrac <= 1)) throw new Error(`fracs clamp high: ${late.shouldFrac} ${late.youFrac}`);
+    if (computeSessionPace(est, 0, 0, { start: "x", end: 1 }, _SS_T0) !== null) throw new Error("invalid session gave a pace");
+  }},
+  { name: "SP3: timeLeftKey: white, amber at 75 % elapsed, red at 5 min left", fn: async () => {
+    const est = sessionEstimates(_ssSeq([60]));
+    const ses = _ssSes(3600);
+    _ssEq(computeSessionPace(est, 0, 0, ses, ses.start + 60000).timeLeftKey, "white", "early");
+    _ssEq(computeSessionPace(est, 0, 0, ses, ses.start + 2700000).timeLeftKey, "amber", "75 %");
+    _ssEq(computeSessionPace(est, 0, 0, ses, ses.end - 300000).timeLeftKey, "red", "5 min left");
+    _ssEq(computeSessionPace(est, 0, 0, ses, ses.start - 1).timeLeftKey, "white", "before start");
+  }},
+  { name: "SP4: estimates: deck average for missing durations, fallback 60 s, bad durations count as missing", fn: async () => {
+    const a = sessionEstimates(_ssSeq([30, undefined, 90, "60", NaN, -5, Infinity, 0]));
+    _ssEq(a, { est: [30, 60, 90, 60, 60, 60, 60, 60], total: 480, estimated: 6 }, "average rule");
+    _ssEq(sessionEstimates(_ssSeq([undefined, null])), { est: [60, 60], total: 120, estimated: 2 }, "fallback 60");
+    _ssEq(sessionEstimates(_ssSeq([999999])), { est: [86400], total: 86400, estimated: 0 }, "cap");
+    _ssEq(sessionEstimates([]), { est: [], total: 0, estimated: 0 }, "empty");
+    _ssEq(sessionEstimates(null), { est: [], total: 0, estimated: 0 }, "null");
+    _ssEq(sessionEstimates([null, { s: null }]), { est: [60, 60], total: 120, estimated: 2 }, "broken entries");
+  }},
+  { name: "SP5: presentSequence numbering, hidden slides and the collapsed lane rule; sessionSeqIndex", fn: async () => {
+    const lanes = [
+      { title: "A", items: [{ id: "a1", slides: [{ duration: 10 }, { hidden: true }, { duration: 20 }] }] },
+      { title: "B", collapsed: true, items: [{ id: "b1", slides: [{}, {}] }, { id: "b2", slides: [{}] }] },
+      { title: "C", items: [{ id: "c1", slides: [{ hidden: true }] }, { id: "c2", slides: [{}] }] },
+    ];
+    const seq = presentSequence(lanes, "a1");
+    _ssEq(seq.map((e) => [e.num, e.itemId, e.rawIdx]), [[1, "a1", 0], [2, "a1", 2], [6, "c2", 0]], "collapsed lane skipped");
+    if (seq[0].s !== lanes[0].items[0].slides[0]) throw new Error("entry.s is not the slide");
+    const keep = presentSequence(lanes, "b2");
+    _ssEq(keep.map((e) => [e.num, e.itemId, e.rawIdx]), [[1, "a1", 0], [2, "a1", 2], [3, "b1", 0], [4, "b1", 1], [5, "b2", 0], [6, "c2", 0]], "lane of keepItemId kept");
+    _ssEq(sessionEstimates(seq).est, [10, 20, 15], "estimates read entry.s.duration");
+    _ssEq([sessionSeqIndex(seq, "a1", 0), sessionSeqIndex(seq, "a1", 1), sessionSeqIndex(seq, "a1", 2), sessionSeqIndex(seq, "a1", 9)], [0, 0, 1, 1], "largest rawIdx <= given");
+    _ssEq(sessionSeqIndex(seq, "a1", -1), 0, "title card -> first entry of item");
+    _ssEq(sessionSeqIndex(seq, "c2", -1), 2, "title card of later item");
+    _ssEq(sessionSeqIndex(seq, "c1", 0), 2, "item with no entry -> entries before it");
+    _ssEq(sessionSeqIndex(seq, "b1", 0), 2, "collapsed item -> entries before it");
+    _ssEq(sessionSeqIndex(seq, "zz", 0), 0, "unknown item");
+    _ssEq(sessionSeqIndex(seq, "a1", NaN), 0, "NaN rawIdx");
+    _ssEq(sessionSeqIndex([], "a1", 0), 0, "empty seq");
+    _ssEq(sessionSeqIndex(null, "a1", 0), 0, "null seq");
+    const tail = presentSequence([{ items: [{ id: "x", slides: [{}] }, { id: "y", slides: [{ hidden: true }] }] }], null);
+    _ssEq(sessionSeqIndex(tail, "y", 0), 0, "trailing item with no entry clamps to last index");
+    _ssEq(presentSequence(null, null).length, 0, "null lanes");
+    _ssEq(presentSequence([null, { items: null }, { items: [null, { id: "q", slides: [null, {}] }] }], null).map((e) => [e.num, e.rawIdx]), [[1, 1]], "broken lanes");
+  }},
+  { name: "SP6: no NaN / Infinity in any field for edge inputs", fn: async () => {
+    const e3 = sessionEstimates(_ssSeq([60, 60, 60]));
+    const ses = _ssSes(600);
+    const rows = [
+      ["empty seq", { est: [], total: 0 }, 0, 0, ses.start + 1000],
+      ["total 0", { est: [0, 0], total: 0 }, 1, 0, ses.start + 1000],
+      ["wrong total", { est: [60], total: NaN }, 0, 0, ses.start],
+      ["est junk", { est: [NaN, Infinity, -5, "9", 1e308] }, 0, 0, ses.start],
+      ["no estimates object", null, 0, 0, ses.start],
+      ["huge onSlideSec", e3, 0, 1e308, ses.start + 1000],
+      ["Infinity onSlideSec", e3, 0, Infinity, ses.start + 1000],
+      ["NaN onSlideSec", e3, 0, NaN, ses.start + 1000],
+      ["NaN idx", e3, NaN, 0, ses.start],
+      ["huge idx", e3, 1e20, 0, ses.start],
+      ["negative idx", e3, -7, 0, ses.start],
+      ["now far before", e3, 0, 0, -8.64e15],
+      ["now far after", e3, 0, 0, 8.64e15],
+      ["now 1e308", e3, 0, 0, 1e308],
+      ["now NaN", e3, 0, 0, NaN],
+      ["now Infinity", e3, 0, 0, Infinity],
+    ];
+    for (const [label, est, idx, on, now] of rows) {
+      const p = computeSessionPace(est, idx, on, ses, now);
+      if (!p) throw new Error(`${label}: null`);
+      _ssNoNaN(p, label);
+      if (!(p.shouldIdx >= 0 && p.shouldIdx <= Math.max(0, (est?.est?.length || 0) - 1))) throw new Error(`${label}: shouldIdx ${p.shouldIdx}`);
+      for (const k of ["shouldFrac", "youFrac", "elapsedFrac"]) if (!(p[k] >= 0 && p[k] <= 1)) throw new Error(`${label}: ${k} ${p[k]}`);
+      if (!SESSION_PACE_COLORS[p.paceKey] || !SESSION_PACE_COLORS[p.timeLeftKey]) throw new Error(`${label}: colour key`);
+      if (/NaN|Infinity|undefined/.test(p.verdict)) throw new Error(`${label}: verdict "${p.verdict}"`);
+    }
+  }},
+  { name: "SP7: fmtCountdown, fmtClock, resolveSessionTimes", fn: async () => {
+    _ssEq([fmtCountdown(0), fmtCountdown(59.9), fmtCountdown(61), fmtCountdown(3600), fmtCountdown(-5), fmtCountdown(NaN), fmtCountdown(Infinity), fmtCountdown("9")], ["0:00", "0:59", "1:01", "1:00:00", "0:00", "0:00", "0:00", "0:00"], "fmtCountdown");
+    if (!/^\d\d:\d\d$/.test(fmtClock(Date.now()))) throw new Error(`fmtClock: ${fmtClock(Date.now())}`);
+    _ssEq([fmtClock(NaN), fmtClock(8.64e15 + 1), fmtClock("x")], ["--:--", "--:--", "--:--"], "fmtClock invalid");
+    const now = new Date(2026, 5, 10, 8, 0).getTime();
+    const len = (r) => (r ? (r.end - r.start) / 60000 : null);
+    _ssEq(len(resolveSessionTimes("09:00", "10:00", now)), 60, "1 h");
+    _ssEq(len(resolveSessionTimes("23:30", "00:15", now)), 45, "next day");
+    _ssEq(len(resolveSessionTimes("09:00", "09:00", now)), 1440, "equal -> 24 h");
+    _ssEq(resolveSessionTimes("09:00", "10:00", now).start, new Date(2026, 5, 10, 9, 0).getTime(), "start on today");
+    for (const [a, b] of [["24:00", "10:00"], ["9:00", "10:00"], ["", "10:00"], ["09:00", null], [900, "10:00"], ["09:00 ", "10:00"]]) {
+      if (resolveSessionTimes(a, b, now) !== null) throw new Error(`accepted ${JSON.stringify([a, b])}`);
+    }
+    if (resolveSessionTimes("09:00", "10:00", NaN) !== null) throw new Error("NaN now accepted");
+  }},
+]);
+
+uiSuite("session-ingress", [
+  { name: "SI1: validateAndSanitizeDeck always returns a session key (value or null)", fn: async () => {
+    const lanes = () => [{ title: "L", items: [{ title: "I", slides: [{ blocks: [] }] }] }];
+    const none = validateAndSanitizeDeck({ lanes: lanes() });
+    if (!Object.prototype.hasOwnProperty.call(none, "session") || none.session !== null) throw new Error("deck without session: key missing or not null");
+    const ok = validateAndSanitizeDeck({ lanes: lanes(), session: { start: _SS_T0, end: _SS_T0 + 600000, x: 1 } });
+    _ssEq(ok.session, { start: _SS_T0, end: _SS_T0 + 600000 }, "valid session");
+    const bad = validateAndSanitizeDeck({ lanes: lanes(), session: { start: "1700000000000", end: _SS_T0 + 600000 } });
+    if (bad.session !== null) throw new Error("hostile session kept");
+  }},
+  { name: "SI2: storage-reload shape: hostile session is dropped; a deck without the key keeps its shape", fn: async () => {
+    const d1 = { lanes: [], session: { start: _SS_T0, end: "x" } };
+    resanitizeLoadedSession(d1);
+    if (d1.session !== null) throw new Error("hostile stored session kept");
+    const d2 = { lanes: [], session: { start: _SS_T0, end: _SS_T0 + 60000, __proto__x: 1 } };
+    resanitizeLoadedSession(d2);
+    _ssEq(d2.session, { start: _SS_T0, end: _SS_T0 + 60000 }, "valid stored session");
+    const d3 = { lanes: [] };
+    resanitizeLoadedSession(d3);
+    if ("session" in d3) throw new Error("key added to a deck without one");
+    for (const v of [null, undefined, "x", 5]) resanitizeLoadedSession(v);
+  }},
+  { name: "SI3: file/export payload carries session only when set", fn: async () => {
+    const base = { deckTitle: "D", lanes: [], branding: {}, guidelines: "" };
+    const p0 = localDeckPayload({ ...base, session: null, chatMessages: [] });
+    _ssEq(Object.keys(p0), ["deckTitle", "lanes", "branding", "guidelines"], "no session");
+    const p1 = localDeckPayload({ ...base, session: { start: _SS_T0, end: _SS_T0 + 60000 } });
+    _ssEq(p1.session, { start: _SS_T0, end: _SS_T0 + 60000 }, "session set");
+    _ssEq(Object.keys(extractSave({ ...init, session: { start: _SS_T0, end: _SS_T0 + 60000 } })).includes("session"), true, "extractSave keeps session");
+  }},
+  { name: "SI4: LOAD of a deck without session clears the session of the previous deck (live state)", fn: async () => {
+    const hooks = _hooks();
+    if (!hooks.setSessionForTest || !hooks.getSessionForTest || !hooks.restoreStartupDeck) throw new Error("session test hooks missing");
+    try {
+      hooks.setSessionForTest({ start: _SS_T0, end: _SS_T0 + 600000 });
+      await _waitFor(() => hooks.getSessionForTest() !== null, 1500).catch(() => { throw new Error("SET_SESSION did not reach state"); });
+      _ssEq(hooks.getDeckStateForTest().session, { start: _SS_T0, end: _SS_T0 + 600000 }, "getDeckStateForTest");
+      hooks.setSessionForTest({ start: _SS_T0, end: _SS_T0 });
+      await _wait(80);
+      _ssEq(hooks.getSessionForTest(), { start: _SS_T0, end: _SS_T0 + 600000 }, "invalid SET_SESSION changed state");
+      if (!hooks.restoreStartupDeck()) throw new Error("startup deck fixture missing");
+      await _waitFor(() => hooks.getSessionForTest() === null, 1500).catch(() => { throw new Error("LOAD kept the session of the previous deck"); });
+    } finally { hooks.setSessionForTest?.(null); }
+  }},
+]);
+
 // ━━━ UI TEST RUNNER COMPONENT ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 // Demo deck guard — UI tests only run against the original demo deck

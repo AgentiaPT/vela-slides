@@ -138,8 +138,9 @@ const velaClipboardReadSlides = async () => {
   return [];
 };
 
-const VELA_VERSION = "13.79";
+const VELA_VERSION = "13.80";
 const VELA_CHANGELOG = [
+  { v: "13.80", d: ["Session end time: set it from the toolbar or the Presenter View.", "Presenter View: clock, time left and pace guidance (ahead / on pace / behind).", "Present: thin pace bar on the slide edge (T hides it)."] },
   { v: "13.79", d: ["Present: Ctrl+E search also matches slide text, with a snippet.", "Present: while typing, search also lists hidden slides and slides in collapsed lanes (a detour).", "Present: after a detour, arrows, wheel or Esc return to the slide you left.", "Present: a detour slide shows no slide number; Presenter view shows where you will return."] },
   { v: "13.78", d: ["Images: up to 10 per slide; overflow goes to a new slide.", "Images: drag image files from your computer onto a slide.", "Images: drag tiles to reorder.", "Story mode: present a slide's images one by one.", "Export: expand story slides to one page per image (PDF/PPTX).", "Text: Ctrl+U underline is saved and shows everywhere (++text++).", "Images: dropped files use the same ordered, safe queue as pasted images.", "Story mode: grid tiles keep a one-line title row, so tiles align.", "Vector PDF: text after bold/italic/underline/link keeps its space and letter spacing.", "Drop: images dropped outside a slide show a hint; a deck file dropped with images still loads.", "Slide toolbar stays on one row; labels change to icons when space is short."] },
   { v: "13.77", d: ["Two-column slides: edits to a column block (link, text, hide, delete) are saved; before, they were lost.", "Link boxes accept a bare domain (example.com) or an email address; before, these were saved as an empty link.", "Desktop: outside edits to decks up to 50 MB now reload live (was 5 MB).", "Present: Esc exits fullscreen, also inside Claude.ai artifacts.", "Esc closes the gallery, presenter view, image zoom or an open dialog first.", "Present toolbar: removed the duplicate gallery icon; presenter view uses a notes icon.", "Image zoom fills the window again (it was limited to the scaled slide).", "Zoom: arrow keys step through the images on the slide; past the first or last image they close the zoom.", "Present toolbar stays faint until you point at it.", "Editor: Ctrl+E toggles the TOC (as in present mode); [ also works with AltGr keyboards."] },
@@ -538,6 +539,37 @@ function sanitizeString(val, maxLen = 500) {
 // capped to a sane title length. (v13.26, F-12)
 function sanitizeDeckTitle(t) {
   return String(t == null ? "" : t).slice(0, 200) || "Untitled";
+}
+
+// Deck-level presentation session { start, end } (epoch ms). Numbers only: the
+// value never reaches a style/URL/DOM sink as a string; the UI formats it in code.
+// Fail closed: any defect drops the WHOLE field (null). Type-check first, never
+// coerce: a numeric string, boolean, float, NaN, Infinity or huge number is out.
+// Own props only, each read once (a getter cannot pass one value to the check
+// and another to the result); the result is a fresh object with exactly 2 keys,
+// so extra keys and prototype tricks never reach state.
+const SESSION_EPOCH_MIN = 946684800000;   // 2000-01-01T00:00:00Z
+const SESSION_EPOCH_MAX = 4102444800000;  // 2100-01-01T00:00:00Z
+const SESSION_LEN_MIN = 60000;            // 1 min
+const SESSION_LEN_MAX = 86400000;         // 24 h
+const SESSION_STALE_MS = 3 * 3600000;     // end + 3 h -> treated as NOT SET in the UI
+function sanitizeSession(raw) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const own = Object.prototype.hasOwnProperty;
+  if (!own.call(raw, "start") || !own.call(raw, "end")) return null;
+  const start = raw.start, end = raw.end;
+  if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end)) return null; // false for non-numbers
+  if (start < SESSION_EPOCH_MIN || end > SESSION_EPOCH_MAX) return null;
+  const len = end - start;
+  if (!(len >= SESSION_LEN_MIN && len <= SESSION_LEN_MAX)) return null;      // also end > start
+  return { start, end };
+}
+// Storage-reload backstop (same rule as resanitizeLoadedBranding): storage is
+// hostile input, so a stored `session` is re-checked. Only touch the key if the
+// stored deck carries one, so a deck without it keeps that exact shape.
+function resanitizeLoadedSession(data) {
+  if (data && typeof data === "object" && "session" in data) data.session = sanitizeSession(data.session);
+  return data;
 }
 
 function sanitizeUrl(url, allowedProtocols = ["http:", "https:", "mailto:"]) {
@@ -1926,7 +1958,9 @@ function adoptPriorDeckIds(sanitized, raw, cur) {
 // signature equals the file's known content is skipped, so opening a deck the
 // user did not change never writes the file (CR01).
 function localDeckPayload(s) {
-  return { deckTitle: s.deckTitle, lanes: s.lanes, branding: s.branding, guidelines: s.guidelines };
+  // `session` only when set: a deck without one writes byte-identical JSON, so the
+  // no-edit guard and existing files stay unchanged.
+  return { deckTitle: s.deckTitle, lanes: s.lanes, branding: s.branding, guidelines: s.guidelines, ...(s.session ? { session: s.session } : {}) };
 }
 
 function validateAndSanitizeDeck(raw, opts) {
@@ -1991,7 +2025,10 @@ function validateAndSanitizeDeck(raw, opts) {
     : "";
   return { lanes, guidelines: importedGuidelines, selectedId: null, slideIndex: 0, fullscreen: VELA_PRESENTATION_MODE, chatOpen: false,
     chatMessages: [{ role: "assistant", content: "Deck imported successfully! Ready to sail. ⛵🖖", ts: now() }],
-    chatLoading: false, lastDebug: "", branding: importedBranding };
+    chatLoading: false, lastDebug: "", branding: importedBranding,
+    // Key ALWAYS present (value or null): LOAD spreads the payload over state,
+    // so a missing key would keep the previous deck's session.
+    session: sanitizeSession(raw.session) };
 }
 
 // ━━━ Image Compression ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -2561,6 +2598,132 @@ const fmtTimeMin = (s) => { if (!s || s <= 0) return ""; const totalMin = Math.r
 const visibleSlides = (slides) => (slides || []).filter((s) => !(s && s.hidden));
 const sumDurations = (slides) => (slides || []).reduce((s, sl) => s + (sl.duration || 0), 0);
 const sumVisibleDurations = (slides) => visibleSlides(slides).reduce((s, sl) => s + (sl.duration || 0), 0);
+// ━━━ Session end: pure pace helpers (v13.80) ━━━━━━━━━━━━━━━━━━━━━━━━
+// All inputs are numbers from sanitizeSession / code; outputs are numbers, static
+// colour keys and code-built strings only. Every helper is total: no throw and no
+// NaN/Infinity output for any input (the UI writes these into text and CSS %).
+// Live session: sanitized and not stale (now <= end + 3 h). Else null.
+const liveSession = (session, now) => { const s = sanitizeSession(session); return s && typeof now === "number" && now <= s.end + SESSION_STALE_MS ? s : null; };
+
+// Present pace sequence: entries { s, num, itemId, rawIdx } in Present order.
+// num = 1-based global visible slide number over ALL lanes (the "Slide i / N"
+// numbering). An entry is in the sequence when the slide is not hidden AND its
+// lane is not collapsed or holds the item `keepItemId` (Present navigation
+// skips collapsed lanes, so their slides are not remaining work).
+// `seq.before` (Map itemId -> count of entries before that item) lets
+// sessionSeqIndex place an item that has no entry.
+const presentSequence = (lanes, keepItemId) => {
+  const out = [], before = new Map();
+  let num = 0;
+  for (const l of (Array.isArray(lanes) ? lanes : [])) {
+    const items = l && Array.isArray(l.items) ? l.items : [];
+    const keep = !(l && l.collapsed) || (keepItemId != null && items.some((it) => it && it.id === keepItemId));
+    for (const it of items) {
+      if (!it) continue;
+      if (!before.has(it.id)) before.set(it.id, out.length);
+      const slides = Array.isArray(it.slides) ? it.slides : [];
+      for (let r = 0; r < slides.length; r++) {
+        const s = slides[r];
+        if (!s || s.hidden) continue;
+        num++;
+        if (keep) out.push({ s, num, itemId: it.id, rawIdx: r });
+      }
+    }
+  }
+  out.before = before;
+  return out;
+};
+
+// Index into seq for the slide at raw index `rawIdx` (Present index minus the
+// title-card offset) of item `itemId`: the item's entry with the largest
+// rawIdx <= rawIdx; else the item's first entry (title card); else, for an item
+// with no entry, the count of entries before it. Clamped to [0, len - 1]; 0 for
+// an empty sequence or an unknown item.
+function sessionSeqIndex(seq, itemId, rawIdx) {
+  const n = Array.isArray(seq) ? seq.length : 0;
+  if (!n) return 0;
+  const r = typeof rawIdx === "number" && !Number.isNaN(rawIdx) ? rawIdx : 0;
+  let best = -1, first = -1;
+  for (let k = 0; k < n; k++) {
+    const e = seq[k];
+    if (!e || e.itemId !== itemId) continue;
+    if (first < 0) first = k;
+    if (e.rawIdx <= r) best = k;
+  }
+  if (best >= 0) return best;
+  if (first >= 0) return first;
+  const b = seq.before instanceof Map ? seq.before.get(itemId) : undefined;
+  return Number.isSafeInteger(b) ? Math.max(0, Math.min(n - 1, b)) : 0;
+}
+
+// Per-slide estimate (s). A usable duration: finite number, > 0, capped at 86400.
+// Missing -> average of usable ones; none usable -> 60.
+const sessionEstimates = (seq) => {
+  const list = Array.isArray(seq) ? seq : [];
+  const ok = (d) => typeof d === "number" && Number.isFinite(d) && d > 0;
+  const dur = (e) => (e && e.s ? e.s.duration : undefined);
+  const have = list.filter((e) => ok(dur(e))).map((e) => Math.min(dur(e), 86400));
+  const avg = have.length ? have.reduce((a, b) => a + b, 0) / have.length : 60;
+  let estimated = 0;
+  const est = list.map((e) => { const d = dur(e); if (ok(d)) return Math.min(d, 86400); estimated++; return avg; });
+  return { est, total: est.reduce((a, b) => a + b, 0), estimated };
+};
+
+const SESSION_PACE_COLORS = { green: "#22c55e", white: "#f8fafc", amber: "#f59e0b", red: "#ef4444" }; // static, code-authored
+
+const pad2 = (n) => String(n).padStart(2, "0");
+const fmtClock = (ms) => { if (typeof ms !== "number" || !Number.isFinite(ms)) return "--:--"; const d = new Date(ms); if (Number.isNaN(d.getTime())) return "--:--"; return `${pad2(d.getHours())}:${pad2(d.getMinutes())}`; }; // local 24 h
+const fmtCountdown = (sec) => { const s = Math.max(0, Math.floor(typeof sec === "number" && Number.isFinite(sec) ? sec : 0)); const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), r = s % 60; return h > 0 ? `${h}:${pad2(m)}:${pad2(r)}` : `${m}:${pad2(r)}`; };
+
+// Pace for seq position `idx` (0-based, clamped), `onSlideSec` on the current
+// slide, a session and `now` (ms). Returns null for an invalid session. The total
+// is recomputed from the (finite, capped) estimates, so no field can be NaN.
+// shouldIdx: 0-based index into seq where the speaker should be now.
+function computeSessionPace(estimates, idx, onSlideSec, session, now) {
+  const ses = sanitizeSession(session);
+  if (!ses) return null;
+  const fin = (x, d) => (typeof x === "number" && Number.isFinite(x) ? x : d);
+  const est = (estimates && Array.isArray(estimates.est) ? estimates.est : []).map((x) => Math.min(86400, Math.max(0, fin(x, 0))));
+  const total = est.reduce((a, b) => a + b, 0);
+  const N = est.length, i = Math.max(0, Math.min(Math.max(0, N - 1), Math.trunc(fin(idx, 0))));
+  const t0 = fin(now, ses.start);
+  const onS = typeof onSlideSec === "number" && onSlideSec > 0 ? onSlideSec : 0; // NaN/negative -> 0; Infinity -> slide done
+  const lenSec = (ses.end - ses.start) / 1000;
+  const before = t0 < ses.start, over = t0 > ses.end;
+  const have = before ? lenSec : (ses.end - t0) / 1000;               // < 0 when over
+  let need = N ? Math.max(0, est[i] - onS) : 0;
+  for (let k = i + 1; k < N; k++) need += est[k];
+  const delta = have - need;
+  const paceKey = over ? "red" : delta > 60 ? "green" : delta >= -60 ? "white" : delta >= -180 ? "amber" : "red";
+  const verdict = over ? `+${fmtCountdown((t0 - ses.end) / 1000)} over · wrap up`
+    : before ? `starts in ${fmtCountdown((ses.start - t0) / 1000)}`
+    : delta > 60 ? `${fmtCountdown(delta)} ahead · you can slow down`
+    : delta >= -60 ? "on pace" : `${fmtCountdown(-delta)} behind · speed up`;
+  const elapsedFrac = before ? 0 : Math.min(1, (t0 - ses.start) / (ses.end - ses.start));
+  const timeLeftSec = over ? (t0 - ses.end) / 1000 : have;            // counts UP when over
+  const timeLeftKey = over || (!before && have <= 300) ? "red" : elapsedFrac >= 0.75 ? "amber" : "white";
+  const clamp01 = (x) => (Number.isFinite(x) ? Math.max(0, Math.min(1, x)) : 0);
+  const shouldFrac = total > 0 ? clamp01((total - have) / total) : 0; // fill end
+  const youFrac = total > 0 ? clamp01((total - need) / total) : 0;    // white tick
+  const t = Math.max(0, Math.min(total, total - have));
+  let shouldIdx = Math.max(0, N - 1), cum = 0;
+  for (let k = 0; k < N; k++) { cum += est[k]; if (cum > t) { shouldIdx = k; break; } }
+  return { need, have, delta, before, over, paceKey, verdict, timeLeftSec, timeLeftKey, elapsedFrac, shouldFrac, youFrac, shouldIdx };
+}
+
+// Dialog: "HH:MM" strings (input type=time) -> { start, end } or null.
+// Both on the local date of `now`; end <= start (time of day) -> next day.
+// new Date(y, m, d+1, hh, mm) keeps local wall time across DST.
+const SESSION_HHMM = /^([01]\d|2[0-3]):([0-5]\d)$/;
+function resolveSessionTimes(startHHMM, endHHMM, now) {
+  const a = SESSION_HHMM.exec(typeof startHHMM === "string" ? startHHMM : ""), b = SESSION_HHMM.exec(typeof endHHMM === "string" ? endHHMM : "");
+  if (!a || !b) return null;
+  const d = new Date(now), sh = +a[1], sm = +a[2], eh = +b[1], em = +b[2];
+  const start = new Date(d.getFullYear(), d.getMonth(), d.getDate(), sh, sm).getTime();
+  const next = eh * 60 + em <= sh * 60 + sm ? 1 : 0;
+  const end = new Date(d.getFullYear(), d.getMonth(), d.getDate() + next, eh, em).getTime();
+  return sanitizeSession({ start, end });   // enforces 1 min .. 24 h, rejects NaN
+}
 const S = {
   btn: (o = {}) => ({ padding: "3px 8px", fontSize: 10, fontFamily: FONT.mono, fontWeight: 700, background: "transparent", border: `1px solid ${T.border}`, borderRadius: 3, color: T.textDim, cursor: "pointer", ...o }),
   primaryBtn: (o = {}) => ({ padding: "4px 10px", fontSize: 10, fontFamily: FONT.mono, fontWeight: 700, background: T.accent, color: "#fff", border: "none", borderRadius: 3, cursor: "pointer", ...o }),
@@ -6220,7 +6383,7 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
 // ModuleList local useState (CR2) so the TOC disclosure keys and the collapsed-header
 // current-slide marker can read/act on it.
 // aiWork (CR5): ephemeral UI signal (which slide Vera is actively editing) — never persisted.
-const init = { deckTitle: "Untitled", guidelines: "", lanes: [], selectedId: null, slideIndex: 0, selectedSlideIndices: [], collapsedSections: [], fullscreen: VELA_PRESENTATION_MODE, fontScale: 1, chatOpen: false, reviewMode: false, commentsPanelOpen: false, chatMessages: [{ role: "assistant", content: "Welcome aboard Vela. Paste your agenda or tell me where we're sailing. ⛵🖖", ts: now() }], chatLoading: false, lastDebug: "", branding: { ...defaultBranding }, veraMode: "editor", teacherHistory: {}, teacherLoading: false, aiWork: null, _deckEpoch: 0 };
+const init = { deckTitle: "Untitled", guidelines: "", lanes: [], selectedId: null, slideIndex: 0, selectedSlideIndices: [], collapsedSections: [], fullscreen: VELA_PRESENTATION_MODE, fontScale: 1, chatOpen: false, reviewMode: false, commentsPanelOpen: false, chatMessages: [{ role: "assistant", content: "Welcome aboard Vela. Paste your agenda or tell me where we're sailing. ⛵🖖", ts: now() }], chatLoading: false, lastDebug: "", branding: { ...defaultBranding }, session: null, veraMode: "editor", teacherHistory: {}, teacherLoading: false, aiWork: null, _deckEpoch: 0 };
 let _activeDeckEpoch = init._deckEpoch;
 const velaPrepareDeckReplacement = () => { _activeDeckEpoch += 1; };
 const velaSyncDeckEpoch = (epoch) => {
@@ -6591,6 +6754,16 @@ function innerReducer(state, a) {
       return { ...state, branding: b };
     }
     case "SET_GUIDELINES": return { ...state, guidelines: a.guidelines };
+    // Session end (deck-level, persisted). Re-sanitized here: third door into the
+    // field. null clears. An invalid non-null payload is a no-op (fail closed, and
+    // returning `state` adds no history step); so does an unchanged value.
+    case "SET_SESSION": {
+      const s = a.session == null ? null : sanitizeSession(a.session);
+      if (a.session != null && !s) return state;
+      const cur = state.session;
+      if ((cur == null && s == null) || (cur && s && cur.start === s.start && cur.end === s.end)) return state;
+      return { ...state, session: s };
+    }
     case "RESET": return { ...init, chatOpen: state.chatOpen, _deckEpoch: nextDeckEpoch(state) };
     case "SET_TITLE": return { ...state, deckTitle: a.title };
     default: return state;
@@ -20515,6 +20688,253 @@ uiSuite("present-detour-search", [
   }},
 ], { setup: _selectFirstModule });
 
+// ━━━ Session end (v13.80): sanitizer, pace math, deck ingress ━━━━━━━
+const _SS_T0 = 1700000000000;
+const _ssEq = (got, want, what) => { const g = JSON.stringify(got), w = JSON.stringify(want); if (g !== w) throw new Error(`${what}: got ${g}, want ${w}`); };
+const _ssNoNaN = (o, what) => { for (const [k, v] of Object.entries(o || {})) if (typeof v === "number" && !Number.isFinite(v)) throw new Error(`${what}: ${k} = ${v}`); };
+const _ssSeq = (durs) => durs.map((d, i) => ({ s: { duration: d }, num: i + 1, itemId: "m", rawIdx: i }));
+const _ssSes = (lenSec) => ({ start: _SS_T0, end: _SS_T0 + lenSec * 1000 });
+
+uiSuite("session-sanitizer", [
+  { name: "SS1: valid sessions are accepted as fresh 2-key objects; extra keys are dropped", fn: async () => {
+    _ssEq(sanitizeSession({ start: _SS_T0, end: _SS_T0 + 60000 }), { start: _SS_T0, end: _SS_T0 + 60000 }, "1 min");
+    _ssEq(sanitizeSession({ start: _SS_T0, end: _SS_T0 + 86400000 }), { start: _SS_T0, end: _SS_T0 + 86400000 }, "24 h");
+    const raw = { start: _SS_T0, end: _SS_T0 + 600000, x: 1, _private: true, style: "color:red" };
+    const out = sanitizeSession(raw);
+    _ssEq(Object.keys(out), ["start", "end"], "keys");
+    if (out === raw) throw new Error("result is the raw object, not a fresh one");
+    _ssEq(sanitizeSession({ start: SESSION_EPOCH_MIN, end: SESSION_EPOCH_MIN + 60000 }), { start: SESSION_EPOCH_MIN, end: SESSION_EPOCH_MIN + 60000 }, "epoch min");
+    _ssEq(sanitizeSession({ start: SESSION_EPOCH_MAX - 60000, end: SESSION_EPOCH_MAX }), { start: SESSION_EPOCH_MAX - 60000, end: SESSION_EPOCH_MAX }, "epoch max");
+  }},
+  { name: "SS2: every malformed value is rejected (null, never coerced)", fn: async () => {
+    const T = _SS_T0, E = T + 600000;
+    const bad = [
+      ["null", null], ["undefined", undefined], ["array", [T, E]], ["array with props", Object.assign([], { start: T, end: E })],
+      ["string", "x"], ["number", 5], ["true", true], ["function", Object.assign(() => 0, { start: T, end: E })], ["{}", {}],
+      ["missing end", { start: T }], ["missing start", { end: E }],
+      ["numeric string start", { start: String(T), end: E }], ["numeric string end", { start: T, end: String(E) }],
+      ["bool start", { start: true, end: E }], ["float start", { start: T + 0.5, end: E }], ["float end", { start: T, end: E + 0.5 }],
+      ["NaN", { start: NaN, end: E }], ["Infinity end", { start: T, end: Infinity }], ["-Infinity start", { start: -Infinity, end: E }],
+      ["1e300", { start: T, end: 1e300 }], ["negative", { start: -1, end: E }], ["unsafe integer", { start: T, end: 2 ** 53 }],
+      ["Number object", { start: new Number(T), end: E }], ["null start", { start: null, end: E }],
+      ["end == start", { start: T, end: T }], ["end < start", { start: E, end: T }],
+      ["length 59999", { start: T, end: T + 59999 }], ["length 86400001", { start: T, end: T + 86400001 }],
+      ["start before 2000", { start: SESSION_EPOCH_MIN - 1, end: SESSION_EPOCH_MIN + 60000 }],
+      ["end after 2100", { start: SESSION_EPOCH_MAX - 60000, end: SESSION_EPOCH_MAX + 1 }],
+      ["inherited start/end", Object.create({ start: T, end: E })],
+      ["inherited end only", Object.assign(Object.create({ end: E }), { start: T })],
+    ];
+    for (const [label, v] of bad) { const r = sanitizeSession(v); if (r !== null) throw new Error(`${label} accepted: ${JSON.stringify(r)}`); }
+  }},
+  { name: "SS3: getters are read once; the checked value is the stored value", fn: async () => {
+    let rs = 0, re = 0;
+    const g = {};
+    Object.defineProperty(g, "start", { enumerable: true, get: () => (++rs === 1 ? _SS_T0 : "x") });
+    Object.defineProperty(g, "end", { enumerable: true, get: () => (++re === 1 ? _SS_T0 + 60000 : 1e300) });
+    const out = sanitizeSession(g);
+    if (rs !== 1 || re !== 1) throw new Error(`getter reads: start ${rs}, end ${re}`);
+    _ssEq(out, { start: _SS_T0, end: _SS_T0 + 60000 }, "getter result");
+    let n = 0;
+    const h = {};
+    Object.defineProperty(h, "start", { get: () => (++n === 1 ? "1700000000000" : _SS_T0) });
+    Object.defineProperty(h, "end", { get: () => _SS_T0 + 60000 });
+    if (sanitizeSession(h) !== null) throw new Error("getter that first returns a string was accepted");
+  }},
+  { name: "SS4: liveSession treats a session as not set from end + 3 h + 1 ms", fn: async () => {
+    const s = _ssSes(600);
+    if (!liveSession(s, s.start - 86400000)) throw new Error("future session not live");
+    if (!liveSession(s, s.end + SESSION_STALE_MS)) throw new Error("end + 3 h not live");
+    if (liveSession(s, s.end + SESSION_STALE_MS + 1) !== null) throw new Error("end + 3 h + 1 ms still live");
+    if (liveSession({ start: "x", end: 1 }, s.start) !== null) throw new Error("invalid session live");
+    if (liveSession(s, NaN) !== null) throw new Error("NaN now gave a live session");
+  }},
+  { name: "SS5: SET_SESSION re-sanitizes; invalid and unchanged values return the same state", fn: async () => {
+    const st = { ...init, session: null };
+    const valid = { start: _SS_T0, end: _SS_T0 + 600000, evil: 1 };
+    const s1 = innerReducer(st, { type: "SET_SESSION", session: valid });
+    _ssEq(s1.session, { start: _SS_T0, end: _SS_T0 + 600000 }, "set");
+    if (innerReducer(s1, { type: "SET_SESSION", session: { start: "1", end: 2 } }) !== s1) throw new Error("invalid payload changed state");
+    if (innerReducer(s1, { type: "SET_SESSION", session: { start: _SS_T0, end: _SS_T0 + 600000 } }) !== s1) throw new Error("unchanged payload changed state");
+    if (innerReducer(st, { type: "SET_SESSION", session: null }) !== st) throw new Error("null on null changed state");
+    const s2 = innerReducer(s1, { type: "SET_SESSION", session: null });
+    if (s2.session !== null) throw new Error("null did not clear");
+  }},
+]);
+
+uiSuite("session-pace-math", [
+  { name: "SP1: verdict thresholds at delta 61 / 60 / -60 / -61 / -180 / -181", fn: async () => {
+    // est [60,60,60,820] = need 1000 s at idx 0, onSlide 0; a 2000 s session keeps
+    // every row inside the session (have = 1000 + delta > 0); now = end - have.
+    const est = sessionEstimates(_ssSeq([60, 60, 60, 820]));
+    const at = (delta) => { const ses = _ssSes(2000); const have = 1000 + delta; return computeSessionPace(est, 0, 0, ses, ses.end - have * 1000); };
+    const rows = [[61, "green", "1:01 ahead · you can slow down"], [60, "white", "on pace"], [0, "white", "on pace"], [-60, "white", "on pace"],
+      [-61, "amber", "1:01 behind · speed up"], [-180, "amber", "3:00 behind · speed up"], [-181, "red", "3:01 behind · speed up"]];
+    for (const [d, key, text] of rows) {
+      const p = at(d);
+      if (p.delta !== d) throw new Error(`delta ${d}: got ${p.delta}`);
+      if (p.paceKey !== key || p.verdict !== text) throw new Error(`delta ${d}: ${p.paceKey} "${p.verdict}"`);
+      _ssNoNaN(p, `delta ${d}`);
+    }
+  }},
+  { name: "SP2: before start, over, onSlideSec, fractions and shouldIdx", fn: async () => {
+    const est = sessionEstimates(_ssSeq([60, 60, 60]));
+    const ses = _ssSes(180);
+    const b = computeSessionPace(est, 0, 0, ses, ses.start - 60000);
+    if (!b.before || b.over || b.verdict !== "starts in 1:00" || b.timeLeftSec !== 180 || b.elapsedFrac !== 0 || b.delta !== 0) throw new Error(`before: ${JSON.stringify(b)}`);
+    const o = computeSessionPace(est, 2, 0, ses, ses.end + 10000);
+    if (!o.over || o.paceKey !== "red" || o.timeLeftKey !== "red" || o.verdict !== "+0:10 over · wrap up" || o.timeLeftSec !== 10 || o.elapsedFrac !== 1) throw new Error(`over: ${JSON.stringify(o)}`);
+    const m = computeSessionPace(est, 1, 30, ses, ses.start + 90000);
+    if (m.need !== 90 || m.have !== 90 || m.paceKey !== "white") throw new Error(`mid: ${JSON.stringify(m)}`);
+    const f = computeSessionPace(est, 0, 500, ses, ses.start);
+    if (f.need !== 120) throw new Error(`onSlideSec floor: need ${f.need}`);
+    if (computeSessionPace(est, 0, -50, ses, ses.start).need !== 180) throw new Error("negative onSlideSec changed need");
+    // shouldIdx: t = total - have; first k with cumulative est > t.
+    const sAt = (sec) => computeSessionPace(est, 0, 0, ses, ses.start + sec * 1000).shouldIdx;
+    _ssEq([sAt(0), sAt(59), sAt(60), sAt(119), sAt(120), sAt(180)], [0, 0, 1, 1, 2, 2], "shouldIdx");
+    _ssEq(computeSessionPace(est, 0, 0, ses, ses.end + 999999).shouldIdx, 2, "shouldIdx over");
+    const big = computeSessionPace(est, 0, 0, _ssSes(3600), _SS_T0);
+    if (big.shouldFrac !== 0 || big.youFrac !== 0) throw new Error(`fracs clamp low: ${big.shouldFrac} ${big.youFrac}`);
+    const late = computeSessionPace(est, 2, 0, ses, ses.end + 5000);
+    if (late.shouldFrac !== 1 || !(late.youFrac >= 0 && late.youFrac <= 1)) throw new Error(`fracs clamp high: ${late.shouldFrac} ${late.youFrac}`);
+    if (computeSessionPace(est, 0, 0, { start: "x", end: 1 }, _SS_T0) !== null) throw new Error("invalid session gave a pace");
+  }},
+  { name: "SP3: timeLeftKey: white, amber at 75 % elapsed, red at 5 min left", fn: async () => {
+    const est = sessionEstimates(_ssSeq([60]));
+    const ses = _ssSes(3600);
+    _ssEq(computeSessionPace(est, 0, 0, ses, ses.start + 60000).timeLeftKey, "white", "early");
+    _ssEq(computeSessionPace(est, 0, 0, ses, ses.start + 2700000).timeLeftKey, "amber", "75 %");
+    _ssEq(computeSessionPace(est, 0, 0, ses, ses.end - 300000).timeLeftKey, "red", "5 min left");
+    _ssEq(computeSessionPace(est, 0, 0, ses, ses.start - 1).timeLeftKey, "white", "before start");
+  }},
+  { name: "SP4: estimates: deck average for missing durations, fallback 60 s, bad durations count as missing", fn: async () => {
+    const a = sessionEstimates(_ssSeq([30, undefined, 90, "60", NaN, -5, Infinity, 0]));
+    _ssEq(a, { est: [30, 60, 90, 60, 60, 60, 60, 60], total: 480, estimated: 6 }, "average rule");
+    _ssEq(sessionEstimates(_ssSeq([undefined, null])), { est: [60, 60], total: 120, estimated: 2 }, "fallback 60");
+    _ssEq(sessionEstimates(_ssSeq([999999])), { est: [86400], total: 86400, estimated: 0 }, "cap");
+    _ssEq(sessionEstimates([]), { est: [], total: 0, estimated: 0 }, "empty");
+    _ssEq(sessionEstimates(null), { est: [], total: 0, estimated: 0 }, "null");
+    _ssEq(sessionEstimates([null, { s: null }]), { est: [60, 60], total: 120, estimated: 2 }, "broken entries");
+  }},
+  { name: "SP5: presentSequence numbering, hidden slides and the collapsed lane rule; sessionSeqIndex", fn: async () => {
+    const lanes = [
+      { title: "A", items: [{ id: "a1", slides: [{ duration: 10 }, { hidden: true }, { duration: 20 }] }] },
+      { title: "B", collapsed: true, items: [{ id: "b1", slides: [{}, {}] }, { id: "b2", slides: [{}] }] },
+      { title: "C", items: [{ id: "c1", slides: [{ hidden: true }] }, { id: "c2", slides: [{}] }] },
+    ];
+    const seq = presentSequence(lanes, "a1");
+    _ssEq(seq.map((e) => [e.num, e.itemId, e.rawIdx]), [[1, "a1", 0], [2, "a1", 2], [6, "c2", 0]], "collapsed lane skipped");
+    if (seq[0].s !== lanes[0].items[0].slides[0]) throw new Error("entry.s is not the slide");
+    const keep = presentSequence(lanes, "b2");
+    _ssEq(keep.map((e) => [e.num, e.itemId, e.rawIdx]), [[1, "a1", 0], [2, "a1", 2], [3, "b1", 0], [4, "b1", 1], [5, "b2", 0], [6, "c2", 0]], "lane of keepItemId kept");
+    _ssEq(sessionEstimates(seq).est, [10, 20, 15], "estimates read entry.s.duration");
+    _ssEq([sessionSeqIndex(seq, "a1", 0), sessionSeqIndex(seq, "a1", 1), sessionSeqIndex(seq, "a1", 2), sessionSeqIndex(seq, "a1", 9)], [0, 0, 1, 1], "largest rawIdx <= given");
+    _ssEq(sessionSeqIndex(seq, "a1", -1), 0, "title card -> first entry of item");
+    _ssEq(sessionSeqIndex(seq, "c2", -1), 2, "title card of later item");
+    _ssEq(sessionSeqIndex(seq, "c1", 0), 2, "item with no entry -> entries before it");
+    _ssEq(sessionSeqIndex(seq, "b1", 0), 2, "collapsed item -> entries before it");
+    _ssEq(sessionSeqIndex(seq, "zz", 0), 0, "unknown item");
+    _ssEq(sessionSeqIndex(seq, "a1", NaN), 0, "NaN rawIdx");
+    _ssEq(sessionSeqIndex([], "a1", 0), 0, "empty seq");
+    _ssEq(sessionSeqIndex(null, "a1", 0), 0, "null seq");
+    const tail = presentSequence([{ items: [{ id: "x", slides: [{}] }, { id: "y", slides: [{ hidden: true }] }] }], null);
+    _ssEq(sessionSeqIndex(tail, "y", 0), 0, "trailing item with no entry clamps to last index");
+    _ssEq(presentSequence(null, null).length, 0, "null lanes");
+    _ssEq(presentSequence([null, { items: null }, { items: [null, { id: "q", slides: [null, {}] }] }], null).map((e) => [e.num, e.rawIdx]), [[1, 1]], "broken lanes");
+  }},
+  { name: "SP6: no NaN / Infinity in any field for edge inputs", fn: async () => {
+    const e3 = sessionEstimates(_ssSeq([60, 60, 60]));
+    const ses = _ssSes(600);
+    const rows = [
+      ["empty seq", { est: [], total: 0 }, 0, 0, ses.start + 1000],
+      ["total 0", { est: [0, 0], total: 0 }, 1, 0, ses.start + 1000],
+      ["wrong total", { est: [60], total: NaN }, 0, 0, ses.start],
+      ["est junk", { est: [NaN, Infinity, -5, "9", 1e308] }, 0, 0, ses.start],
+      ["no estimates object", null, 0, 0, ses.start],
+      ["huge onSlideSec", e3, 0, 1e308, ses.start + 1000],
+      ["Infinity onSlideSec", e3, 0, Infinity, ses.start + 1000],
+      ["NaN onSlideSec", e3, 0, NaN, ses.start + 1000],
+      ["NaN idx", e3, NaN, 0, ses.start],
+      ["huge idx", e3, 1e20, 0, ses.start],
+      ["negative idx", e3, -7, 0, ses.start],
+      ["now far before", e3, 0, 0, -8.64e15],
+      ["now far after", e3, 0, 0, 8.64e15],
+      ["now 1e308", e3, 0, 0, 1e308],
+      ["now NaN", e3, 0, 0, NaN],
+      ["now Infinity", e3, 0, 0, Infinity],
+    ];
+    for (const [label, est, idx, on, now] of rows) {
+      const p = computeSessionPace(est, idx, on, ses, now);
+      if (!p) throw new Error(`${label}: null`);
+      _ssNoNaN(p, label);
+      if (!(p.shouldIdx >= 0 && p.shouldIdx <= Math.max(0, (est?.est?.length || 0) - 1))) throw new Error(`${label}: shouldIdx ${p.shouldIdx}`);
+      for (const k of ["shouldFrac", "youFrac", "elapsedFrac"]) if (!(p[k] >= 0 && p[k] <= 1)) throw new Error(`${label}: ${k} ${p[k]}`);
+      if (!SESSION_PACE_COLORS[p.paceKey] || !SESSION_PACE_COLORS[p.timeLeftKey]) throw new Error(`${label}: colour key`);
+      if (/NaN|Infinity|undefined/.test(p.verdict)) throw new Error(`${label}: verdict "${p.verdict}"`);
+    }
+  }},
+  { name: "SP7: fmtCountdown, fmtClock, resolveSessionTimes", fn: async () => {
+    _ssEq([fmtCountdown(0), fmtCountdown(59.9), fmtCountdown(61), fmtCountdown(3600), fmtCountdown(-5), fmtCountdown(NaN), fmtCountdown(Infinity), fmtCountdown("9")], ["0:00", "0:59", "1:01", "1:00:00", "0:00", "0:00", "0:00", "0:00"], "fmtCountdown");
+    if (!/^\d\d:\d\d$/.test(fmtClock(Date.now()))) throw new Error(`fmtClock: ${fmtClock(Date.now())}`);
+    _ssEq([fmtClock(NaN), fmtClock(8.64e15 + 1), fmtClock("x")], ["--:--", "--:--", "--:--"], "fmtClock invalid");
+    const now = new Date(2026, 5, 10, 8, 0).getTime();
+    const len = (r) => (r ? (r.end - r.start) / 60000 : null);
+    _ssEq(len(resolveSessionTimes("09:00", "10:00", now)), 60, "1 h");
+    _ssEq(len(resolveSessionTimes("23:30", "00:15", now)), 45, "next day");
+    _ssEq(len(resolveSessionTimes("09:00", "09:00", now)), 1440, "equal -> 24 h");
+    _ssEq(resolveSessionTimes("09:00", "10:00", now).start, new Date(2026, 5, 10, 9, 0).getTime(), "start on today");
+    for (const [a, b] of [["24:00", "10:00"], ["9:00", "10:00"], ["", "10:00"], ["09:00", null], [900, "10:00"], ["09:00 ", "10:00"]]) {
+      if (resolveSessionTimes(a, b, now) !== null) throw new Error(`accepted ${JSON.stringify([a, b])}`);
+    }
+    if (resolveSessionTimes("09:00", "10:00", NaN) !== null) throw new Error("NaN now accepted");
+  }},
+]);
+
+uiSuite("session-ingress", [
+  { name: "SI1: validateAndSanitizeDeck always returns a session key (value or null)", fn: async () => {
+    const lanes = () => [{ title: "L", items: [{ title: "I", slides: [{ blocks: [] }] }] }];
+    const none = validateAndSanitizeDeck({ lanes: lanes() });
+    if (!Object.prototype.hasOwnProperty.call(none, "session") || none.session !== null) throw new Error("deck without session: key missing or not null");
+    const ok = validateAndSanitizeDeck({ lanes: lanes(), session: { start: _SS_T0, end: _SS_T0 + 600000, x: 1 } });
+    _ssEq(ok.session, { start: _SS_T0, end: _SS_T0 + 600000 }, "valid session");
+    const bad = validateAndSanitizeDeck({ lanes: lanes(), session: { start: "1700000000000", end: _SS_T0 + 600000 } });
+    if (bad.session !== null) throw new Error("hostile session kept");
+  }},
+  { name: "SI2: storage-reload shape: hostile session is dropped; a deck without the key keeps its shape", fn: async () => {
+    const d1 = { lanes: [], session: { start: _SS_T0, end: "x" } };
+    resanitizeLoadedSession(d1);
+    if (d1.session !== null) throw new Error("hostile stored session kept");
+    const d2 = { lanes: [], session: { start: _SS_T0, end: _SS_T0 + 60000, __proto__x: 1 } };
+    resanitizeLoadedSession(d2);
+    _ssEq(d2.session, { start: _SS_T0, end: _SS_T0 + 60000 }, "valid stored session");
+    const d3 = { lanes: [] };
+    resanitizeLoadedSession(d3);
+    if ("session" in d3) throw new Error("key added to a deck without one");
+    for (const v of [null, undefined, "x", 5]) resanitizeLoadedSession(v);
+  }},
+  { name: "SI3: file/export payload carries session only when set", fn: async () => {
+    const base = { deckTitle: "D", lanes: [], branding: {}, guidelines: "" };
+    const p0 = localDeckPayload({ ...base, session: null, chatMessages: [] });
+    _ssEq(Object.keys(p0), ["deckTitle", "lanes", "branding", "guidelines"], "no session");
+    const p1 = localDeckPayload({ ...base, session: { start: _SS_T0, end: _SS_T0 + 60000 } });
+    _ssEq(p1.session, { start: _SS_T0, end: _SS_T0 + 60000 }, "session set");
+    _ssEq(Object.keys(extractSave({ ...init, session: { start: _SS_T0, end: _SS_T0 + 60000 } })).includes("session"), true, "extractSave keeps session");
+  }},
+  { name: "SI4: LOAD of a deck without session clears the session of the previous deck (live state)", fn: async () => {
+    const hooks = _hooks();
+    if (!hooks.setSessionForTest || !hooks.getSessionForTest || !hooks.restoreStartupDeck) throw new Error("session test hooks missing");
+    try {
+      hooks.setSessionForTest({ start: _SS_T0, end: _SS_T0 + 600000 });
+      await _waitFor(() => hooks.getSessionForTest() !== null, 1500).catch(() => { throw new Error("SET_SESSION did not reach state"); });
+      _ssEq(hooks.getDeckStateForTest().session, { start: _SS_T0, end: _SS_T0 + 600000 }, "getDeckStateForTest");
+      hooks.setSessionForTest({ start: _SS_T0, end: _SS_T0 });
+      await _wait(80);
+      _ssEq(hooks.getSessionForTest(), { start: _SS_T0, end: _SS_T0 + 600000 }, "invalid SET_SESSION changed state");
+      if (!hooks.restoreStartupDeck()) throw new Error("startup deck fixture missing");
+      await _waitFor(() => hooks.getSessionForTest() === null, 1500).catch(() => { throw new Error("LOAD kept the session of the previous deck"); });
+    } finally { hooks.setSessionForTest?.(null); }
+  }},
+]);
+
 // ━━━ UI TEST RUNNER COMPONENT ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 // Demo deck guard — UI tests only run against the original demo deck
@@ -26151,6 +26571,7 @@ function StandaloneHtmlModal({ state, onClose }) {
       const deck = { deckTitle, lanes: save.lanes || [] };
       if (save.branding) deck.branding = save.branding;
       if (save.guidelines) deck.guidelines = save.guidelines;
+      if (save.session) deck.session = save.session;
       const html = buildStandaloneHtml(jsxSource, deck, { footer, babel: window.Babel });
       const safeTitle = deckTitle.replace(/[^a-zA-Z0-9_-]/g, "-").replace(/-{2,}/g, "-").slice(0, 60) || "vela-deck";
       const blob = new Blob([html], { type: "text/html;charset=utf-8" });
@@ -28876,6 +29297,7 @@ export default function App() {
         return s ? {
           deckTitle: s.deckTitle,
           guidelines: s.guidelines,
+          session: s.session ?? null,
           firstLaneTitle: firstLane?.title || null,
           firstItemId: firstItem?.id || null,
           firstItemTitle: firstItem?.title || null,
@@ -28932,6 +29354,8 @@ export default function App() {
       newDeckForTest: () => dispatch({ type: "NEW_DECK", title: "Tour interruption", prompt: "", images: [] }),
       getGuidelinesForTest: () => _localSyncState.current?.guidelines || "",
       setGuidelinesForTest: (value) => dispatch({ type: "SET_GUIDELINES", guidelines: value }),
+      getSessionForTest: () => _localSyncState.current?.session ?? null,
+      setSessionForTest: (v) => dispatch({ type: "SET_SESSION", session: v }),
       capturePostDemoFlushForTest: () => {
         const current = _localSyncState.current;
         return current ? {
@@ -28975,7 +29399,7 @@ export default function App() {
         document.documentElement.dataset.velaDemoRunning === "true") return;
     localSyncTimer.current = setTimeout(() => flushLocalStateRef.current?.(null), 600);
     return () => clearTimeout(localSyncTimer.current);
-  }, [state.lanes, state.branding, state.deckTitle, state.guidelines]);
+  }, [state.lanes, state.branding, state.deckTitle, state.guidelines, state.session]);
 
   // Receive deck updates from local server (file → browser)
   useEffect(() => {
@@ -29005,6 +29429,8 @@ export default function App() {
           // raw deck.guidelines: it goes into the Vera system prompt, and a
           // non-string would make every AI call throw.
           guidelines: deck.guidelines !== undefined ? sanitized.guidelines : cur.guidelines,
+          // The file is authoritative: sanitized value, or null when the file has none.
+          session: sanitized.session,
           // Reset selection when switching to a different deck so auto-select picks the first module
           ...(isDifferentDeck ? { selectedId: null, slideIndex: 0 } : {}),
         };
@@ -29260,6 +29686,7 @@ export default function App() {
           // that exact shape through the LOAD spread. (v13.26 / v13.27)
           data.lanes = resanitizeLoadedLanes(data.lanes);
           if ("branding" in data) data.branding = resanitizeLoadedBranding(data.branding);
+          resanitizeLoadedSession(data);
           dispatch({ type: "LOAD", payload: data });
           loadedDeck = data;
         } else if (data && data._version === 2) {
@@ -29289,6 +29716,7 @@ export default function App() {
           // that exact shape through the LOAD spread. (v13.26 / v13.27)
           payload.lanes = resanitizeLoadedLanes(payload.lanes);
           if ("branding" in payload) payload.branding = resanitizeLoadedBranding(payload.branding);
+          resanitizeLoadedSession(payload);
           dispatch({ type: "LOAD", payload });
           loadedDeck = payload;
           // Clean up old distributed keys in background
@@ -29305,6 +29733,7 @@ export default function App() {
           // that exact shape through the LOAD spread. (v13.26 / v13.27)
           data.lanes = resanitizeLoadedLanes(data.lanes);
           if ("branding" in data) data.branding = resanitizeLoadedBranding(data.branding);
+          resanitizeLoadedSession(data);
           dispatch({ type: "LOAD", payload: data });
           loadedDeck = data;
         }
@@ -29429,7 +29858,7 @@ export default function App() {
         document.documentElement.dataset.velaDemoRunning === "true") return;
     saveTimer.current = setTimeout(() => flushStorageStateRef.current?.(null), 1500);
     return () => clearTimeout(saveTimer.current);
-  }, [state.lanes, state.chatMessages, state.branding, state.deckTitle, state.guidelines]);
+  }, [state.lanes, state.chatMessages, state.branding, state.deckTitle, state.guidelines, state.session]);
 
   // Sync browser tab title with deck title
   React.useEffect(() => {
@@ -29449,6 +29878,7 @@ export default function App() {
     const deck = { deckTitle: title, lanes: save.lanes || [] };
     if (save.branding) deck.branding = save.branding;
     if (save.guidelines) deck.guidelines = save.guidelines;
+    if (save.session) deck.session = save.session;
     const blob = new Blob([JSON.stringify(deck, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a"); a.href = url;

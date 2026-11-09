@@ -138,8 +138,9 @@ const velaClipboardReadSlides = async () => {
   return [];
 };
 
-const VELA_VERSION = "13.79";
+const VELA_VERSION = "13.80";
 const VELA_CHANGELOG = [
+  { v: "13.80", d: ["Session end time: set it from the toolbar or the Presenter View.", "Presenter View: clock, time left and pace guidance (ahead / on pace / behind).", "Present: thin pace bar on the slide edge (T hides it)."] },
   { v: "13.79", d: ["Present: Ctrl+E search also matches slide text, with a snippet.", "Present: while typing, search also lists hidden slides and slides in collapsed lanes (a detour).", "Present: after a detour, arrows, wheel or Esc return to the slide you left.", "Present: a detour slide shows no slide number; Presenter view shows where you will return."] },
   { v: "13.78", d: ["Images: up to 10 per slide; overflow goes to a new slide.", "Images: drag image files from your computer onto a slide.", "Images: drag tiles to reorder.", "Story mode: present a slide's images one by one.", "Export: expand story slides to one page per image (PDF/PPTX).", "Text: Ctrl+U underline is saved and shows everywhere (++text++).", "Images: dropped files use the same ordered, safe queue as pasted images.", "Story mode: grid tiles keep a one-line title row, so tiles align.", "Vector PDF: text after bold/italic/underline/link keeps its space and letter spacing.", "Drop: images dropped outside a slide show a hint; a deck file dropped with images still loads.", "Slide toolbar stays on one row; labels change to icons when space is short."] },
   { v: "13.77", d: ["Two-column slides: edits to a column block (link, text, hide, delete) are saved; before, they were lost.", "Link boxes accept a bare domain (example.com) or an email address; before, these were saved as an empty link.", "Desktop: outside edits to decks up to 50 MB now reload live (was 5 MB).", "Present: Esc exits fullscreen, also inside Claude.ai artifacts.", "Esc closes the gallery, presenter view, image zoom or an open dialog first.", "Present toolbar: removed the duplicate gallery icon; presenter view uses a notes icon.", "Image zoom fills the window again (it was limited to the scaled slide).", "Zoom: arrow keys step through the images on the slide; past the first or last image they close the zoom.", "Present toolbar stays faint until you point at it.", "Editor: Ctrl+E toggles the TOC (as in present mode); [ also works with AltGr keyboards."] },
@@ -538,6 +539,37 @@ function sanitizeString(val, maxLen = 500) {
 // capped to a sane title length. (v13.26, F-12)
 function sanitizeDeckTitle(t) {
   return String(t == null ? "" : t).slice(0, 200) || "Untitled";
+}
+
+// Deck-level presentation session { start, end } (epoch ms). Numbers only: the
+// value never reaches a style/URL/DOM sink as a string; the UI formats it in code.
+// Fail closed: any defect drops the WHOLE field (null). Type-check first, never
+// coerce: a numeric string, boolean, float, NaN, Infinity or huge number is out.
+// Own props only, each read once (a getter cannot pass one value to the check
+// and another to the result); the result is a fresh object with exactly 2 keys,
+// so extra keys and prototype tricks never reach state.
+const SESSION_EPOCH_MIN = 946684800000;   // 2000-01-01T00:00:00Z
+const SESSION_EPOCH_MAX = 4102444800000;  // 2100-01-01T00:00:00Z
+const SESSION_LEN_MIN = 60000;            // 1 min
+const SESSION_LEN_MAX = 86400000;         // 24 h
+const SESSION_STALE_MS = 3 * 3600000;     // end + 3 h -> treated as NOT SET in the UI
+function sanitizeSession(raw) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const own = Object.prototype.hasOwnProperty;
+  if (!own.call(raw, "start") || !own.call(raw, "end")) return null;
+  const start = raw.start, end = raw.end;
+  if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end)) return null; // false for non-numbers
+  if (start < SESSION_EPOCH_MIN || end > SESSION_EPOCH_MAX) return null;
+  const len = end - start;
+  if (!(len >= SESSION_LEN_MIN && len <= SESSION_LEN_MAX)) return null;      // also end > start
+  return { start, end };
+}
+// Storage-reload backstop (same rule as resanitizeLoadedBranding): storage is
+// hostile input, so a stored `session` is re-checked. Only touch the key if the
+// stored deck carries one, so a deck without it keeps that exact shape.
+function resanitizeLoadedSession(data) {
+  if (data && typeof data === "object" && "session" in data) data.session = sanitizeSession(data.session);
+  return data;
 }
 
 function sanitizeUrl(url, allowedProtocols = ["http:", "https:", "mailto:"]) {
@@ -1926,7 +1958,9 @@ function adoptPriorDeckIds(sanitized, raw, cur) {
 // signature equals the file's known content is skipped, so opening a deck the
 // user did not change never writes the file (CR01).
 function localDeckPayload(s) {
-  return { deckTitle: s.deckTitle, lanes: s.lanes, branding: s.branding, guidelines: s.guidelines };
+  // `session` only when set: a deck without one writes byte-identical JSON, so the
+  // no-edit guard and existing files stay unchanged.
+  return { deckTitle: s.deckTitle, lanes: s.lanes, branding: s.branding, guidelines: s.guidelines, ...(s.session ? { session: s.session } : {}) };
 }
 
 function validateAndSanitizeDeck(raw, opts) {
@@ -1991,7 +2025,10 @@ function validateAndSanitizeDeck(raw, opts) {
     : "";
   return { lanes, guidelines: importedGuidelines, selectedId: null, slideIndex: 0, fullscreen: VELA_PRESENTATION_MODE, chatOpen: false,
     chatMessages: [{ role: "assistant", content: "Deck imported successfully! Ready to sail. ⛵🖖", ts: now() }],
-    chatLoading: false, lastDebug: "", branding: importedBranding };
+    chatLoading: false, lastDebug: "", branding: importedBranding,
+    // Key ALWAYS present (value or null): LOAD spreads the payload over state,
+    // so a missing key would keep the previous deck's session.
+    session: sanitizeSession(raw.session) };
 }
 
 // ━━━ Image Compression ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -2561,6 +2598,132 @@ const fmtTimeMin = (s) => { if (!s || s <= 0) return ""; const totalMin = Math.r
 const visibleSlides = (slides) => (slides || []).filter((s) => !(s && s.hidden));
 const sumDurations = (slides) => (slides || []).reduce((s, sl) => s + (sl.duration || 0), 0);
 const sumVisibleDurations = (slides) => visibleSlides(slides).reduce((s, sl) => s + (sl.duration || 0), 0);
+// ━━━ Session end: pure pace helpers (v13.80) ━━━━━━━━━━━━━━━━━━━━━━━━
+// All inputs are numbers from sanitizeSession / code; outputs are numbers, static
+// colour keys and code-built strings only. Every helper is total: no throw and no
+// NaN/Infinity output for any input (the UI writes these into text and CSS %).
+// Live session: sanitized and not stale (now <= end + 3 h). Else null.
+const liveSession = (session, now) => { const s = sanitizeSession(session); return s && typeof now === "number" && now <= s.end + SESSION_STALE_MS ? s : null; };
+
+// Present pace sequence: entries { s, num, itemId, rawIdx } in Present order.
+// num = 1-based global visible slide number over ALL lanes (the "Slide i / N"
+// numbering). An entry is in the sequence when the slide is not hidden AND its
+// lane is not collapsed or holds the item `keepItemId` (Present navigation
+// skips collapsed lanes, so their slides are not remaining work).
+// `seq.before` (Map itemId -> count of entries before that item) lets
+// sessionSeqIndex place an item that has no entry.
+const presentSequence = (lanes, keepItemId) => {
+  const out = [], before = new Map();
+  let num = 0;
+  for (const l of (Array.isArray(lanes) ? lanes : [])) {
+    const items = l && Array.isArray(l.items) ? l.items : [];
+    const keep = !(l && l.collapsed) || (keepItemId != null && items.some((it) => it && it.id === keepItemId));
+    for (const it of items) {
+      if (!it) continue;
+      if (!before.has(it.id)) before.set(it.id, out.length);
+      const slides = Array.isArray(it.slides) ? it.slides : [];
+      for (let r = 0; r < slides.length; r++) {
+        const s = slides[r];
+        if (!s || s.hidden) continue;
+        num++;
+        if (keep) out.push({ s, num, itemId: it.id, rawIdx: r });
+      }
+    }
+  }
+  out.before = before;
+  return out;
+};
+
+// Index into seq for the slide at raw index `rawIdx` (Present index minus the
+// title-card offset) of item `itemId`: the item's entry with the largest
+// rawIdx <= rawIdx; else the item's first entry (title card); else, for an item
+// with no entry, the count of entries before it. Clamped to [0, len - 1]; 0 for
+// an empty sequence or an unknown item.
+function sessionSeqIndex(seq, itemId, rawIdx) {
+  const n = Array.isArray(seq) ? seq.length : 0;
+  if (!n) return 0;
+  const r = typeof rawIdx === "number" && !Number.isNaN(rawIdx) ? rawIdx : 0;
+  let best = -1, first = -1;
+  for (let k = 0; k < n; k++) {
+    const e = seq[k];
+    if (!e || e.itemId !== itemId) continue;
+    if (first < 0) first = k;
+    if (e.rawIdx <= r) best = k;
+  }
+  if (best >= 0) return best;
+  if (first >= 0) return first;
+  const b = seq.before instanceof Map ? seq.before.get(itemId) : undefined;
+  return Number.isSafeInteger(b) ? Math.max(0, Math.min(n - 1, b)) : 0;
+}
+
+// Per-slide estimate (s). A usable duration: finite number, > 0, capped at 86400.
+// Missing -> average of usable ones; none usable -> 60.
+const sessionEstimates = (seq) => {
+  const list = Array.isArray(seq) ? seq : [];
+  const ok = (d) => typeof d === "number" && Number.isFinite(d) && d > 0;
+  const dur = (e) => (e && e.s ? e.s.duration : undefined);
+  const have = list.filter((e) => ok(dur(e))).map((e) => Math.min(dur(e), 86400));
+  const avg = have.length ? have.reduce((a, b) => a + b, 0) / have.length : 60;
+  let estimated = 0;
+  const est = list.map((e) => { const d = dur(e); if (ok(d)) return Math.min(d, 86400); estimated++; return avg; });
+  return { est, total: est.reduce((a, b) => a + b, 0), estimated };
+};
+
+const SESSION_PACE_COLORS = { green: "#22c55e", white: "#f8fafc", amber: "#f59e0b", red: "#ef4444" }; // static, code-authored
+
+const pad2 = (n) => String(n).padStart(2, "0");
+const fmtClock = (ms) => { if (typeof ms !== "number" || !Number.isFinite(ms)) return "--:--"; const d = new Date(ms); if (Number.isNaN(d.getTime())) return "--:--"; return `${pad2(d.getHours())}:${pad2(d.getMinutes())}`; }; // local 24 h
+const fmtCountdown = (sec) => { const s = Math.max(0, Math.floor(typeof sec === "number" && Number.isFinite(sec) ? sec : 0)); const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), r = s % 60; return h > 0 ? `${h}:${pad2(m)}:${pad2(r)}` : `${m}:${pad2(r)}`; };
+
+// Pace for seq position `idx` (0-based, clamped), `onSlideSec` on the current
+// slide, a session and `now` (ms). Returns null for an invalid session. The total
+// is recomputed from the (finite, capped) estimates, so no field can be NaN.
+// shouldIdx: 0-based index into seq where the speaker should be now.
+function computeSessionPace(estimates, idx, onSlideSec, session, now) {
+  const ses = sanitizeSession(session);
+  if (!ses) return null;
+  const fin = (x, d) => (typeof x === "number" && Number.isFinite(x) ? x : d);
+  const est = (estimates && Array.isArray(estimates.est) ? estimates.est : []).map((x) => Math.min(86400, Math.max(0, fin(x, 0))));
+  const total = est.reduce((a, b) => a + b, 0);
+  const N = est.length, i = Math.max(0, Math.min(Math.max(0, N - 1), Math.trunc(fin(idx, 0))));
+  const t0 = fin(now, ses.start);
+  const onS = typeof onSlideSec === "number" && onSlideSec > 0 ? onSlideSec : 0; // NaN/negative -> 0; Infinity -> slide done
+  const lenSec = (ses.end - ses.start) / 1000;
+  const before = t0 < ses.start, over = t0 > ses.end;
+  const have = before ? lenSec : (ses.end - t0) / 1000;               // < 0 when over
+  let need = N ? Math.max(0, est[i] - onS) : 0;
+  for (let k = i + 1; k < N; k++) need += est[k];
+  const delta = have - need;
+  const paceKey = over ? "red" : delta > 60 ? "green" : delta >= -60 ? "white" : delta >= -180 ? "amber" : "red";
+  const verdict = over ? `+${fmtCountdown((t0 - ses.end) / 1000)} over · wrap up`
+    : before ? `starts in ${fmtCountdown((ses.start - t0) / 1000)}`
+    : delta > 60 ? `${fmtCountdown(delta)} ahead · you can slow down`
+    : delta >= -60 ? "on pace" : `${fmtCountdown(-delta)} behind · speed up`;
+  const elapsedFrac = before ? 0 : Math.min(1, (t0 - ses.start) / (ses.end - ses.start));
+  const timeLeftSec = over ? (t0 - ses.end) / 1000 : have;            // counts UP when over
+  const timeLeftKey = over || (!before && have <= 300) ? "red" : elapsedFrac >= 0.75 ? "amber" : "white";
+  const clamp01 = (x) => (Number.isFinite(x) ? Math.max(0, Math.min(1, x)) : 0);
+  const shouldFrac = total > 0 ? clamp01((total - have) / total) : 0; // fill end
+  const youFrac = total > 0 ? clamp01((total - need) / total) : 0;    // white tick
+  const t = Math.max(0, Math.min(total, total - have));
+  let shouldIdx = Math.max(0, N - 1), cum = 0;
+  for (let k = 0; k < N; k++) { cum += est[k]; if (cum > t) { shouldIdx = k; break; } }
+  return { need, have, delta, before, over, paceKey, verdict, timeLeftSec, timeLeftKey, elapsedFrac, shouldFrac, youFrac, shouldIdx };
+}
+
+// Dialog: "HH:MM" strings (input type=time) -> { start, end } or null.
+// Both on the local date of `now`; end <= start (time of day) -> next day.
+// new Date(y, m, d+1, hh, mm) keeps local wall time across DST.
+const SESSION_HHMM = /^([01]\d|2[0-3]):([0-5]\d)$/;
+function resolveSessionTimes(startHHMM, endHHMM, now) {
+  const a = SESSION_HHMM.exec(typeof startHHMM === "string" ? startHHMM : ""), b = SESSION_HHMM.exec(typeof endHHMM === "string" ? endHHMM : "");
+  if (!a || !b) return null;
+  const d = new Date(now), sh = +a[1], sm = +a[2], eh = +b[1], em = +b[2];
+  const start = new Date(d.getFullYear(), d.getMonth(), d.getDate(), sh, sm).getTime();
+  const next = eh * 60 + em <= sh * 60 + sm ? 1 : 0;
+  const end = new Date(d.getFullYear(), d.getMonth(), d.getDate() + next, eh, em).getTime();
+  return sanitizeSession({ start, end });   // enforces 1 min .. 24 h, rejects NaN
+}
 const S = {
   btn: (o = {}) => ({ padding: "3px 8px", fontSize: 10, fontFamily: FONT.mono, fontWeight: 700, background: "transparent", border: `1px solid ${T.border}`, borderRadius: 3, color: T.textDim, cursor: "pointer", ...o }),
   primaryBtn: (o = {}) => ({ padding: "4px 10px", fontSize: 10, fontFamily: FONT.mono, fontWeight: 700, background: T.accent, color: "#fff", border: "none", borderRadius: 3, cursor: "pointer", ...o }),

@@ -14,7 +14,7 @@ that symbol in the named part for the line. No line numbers here — they rot.
 - Startup Patch System: STARTUP_PATCH VELA_TEST_STARTUP_PATCH levenshtein extractSlideText applyStartupPatch
 - Distributed Storage: dirty tracking: _dirtyMods _deletedMods _loadedMods _autoEditItemId _fullRewrite now
 - Validation Constants: MAX_IMPORT_SIZE VALID_STATUSES VALID_IMPORTANCES SAFE_BLOCK_TYPES defaultBranding linkPreview
-- Sanitizers: sanitizeString sanitizeDeckTitle sanitizeUrl LINK_HOST_LABEL LINK_HOST LINK_BARE_EMAIL LINK_BARE_HOST linkFromInput openExternalLink SVG_ALLOWED_TAGS SVG_URL_REF_ATTRS CSS_FETCH_SCHEME SVG_VALUE_FNS SVG_STYLE_PROPS SVG_ROOT_BLOCKED isSvgStyleSafe isSvgInlineStyleSafe sanitizeSvgMarkup SAFE_RASTER_DATA_IMAGE sanitizeImageDataUri SAFE_STYLE_KEYS STYLE_VALUE_REJECT sanitizeStyle CSS_COLOR_KEY scrubCssFields scrubColorFields CSS_LAYOUT_KEY scrubLayoutFields CSS_PAINT_KEY cssKeyStem scrubPaintFields velaTestSurfaceEnabled MAX_SUBOBJECT_DEPTH scrubSubObject cssUrl CSS_COLOR_OK cssColor CSS_GRADIENT_OK cssGradient
+- Sanitizers: sanitizeString sanitizeDeckTitle SESSION_EPOCH_MIN SESSION_EPOCH_MAX SESSION_LEN_MIN SESSION_LEN_MAX SESSION_STALE_MS sanitizeSession resanitizeLoadedSession sanitizeUrl LINK_HOST_LABEL LINK_HOST LINK_BARE_EMAIL LINK_BARE_HOST linkFromInput openExternalLink SVG_ALLOWED_TAGS SVG_URL_REF_ATTRS CSS_FETCH_SCHEME SVG_VALUE_FNS SVG_STYLE_PROPS SVG_ROOT_BLOCKED isSvgStyleSafe isSvgInlineStyleSafe sanitizeSvgMarkup SAFE_RASTER_DATA_IMAGE sanitizeImageDataUri SAFE_STYLE_KEYS STYLE_VALUE_REJECT sanitizeStyle CSS_COLOR_KEY scrubCssFields scrubColorFields CSS_LAYOUT_KEY scrubLayoutFields CSS_PAINT_KEY cssKeyStem scrubPaintFields velaTestSurfaceEnabled MAX_SUBOBJECT_DEPTH scrubSubObject cssUrl CSS_COLOR_OK cssColor CSS_GRADIENT_OK cssGradient
 - Deck-ingress key allowlists: SAFE_SLIDE_KEYS SAFE_BLOCK_KEYS SLIDE_NUMERIC_BOUNDS clampDeckNumber MAX_BLOCK_DEPTH sanitizeBlock VALID_COMMENT_STATUSES MAX_COMMENTS sanitizeComment
 - Offline Study Notes sanitizer: sanitizeStudyNotes sanitizeSlide stableIdFrom sanitizeItem resanitizeLoadedLanes resanitizeLoadedBranding KEEPABLE_DECK_ID isKeepableDeckId adoptPriorDeckIds localDeckPayload validateAndSanitizeDeck
 - Image Compression: PNG_KEEP_MAX compressImage IMG_SETTINGS compressSlideImage imageAspect imageNaturalSize PASTE_TITLE_BLOCKS pasteImageLayout pasteSplitFlex PASTE_TEXT_METRICS pasteBodyEstimate pasteLayoutArea pasteBodyProbe gridColsFor imageGridPlan bestImageGridCols
@@ -22,7 +22,8 @@ that symbol in the named part for the line. No line numbers here — they rot.
 - Status & Importance Meta: STATUSES STATUS_META IMP
 - Themes: themes T statusColor FONT buildTitleCardSlide
 - Vela Logo Icon: VelaIcon BASE_SIZES
-- Style Factories & Helpers: saveKV delKV extractSave extractMaster collectComments formatCommentsForAgent allItemIds findItem fmtSize fmtTime fmtTimeMin visibleSlides sumDurations sumVisibleDurations S
+- Style Factories & Helpers: saveKV delKV extractSave extractMaster collectComments formatCommentsForAgent allItemIds findItem fmtSize fmtTime fmtTimeMin visibleSlides sumDurations sumVisibleDurations
+- Session end: pure pace helpers (v13.80): liveSession presentSequence sessionSeqIndex sessionEstimates SESSION_PACE_COLORS pad2 fmtClock fmtCountdown computeSessionPace SESSION_HHMM resolveSessionTimes S
 - CSS Generator: getCss
 - Mobile Detection: MOBILE_BP useIsMobile useSwipe
 - Shared Prompt Constants (deduped from 3 system prompts): BLOCK_REFERENCE ICON_LIST DESIGN_RULES
@@ -135,6 +136,7 @@ that symbol in the named part for the line. No line numbers here — they rot.
 - WP7: Ctrl+U underline is saved as ++text++ and shows underlined: _ulSaved _ulOpenEditor
 - WP5: story images, image file drop, tile reorder: _wp5Sel _wp5Key _wp5Deck _wp5Fs _wp5Cur _wp5ImgSrcs _wp5Imgs _wp5Inject _wp5UndoTo _wp5Enter _wp5Exit _wp5Layer _wp5CurThumb _wp5ZoomedAt _wp5Grid _wp5Step _wp5OnSlide _wp5Toast _wp5Drop _wp5Aspect _wp5NoBlob
 - WP5b: story steps by wheel and swipe, Preview, phone layout, large images: _wp5bFsEl _wp5bWheel _wp5bState _wp5bWheelStep _wp5bTouch _wp5bSwipe _wp5bSwipeStep _wp5bHold _wp5bPhone _wp5bInside _wp5bOverlap _wp5bBox _wp5bBig _wp5bLayerImg _tbEl _tbButtons _tbOneRow _tbAtWidth _pdSel _pdOnSlide _pdSame _pdPrepare _pdEnterPresent _pdJump
+- Session end (v13.80): sanitizer, pace math, deck ingress: _SS_T0 _ssEq _ssNoNaN _ssSeq _ssSes
 - UI TEST RUNNER COMPONENT: computeDeckFingerprint DEMO_DECK_FP_TITLE VelaUITestRunner
 
 ### part-demo.jsx
@@ -275,6 +277,7 @@ keyboard ternaries) or are currently unused — check before assuming a UI exist
 - SET_LOADING: part-chat.jsx
 - SET_REVIEW_MODE: part-app-modals.jsx part-app.jsx part-demo.jsx part-slidepanel.jsx
 - SET_SECTION_COLLAPSED: part-demo.jsx part-list.jsx
+- SET_SESSION: part-app.jsx
 - SET_SLIDES: (no direct dispatch site)
 - SET_SLIDE_INDEX: part-app.jsx part-chat.jsx part-list.jsx part-slidepanel.jsx part-slides.jsx
 - SET_SLIDE_SELECTION: part-demo.jsx part-list.jsx
@@ -330,7 +333,7 @@ add_lane add_item batch_add_items remove_item remove_lane rename_item rename_lan
 
 ## Navigability debt (WARN — candidates for banners or splits)
 
-- part-imports.jsx: 898-line unbannered stretch after line 517
+- part-imports.jsx: 929-line unbannered stretch after line 518
 - part-blocks.jsx: 806-line unbannered stretch after line 1265
 - part-canvas.jsx: 581-line unbannered stretch after line 150
 - part-slidepanel.jsx: 437-line unbannered stretch after line 1403

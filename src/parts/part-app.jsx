@@ -339,6 +339,7 @@ export default function App() {
         return s ? {
           deckTitle: s.deckTitle,
           guidelines: s.guidelines,
+          session: s.session ?? null,
           firstLaneTitle: firstLane?.title || null,
           firstItemId: firstItem?.id || null,
           firstItemTitle: firstItem?.title || null,
@@ -395,6 +396,8 @@ export default function App() {
       newDeckForTest: () => dispatch({ type: "NEW_DECK", title: "Tour interruption", prompt: "", images: [] }),
       getGuidelinesForTest: () => _localSyncState.current?.guidelines || "",
       setGuidelinesForTest: (value) => dispatch({ type: "SET_GUIDELINES", guidelines: value }),
+      getSessionForTest: () => _localSyncState.current?.session ?? null,
+      setSessionForTest: (v) => dispatch({ type: "SET_SESSION", session: v }),
       capturePostDemoFlushForTest: () => {
         const current = _localSyncState.current;
         return current ? {
@@ -438,7 +441,7 @@ export default function App() {
         document.documentElement.dataset.velaDemoRunning === "true") return;
     localSyncTimer.current = setTimeout(() => flushLocalStateRef.current?.(null), 600);
     return () => clearTimeout(localSyncTimer.current);
-  }, [state.lanes, state.branding, state.deckTitle, state.guidelines]);
+  }, [state.lanes, state.branding, state.deckTitle, state.guidelines, state.session]);
 
   // Receive deck updates from local server (file → browser)
   useEffect(() => {
@@ -468,6 +471,8 @@ export default function App() {
           // raw deck.guidelines: it goes into the Vera system prompt, and a
           // non-string would make every AI call throw.
           guidelines: deck.guidelines !== undefined ? sanitized.guidelines : cur.guidelines,
+          // The file is authoritative: sanitized value, or null when the file has none.
+          session: sanitized.session,
           // Reset selection when switching to a different deck so auto-select picks the first module
           ...(isDifferentDeck ? { selectedId: null, slideIndex: 0 } : {}),
         };
@@ -723,6 +728,7 @@ export default function App() {
           // that exact shape through the LOAD spread. (v13.26 / v13.27)
           data.lanes = resanitizeLoadedLanes(data.lanes);
           if ("branding" in data) data.branding = resanitizeLoadedBranding(data.branding);
+          resanitizeLoadedSession(data);
           dispatch({ type: "LOAD", payload: data });
           loadedDeck = data;
         } else if (data && data._version === 2) {
@@ -752,6 +758,7 @@ export default function App() {
           // that exact shape through the LOAD spread. (v13.26 / v13.27)
           payload.lanes = resanitizeLoadedLanes(payload.lanes);
           if ("branding" in payload) payload.branding = resanitizeLoadedBranding(payload.branding);
+          resanitizeLoadedSession(payload);
           dispatch({ type: "LOAD", payload });
           loadedDeck = payload;
           // Clean up old distributed keys in background
@@ -768,6 +775,7 @@ export default function App() {
           // that exact shape through the LOAD spread. (v13.26 / v13.27)
           data.lanes = resanitizeLoadedLanes(data.lanes);
           if ("branding" in data) data.branding = resanitizeLoadedBranding(data.branding);
+          resanitizeLoadedSession(data);
           dispatch({ type: "LOAD", payload: data });
           loadedDeck = data;
         }
@@ -892,7 +900,7 @@ export default function App() {
         document.documentElement.dataset.velaDemoRunning === "true") return;
     saveTimer.current = setTimeout(() => flushStorageStateRef.current?.(null), 1500);
     return () => clearTimeout(saveTimer.current);
-  }, [state.lanes, state.chatMessages, state.branding, state.deckTitle, state.guidelines]);
+  }, [state.lanes, state.chatMessages, state.branding, state.deckTitle, state.guidelines, state.session]);
 
   // Sync browser tab title with deck title
   React.useEffect(() => {
@@ -912,6 +920,7 @@ export default function App() {
     const deck = { deckTitle: title, lanes: save.lanes || [] };
     if (save.branding) deck.branding = save.branding;
     if (save.guidelines) deck.guidelines = save.guidelines;
+    if (save.session) deck.session = save.session;
     const blob = new Blob([JSON.stringify(deck, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a"); a.href = url;
