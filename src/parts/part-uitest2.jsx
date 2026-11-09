@@ -4801,6 +4801,45 @@ uiSuite("wp5-image-drop", [
   }},
 ]);
 
+// Slide toolbar auto-compact: one row at any width; labels hide from the right.
+const _tbEl = () => _$("[data-testid='slide-toolbar']");
+const _tbButtons = () => Array.from(_tbEl()?.querySelectorAll("button") || []);
+const _tbOneRow = () => { const c = _tbButtons().map((b) => { const r = b.getBoundingClientRect(); return r.top + r.height / 2; }); return c.length > 0 && c.every((y) => Math.abs(y - c[0]) < 2); };
+const _tbAtWidth = async (w, body) => {
+  await _selectFirstModule();
+  const el = await _waitFor(_tbEl, 3000).catch(() => { throw new Error("no slide toolbar"); });
+  const old = el.style.width;
+  try { el.style.width = w + "px"; await _wait(250); await body(el); }
+  finally { el.style.width = old; await _wait(150); }
+};
+uiSuite("toolbar-auto-compact", [
+  { name: "narrow toolbar: all buttons share one row", fn: async () => {
+    await _tbAtWidth(620, async () => {
+      if (!_tbOneRow()) throw new Error(`toolbar buttons wrap to more than one row (${_tbButtons().map((b) => Math.round(b.getBoundingClientRect().top)).join(",")})`);
+    });
+  }},
+  { name: "narrow toolbar: a button with a hidden label has an aria-label", fn: async () => {
+    await _tbAtWidth(620, async () => {
+      const ov = _$("[data-testid='editor-gallery-toggle']");
+      if (!ov) throw new Error("no Overview button");
+      if (ov.querySelector("span")) throw new Error("the rightmost label (Overview) is still shown at 620 px");
+      if (ov.getAttribute("aria-label") !== "Overview") throw new Error(`Overview aria-label is ${ov.getAttribute("aria-label")}`);
+      if (!ov.title) throw new Error("Overview lost its title tooltip");
+      const firstLabelled = _tbButtons()[0];
+      if (!firstLabelled.querySelector("span")) throw new Error("the leftmost label hid before the rightmost labels");
+    });
+  }},
+  { name: "wide toolbar: all labels show, no aria-label added", fn: async () => {
+    await _tbAtWidth(2400, async () => {
+      const bad = _tbButtons().filter((b) => !b.querySelector("span"));
+      if (bad.length) throw new Error(`${bad.length} button(s) without a label at 2400 px`);
+      const extra = _tbButtons().filter((b) => b.getAttribute("aria-label") && b.dataset.testid !== "story-preview");
+      if (extra.length) throw new Error(`aria-label set on a labelled button: ${extra.map((b) => b.getAttribute("aria-label")).join(",")}`);
+      if (!_tbOneRow()) throw new Error("toolbar is not one row at 2400 px");
+    });
+  }},
+]);
+
 // ━━━ UI TEST RUNNER COMPONENT ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 // Demo deck guard — UI tests only run against the original demo deck

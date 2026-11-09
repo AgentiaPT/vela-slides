@@ -140,7 +140,7 @@ const velaClipboardReadSlides = async () => {
 
 const VELA_VERSION = "13.78";
 const VELA_CHANGELOG = [
-  { v: "13.78", d: ["Images: up to 10 per slide; overflow goes to a new slide.", "Images: drag image files from your computer onto a slide.", "Images: drag tiles to reorder.", "Story mode: present a slide's images one by one.", "Export: expand story slides to one page per image (PDF/PPTX).", "Text: Ctrl+U underline is saved and shows everywhere (++text++).", "Images: dropped files use the same ordered, safe queue as pasted images.", "Story mode: grid tiles keep a one-line title row, so tiles align.", "Vector PDF: text after bold/italic/underline/link keeps its space and letter spacing.", "Drop: images dropped outside a slide show a hint; a deck file dropped with images still loads."] },
+  { v: "13.78", d: ["Images: up to 10 per slide; overflow goes to a new slide.", "Images: drag image files from your computer onto a slide.", "Images: drag tiles to reorder.", "Story mode: present a slide's images one by one.", "Export: expand story slides to one page per image (PDF/PPTX).", "Text: Ctrl+U underline is saved and shows everywhere (++text++).", "Images: dropped files use the same ordered, safe queue as pasted images.", "Story mode: grid tiles keep a one-line title row, so tiles align.", "Vector PDF: text after bold/italic/underline/link keeps its space and letter spacing.", "Drop: images dropped outside a slide show a hint; a deck file dropped with images still loads.", "Slide toolbar stays on one row; labels change to icons when space is short."] },
   { v: "13.77", d: ["Two-column slides: edits to a column block (link, text, hide, delete) are saved; before, they were lost.", "Link boxes accept a bare domain (example.com) or an email address; before, these were saved as an empty link.", "Desktop: outside edits to decks up to 50 MB now reload live (was 5 MB).", "Present: Esc exits fullscreen, also inside Claude.ai artifacts.", "Esc closes the gallery, presenter view, image zoom or an open dialog first.", "Present toolbar: removed the duplicate gallery icon; presenter view uses a notes icon.", "Image zoom fills the window again (it was limited to the scaled slide).", "Zoom: arrow keys step through the images on the slide; past the first or last image they close the zoom.", "Present toolbar stays faint until you point at it.", "Editor: Ctrl+E toggles the TOC (as in present mode); [ also works with AltGr keyboards."] },
   { v: "13.76", d: ["TOC: dragging a slide or section near the list edge auto-scrolls the list.", "TOC: moving a slide to a section in an earlier lane no longer loses the slide.", "Images: a pasted image on an empty slide fills the slide, not one half.", "Images: grids pick rows and columns by image aspect ratio.", "Images: solo and wide images fill the free slide area.", "Images: images shrink to fit, so text below an image stays on the slide.", "Editing: all text in checklist, comparison, matrix, number-row, progress and flow blocks is editable inline.", "Checklist: type a status name to change the status; custom status labels survive compact/turbo formats."] },
   { v: "13.75", d: ["Editor: mark slides reviewed (✓); Review cycle makes arrow keys skip reviewed slides.", "View switch (editor | presenter | gallery) next to Present.", "Gallery: hide/unhide a slide beside delete; TOC: delete icon on slide rows (undoable).", "Fullscreen nav icons stay visible on any slide background.", "Branding: right-side settings pane; accent line removable at 0px.", "Block toolbar stays visible on full-bleed images; link badges sit right after the text.", "Vector PDF: € and other WinAnsi symbols render as text at correct size.", "validate: reports a gradient in solid-color bg fields (use bgGradient).", "Opening or switching a deck keeps lane/module ids.", "Desktop: window title shows the deck title; keyboard works after alt-tab; AI agents detected on first start; HTML export fixed."] },
@@ -9452,6 +9452,43 @@ function dragHasOnlyImageFiles(dt) {
   return items.length > 0 && items.every((it) => !!it && it.kind === "file" && typeof it.type === "string" && it.type.startsWith("image/"));
 }
 
+// Slide toolbar auto-compact: the toolbar stays on one row. When the buttons do
+// not fit, the rightmost labels are hidden (icon only) one by one until the row
+// fits. Measures once with all labels shown (per `key`), then recomputes from the
+// cached widths on resize, so it cannot oscillate. Returns the hidden-label count;
+// labels + 1 means even icon-only does not fit (e.g. a phone): the row wraps as before.
+function useToolbarCompact(ref, key) {
+  const [hide, setHide] = useState(0);
+  const m = useRef(null);
+  const fit = useCallback(() => {
+    const el = ref.current, c = m.current;
+    if (!el || !c) return;
+    const cs = getComputedStyle(el);
+    let over = c.full - (el.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight)), n = 0;
+    while (over > 0.5 && n < c.labels.length) { over -= c.labels[c.labels.length - 1 - n]; n++; }
+    if (over > 0.5) n++;
+    setHide(n);
+  }, [ref]);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el || !el.children.length) { m.current = null; return; }
+    if (!m.current || m.current.key !== key) {
+      if (hide !== 0) { m.current = null; setHide(0); return; } // show all labels first, then measure
+      const first = el.children[0].getBoundingClientRect(), last = el.children[el.children.length - 1].getBoundingClientRect();
+      m.current = { key, full: last.right - first.left, labels: Array.from(el.querySelectorAll("button > span"), (sp) => sp.getBoundingClientRect().width + (parseFloat(getComputedStyle(sp.parentElement).columnGap) || 0)) }; // label width + icon gap
+    }
+    fit();
+  }, [ref, key, hide, fit]);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(() => fit());
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [ref, key, fit]);
+  return hide;
+}
+
 function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, branding, guidelines, isMobile, fontScale, actionsRef, onRibbonUpdate }) {
   const deckEpochRef = useRef(state._deckEpoch);
   deckEpochRef.current = state._deckEpoch;
@@ -10815,6 +10852,15 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
   // The Present list (hidden images left out): the toggle shows only when Present can step a story.
   const editStoryImages = fullscreen ? 0 : storyImageList(slides[slideIndex], true).length;
   const editStoryOn = slides[slideIndex]?.story === true;
+  // Slide toolbar labels, left to right; auto-compact hides them from the right.
+  const tbRef = useRef(null);
+  const [tbFontGen, setTbFontGen] = useState(0);
+  useEffect(() => { let live = true; document.fonts?.ready?.then(() => { if (live) setTbFontGen((g) => g + 1); }); return () => { live = false; }; }, []);
+  const tbKeys = ["ai", "improve", "variants", "new", "dup", "move", "delete", "review", ...(editStoryImages >= 2 ? ["story"] : []), ...(editStoryImages >= 2 && editStoryOn ? ["preview"] : []), "overview"];
+  const tbHide = useToolbarCompact(tbRef, `${fullscreen}|${slides.length > 0}|${isMobile}|${tbKeys.join()}|${concept.id}|${slideIndex}|${!!improving}|${!!altLoading}|${tbFontGen}`);
+  const tbShow = (k) => !isMobile && tbKeys.indexOf(k) < tbKeys.length - tbHide;
+  const tbAria = (k, label) => (isMobile || tbShow(k)) ? undefined : label;
+  const tbWrap = tbHide > (isMobile ? 0 : tbKeys.length);
 
   // Hidden offscreen host used to measure a slide's layout without disturbing the
   // visible view, so Improve can run in the background across navigation.
@@ -11110,20 +11156,20 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
         </div>}
 
         {/* ── SLIDE TOOLBAR — centered strip between preview & notes ── */}
-        {slides.length > 0 && <div data-testid="slide-toolbar" style={{ flexShrink: 0, borderTop: `1px solid ${T.border}`, background: T.bgPanel, padding: "4px 12px", display: "flex", flexWrap: "wrap", justifyContent: "center", alignItems: "center", gap: 3 }}>
-          <button data-testid="quick-edit-open" onClick={() => { if (aiOk) setShowQuickEdit((v) => !v); }} disabled={!aiOk} title={aiOk ? "AI Edit slide (E)" : VELA_AI_UNAVAILABLE_MSG} style={S.btn({ padding: "5px 12px", fontSize: 14, color: !aiOk ? T.textDim + "60" : showQuickEdit ? T.accent : T.textDim, background: showQuickEdit ? T.accent + "20" : "transparent", borderRadius: 4, display: "flex", alignItems: "center", gap: 5, cursor: aiOk ? "pointer" : "not-allowed" })}>⚡{!isMobile && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>AI Edit</span>}</button>
-          <button onClick={() => improving ? stopAll() : runImproveRef.current?.(null, "slide")} disabled={!aiOk || slides.length === 0 || altLoading} title={aiOk ? "Auto-improve this slide (⇧I)" : VELA_AI_UNAVAILABLE_MSG} style={S.btn({ padding: "5px 12px", fontSize: 14, color: !aiOk ? T.textDim + "60" : improving ? T.red : T.textDim, background: improving ? T.accent + "20" : "transparent", borderRadius: 4, display: "flex", alignItems: "center", gap: 5, opacity: !aiOk || slides.length === 0 ? 0.35 : 1, cursor: aiOk ? "pointer" : "not-allowed" })}>{improving ? "⏹" : "✨"}{!isMobile && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>{improving ? "Stop" : "Improve"}</span>}</button>
-          <button onClick={() => altLoading ? stopAlternatives() : runAlternatives()} disabled={!aiOk || slides.length === 0 || improving} title={aiOk ? "Generate design variants — click a tile to apply, ↩ Original to revert, Esc to close" : VELA_AI_UNAVAILABLE_MSG} style={S.btn({ padding: "5px 12px", fontSize: 14, color: !aiOk ? T.textDim + "60" : altLoading ? T.red : (alternatives ? T.accent : T.textDim), background: altLoading || alternatives ? T.accent + "20" : "transparent", borderRadius: 4, display: "flex", alignItems: "center", gap: 5, opacity: !aiOk || slides.length === 0 ? 0.35 : 1, cursor: aiOk ? "pointer" : "not-allowed" })}>{altLoading ? "⏹" : "🎲"}{!isMobile && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>{altLoading ? "Stop" : "Variants"}</span>}</button>
+        {slides.length > 0 && <div ref={tbRef} data-testid="slide-toolbar" style={{ flexShrink: 0, borderTop: `1px solid ${T.border}`, background: T.bgPanel, padding: "4px 12px", display: "flex", flexWrap: tbWrap ? "wrap" : "nowrap", whiteSpace: tbWrap ? undefined : "nowrap", justifyContent: "center", alignItems: "center", gap: 3 }}>
+          <button data-testid="quick-edit-open" onClick={() => { if (aiOk) setShowQuickEdit((v) => !v); }} disabled={!aiOk} aria-label={tbAria("ai", "AI Edit")} title={aiOk ? "AI Edit slide (E)" : VELA_AI_UNAVAILABLE_MSG} style={S.btn({ padding: "5px 12px", fontSize: 14, color: !aiOk ? T.textDim + "60" : showQuickEdit ? T.accent : T.textDim, background: showQuickEdit ? T.accent + "20" : "transparent", borderRadius: 4, display: "flex", alignItems: "center", gap: 5, cursor: aiOk ? "pointer" : "not-allowed" })}>⚡{tbShow("ai") && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>AI Edit</span>}</button>
+          <button onClick={() => improving ? stopAll() : runImproveRef.current?.(null, "slide")} disabled={!aiOk || slides.length === 0 || altLoading} aria-label={tbAria("improve", improving ? "Stop" : "Improve")} title={aiOk ? "Auto-improve this slide (⇧I)" : VELA_AI_UNAVAILABLE_MSG} style={S.btn({ padding: "5px 12px", fontSize: 14, color: !aiOk ? T.textDim + "60" : improving ? T.red : T.textDim, background: improving ? T.accent + "20" : "transparent", borderRadius: 4, display: "flex", alignItems: "center", gap: 5, opacity: !aiOk || slides.length === 0 ? 0.35 : 1, cursor: aiOk ? "pointer" : "not-allowed" })}>{improving ? "⏹" : "✨"}{tbShow("improve") && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>{improving ? "Stop" : "Improve"}</span>}</button>
+          <button onClick={() => altLoading ? stopAlternatives() : runAlternatives()} disabled={!aiOk || slides.length === 0 || improving} aria-label={tbAria("variants", altLoading ? "Stop" : "Variants")} title={aiOk ? "Generate design variants — click a tile to apply, ↩ Original to revert, Esc to close" : VELA_AI_UNAVAILABLE_MSG} style={S.btn({ padding: "5px 12px", fontSize: 14, color: !aiOk ? T.textDim + "60" : altLoading ? T.red : (alternatives ? T.accent : T.textDim), background: altLoading || alternatives ? T.accent + "20" : "transparent", borderRadius: 4, display: "flex", alignItems: "center", gap: 5, opacity: !aiOk || slides.length === 0 ? 0.35 : 1, cursor: aiOk ? "pointer" : "not-allowed" })}>{altLoading ? "⏹" : "🎲"}{tbShow("variants") && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>{altLoading ? "Stop" : "Variants"}</span>}</button>
           <div style={{ width: 1, height: 22, background: T.border + "60" }} />
-          <button onClick={() => { setShowNewSlide((v) => !v); setShowQuickEdit(false); }} title="New slide (N)" style={S.btn({ padding: "5px 12px", fontSize: 14, color: showNewSlide ? T.green : T.textDim, background: showNewSlide ? T.green + "20" : "transparent", borderRadius: 4, display: "flex", alignItems: "center", gap: 5 })}>+{!isMobile && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>New</span>}</button>
-          <button onClick={() => { dispatch({ type: "DUPLICATE_SLIDE", id: concept.id, index: slideIndex }); dispatch({ type: "SET_SLIDE_INDEX", index: slideIndex + 1 }); }} title="Duplicate slide" style={S.btn({ padding: "5px 12px", fontSize: 14, color: T.textDim, borderRadius: 4, display: "flex", alignItems: "center", gap: 5 })}>📋{!isMobile && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>Duplicate</span>}</button>
-          <button ref={moveRef} onClick={() => setShowMoveToModule((v) => !v)} title="Move to module" style={S.btn({ padding: "5px 12px", fontSize: 14, color: showMoveToModule ? T.accent : T.textDim, background: showMoveToModule ? T.accent + "20" : "transparent", borderRadius: 4, display: "flex", alignItems: "center", gap: 5 })}>📦{!isMobile && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>Move</span>}</button>
-          <button onClick={() => { dispatch({ type: "REMOVE_SLIDE", id: concept.id, index: slideIndex }); dispatch({ type: "SET_SLIDE_INDEX", index: Math.max(0, slideIndex - 1) }); }} title="Delete slide (Del)" style={S.btn({ padding: "5px 12px", fontSize: 14, color: T.red + "90", borderRadius: 4, display: "flex", alignItems: "center", gap: 5 })}>🗑{!isMobile && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>Delete</span>}</button>
-          <button data-testid="review-cycle-toggle" aria-pressed={reviewCycle} onClick={() => setReviewCycle((v) => !v)} title={reviewCycle ? "Review cycle on — arrow keys skip reviewed slides" : "Review cycle — arrow keys skip reviewed slides"} style={S.btn({ padding: "5px 12px", fontSize: 14, color: reviewCycle ? T.green : T.textDim, background: reviewCycle ? T.green + "20" : "transparent", borderRadius: 4, display: "flex", alignItems: "center", gap: 5 })}>✓{!isMobile && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>Review cycle</span>}</button>
-          {editStoryImages >= 2 && <button data-testid="story-toggle" aria-pressed={editStoryOn} onClick={() => handleSlideEdit({ story: editStoryOn ? undefined : true })} title={editStoryOn ? "Story on — Present shows the images one by one" : "Story — present the images one by one"} style={S.btn({ padding: "5px 12px", fontSize: 14, color: editStoryOn ? T.accent : T.textDim, background: editStoryOn ? T.accent + "20" : "transparent", borderRadius: 4, display: "flex", alignItems: "center", gap: 5 })}>🎞{!isMobile && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>Story</span>}</button>}
-          {editStoryImages >= 2 && editStoryOn && <button data-testid="story-preview" onClick={() => { stopAll(); dispatch({ type: "SET_FULLSCREEN", value: true }); }} title="Preview story — present from this slide" aria-label="Preview story" style={S.btn({ padding: "5px 12px", fontSize: 14, color: T.textDim, background: "transparent", borderRadius: 4, display: "flex", alignItems: "center", gap: 5 })}>▶{!isMobile && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>Preview</span>}</button>}
+          <button onClick={() => { setShowNewSlide((v) => !v); setShowQuickEdit(false); }} aria-label={tbAria("new", "New")} title="New slide (N)" style={S.btn({ padding: "5px 12px", fontSize: 14, color: showNewSlide ? T.green : T.textDim, background: showNewSlide ? T.green + "20" : "transparent", borderRadius: 4, display: "flex", alignItems: "center", gap: 5 })}>+{tbShow("new") && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>New</span>}</button>
+          <button onClick={() => { dispatch({ type: "DUPLICATE_SLIDE", id: concept.id, index: slideIndex }); dispatch({ type: "SET_SLIDE_INDEX", index: slideIndex + 1 }); }} aria-label={tbAria("dup", "Duplicate")} title="Duplicate slide" style={S.btn({ padding: "5px 12px", fontSize: 14, color: T.textDim, borderRadius: 4, display: "flex", alignItems: "center", gap: 5 })}>📋{tbShow("dup") && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>Duplicate</span>}</button>
+          <button ref={moveRef} onClick={() => setShowMoveToModule((v) => !v)} aria-label={tbAria("move", "Move")} title="Move to module" style={S.btn({ padding: "5px 12px", fontSize: 14, color: showMoveToModule ? T.accent : T.textDim, background: showMoveToModule ? T.accent + "20" : "transparent", borderRadius: 4, display: "flex", alignItems: "center", gap: 5 })}>📦{tbShow("move") && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>Move</span>}</button>
+          <button onClick={() => { dispatch({ type: "REMOVE_SLIDE", id: concept.id, index: slideIndex }); dispatch({ type: "SET_SLIDE_INDEX", index: Math.max(0, slideIndex - 1) }); }} aria-label={tbAria("delete", "Delete")} title="Delete slide (Del)" style={S.btn({ padding: "5px 12px", fontSize: 14, color: T.red + "90", borderRadius: 4, display: "flex", alignItems: "center", gap: 5 })}>🗑{tbShow("delete") && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>Delete</span>}</button>
+          <button data-testid="review-cycle-toggle" aria-pressed={reviewCycle} onClick={() => setReviewCycle((v) => !v)} aria-label={tbAria("review", "Review cycle")} title={reviewCycle ? "Review cycle on — arrow keys skip reviewed slides" : "Review cycle — arrow keys skip reviewed slides"} style={S.btn({ padding: "5px 12px", fontSize: 14, color: reviewCycle ? T.green : T.textDim, background: reviewCycle ? T.green + "20" : "transparent", borderRadius: 4, display: "flex", alignItems: "center", gap: 5 })}>✓{tbShow("review") && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>Review cycle</span>}</button>
+          {editStoryImages >= 2 && <button data-testid="story-toggle" aria-pressed={editStoryOn} onClick={() => handleSlideEdit({ story: editStoryOn ? undefined : true })} aria-label={tbAria("story", "Story")} title={editStoryOn ? "Story on — Present shows the images one by one" : "Story — present the images one by one"} style={S.btn({ padding: "5px 12px", fontSize: 14, color: editStoryOn ? T.accent : T.textDim, background: editStoryOn ? T.accent + "20" : "transparent", borderRadius: 4, display: "flex", alignItems: "center", gap: 5 })}>🎞{tbShow("story") && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>Story</span>}</button>}
+          {editStoryImages >= 2 && editStoryOn && <button data-testid="story-preview" onClick={() => { stopAll(); dispatch({ type: "SET_FULLSCREEN", value: true }); }} title="Preview story — present from this slide" aria-label="Preview story" style={S.btn({ padding: "5px 12px", fontSize: 14, color: T.textDim, background: "transparent", borderRadius: 4, display: "flex", alignItems: "center", gap: 5 })}>▶{tbShow("preview") && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>Preview</span>}</button>}
           <div style={{ width: 1, height: 22, background: T.border + "60" }} />
-          <button data-testid="editor-gallery-toggle" onClick={() => setGallery((v) => !v)} title="Overview — all slides (G)" style={S.btn({ padding: "5px 12px", fontSize: 14, color: showGallery ? T.accent : T.textDim, background: showGallery ? T.accent + "20" : "transparent", borderRadius: 4, display: "flex", alignItems: "center", gap: 5 })}>🗂{!isMobile && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>Overview</span>}</button>
+          <button data-testid="editor-gallery-toggle" onClick={() => setGallery((v) => !v)} aria-label={tbAria("overview", "Overview")} title="Overview — all slides (G)" style={S.btn({ padding: "5px 12px", fontSize: 14, color: showGallery ? T.accent : T.textDim, background: showGallery ? T.accent + "20" : "transparent", borderRadius: 4, display: "flex", alignItems: "center", gap: 5 })}>🗂{tbShow("overview") && <span style={{ fontSize: 13, fontFamily: FONT.mono }}>Overview</span>}</button>
         </div>}
 
         {/* ── NOTES BAR ──────────────────────────────────────── */}
@@ -20202,6 +20248,45 @@ uiSuite("wp5-image-drop", [
       await _waitFor(() => _wp5Deck().deckTitle === title, 3000).catch(() => { throw new Error("demo deck not restored"); });
       await _selectFirstModule();
     }
+  }},
+]);
+
+// Slide toolbar auto-compact: one row at any width; labels hide from the right.
+const _tbEl = () => _$("[data-testid='slide-toolbar']");
+const _tbButtons = () => Array.from(_tbEl()?.querySelectorAll("button") || []);
+const _tbOneRow = () => { const c = _tbButtons().map((b) => { const r = b.getBoundingClientRect(); return r.top + r.height / 2; }); return c.length > 0 && c.every((y) => Math.abs(y - c[0]) < 2); };
+const _tbAtWidth = async (w, body) => {
+  await _selectFirstModule();
+  const el = await _waitFor(_tbEl, 3000).catch(() => { throw new Error("no slide toolbar"); });
+  const old = el.style.width;
+  try { el.style.width = w + "px"; await _wait(250); await body(el); }
+  finally { el.style.width = old; await _wait(150); }
+};
+uiSuite("toolbar-auto-compact", [
+  { name: "narrow toolbar: all buttons share one row", fn: async () => {
+    await _tbAtWidth(620, async () => {
+      if (!_tbOneRow()) throw new Error(`toolbar buttons wrap to more than one row (${_tbButtons().map((b) => Math.round(b.getBoundingClientRect().top)).join(",")})`);
+    });
+  }},
+  { name: "narrow toolbar: a button with a hidden label has an aria-label", fn: async () => {
+    await _tbAtWidth(620, async () => {
+      const ov = _$("[data-testid='editor-gallery-toggle']");
+      if (!ov) throw new Error("no Overview button");
+      if (ov.querySelector("span")) throw new Error("the rightmost label (Overview) is still shown at 620 px");
+      if (ov.getAttribute("aria-label") !== "Overview") throw new Error(`Overview aria-label is ${ov.getAttribute("aria-label")}`);
+      if (!ov.title) throw new Error("Overview lost its title tooltip");
+      const firstLabelled = _tbButtons()[0];
+      if (!firstLabelled.querySelector("span")) throw new Error("the leftmost label hid before the rightmost labels");
+    });
+  }},
+  { name: "wide toolbar: all labels show, no aria-label added", fn: async () => {
+    await _tbAtWidth(2400, async () => {
+      const bad = _tbButtons().filter((b) => !b.querySelector("span"));
+      if (bad.length) throw new Error(`${bad.length} button(s) without a label at 2400 px`);
+      const extra = _tbButtons().filter((b) => b.getAttribute("aria-label") && b.dataset.testid !== "story-preview");
+      if (extra.length) throw new Error(`aria-label set on a labelled button: ${extra.map((b) => b.getAttribute("aria-label")).join(",")}`);
+      if (!_tbOneRow()) throw new Error("toolbar is not one row at 2400 px");
+    });
   }},
 ]);
 

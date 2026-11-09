@@ -86,7 +86,7 @@ that symbol in the named part for the line. No line numbers here — they rot.
 - StudentPanel — dispatcher: static studyNotes first, else live Vera: StudentPanel TeacherPanel SectionPicker
 
 ### part-slidepanel.jsx
-- Slide Panel — editor slide view, fullscreen/presenter nav, per-slide AI actions: VIEW_SWITCH_SEGMENTS VIEW_SWITCH_PAD VIEW_SWITCH_LABEL_EXTRA ViewSwitch dragHasOnlyImageFiles SlidePanel
+- Slide Panel — editor slide view, fullscreen/presenter nav, per-slide AI actions: VIEW_SWITCH_SEGMENTS VIEW_SWITCH_PAD VIEW_SWITCH_LABEL_EXTRA ViewSwitch dragHasOnlyImageFiles useToolbarCompact SlidePanel
 
 ### part-list.jsx
 - (file preamble): _velaDrag _setDrag _clearDrag
@@ -134,7 +134,7 @@ that symbol in the named part for the line. No line numbers here — they rot.
 - Bug-hunt round 1 fixes: image paste and placement: _h1Heavy _h1CellWidths _h1Imgs _h1Paste _h1Heading
 - WP7: Ctrl+U underline is saved as ++text++ and shows underlined: _ulSaved _ulOpenEditor
 - WP5: story images, image file drop, tile reorder: _wp5Sel _wp5Key _wp5Deck _wp5Fs _wp5Cur _wp5ImgSrcs _wp5Imgs _wp5Inject _wp5UndoTo _wp5Enter _wp5Exit _wp5Layer _wp5CurThumb _wp5ZoomedAt _wp5Grid _wp5Step _wp5OnSlide _wp5Toast _wp5Drop _wp5Aspect _wp5NoBlob
-- WP5b: story steps by wheel and swipe, Preview, phone layout, large images: _wp5bFsEl _wp5bWheel _wp5bState _wp5bWheelStep _wp5bTouch _wp5bSwipe _wp5bSwipeStep _wp5bHold _wp5bPhone _wp5bInside _wp5bOverlap _wp5bBox _wp5bBig _wp5bLayerImg
+- WP5b: story steps by wheel and swipe, Preview, phone layout, large images: _wp5bFsEl _wp5bWheel _wp5bState _wp5bWheelStep _wp5bTouch _wp5bSwipe _wp5bSwipeStep _wp5bHold _wp5bPhone _wp5bInside _wp5bOverlap _wp5bBox _wp5bBig _wp5bLayerImg _tbEl _tbButtons _tbOneRow _tbAtWidth
 - UI TEST RUNNER COMPONENT: computeDeckFingerprint DEMO_DECK_FP_TITLE VelaUITestRunner
 
 ### part-demo.jsx
@@ -333,12 +333,13 @@ add_lane add_item batch_add_items remove_item remove_lane rename_item rename_lan
 - part-imports.jsx: 898-line unbannered stretch after line 516
 - part-blocks.jsx: 806-line unbannered stretch after line 1265
 - part-canvas.jsx: 581-line unbannered stretch after line 150
-- part-slidepanel.jsx: 426-line unbannered stretch after line 1318
+- part-slidepanel.jsx: 435-line unbannered stretch after line 1355
 - part-uitest.jsx: 616-line unbannered stretch after line 1230
 - part-uitest2.jsx: 448-line unbannered stretch after line 2
 - part-uitest2.jsx: 593-line unbannered stretch after line 1457
 - part-uitest2.jsx: 837-line unbannered stretch after line 2323
 - part-uitest2.jsx: 376-line unbannered stretch after line 4088
+- part-uitest2.jsx: 379-line unbannered stretch after line 4464
 - part-demo.jsx: 407-line unbannered stretch after line 510
 - part-demo.jsx: 373-line unbannered stretch after line 917
 - part-pdf.jsx: 414-line unbannered stretch after line 582
