@@ -580,11 +580,12 @@ function drawVelaWatermark(ctx, pw, ph) {
 }
 
 // ━━━ PDF Export Modal ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-function PdfExportModal({ slides: allSlides, branding, deckTitle, onClose }) {
+function PdfExportModal({ slides: deckSlides, branding, deckTitle, onClose }) {
   const [ratio, setRatio] = useState("16:9");
   const [quality, setQuality] = useState("high");
   const [useVector, setUseVector] = useState(false);
   const [includeCards, setIncludeCards] = useState(true);
+  const [expandStory, setExpandStory] = useState(true);
   const [phase, setPhase] = useState("choose"); // choose | exporting | done | error
   const [progress, setProgress] = useState(0);
   const [errorMsg, setErrorMsg] = useState("");
@@ -601,6 +602,11 @@ function PdfExportModal({ slides: allSlides, branding, deckTitle, onClose }) {
   ratioRef.current = ratio;
   const qualityRef = useRef(quality);
   qualityRef.current = quality;
+
+  // Story slides (slide.story with 2+ images) optionally expand to one page per image.
+  const storyExpanded = useMemo(() => expandStorySlides(deckSlides), [deckSlides]);
+  const storyPageCount = useMemo(() => storyExpanded.filter((s) => s._storyPage).length, [storyExpanded]);
+  const allSlides = expandStory ? storyExpanded : deckSlides;
 
   // Module title cards (the 🎬 "present card") are inserted by collectAllSlides as
   // _virtual slides. Let the user opt out, and surface how many enabled cards there are.
@@ -817,6 +823,24 @@ function PdfExportModal({ slides: allSlides, branding, deckTitle, onClose }) {
                 }} />
               </button>
             </div>}
+            {storyPageCount > 0 && <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20, padding: "10px 12px", background: "rgba(255,255,255,0.03)", border: `1px solid ${T.border}`, borderRadius: 8 }}>
+              <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                <span style={{ fontFamily: FONT.body, fontSize: 13, color: T.text }}>Expand story slides</span>
+                <span style={{ fontFamily: FONT.mono, fontSize: 9, color: T.textDim }}>🖼 {storyPageCount} extra image page{storyPageCount !== 1 ? "s" : ""} (one per story image)</span>
+              </div>
+              <button data-testid="pdf-expand-story" aria-pressed={expandStory} onClick={() => setExpandStory(b => !b)} style={{
+                width: 40, height: 22, borderRadius: 11, border: "none", cursor: "pointer",
+                background: expandStory ? T.accent : "rgba(255,255,255,0.12)",
+                position: "relative", transition: "background .2s", flexShrink: 0,
+              }}>
+                <div style={{
+                  width: 16, height: 16, borderRadius: 8, background: "#fff",
+                  position: "absolute", top: 3,
+                  left: expandStory ? 21 : 3,
+                  transition: "left .2s", boxShadow: "0 1px 3px rgba(0,0,0,0.3)",
+                }} />
+              </button>
+            </div>}
             <button data-testid="pdf-export-start" onClick={() => quality === "vector" ? setUseVector(true) : startExport()} style={{
               width: "100%", padding: "10px", fontFamily: FONT.mono, fontSize: 12, fontWeight: 700,
               background: T.accent, color: "#fff", border: "none", borderRadius: 6, cursor: "pointer",
@@ -946,10 +970,11 @@ function PdfExportModal({ slides: allSlides, branding, deckTitle, onClose }) {
         const slideBg = reflowed.bgGradient || reflowed.bg || T.slideBg;
         // Match presentation numbering: title cards aren't counted, real slides
         // keep continuous 1-based numbers (excluding any inserted title cards).
-        const displayTotal = slides.reduce((n, s) => n + (s._virtual ? 0 : 1), 0);
+        const displayTotal = slides.reduce((n, s) => n + (s._storyPage ? 0 : s._virtual ? 0 : 1), 0);
         let nonVirtualBefore = 0;
-        for (let i = 0; i < renderIdx; i++) if (!slides[i]._virtual) nonVirtualBefore++;
-        const displayIndex = currentSlide._virtual ? nonVirtualBefore - 1 : nonVirtualBefore;
+        for (let i = 0; i < renderIdx; i++) if (!(slides[i]._virtual || slides[i]._storyPage)) nonVirtualBefore++;
+        // A story page shares the number of its grid slide (the one just before it).
+        const displayIndex = (currentSlide._virtual || currentSlide._storyPage) ? nonVirtualBefore - 1 : nonVirtualBefore;
         return (
           <div style={{ position: "fixed", left: -9999, top: -9999, width: rw, height: rh, overflow: "hidden", zIndex: -1 }}>
             <div ref={offscreenRef} className="no-anim vela-pdf-capture" style={{ width: rw, height: rh, overflow: "hidden", background: slideBg }}>

@@ -20374,11 +20374,12 @@ function drawVelaWatermark(ctx, pw, ph) {
 }
 
 // ━━━ PDF Export Modal ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-function PdfExportModal({ slides: allSlides, branding, deckTitle, onClose }) {
+function PdfExportModal({ slides: deckSlides, branding, deckTitle, onClose }) {
   const [ratio, setRatio] = useState("16:9");
   const [quality, setQuality] = useState("high");
   const [useVector, setUseVector] = useState(false);
   const [includeCards, setIncludeCards] = useState(true);
+  const [expandStory, setExpandStory] = useState(true);
   const [phase, setPhase] = useState("choose"); // choose | exporting | done | error
   const [progress, setProgress] = useState(0);
   const [errorMsg, setErrorMsg] = useState("");
@@ -20395,6 +20396,11 @@ function PdfExportModal({ slides: allSlides, branding, deckTitle, onClose }) {
   ratioRef.current = ratio;
   const qualityRef = useRef(quality);
   qualityRef.current = quality;
+
+  // Story slides (slide.story with 2+ images) optionally expand to one page per image.
+  const storyExpanded = useMemo(() => expandStorySlides(deckSlides), [deckSlides]);
+  const storyPageCount = useMemo(() => storyExpanded.filter((s) => s._storyPage).length, [storyExpanded]);
+  const allSlides = expandStory ? storyExpanded : deckSlides;
 
   // Module title cards (the 🎬 "present card") are inserted by collectAllSlides as
   // _virtual slides. Let the user opt out, and surface how many enabled cards there are.
@@ -20611,6 +20617,24 @@ function PdfExportModal({ slides: allSlides, branding, deckTitle, onClose }) {
                 }} />
               </button>
             </div>}
+            {storyPageCount > 0 && <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20, padding: "10px 12px", background: "rgba(255,255,255,0.03)", border: `1px solid ${T.border}`, borderRadius: 8 }}>
+              <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                <span style={{ fontFamily: FONT.body, fontSize: 13, color: T.text }}>Expand story slides</span>
+                <span style={{ fontFamily: FONT.mono, fontSize: 9, color: T.textDim }}>🖼 {storyPageCount} extra image page{storyPageCount !== 1 ? "s" : ""} (one per story image)</span>
+              </div>
+              <button data-testid="pdf-expand-story" aria-pressed={expandStory} onClick={() => setExpandStory(b => !b)} style={{
+                width: 40, height: 22, borderRadius: 11, border: "none", cursor: "pointer",
+                background: expandStory ? T.accent : "rgba(255,255,255,0.12)",
+                position: "relative", transition: "background .2s", flexShrink: 0,
+              }}>
+                <div style={{
+                  width: 16, height: 16, borderRadius: 8, background: "#fff",
+                  position: "absolute", top: 3,
+                  left: expandStory ? 21 : 3,
+                  transition: "left .2s", boxShadow: "0 1px 3px rgba(0,0,0,0.3)",
+                }} />
+              </button>
+            </div>}
             <button data-testid="pdf-export-start" onClick={() => quality === "vector" ? setUseVector(true) : startExport()} style={{
               width: "100%", padding: "10px", fontFamily: FONT.mono, fontSize: 12, fontWeight: 700,
               background: T.accent, color: "#fff", border: "none", borderRadius: 6, cursor: "pointer",
@@ -20740,10 +20764,11 @@ function PdfExportModal({ slides: allSlides, branding, deckTitle, onClose }) {
         const slideBg = reflowed.bgGradient || reflowed.bg || T.slideBg;
         // Match presentation numbering: title cards aren't counted, real slides
         // keep continuous 1-based numbers (excluding any inserted title cards).
-        const displayTotal = slides.reduce((n, s) => n + (s._virtual ? 0 : 1), 0);
+        const displayTotal = slides.reduce((n, s) => n + (s._storyPage ? 0 : s._virtual ? 0 : 1), 0);
         let nonVirtualBefore = 0;
-        for (let i = 0; i < renderIdx; i++) if (!slides[i]._virtual) nonVirtualBefore++;
-        const displayIndex = currentSlide._virtual ? nonVirtualBefore - 1 : nonVirtualBefore;
+        for (let i = 0; i < renderIdx; i++) if (!(slides[i]._virtual || slides[i]._storyPage)) nonVirtualBefore++;
+        // A story page shares the number of its grid slide (the one just before it).
+        const displayIndex = (currentSlide._virtual || currentSlide._storyPage) ? nonVirtualBefore - 1 : nonVirtualBefore;
         return (
           <div style={{ position: "fixed", left: -9999, top: -9999, width: rw, height: rh, overflow: "hidden", zIndex: -1 }}>
             <div ref={offscreenRef} className="no-anim vela-pdf-capture" style={{ width: rw, height: rh, overflow: "hidden", background: slideBg }}>
@@ -23248,10 +23273,11 @@ function VectorPdfExportModal({ slides, branding, deckTitle, onClose, initialRat
         const rw = Math.round(VIRTUAL_W / zoom);
         const rh = Math.round(rh0 / zoom);
         // Match presentation numbering: title cards aren't counted toward slide numbers.
-        const displayTotal = slides.reduce((n, s) => n + (s._virtual ? 0 : 1), 0);
+        const displayTotal = slides.reduce((n, s) => n + (s._storyPage ? 0 : s._virtual ? 0 : 1), 0);
         let nonVirtualBefore = 0;
-        for (let i = 0; i < renderIdx; i++) if (!slides[i]._virtual) nonVirtualBefore++;
-        const displayIndex = currentSlide._virtual ? nonVirtualBefore - 1 : nonVirtualBefore;
+        for (let i = 0; i < renderIdx; i++) if (!(slides[i]._virtual || slides[i]._storyPage)) nonVirtualBefore++;
+        // A story page shares the number of its grid slide (the one just before it).
+        const displayIndex = (currentSlide._virtual || currentSlide._storyPage) ? nonVirtualBefore - 1 : nonVirtualBefore;
         return (
           <div style={{ position: "fixed", left: -9999, top: -9999, width: rw, height: rh, overflow: "hidden", zIndex: -1 }}>
             <style>{`.no-anim, .no-anim * { animation: none !important; transition: none !important; }`}</style>
@@ -23294,6 +23320,32 @@ function collectAllSlides(lanes, branding) {
     }
   }
   return all;
+}
+
+// Story slides ("Expand story slides" export option): after a story-active slide,
+// emit one virtual full-slide page per story image. A page is built ONLY from
+// already-sanitized slide state and copies a fixed key list, so no deck key can
+// ride along; "_storyPage" is a renderer-private flag set here, after sanitization
+// (deck input can never carry a "_" key). A one-image page renders through the
+// solo-image path (full slide, contain). Hidden images are excluded because
+// storyImageList runs in presenting mode. Title cards (_virtual) are never story.
+const STORY_PAGE_KEYS = ["bg", "bgGradient", "bgImage", "color", "accent", "mutedColor", "duration"];
+function expandStorySlides(slides) {
+  const out = [];
+  for (const slide of (slides || [])) {
+    out.push(slide);
+    if (!slide || typeof slide !== "object" || slide._virtual) continue;
+    const list = storyImageList(slide, true);
+    if (!storyIsActive(slide, list)) continue;
+    for (const it of list) {
+      const page = {};
+      for (const k of STORY_PAGE_KEYS) if (slide[k] !== undefined) page[k] = slide[k];
+      page.blocks = [{ type: "image", src: it.src, alt: it.alt }];
+      page._storyPage = true;
+      out.push(page);
+    }
+  }
+  return out;
 }
 
 // © 2025-present Rui Quintino. Vela Slides — licensed under ELv2. See LICENSE.
@@ -25106,7 +25158,7 @@ function ModalBackdrop({ onClose, onEnter, extraKeys, children }) {
 // then buildPptx() emits the OOXML+ZIP Blob. The artifact sandbox blocks blob:
 // URLs, so the bytes are base64-encoded into a data: URI for the <a download>
 // (same pattern the PDF modal uses for its own bytes).
-function PptxExportModal({ slides, branding, deckTitle, onClose }) {
+function PptxExportModal({ slides: allSlides, branding, deckTitle, onClose }) {
   const [phase, setPhase] = useState("choose"); // choose | exporting | done | error
   const [progress, setProgress] = useState(0);
   const [errorMsg, setErrorMsg] = useState("");
@@ -25119,6 +25171,11 @@ function PptxExportModal({ slides, branding, deckTitle, onClose }) {
   const [showBranding, setShowBranding] = useState(false);
   const showBrandingRef = useRef(showBranding);
   showBrandingRef.current = showBranding;
+  // Story slides (slide.story with 2+ images) optionally expand to one page per image.
+  const [expandStory, setExpandStory] = useState(true);
+  const storyExpanded = useMemo(() => expandStorySlides(allSlides), [allSlides]);
+  const storyPageCount = useMemo(() => storyExpanded.filter((s) => s._storyPage).length, [storyExpanded]);
+  const slides = expandStory ? storyExpanded : allSlides;
 
   const startExport = useCallback(() => {
     setPhase("exporting");
@@ -25252,6 +25309,23 @@ function PptxExportModal({ slides, branding, deckTitle, onClose }) {
                 }} />
               </button>
             </div>
+            {storyPageCount > 0 && <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20, padding: "10px 12px", background: "rgba(255,255,255,0.03)", border: `1px solid ${T.border}`, borderRadius: 8 }}>
+              <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                <span style={{ fontFamily: FONT.body, fontSize: 13, color: T.text }}>Expand story slides</span>
+                <span style={{ fontFamily: FONT.mono, fontSize: 9, color: T.textDim }}>{"🖼"} {storyPageCount} extra image page{storyPageCount !== 1 ? "s" : ""} (one per story image)</span>
+              </div>
+              <button data-testid="pptx-export-expand-story" aria-pressed={expandStory} onClick={() => setExpandStory(b => !b)} style={{
+                width: 40, height: 22, borderRadius: 11, border: "none", cursor: "pointer",
+                background: expandStory ? T.accent : "rgba(255,255,255,0.12)",
+                position: "relative", transition: "background .2s", flexShrink: 0,
+              }}>
+                <div style={{
+                  width: 16, height: 16, borderRadius: 8, background: "#fff",
+                  position: "absolute", top: 3, left: expandStory ? 21 : 3,
+                  transition: "left .2s", boxShadow: "0 1px 3px rgba(0,0,0,0.3)",
+                }} />
+              </button>
+            </div>}
             <button data-testid="pptx-export-start" onClick={startExport} style={{
               width: "100%", padding: "10px", fontFamily: FONT.mono, fontSize: 12, fontWeight: 700,
               background: T.accent, color: "#fff", border: "none", borderRadius: 6, cursor: "pointer",
@@ -25368,10 +25442,11 @@ function PptxExportModal({ slides, branding, deckTitle, onClose }) {
 
       {/* Off-screen slide renderer — one slide at a time, fixed 960×540 (16:9). */}
       {phase === "exporting" && currentSlide && (() => {
-        const displayTotal = slides.reduce((n, s) => n + (s._virtual ? 0 : 1), 0);
+        const displayTotal = slides.reduce((n, s) => n + (s._storyPage ? 0 : s._virtual ? 0 : 1), 0);
         let nonVirtualBefore = 0;
-        for (let i = 0; i < renderIdx; i++) if (!slides[i]._virtual) nonVirtualBefore++;
-        const displayIndex = currentSlide._virtual ? nonVirtualBefore - 1 : nonVirtualBefore;
+        for (let i = 0; i < renderIdx; i++) if (!(slides[i]._virtual || slides[i]._storyPage)) nonVirtualBefore++;
+        // A story page shares the number of its grid slide (the one just before it).
+        const displayIndex = (currentSlide._virtual || currentSlide._storyPage) ? nonVirtualBefore - 1 : nonVirtualBefore;
         return (
           <div style={{ position: "fixed", left: -9999, top: -9999, width: VIRTUAL_W, height: VIRTUAL_H, overflow: "hidden", zIndex: -1 }}>
             <style>{`.no-anim, .no-anim * { animation: none !important; transition: none !important; }`}</style>

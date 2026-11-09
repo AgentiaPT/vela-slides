@@ -172,7 +172,7 @@ that symbol in the named part for the line. No line numbers here — they rot.
 - Font loading: _fontCache loadFonts
 - Font selection: pickFont
 - Image capture fallback (from existing pdf-export): vectorDomToCanvas
-- Vector PDF Export Modal: VectorPdfExportModal stripHiddenBlocks collectAllSlides
+- Vector PDF Export Modal: VectorPdfExportModal stripHiddenBlocks collectAllSlides STORY_PAGE_KEYS expandStorySlides
 
 ### part-export-md.jsx
 - Markdown Export: deckToMarkdown exportMarkdown
@@ -336,8 +336,8 @@ add_lane add_item batch_add_items remove_item remove_lane rename_item rename_lan
 - part-uitest2.jsx: 837-line unbannered stretch after line 2323
 - part-demo.jsx: 407-line unbannered stretch after line 510
 - part-demo.jsx: 373-line unbannered stretch after line 917
-- part-pdf.jsx: 389-line unbannered stretch after line 582
+- part-pdf.jsx: 414-line unbannered stretch after line 582
 - part-pdf-vector.jsx: 441-line unbannered stretch after line 2
 - part-pdf-vector.jsx: 480-line unbannered stretch after line 459
-- part-pdf-vector.jsx: 524-line unbannered stretch after line 1204
+- part-pdf-vector.jsx: 551-line unbannered stretch after line 1204
 - part-pptx.jsx: no level-1 banners (1188 lines)
