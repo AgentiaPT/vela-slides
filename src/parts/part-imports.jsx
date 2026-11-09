@@ -2077,16 +2077,20 @@ function pasteLayoutArea(slide, aspects, layout, measure, naturalW) {
   // GRID_IMG_MAX_UPSCALE x natural size; a lone side image at most 1x.
   const known = Array.isArray(naturalW) && naturalW.length === n;
   const capGrid = known ? naturalW.map((w) => w * GRID_IMG_MAX_UPSCALE) : undefined;
+  // The author's imageCols pins the grid, clamped as renderImageGrid does, so the
+  // estimate packs the images as the slide renders them. A lone side image does
+  // not render as a grid, so the pin does not apply to it.
+  const pinned = slide.imageCols ? Math.min(6, Math.max(1, slide.imageCols | 0)) : 0;
   if (layout === "stack") {
     const head = body.length ? textH(W) + gap : 0;
-    const floorRows = imageGridPlan(aspects, 0, 0, gap, gridColsFor(n, "full")).rows.length;
+    const floorRows = imageGridPlan(aspects, 0, 0, gap, gridColsFor(n, "full"), pinned).rows.length;
     const gridH = Math.max(H - head, floorRows * 72);
     const s = Math.min(1, H / (head + gridH));
-    return imageGridPlan(aspects, W, gridH, gap, gridColsFor(n, "full"), 0, capGrid).area * s * s;
+    return imageGridPlan(aspects, W, gridH, gap, gridColsFor(n, "full"), pinned, capGrid).area * s * s;
   }
   const [cf, imf] = pasteSplitFlex(n, aspects[n - 1]);
   const colW = (W - (Number(slide.splitGap) || 32)) / (cf + imf);
-  return imageGridPlan(aspects, colW * imf, H, gap, gridColsFor(n, "half"), 0, n === 1 && known ? naturalW : capGrid).area;
+  return imageGridPlan(aspects, colW * imf, H, gap, gridColsFor(n, "half"), n === 1 ? 0 : pinned, n === 1 && known ? naturalW : capGrid).area;
 }
 
 // CR23: body-height probe for pasteLayoutArea(). When a paste starts, it copies

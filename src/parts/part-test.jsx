@@ -105,6 +105,13 @@ const VELA_TESTS = [
   { name: "imageGridPlan CR23: equal aspects keep uniform cells", fn: () => imageGridPlan([1.78, 1.78, 1.78, 1.78, 1.78], 864, 400, 12, 3).rows.every((r) => r.cells.every((c) => Math.abs(c.f - 1 / 3) < 1e-9 || Math.abs(c.f - 1 / 2) < 1e-9 || c.f === 1)) },
   { name: "imageGridPlan CR23: pinned imageCols forces a uniform grid", fn: () => { const p = imageGridPlan([4, 0.5], 864, 468, 12, 2, 3); return p.cols === 3 && p.rows[0].cells.every((c) => c.f === 1 / 3); } },
   { name: "imageGridPlan CR23: no box → count default, area 0", fn: () => { const p = imageGridPlan([1, 2, 3], 0, 0, 12, 3); return p.cols === 3 && p.area === 0; } },
+  { name: "pasteLayoutArea: honors the author's imageCols like the renderer", fn: () => {
+    const a = [1, 1, 1], pin = imageGridPlan(a, 864, 468, 12, 3, 1).area;
+    const stack = pasteLayoutArea({ blocks: [], imageCols: 1 }, a, "stack");
+    const split = pasteLayoutArea({ blocks: [{ type: "heading", text: "H" }], imageCols: 1 }, a, "image-right");
+    const colW = (864 - 32) / 2, splitPin = imageGridPlan(a, colW, 468, 12, 2, 1).area;
+    return Math.abs(stack - pin) < 1e-6 && Math.abs(split - splitPin) < 1e-6 && pasteLayoutArea({ blocks: [] }, a, "stack") > stack;
+  } },
   { name: "bestImageGridCols: unknown aspect → count default", fn: () => bestImageGridCols([3, undefined, 3], 864, 418, 12, 3) === 3 },
   { name: "bestImageGridCols: no box → count default", fn: () => bestImageGridCols([3, 3, 3], 0, 0, 12, 3) === 3 },
   { name: "bestImageGridCols: bad aspect values → count default", fn: () => bestImageGridCols([3, NaN, -1], 864, 418, 12, 3) === 3 && bestImageGridCols([3, "3", 3], 864, 418, 12, 3) === 3 },

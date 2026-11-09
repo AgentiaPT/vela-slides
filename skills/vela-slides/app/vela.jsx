@@ -2077,16 +2077,20 @@ function pasteLayoutArea(slide, aspects, layout, measure, naturalW) {
   // GRID_IMG_MAX_UPSCALE x natural size; a lone side image at most 1x.
   const known = Array.isArray(naturalW) && naturalW.length === n;
   const capGrid = known ? naturalW.map((w) => w * GRID_IMG_MAX_UPSCALE) : undefined;
+  // The author's imageCols pins the grid, clamped as renderImageGrid does, so the
+  // estimate packs the images as the slide renders them. A lone side image does
+  // not render as a grid, so the pin does not apply to it.
+  const pinned = slide.imageCols ? Math.min(6, Math.max(1, slide.imageCols | 0)) : 0;
   if (layout === "stack") {
     const head = body.length ? textH(W) + gap : 0;
-    const floorRows = imageGridPlan(aspects, 0, 0, gap, gridColsFor(n, "full")).rows.length;
+    const floorRows = imageGridPlan(aspects, 0, 0, gap, gridColsFor(n, "full"), pinned).rows.length;
     const gridH = Math.max(H - head, floorRows * 72);
     const s = Math.min(1, H / (head + gridH));
-    return imageGridPlan(aspects, W, gridH, gap, gridColsFor(n, "full"), 0, capGrid).area * s * s;
+    return imageGridPlan(aspects, W, gridH, gap, gridColsFor(n, "full"), pinned, capGrid).area * s * s;
   }
   const [cf, imf] = pasteSplitFlex(n, aspects[n - 1]);
   const colW = (W - (Number(slide.splitGap) || 32)) / (cf + imf);
-  return imageGridPlan(aspects, colW * imf, H, gap, gridColsFor(n, "half"), 0, n === 1 && known ? naturalW : capGrid).area;
+  return imageGridPlan(aspects, colW * imf, H, gap, gridColsFor(n, "half"), n === 1 ? 0 : pinned, n === 1 && known ? naturalW : capGrid).area;
 }
 
 // CR23: body-height probe for pasteLayoutArea(). When a paste starts, it copies
@@ -3704,14 +3708,22 @@ const GRID_IMG_MAX_UPSCALE = 2;
 const IMAGE_NATURAL_SIZE = new Map();
 function GridCellImage({ src, alt, style }) {
   const [, setTick] = useState(0);
+  const imgRef = useRef(null);
   const size = IMAGE_NATURAL_SIZE.get(src);
   const remember = (w, h) => {
     if (!IMAGE_NATURAL_SIZE.has(src) && IMAGE_NATURAL_SIZE.size >= 256) IMAGE_NATURAL_SIZE.delete(IMAGE_NATURAL_SIZE.keys().next().value);
     IMAGE_NATURAL_SIZE.set(src, { w, h });
     setTick((t) => t + 1);
   };
+  // The cache is bounded, so it can evict the entry of an image that is still
+  // on screen. That <img> has already loaded and onLoad does not fire again, so
+  // a cache miss would hide it for good. Measure it again here, before paint.
+  useLayoutEffect(() => {
+    const el = imgRef.current;
+    if (!IMAGE_NATURAL_SIZE.has(src) && el && el.complete && el.getAttribute("src") === src) remember(el.naturalWidth || 0, el.naturalHeight || 0);
+  });
   const capped = size && size.w > 0 && size.h > 0;
-  return <img src={src} alt={alt} data-grid-cap={capped ? GRID_IMG_MAX_UPSCALE : undefined}
+  return <img ref={imgRef} src={src} alt={alt} data-grid-cap={capped ? GRID_IMG_MAX_UPSCALE : undefined}
     onLoad={(e) => remember(e.currentTarget.naturalWidth || 0, e.currentTarget.naturalHeight || 0)}
     onError={() => remember(0, 0)}
     style={{ ...style, margin: "auto", maxWidth: capped ? size.w * GRID_IMG_MAX_UPSCALE : undefined, maxHeight: capped ? size.h * GRID_IMG_MAX_UPSCALE : undefined, visibility: size ? undefined : "hidden" }} />;
@@ -5335,10 +5347,13 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
     plan.rows.forEach((row, r) => {
       const h = row.hw / hwSum, sumF = row.cells.reduce((t, c) => t + c.f, 0), rowGaps = gap * row.gc;
       let cumF = 0;
+      // A short row also has fewer gaps than rowGaps reserves: split the unused
+      // gaps (gc - (cells - 1)) evenly on both sides, so the row centers exactly.
+      const spare = gap * (row.gc - (row.cells.length - 1)) / 2;
       row.cells.forEach((c, k) => {
         cellPos[c.i] = {
           top: len(cumH, gap * r - cumH * gapsH), height: len(h, -h * gapsH),
-          left: len((1 - sumF) / 2 + cumF, gap * k - rowGaps * ((1 - sumF) / 2 + cumF)), width: len(c.f, -c.f * rowGaps),
+          left: len((1 - sumF) / 2 + cumF, gap * k + spare - rowGaps * ((1 - sumF) / 2 + cumF)), width: len(c.f, -c.f * rowGaps),
         };
         cumF += c.f;
       });
@@ -5356,7 +5371,8 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
       <div key={`__imgrid-${idxs[0]}`} data-testid="image-grid" data-image-grid={region} data-image-count={runLen} data-image-grid-key={gridKey} data-image-cols={plan.cols} data-image-rows={rows}
         style={{ position: "relative", flex: gridHeight == null ? "1 1 0" : "0 0 auto", height: gridHeight == null ? undefined : gridHeight, maxHeight: "100%", minHeight: minGridH, minWidth: 0, width: "100%" }}>
         {idxs.map((bi, k) => {
-          const rendered = renderBlockWithComments({ ...blocks[bi], _gridCell: true, ...(isSoloImage && blocks[bi].rounded == null ? { rounded: 0 } : {}) }, bi);
+          // A solo image fills the slide: keep its _solo flag, so it is not click-to-zoom.
+          const rendered = renderBlockWithComments({ ...blocks[bi], _gridCell: true, ...(isSoloImage ? { _solo: true } : {}), ...(isSoloImage && blocks[bi].rounded == null ? { rounded: 0 } : {}) }, bi);
           const [blockEl, ...rest] = rendered;
           // Make the block wrapper fill its cell height so the image (height:100%)
           // and objectFit:contain letterbox uniformly across mixed aspect ratios.
@@ -9082,9 +9098,10 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
     return list;
   }, [lanes]);
 
-  const showNavToast = useCallback((module, section) => {
+  // editor: also show the toast in the editor view (the paste notice), not only in Present.
+  const showNavToast = useCallback((module, section, editor) => {
     clearTimeout(navToastTimer.current);
-    setNavToast({ module, section, phase: "in" });
+    setNavToast({ module, section, editor: !!editor, phase: "in" });
     navToastTimer.current = setTimeout(() => {
       setNavToast((t) => t ? { ...t, phase: "out" } : null);
       navToastTimer.current = setTimeout(() => setNavToast(null), 300);
@@ -9186,8 +9203,15 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
           if (live()) pasteRecordSuccessor(from, before, slidesRef.current, src);
         };
         const apply = async () => {
-          const compressed = await data;
-          if (!compressed || deckEpochRef.current !== epoch) return;
+          const raw = await data;
+          if (deckEpochRef.current !== epoch) return;
+          // The reducer keeps an image src only in this canonical form (the same
+          // chain sanitizeBlock runs). Use that same value here: an empty result
+          // (undecodable type, canvas too large, read error) must not add an empty
+          // image block, and a src the reducer changes would break the successor
+          // link for the rest of the burst.
+          const compressed = raw ? sanitizeImageDataUri(sanitizeUrl(raw, ["data:"])) : "";
+          if (!compressed) { showNavToast("This image could not be pasted", null, true); return; }
           // Empty module → brand-new full-bleed solo-image slide (additive). Later
           // pastes of the same burst go onto that slide.
           if (empty && !pasteResolveTarget(target, slidesRef.current)) {
@@ -9249,11 +9273,12 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
           dispatch({ type: "UPDATE_SLIDE", id: moduleId, index: at, patch, merge: true });
           await settle(cur, before, compressed);
         };
-        pasteQueueRef.current = pasteQueueRef.current.then(apply).catch(() => {});
+        // Log a fault (never swallow it silently); the catch keeps the queue alive.
+        pasteQueueRef.current = pasteQueueRef.current.then(apply).catch((err) => { console.warn("Vela: image paste failed", err); });
         break;
       }
     }
-  }, [concept.id, slideIndex, slides, dispatch]);
+  }, [concept.id, slideIndex, slides, dispatch, showNavToast]);
 
   useEffect(() => { const el = containerRef.current; if (el) { el.addEventListener("paste", handlePaste); return () => el.removeEventListener("paste", handlePaste); } }, [handlePaste]);
   useEffect(() => {
@@ -9903,6 +9928,10 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
   return (
     <div ref={containerRef} tabIndex={0} className="fade-in" style={{ flex: 1, display: "flex", flexDirection: "column", background: T.bg, borderLeft: isMobile ? "none" : `1px solid ${T.border}`, outline: "none", minWidth: 0 }}>
       {measureHarness}
+      {/* The toast in the editor view: only notices raised for it (image paste). */}
+      {navToast?.editor && <div data-testid="paste-notice" role="status" className={navToast.phase === "in" ? "nav-toast-in" : "nav-toast-out"} style={{ position: "fixed", bottom: 24, left: 0, right: 0, display: "flex", justifyContent: "center", zIndex: 1000, pointerEvents: "none" }}>
+        <div style={{ padding: "8px 20px", borderRadius: 8, background: "rgba(0,0,0,0.78)", backdropFilter: "blur(8px)", border: `1px solid ${T.accent}30`, fontFamily: FONT.display, fontSize: 14, color: "#fff", fontWeight: 600 }}>{navToast.module}</div>
+      </div>}
 
 
       {/* ── TOP PANELS — deck-level dialogs from top bar ──── */}
@@ -11603,6 +11632,13 @@ const VELA_TESTS = [
   { name: "imageGridPlan CR23: equal aspects keep uniform cells", fn: () => imageGridPlan([1.78, 1.78, 1.78, 1.78, 1.78], 864, 400, 12, 3).rows.every((r) => r.cells.every((c) => Math.abs(c.f - 1 / 3) < 1e-9 || Math.abs(c.f - 1 / 2) < 1e-9 || c.f === 1)) },
   { name: "imageGridPlan CR23: pinned imageCols forces a uniform grid", fn: () => { const p = imageGridPlan([4, 0.5], 864, 468, 12, 2, 3); return p.cols === 3 && p.rows[0].cells.every((c) => c.f === 1 / 3); } },
   { name: "imageGridPlan CR23: no box → count default, area 0", fn: () => { const p = imageGridPlan([1, 2, 3], 0, 0, 12, 3); return p.cols === 3 && p.area === 0; } },
+  { name: "pasteLayoutArea: honors the author's imageCols like the renderer", fn: () => {
+    const a = [1, 1, 1], pin = imageGridPlan(a, 864, 468, 12, 3, 1).area;
+    const stack = pasteLayoutArea({ blocks: [], imageCols: 1 }, a, "stack");
+    const split = pasteLayoutArea({ blocks: [{ type: "heading", text: "H" }], imageCols: 1 }, a, "image-right");
+    const colW = (864 - 32) / 2, splitPin = imageGridPlan(a, colW, 468, 12, 2, 1).area;
+    return Math.abs(stack - pin) < 1e-6 && Math.abs(split - splitPin) < 1e-6 && pasteLayoutArea({ blocks: [] }, a, "stack") > stack;
+  } },
   { name: "bestImageGridCols: unknown aspect → count default", fn: () => bestImageGridCols([3, undefined, 3], 864, 418, 12, 3) === 3 },
   { name: "bestImageGridCols: no box → count default", fn: () => bestImageGridCols([3, 3, 3], 0, 0, 12, 3) === 3 },
   { name: "bestImageGridCols: bad aspect values → count default", fn: () => bestImageGridCols([3, NaN, -1], 864, 418, 12, 3) === 3 && bestImageGridCols([3, "3", 3], 864, 418, 12, 3) === 3 },
@@ -17848,6 +17884,96 @@ const _tlStressCase = async (c) => {
     return { label, ratio: chosen.area / best[1], detail: `${chosen.split ? "split" : "stack"} ${Math.round(chosen.area)} px2 vs ${best[0]} ${Math.round(best[1])} px2` };
   } finally { await _mrdUndoTo(past); }
 };
+
+// ── Review fixes: image grid and image paste ────────────────────────────
+const _rfiCanvas = (w, h, k) => { const cv = document.createElement("canvas"); cv.width = w; cv.height = h; const g = cv.getContext("2d"); g.fillStyle = _tlColors[k % 5]; g.fillRect(0, 0, w, h); return cv; };
+const _rfiSrc = (w, h, k) => _rfiCanvas(w, h, k).toDataURL("image/png");
+const _rfiPasteFile = (file) => {
+  const dt = new DataTransfer(); dt.items.add(file);
+  _mrdViewport().dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true }));
+};
+const _rfiPng = async (w, h, k) => { const blob = await new Promise((r) => _rfiCanvas(w, h, k).toBlob(r, "image/png")); return new File([blob], `r${k}.png`, { type: "image/png" }); };
+uiSuite("review-fix-image", [
+  { name: "E2: a solo full-bleed image is not click-to-zoom", fn: async () => {
+    const past = _hooks().getHistoryCounts().past;
+    try {
+      const vp = await _mrdInject([{ type: "image", src: _rfiSrc(400, 300, 0) }], { imageCols: undefined }, (v) => _tlLoaded(v) === 1 ? v : null);
+      if (!vp.querySelector("[data-testid='image-grid']")) throw new Error("the solo image left the grid path");
+      if (vp.querySelector("[data-vela-zoomable]")) throw new Error("the solo image has a zoom wrapper");
+      _click(vp.querySelector("img"));
+      await _wait(200);
+      const zoom = document.querySelector("[data-vela-zoom]");
+      if (zoom) { zoom.click(); throw new Error("a click on the solo image opened the zoom overlay"); }
+    } finally { await _mrdUndoTo(past); }
+  }},
+  { name: "E3: a short last grid row is centered exactly (auto and pinned imageCols)", fn: async () => {
+    const cases = [[5, undefined], [7, undefined], [2, 6], [3, 2], [5, 4]];
+    for (const [n, cols] of cases) {
+      const past = _hooks().getHistoryCounts().past;
+      try {
+        const blocks = Array.from({ length: n }, (_, k) => ({ type: "image", src: _rfiSrc(300, 300, k) }));
+        const vp = await _mrdInject(blocks, { imageCols: cols }, (v) => _tlLoaded(v) === n ? v : null);
+        await _wait(300); await _mrdFrame();
+        const grid = vp.querySelector("[data-testid='image-grid']"), g = grid.getBoundingClientRect(), s = vp.getBoundingClientRect().width / 960;
+        const rows = new Map();
+        grid.querySelectorAll("[data-testid='image-grid-cell']").forEach((c) => { const r = c.getBoundingClientRect(), key = Math.round(r.top); rows.set(key, [...(rows.get(key) || []), r]); });
+        if (rows.size < 2 && !(cols > n)) throw new Error(`${n} images, imageCols ${cols}: expected a short row, got ${rows.size} row(s)`);
+        for (const rs of rows.values()) {
+          const L = (Math.min(...rs.map((r) => r.left)) - g.left) / s, R = (g.right - Math.max(...rs.map((r) => r.right))) / s;
+          if (Math.abs(L - R) > 1) throw new Error(`${n} images, imageCols ${cols}: row of ${rs.length} has margins ${L.toFixed(1)} / ${R.toFixed(1)} px`);
+        }
+      } finally { await _mrdUndoTo(past); }
+    }
+  }},
+  { name: "E4: an undecodable image in a paste burst adds no block, shows a notice and keeps the rest", fn: async () => {
+    const past = _hooks().getHistoryCounts().past, mark = "RFI-E4";
+    try {
+      await _mrdInject([{ type: "heading", text: mark }], { imageCols: undefined }, (vp) => vp?.textContent.includes(mark) && !vp.querySelector("img") ? vp : null);
+      const good = [await _rfiPng(140, 90, 0), await _rfiPng(220, 90, 1)];
+      const bad = new File([new Uint8Array([73, 73, 42, 0, 1, 2, 3, 4, 5, 6, 7, 8])], "bad.tif", { type: "image/tiff" });
+      _rfiPasteFile(good[0]); _rfiPasteFile(bad); _rfiPasteFile(good[1]);
+      const notice = await _waitFor(() => document.querySelector("[data-testid='paste-notice']"), 4000).catch(() => null);
+      let got = [];
+      await _waitFor(() => { got = Array.from(_mrdViewport().querySelectorAll("img")).filter((im) => im.complete && im.naturalWidth > 0).map((im) => im.naturalWidth); return got.length >= 2; }, 6000).catch(() => {});
+      await _wait(400);
+      const imageBlocks = _mrdViewport().querySelectorAll("[data-block-type='image']").length;
+      if (imageBlocks !== 2) throw new Error(`${imageBlocks} image block(s) on the slide (expected 2)`);
+      if (got.join(",") !== "140,220") throw new Error(`images on the slide: ${got.join(",") || "none"} (expected 140,220 in paste order)`);
+      if (!notice) throw new Error("no notice for the image that could not be pasted");
+    } finally { await _mrdUndoTo(past); }
+  }},
+  { name: "E8: a fault in one paste is logged and the paste queue stays alive", fn: async () => {
+    const past = _hooks().getHistoryCounts().past, mark = "RFI-E8";
+    const warn = console.warn, warned = [], layoutFn = pasteImageLayout;
+    try {
+      await _mrdInject([{ type: "heading", text: mark }], { imageCols: undefined }, (vp) => vp?.textContent.includes(mark) && !vp.querySelector("img") ? vp : null);
+      console.warn = (...a) => { warned.push(a); };
+      pasteImageLayout = () => { throw new Error("rfi-e8-fault"); };
+      _rfiPasteFile(await _rfiPng(100, 80, 2));
+      await _waitFor(() => warned.length > 0, 3000).catch(() => {});
+      pasteImageLayout = layoutFn;
+      console.warn = warn;
+      _rfiPasteFile(await _rfiPng(160, 80, 3));
+      const ok = await _waitFor(() => _tlLoaded(_mrdViewport()) === 1, 4000).catch(() => null);
+      if (!warned.some((a) => a.some((x) => x && x.message === "rfi-e8-fault"))) throw new Error("the paste fault was not logged");
+      if (!ok) throw new Error("the paste after the fault did not land");
+    } finally { pasteImageLayout = layoutFn; console.warn = warn; await _mrdUndoTo(past); }
+  }},
+  { name: "E7: a grid image whose natural-size cache entry was evicted stays visible", fn: async () => {
+    const past = _hooks().getHistoryCounts().past;
+    try {
+      const blocks = [{ type: "image", src: _rfiSrc(320, 200, 0) }, { type: "image", src: _rfiSrc(200, 320, 1) }];
+      await _mrdInject(blocks, { imageCols: undefined }, (v) => _tlLoaded(v) === 2 ? v : null);
+      await _mrdFrame();
+      blocks.forEach((b) => IMAGE_NATURAL_SIZE.delete(b.src));
+      const vp = await _mrdInject(blocks, { imageCols: undefined, gap: 14 }, (v) => v);
+      await _wait(150); await _mrdFrame();
+      const hidden = Array.from(vp.querySelectorAll("img")).filter((im) => getComputedStyle(im).visibility === "hidden").length;
+      if (hidden) throw new Error(`${hidden} on-screen image(s) hidden after a cache eviction`);
+      if (!blocks.every((b) => IMAGE_NATURAL_SIZE.has(b.src))) throw new Error("the evicted natural sizes were not measured again");
+    } finally { await _mrdUndoTo(past); }
+  }},
+], { setup: _selectFirstModule });
 
 // ━━━ UI TEST RUNNER COMPONENT ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 

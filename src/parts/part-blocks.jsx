@@ -846,14 +846,22 @@ const GRID_IMG_MAX_UPSCALE = 2;
 const IMAGE_NATURAL_SIZE = new Map();
 function GridCellImage({ src, alt, style }) {
   const [, setTick] = useState(0);
+  const imgRef = useRef(null);
   const size = IMAGE_NATURAL_SIZE.get(src);
   const remember = (w, h) => {
     if (!IMAGE_NATURAL_SIZE.has(src) && IMAGE_NATURAL_SIZE.size >= 256) IMAGE_NATURAL_SIZE.delete(IMAGE_NATURAL_SIZE.keys().next().value);
     IMAGE_NATURAL_SIZE.set(src, { w, h });
     setTick((t) => t + 1);
   };
+  // The cache is bounded, so it can evict the entry of an image that is still
+  // on screen. That <img> has already loaded and onLoad does not fire again, so
+  // a cache miss would hide it for good. Measure it again here, before paint.
+  useLayoutEffect(() => {
+    const el = imgRef.current;
+    if (!IMAGE_NATURAL_SIZE.has(src) && el && el.complete && el.getAttribute("src") === src) remember(el.naturalWidth || 0, el.naturalHeight || 0);
+  });
   const capped = size && size.w > 0 && size.h > 0;
-  return <img src={src} alt={alt} data-grid-cap={capped ? GRID_IMG_MAX_UPSCALE : undefined}
+  return <img ref={imgRef} src={src} alt={alt} data-grid-cap={capped ? GRID_IMG_MAX_UPSCALE : undefined}
     onLoad={(e) => remember(e.currentTarget.naturalWidth || 0, e.currentTarget.naturalHeight || 0)}
     onError={() => remember(0, 0)}
     style={{ ...style, margin: "auto", maxWidth: capped ? size.w * GRID_IMG_MAX_UPSCALE : undefined, maxHeight: capped ? size.h * GRID_IMG_MAX_UPSCALE : undefined, visibility: size ? undefined : "hidden" }} />;

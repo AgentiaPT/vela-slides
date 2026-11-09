@@ -3475,6 +3475,96 @@ const _tlStressCase = async (c) => {
   } finally { await _mrdUndoTo(past); }
 };
 
+// ── Review fixes: image grid and image paste ────────────────────────────
+const _rfiCanvas = (w, h, k) => { const cv = document.createElement("canvas"); cv.width = w; cv.height = h; const g = cv.getContext("2d"); g.fillStyle = _tlColors[k % 5]; g.fillRect(0, 0, w, h); return cv; };
+const _rfiSrc = (w, h, k) => _rfiCanvas(w, h, k).toDataURL("image/png");
+const _rfiPasteFile = (file) => {
+  const dt = new DataTransfer(); dt.items.add(file);
+  _mrdViewport().dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true }));
+};
+const _rfiPng = async (w, h, k) => { const blob = await new Promise((r) => _rfiCanvas(w, h, k).toBlob(r, "image/png")); return new File([blob], `r${k}.png`, { type: "image/png" }); };
+uiSuite("review-fix-image", [
+  { name: "E2: a solo full-bleed image is not click-to-zoom", fn: async () => {
+    const past = _hooks().getHistoryCounts().past;
+    try {
+      const vp = await _mrdInject([{ type: "image", src: _rfiSrc(400, 300, 0) }], { imageCols: undefined }, (v) => _tlLoaded(v) === 1 ? v : null);
+      if (!vp.querySelector("[data-testid='image-grid']")) throw new Error("the solo image left the grid path");
+      if (vp.querySelector("[data-vela-zoomable]")) throw new Error("the solo image has a zoom wrapper");
+      _click(vp.querySelector("img"));
+      await _wait(200);
+      const zoom = document.querySelector("[data-vela-zoom]");
+      if (zoom) { zoom.click(); throw new Error("a click on the solo image opened the zoom overlay"); }
+    } finally { await _mrdUndoTo(past); }
+  }},
+  { name: "E3: a short last grid row is centered exactly (auto and pinned imageCols)", fn: async () => {
+    const cases = [[5, undefined], [7, undefined], [2, 6], [3, 2], [5, 4]];
+    for (const [n, cols] of cases) {
+      const past = _hooks().getHistoryCounts().past;
+      try {
+        const blocks = Array.from({ length: n }, (_, k) => ({ type: "image", src: _rfiSrc(300, 300, k) }));
+        const vp = await _mrdInject(blocks, { imageCols: cols }, (v) => _tlLoaded(v) === n ? v : null);
+        await _wait(300); await _mrdFrame();
+        const grid = vp.querySelector("[data-testid='image-grid']"), g = grid.getBoundingClientRect(), s = vp.getBoundingClientRect().width / 960;
+        const rows = new Map();
+        grid.querySelectorAll("[data-testid='image-grid-cell']").forEach((c) => { const r = c.getBoundingClientRect(), key = Math.round(r.top); rows.set(key, [...(rows.get(key) || []), r]); });
+        if (rows.size < 2 && !(cols > n)) throw new Error(`${n} images, imageCols ${cols}: expected a short row, got ${rows.size} row(s)`);
+        for (const rs of rows.values()) {
+          const L = (Math.min(...rs.map((r) => r.left)) - g.left) / s, R = (g.right - Math.max(...rs.map((r) => r.right))) / s;
+          if (Math.abs(L - R) > 1) throw new Error(`${n} images, imageCols ${cols}: row of ${rs.length} has margins ${L.toFixed(1)} / ${R.toFixed(1)} px`);
+        }
+      } finally { await _mrdUndoTo(past); }
+    }
+  }},
+  { name: "E4: an undecodable image in a paste burst adds no block, shows a notice and keeps the rest", fn: async () => {
+    const past = _hooks().getHistoryCounts().past, mark = "RFI-E4";
+    try {
+      await _mrdInject([{ type: "heading", text: mark }], { imageCols: undefined }, (vp) => vp?.textContent.includes(mark) && !vp.querySelector("img") ? vp : null);
+      const good = [await _rfiPng(140, 90, 0), await _rfiPng(220, 90, 1)];
+      const bad = new File([new Uint8Array([73, 73, 42, 0, 1, 2, 3, 4, 5, 6, 7, 8])], "bad.tif", { type: "image/tiff" });
+      _rfiPasteFile(good[0]); _rfiPasteFile(bad); _rfiPasteFile(good[1]);
+      const notice = await _waitFor(() => document.querySelector("[data-testid='paste-notice']"), 4000).catch(() => null);
+      let got = [];
+      await _waitFor(() => { got = Array.from(_mrdViewport().querySelectorAll("img")).filter((im) => im.complete && im.naturalWidth > 0).map((im) => im.naturalWidth); return got.length >= 2; }, 6000).catch(() => {});
+      await _wait(400);
+      const imageBlocks = _mrdViewport().querySelectorAll("[data-block-type='image']").length;
+      if (imageBlocks !== 2) throw new Error(`${imageBlocks} image block(s) on the slide (expected 2)`);
+      if (got.join(",") !== "140,220") throw new Error(`images on the slide: ${got.join(",") || "none"} (expected 140,220 in paste order)`);
+      if (!notice) throw new Error("no notice for the image that could not be pasted");
+    } finally { await _mrdUndoTo(past); }
+  }},
+  { name: "E8: a fault in one paste is logged and the paste queue stays alive", fn: async () => {
+    const past = _hooks().getHistoryCounts().past, mark = "RFI-E8";
+    const warn = console.warn, warned = [], layoutFn = pasteImageLayout;
+    try {
+      await _mrdInject([{ type: "heading", text: mark }], { imageCols: undefined }, (vp) => vp?.textContent.includes(mark) && !vp.querySelector("img") ? vp : null);
+      console.warn = (...a) => { warned.push(a); };
+      pasteImageLayout = () => { throw new Error("rfi-e8-fault"); };
+      _rfiPasteFile(await _rfiPng(100, 80, 2));
+      await _waitFor(() => warned.length > 0, 3000).catch(() => {});
+      pasteImageLayout = layoutFn;
+      console.warn = warn;
+      _rfiPasteFile(await _rfiPng(160, 80, 3));
+      const ok = await _waitFor(() => _tlLoaded(_mrdViewport()) === 1, 4000).catch(() => null);
+      if (!warned.some((a) => a.some((x) => x && x.message === "rfi-e8-fault"))) throw new Error("the paste fault was not logged");
+      if (!ok) throw new Error("the paste after the fault did not land");
+    } finally { pasteImageLayout = layoutFn; console.warn = warn; await _mrdUndoTo(past); }
+  }},
+  { name: "E7: a grid image whose natural-size cache entry was evicted stays visible", fn: async () => {
+    const past = _hooks().getHistoryCounts().past;
+    try {
+      const blocks = [{ type: "image", src: _rfiSrc(320, 200, 0) }, { type: "image", src: _rfiSrc(200, 320, 1) }];
+      await _mrdInject(blocks, { imageCols: undefined }, (v) => _tlLoaded(v) === 2 ? v : null);
+      await _mrdFrame();
+      blocks.forEach((b) => IMAGE_NATURAL_SIZE.delete(b.src));
+      const vp = await _mrdInject(blocks, { imageCols: undefined, gap: 14 }, (v) => v);
+      await _wait(150); await _mrdFrame();
+      const hidden = Array.from(vp.querySelectorAll("img")).filter((im) => getComputedStyle(im).visibility === "hidden").length;
+      if (hidden) throw new Error(`${hidden} on-screen image(s) hidden after a cache eviction`);
+      if (!blocks.every((b) => IMAGE_NATURAL_SIZE.has(b.src))) throw new Error("the evicted natural sizes were not measured again");
+    } finally { await _mrdUndoTo(past); }
+  }},
+], { setup: _selectFirstModule });
+
 // ━━━ UI TEST RUNNER COMPONENT ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 // Demo deck guard — UI tests only run against the original demo deck

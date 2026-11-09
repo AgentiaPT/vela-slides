@@ -416,9 +416,10 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
     return list;
   }, [lanes]);
 
-  const showNavToast = useCallback((module, section) => {
+  // editor: also show the toast in the editor view (the paste notice), not only in Present.
+  const showNavToast = useCallback((module, section, editor) => {
     clearTimeout(navToastTimer.current);
-    setNavToast({ module, section, phase: "in" });
+    setNavToast({ module, section, editor: !!editor, phase: "in" });
     navToastTimer.current = setTimeout(() => {
       setNavToast((t) => t ? { ...t, phase: "out" } : null);
       navToastTimer.current = setTimeout(() => setNavToast(null), 300);
@@ -520,8 +521,15 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
           if (live()) pasteRecordSuccessor(from, before, slidesRef.current, src);
         };
         const apply = async () => {
-          const compressed = await data;
-          if (!compressed || deckEpochRef.current !== epoch) return;
+          const raw = await data;
+          if (deckEpochRef.current !== epoch) return;
+          // The reducer keeps an image src only in this canonical form (the same
+          // chain sanitizeBlock runs). Use that same value here: an empty result
+          // (undecodable type, canvas too large, read error) must not add an empty
+          // image block, and a src the reducer changes would break the successor
+          // link for the rest of the burst.
+          const compressed = raw ? sanitizeImageDataUri(sanitizeUrl(raw, ["data:"])) : "";
+          if (!compressed) { showNavToast("This image could not be pasted", null, true); return; }
           // Empty module → brand-new full-bleed solo-image slide (additive). Later
           // pastes of the same burst go onto that slide.
           if (empty && !pasteResolveTarget(target, slidesRef.current)) {
@@ -583,11 +591,12 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
           dispatch({ type: "UPDATE_SLIDE", id: moduleId, index: at, patch, merge: true });
           await settle(cur, before, compressed);
         };
-        pasteQueueRef.current = pasteQueueRef.current.then(apply).catch(() => {});
+        // Log a fault (never swallow it silently); the catch keeps the queue alive.
+        pasteQueueRef.current = pasteQueueRef.current.then(apply).catch((err) => { console.warn("Vela: image paste failed", err); });
         break;
       }
     }
-  }, [concept.id, slideIndex, slides, dispatch]);
+  }, [concept.id, slideIndex, slides, dispatch, showNavToast]);
 
   useEffect(() => { const el = containerRef.current; if (el) { el.addEventListener("paste", handlePaste); return () => el.removeEventListener("paste", handlePaste); } }, [handlePaste]);
   useEffect(() => {
@@ -1237,6 +1246,10 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
   return (
     <div ref={containerRef} tabIndex={0} className="fade-in" style={{ flex: 1, display: "flex", flexDirection: "column", background: T.bg, borderLeft: isMobile ? "none" : `1px solid ${T.border}`, outline: "none", minWidth: 0 }}>
       {measureHarness}
+      {/* The toast in the editor view: only notices raised for it (image paste). */}
+      {navToast?.editor && <div data-testid="paste-notice" role="status" className={navToast.phase === "in" ? "nav-toast-in" : "nav-toast-out"} style={{ position: "fixed", bottom: 24, left: 0, right: 0, display: "flex", justifyContent: "center", zIndex: 1000, pointerEvents: "none" }}>
+        <div style={{ padding: "8px 20px", borderRadius: 8, background: "rgba(0,0,0,0.78)", backdropFilter: "blur(8px)", border: `1px solid ${T.accent}30`, fontFamily: FONT.display, fontSize: 14, color: "#fff", fontWeight: 600 }}>{navToast.module}</div>
+      </div>}
 
 
       {/* ── TOP PANELS — deck-level dialogs from top bar ──── */}
