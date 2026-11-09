@@ -133,6 +133,7 @@ that symbol in the named part for the line. No line numbers here — they rot.
 - Review fixes: image grid and image paste: _rfiCanvas _rfiSrc _rfiPasteFile _rfiPng _hfeZoomed _hfeZoomables _hfeTocPanel _hfeTocOpen _hfeHits _hfeTextNode
 - Bug-hunt round 1 fixes: image paste and placement: _h1Heavy _h1CellWidths _h1Imgs _h1Paste _h1Heading
 - WP7: Ctrl+U underline is saved as ++text++ and shows underlined: _ulSaved _ulOpenEditor
+- WP5: story images, image file drop, tile reorder: _wp5Sel _wp5Key _wp5Deck _wp5Fs _wp5Cur _wp5ImgSrcs _wp5Imgs _wp5Inject _wp5UndoTo _wp5Enter _wp5Exit _wp5Layer _wp5CurThumb _wp5ZoomedAt _wp5Grid _wp5Step _wp5OnSlide _wp5Toast _wp5Drop _wp5Aspect _wp5NoBlob
 - UI TEST RUNNER COMPONENT: computeDeckFingerprint DEMO_DECK_FP_TITLE VelaUITestRunner
 
 ### part-demo.jsx
@@ -336,6 +337,7 @@ add_lane add_item batch_add_items remove_item remove_lane rename_item rename_lan
 - part-uitest2.jsx: 448-line unbannered stretch after line 2
 - part-uitest2.jsx: 593-line unbannered stretch after line 1457
 - part-uitest2.jsx: 837-line unbannered stretch after line 2323
+- part-uitest2.jsx: 447-line unbannered stretch after line 4088
 - part-demo.jsx: 407-line unbannered stretch after line 510
 - part-demo.jsx: 373-line unbannered stretch after line 917
 - part-pdf.jsx: 414-line unbannered stretch after line 582

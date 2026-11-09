@@ -4085,6 +4085,453 @@ uiSuite("wp7-underline", [
   }},
 ], { setup: _selectFirstModule });
 
+// ── WP5: story images, image file drop, tile reorder ────────────────────
+// A story slide is set up on the second slide, so a previous slide exists for
+// the back path. Each test exits Present and undoes its own history steps.
+const _wp5Sel = () => _hooks().getSelection?.() || null;
+const _wp5Key = () => { const s = _wp5Sel(); return s ? `${s.itemId}|${s.slideIdx}` : null; };
+const _wp5Deck = () => _hooks().getDeckStateForTest?.() || {};
+const _wp5Fs = () => !!_wp5Deck().fullscreen;
+const _wp5Cur = () => _hooks().getCurrentSlideForTest?.() || null;
+const _wp5ImgSrcs = () => ((_wp5Cur() || {}).blocks || []).filter((b) => b.type === "image").map((b) => b.src);
+const _wp5Imgs = (n, cap) => Array.from({ length: n }, (_, k) => ({ type: "image", src: _rfiSrc(160 + 40 * k, 90, k), ...(cap && cap(k) ? { caption: cap(k) } : {}) }));
+const _wp5Inject = (mark, n, extra, cap) => _mrdInject([{ type: "heading", text: mark }, ..._wp5Imgs(n, cap)], { imageCols: undefined, story: undefined, ...(extra || {}) },
+  (vp) => vp?.textContent.includes(mark) && vp.querySelectorAll("img").length >= n ? vp : null);
+const _wp5UndoTo = async (past) => {
+  const h = _hooks();
+  document.activeElement?.blur?.();
+  for (let i = 0; i < 40 && h.getHistoryCounts && h.getHistoryCounts().past > past; i++) { _key("z", { ctrlKey: true }); await _wait(50); }
+};
+const _wp5Enter = async () => {
+  document.activeElement?.blur?.(); await _wait(60);
+  _key("f");
+  await _waitFor(() => _wp5Fs() && !_$("header"), 2500).catch(() => { throw new Error("did not enter Present"); });
+  await _mrdFrame();
+};
+const _wp5Exit = async () => {
+  for (let i = 0; i < 8 && _wp5Fs(); i++) { document.activeElement?.blur?.(); _key("Escape"); await _wait(150); }
+  if (_wp5Fs()) throw new Error("could not exit Present");
+  await _waitFor(() => _$("header"), 2000).catch(() => {});
+};
+const _wp5Layer = (root = document) => _$("[data-story-layer]", root);
+const _wp5CurThumb = (root = document) => _$("[data-story-rail] [aria-current='true']", root);
+const _wp5ZoomedAt = (k, root = document) => { const l = _wp5Layer(root); return !!l && l.style.pointerEvents === "auto" && _wp5CurThumb(root)?.getAttribute("aria-label") === `Image ${k}`; };
+const _wp5Grid = () => !_wp5Layer();
+const _wp5Step = async (key, want, label) => {
+  document.activeElement?.blur?.();
+  _key(key);
+  await _waitFor(want, 2500).catch(() => { throw new Error(`${key} → ${label}: not reached (layer=${!!_wp5Layer()}, current=${_wp5CurThumb()?.getAttribute("aria-label") || "-"}, slide=${_wp5Key()})`); });
+};
+// Run body on a fresh story slide (the second slide of the deck), then clean up.
+const _wp5OnSlide = async (mark, n, extra, body, cap) => {
+  await _wp5Exit(); await _selectFirstModule();
+  const k0 = _wp5Key();
+  document.activeElement?.blur?.(); _key("ArrowRight");
+  await _waitFor(() => _wp5Key() && _wp5Key() !== k0, 2500).catch(() => { throw new Error("could not move to the second slide"); });
+  const past = _hooks().getHistoryCounts().past;
+  const mm = window.matchMedia;
+  try {
+    const vp = await _wp5Inject(mark, n, extra, cap);
+    await body(vp, past);
+  } finally {
+    window.matchMedia = mm;
+    await _wp5Exit().catch(() => {});
+    await _wp5UndoTo(past);
+  }
+};
+const _wp5Toast = (re) => _$$(".nav-toast-in, .nav-toast-out, [data-testid='paste-notice']").map((t) => (t.textContent || "").trim()).find((t) => re.test(t)) || null;
+const _wp5Drop = (target, files, types = ["dragenter", "dragover", "drop"]) => {
+  const dt = new DataTransfer(); files.forEach((f) => dt.items.add(f));
+  const evs = types.map((type) => { const ev = new DragEvent(type, { dataTransfer: dt, bubbles: true, cancelable: true }); target.dispatchEvent(ev); return ev; });
+  return evs[evs.length - 1];
+};
+const _wp5Aspect = (src) => new Promise((res) => { const im = new Image(); im.onload = () => res(im.naturalHeight > 0 ? im.naturalWidth / im.naturalHeight : 0); im.onerror = () => res(0); im.src = src; });
+const _wp5NoBlob = () => { const b = _$$("img").find((im) => /^blob:/i.test(im.getAttribute("src") || "")); if (b) throw new Error("an img uses a blob: URL"); };
+
+uiSuite("wp5-story-present-nav", [
+  { name: "→ steps grid → image 1..4 → grid → next slide; rail has 4 thumbs, one current", fn: async () => {
+    await _wp5OnSlide("WP5 nav fwd", 4, { story: true }, async () => {
+      const here = _wp5Key();
+      await _wp5Enter();
+      if (_wp5Key() !== here) throw new Error("Present did not open on the story slide");
+      if (_wp5Layer()) throw new Error("the story slide opened zoomed, expected the grid");
+      if (_$("[data-story-rail]")) throw new Error("the index rail shows on the grid");
+      for (let k = 1; k <= 4; k++) {
+        await _wp5Step("ArrowRight", () => _wp5ZoomedAt(k), `image ${k}`);
+        const thumbs = _$$("[data-story-rail] button");
+        if (thumbs.length !== 4) throw new Error(`rail has ${thumbs.length} thumbs, expected 4`);
+        if (thumbs.filter((b) => b.getAttribute("aria-current") === "true").length !== 1) throw new Error("rail does not mark exactly one current thumb");
+        const zsrc = _$("[data-story-image] img")?.getAttribute("src"), tsrc = _$(`[data-story-idx='${k}'] img`)?.getAttribute("src");
+        if (!zsrc || zsrc !== tsrc) throw new Error(`zoomed image ${k} is not the tile ${k} image`);
+        if (_wp5Key() !== here) throw new Error(`left the slide at image ${k}`);
+      }
+      await _wp5Step("ArrowRight", _wp5Grid, "grid after image 4");
+      if (_wp5Key() !== here) throw new Error("left the slide before the final grid");
+      await _wp5Step("ArrowRight", () => _wp5Key() !== here, "next slide");
+    });
+  }},
+  { name: "← enters on the grid (k=N), zooms 4..1, grid, then previous slide", fn: async () => {
+    await _wp5OnSlide("WP5 nav back", 4, { story: true }, async () => {
+      const here = _wp5Key();
+      document.activeElement?.blur?.(); _key("ArrowRight"); // editor: plain slide nav
+      await _waitFor(() => _wp5Key() !== here, 2000);
+      await _wp5Enter();
+      await _wp5Step("ArrowLeft", () => _wp5Key() === here && _wp5Grid(), "story slide grid");
+      for (let k = 4; k >= 1; k--) await _wp5Step("ArrowLeft", () => _wp5ZoomedAt(k), `image ${k}`);
+      await _wp5Step("ArrowLeft", _wp5Grid, "grid before image 1");
+      if (_wp5Key() !== here) throw new Error("left the slide before the first grid");
+      await _wp5Step("ArrowLeft", () => _wp5Key() !== here, "previous slide");
+    });
+  }},
+  { name: "Esc zooms out first and → resumes at k+1; a thumb and a tile click jump", fn: async () => {
+    await _wp5OnSlide("WP5 nav esc", 4, { story: true }, async () => {
+      const here = _wp5Key();
+      await _wp5Enter();
+      await _wp5Step("ArrowRight", () => _wp5ZoomedAt(1), "image 1");
+      await _wp5Step("ArrowRight", () => _wp5ZoomedAt(2), "image 2");
+      await _wp5Step("Escape", _wp5Grid, "grid after Esc");
+      if (!_wp5Fs()) throw new Error("Esc while zoomed left Present");
+      await _wp5Step("ArrowRight", () => _wp5ZoomedAt(3), "image 3 (resume)");
+      _click(_$$("[data-story-rail] button")[3]);
+      await _waitFor(() => _wp5ZoomedAt(4), 2000).catch(() => { throw new Error("rail thumb 4 did not jump to image 4"); });
+      _click(_wp5Layer());
+      await _waitFor(_wp5Grid, 2000).catch(() => { throw new Error("a click on the zoomed image did not zoom out"); });
+      _click(_$("[data-story-idx='2'] img"));
+      await _waitFor(() => _wp5ZoomedAt(2), 2000).catch(() => { throw new Error("a tile click did not jump to image 2"); });
+      if (_$("[data-vela-zoom]")) throw new Error("a story tile click also opened the gallery zoom");
+      if (_wp5Key() !== here) throw new Error("left the slide");
+    });
+  }},
+]);
+
+uiSuite("wp5-story-off-unchanged", [
+  { name: "story OFF: arrows go slide to slide, a tile click opens the old zoom, no rail", fn: async () => {
+    await _wp5OnSlide("WP5 off", 4, {}, async () => {
+      const here = _wp5Key();
+      if (_$("[data-story-idx]")) throw new Error("story numbering on a story-off slide");
+      await _wp5Enter();
+      await _wp5Step("ArrowRight", () => _wp5Key() !== here, "next slide");
+      if (_wp5Layer()) throw new Error("story layer on a story-off slide");
+      await _wp5Step("ArrowLeft", () => _wp5Key() === here, "back to the slide");
+      _click(_$$("[data-testid='image-grid-cell'] img")[0]);
+      await _waitFor(() => _$("[data-vela-zoom]"), 2000).catch(() => { throw new Error("tile click did not open the gallery zoom"); });
+      if (_$("[data-story-rail]") || _wp5Layer()) throw new Error("story rail shows on a story-off slide");
+      _click(_$("[data-vela-zoom]"));
+      await _waitFor(() => !_$("[data-vela-zoom]"), 2000).catch(() => { throw new Error("gallery zoom did not close"); });
+    });
+  }},
+]);
+
+uiSuite("wp5-story-editor", [
+  { name: "editor: arrows change slides and never step the story", fn: async () => {
+    await _wp5OnSlide("WP5 editor nav", 4, { story: true }, async () => {
+      const here = _wp5Key();
+      if (_$("[data-testid='story-toggle']")?.getAttribute("aria-pressed") !== "true") throw new Error("story toggle is not pressed on a story slide");
+      await _wp5Step("ArrowRight", () => _wp5Key() !== here, "next slide");
+      if (_wp5Layer()) throw new Error("editor stepped the story");
+      await _wp5Step("ArrowLeft", () => _wp5Key() === here, "back");
+      await _wait(200);
+      if (_wp5Layer()) throw new Error("editor shows a story zoom layer");
+    });
+  }},
+  { name: "story toggle sets story:true, one undo restores; hidden with < 2 images", fn: async () => {
+    await _wp5OnSlide("WP5 toggle", 3, {}, async () => {
+      const btn = await _waitFor(() => _$("[data-testid='story-toggle']"), 2000).catch(() => { throw new Error("story toggle not shown for 3 images"); });
+      if (btn.getAttribute("aria-pressed") !== "false") throw new Error("toggle pressed on a story-off slide");
+      if (_$("[data-testid='story-preview']")) throw new Error("Preview story shown while story is off");
+      const p1 = _hooks().getHistoryCounts().past;
+      _click(btn);
+      await _waitFor(() => _wp5Cur()?.story === true && _$("[data-testid='story-toggle']")?.getAttribute("aria-pressed") === "true" && _$("[data-testid='story-preview']"), 2000)
+        .catch(() => { throw new Error("toggle did not set story:true"); });
+      if (_hooks().getHistoryCounts().past !== p1 + 1) throw new Error("toggle did not make exactly one undo step");
+      document.activeElement?.blur?.(); _key("z", { ctrlKey: true });
+      await _waitFor(() => _wp5Cur()?.story !== true && _$("[data-testid='story-toggle']")?.getAttribute("aria-pressed") === "false", 2000)
+        .catch(() => { throw new Error("one undo did not restore story off"); });
+      await _wp5Inject("WP5 toggle one", 1);
+      await _wait(150);
+      if (_$("[data-testid='story-toggle']")) throw new Error("story toggle shown with 1 image");
+    });
+  }},
+]);
+
+uiSuite("wp5-story-presenter", [
+  { name: "presenter NOW shows the story step, NEXT says image k/N then overview", fn: async () => {
+    await _wp5OnSlide("WP5 presenter", 4, { story: true }, async () => {
+      const here = _wp5Key();
+      await _wp5Enter();
+      document.activeElement?.blur?.(); _key("s");
+      const pv = await _waitFor(() => _$("[data-testid='presenter-view']"), 2000);
+      const label = () => (_$("[data-testid='presenter-next-story']")?.textContent || "").trim() || null;
+      const nowLayer = () => _$$("[data-story-layer]", pv).find((l) => !l.closest("[data-testid='presenter-next']")) || null;
+      await _waitFor(() => label() === "image 1/4", 2000).catch(() => { throw new Error(`NEXT label on the grid is ${JSON.stringify(label())}`); });
+      if (nowLayer()) throw new Error("NOW is zoomed on the grid step");
+      // Presenter thumbs have no jump, so their rail items are not buttons.
+      for (let k = 1; k <= 4; k++) {
+        const want = k < 4 ? `image ${k + 1}/4` : "overview";
+        document.activeElement?.blur?.(); _key("ArrowRight");
+        await _waitFor(() => label() === want && nowLayer(), 2000).catch(() => { throw new Error(`at image ${k}: NEXT=${JSON.stringify(label())}, NOW zoomed=${!!nowLayer()}`); });
+        const items = _$$("[data-story-rail] > *", nowLayer());
+        const cur = items.findIndex((x) => x.getAttribute("aria-current") === "true");
+        if (items.length !== 4 || cur !== k - 1) throw new Error(`NOW rail current is ${cur + 1} of ${items.length}, expected ${k} of 4`);
+      }
+      document.activeElement?.blur?.(); _key("ArrowRight");
+      await _waitFor(() => !label() && !nowLayer(), 2000).catch(() => { throw new Error("final grid: NEXT should be the next slide"); });
+      if (_wp5Key() !== here) throw new Error("left the slide too early");
+      await _wp5Step("ArrowRight", () => _wp5Key() !== here, "next slide");
+    });
+  }},
+]);
+
+uiSuite("wp5-caption-chip", [
+  { name: "editor hover shows \"+ Add title\" with no layout shift; typing sets the caption", fn: async () => {
+    await _wp5OnSlide("WP5 chip", 2, {}, async (vp) => {
+      const cell = _$$("[data-testid='image-grid-cell']", vp)[0];
+      if (!cell) throw new Error("no grid cell");
+      if (_$("[data-testid='caption-chip']")) throw new Error("chip shown before hover");
+      const r0 = cell.getBoundingClientRect();
+      cell.querySelector("img").dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
+      const chip = await _waitFor(() => _$("[data-testid='caption-chip']", cell), 2000).catch(() => { throw new Error("hover did not show the chip"); });
+      if ((chip.textContent || "").trim() !== "+ Add title") throw new Error(`chip text is ${JSON.stringify(chip.textContent)}`);
+      if (getComputedStyle(chip).position !== "absolute") throw new Error("chip is not absolutely positioned");
+      const r1 = cell.getBoundingClientRect();
+      if (Math.abs(r0.height - r1.height) > 0.5 || Math.abs(r0.width - r1.width) > 0.5) throw new Error("chip changed the tile size");
+      _click(chip);
+      const ed = await _waitFor(() => _$("[contenteditable='true']", cell), 2000).catch(() => { throw new Error("chip click did not open an inline editor"); });
+      ed.focus();
+      document.execCommand("insertText", false, "WP5 title");
+      ed.blur();
+      await _waitFor(() => (_wp5Cur()?.blocks || [])[1]?.caption === "WP5 title", 2000).catch(() => { throw new Error(`caption is ${JSON.stringify((_wp5Cur()?.blocks || [])[1]?.caption)}`); });
+      await _waitFor(() => vp.textContent.includes("WP5 title"), 1500);
+    });
+  }},
+  { name: "no chip in Present, also with present edit ON", fn: async () => {
+    await _wp5OnSlide("WP5 chip present", 2, {}, async () => {
+      await _wp5Enter();
+      document.activeElement?.blur?.(); _key("E", { shiftKey: true });
+      await _waitFor(() => _wp5Toast(/Edit mode ON/), 2000).catch(() => { throw new Error("present edit did not turn ON"); });
+      try {
+        for (const im of _$$("[data-testid='image-grid-cell'] img")) im.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
+        await _wait(250);
+        if (_$("[data-testid='caption-chip']")) throw new Error("caption chip rendered in Present with present edit ON");
+      } finally { document.activeElement?.blur?.(); _key("E", { shiftKey: true }); await _wait(150); }
+    });
+  }},
+  { name: "markup-like caption renders as literal text; no element, no handler", fn: async () => {
+    window.__wp5xss = 0;
+    const xss = '<img src=x onerror="window.__wp5xss=1">';
+    await _wp5OnSlide("WP5 xss", 2, { story: true }, async (vp) => {
+      const stored = (_wp5Cur()?.blocks || [])[1]?.caption || "";
+      const check = (root) => {
+        if (_$$("img", root).some((im) => !/^data:image\//.test(im.getAttribute("src") || ""))) throw new Error("caption created an img element");
+        if (_$("[onerror]", root)) throw new Error("caption created a handler attribute");
+      };
+      await _wait(300);
+      check(vp);
+      if (_$$("img", vp).length !== 2) throw new Error(`expected 2 tile imgs, got ${_$$("img", vp).length}`);
+      if (stored && !vp.textContent.includes(stored)) throw new Error("caption is not rendered as literal text");
+      // The story number is its own text node, never part of the caption string.
+      const tw = document.createTreeWalker(vp, NodeFilter.SHOW_TEXT);
+      let prefix = false;
+      while (tw.nextNode()) if (tw.currentNode.textContent === "1 · ") prefix = true;
+      if (stored && !prefix) throw new Error("story prefix is not a separate text node");
+      await _wp5Enter();
+      await _wp5Step("ArrowRight", () => _wp5ZoomedAt(1), "image 1");
+      await _wait(200);
+      check(document.body);
+      if ((_wp5Layer()?.textContent || "").includes("onerror")) throw new Error("caption shows inside the zoom layer");
+      if (window.__wp5xss) throw new Error("caption handler ran");
+    }, (k) => (k === 0 ? xss : null));
+    if (window.__wp5xss) throw new Error("caption handler ran");
+  }},
+]);
+
+uiSuite("wp5-image-paste-spill", [
+  { name: "paste 12 images: 10 here, 2 on a new story slide after it, toast", fn: async () => {
+    await _wp5Exit(); await _selectFirstModule();
+    const past = _hooks().getHistoryCounts().past;
+    const home = _wp5Key();
+    try {
+      const mark = "WP5 paste spill";
+      await _mrdInject([{ type: "heading", text: mark }], { imageCols: undefined, story: true }, (vp) => vp?.textContent.includes(mark) && !vp.querySelector("img") ? vp : null);
+      const files = [];
+      for (let k = 0; k < 12; k++) files.push(await _rfiPng(120 + 10 * k, 80, k));
+      _h1Paste(files);
+      const msg = await _waitFor(() => _wp5Toast(/Added \d+ here · \d+ on new slide \d+/), 20000).catch(() => { throw new Error("no spill toast"); });
+      const m = msg.match(/Added (\d+) here · (\d+) on new slide (\d+)/);
+      if (m[1] !== "10" || m[2] !== "2") throw new Error(`toast says ${JSON.stringify(msg)}`);
+      await _waitFor(() => _wp5ImgSrcs().length === 2, 3000).catch(() => { throw new Error(`spill slide has ${_wp5ImgSrcs().length} images`); });
+      const spill = _wp5Cur(), sel = _wp5Sel();
+      if (spill.story !== true) throw new Error("spill slide did not inherit story:true");
+      if (sel.slideIdx + 1 !== Number(m[3])) throw new Error(`toast names slide ${m[3]}, spill is slide ${sel.slideIdx + 1}`);
+      document.activeElement?.blur?.(); _key("ArrowLeft");
+      await _waitFor(() => _wp5Key() === home, 2000).catch(() => { throw new Error("spill slide is not right after the pasted slide"); });
+      const src = _wp5ImgSrcs();
+      if (src.length !== 10) throw new Error(`pasted slide has ${src.length} images, expected 10`);
+      if (!src.every((s) => SAFE_RASTER_DATA_IMAGE.test(s))) throw new Error("a pasted src is not a safe raster data URI");
+    } finally {
+      await _wp5UndoTo(past);
+      await _selectFirstModule();
+    }
+  }},
+]);
+
+uiSuite("wp5-tile-reorder", [
+  { name: "drag a tile handle: live reflow, one edit, one undo restores", fn: async () => {
+    await _wp5OnSlide("WP5 reorder", 3, {}, async (vp) => {
+      const before = _wp5ImgSrcs();
+      const cells = _$$("[data-testid='image-grid-cell']", vp);
+      if (cells.length !== 3) throw new Error(`expected 3 cells, got ${cells.length}`);
+      cells[0].querySelector("img").dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
+      const h = await _waitFor(() => _$("[data-testid='tile-drag-handle']", cells[0]), 2000).catch(() => { throw new Error("hover did not show the drag handle"); });
+      const hr = h.getBoundingClientRect(), c0 = cells[0].getBoundingClientRect(), t = cells[2].getBoundingClientRect();
+      const p1 = _hooks().getHistoryCounts().past;
+      h.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, cancelable: true, button: 0, pointerId: 1, isPrimary: true, clientX: hr.x + 4, clientY: hr.y + 4 }));
+      await _mrdFrame();
+      window.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, pointerId: 1, clientX: t.x + t.width / 2, clientY: t.y + t.height / 2 }));
+      await _waitFor(() => Math.abs(cells[0].getBoundingClientRect().left - c0.left) > 2, 1500).catch(() => { throw new Error("dragged tile did not reflow live"); });
+      if (_hooks().getHistoryCounts().past !== p1) throw new Error("drag move wrote history before drop");
+      window.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, pointerId: 1, clientX: t.x + t.width / 2, clientY: t.y + t.height / 2 }));
+      const want = [before[1], before[2], before[0]];
+      await _waitFor(() => JSON.stringify(_wp5ImgSrcs()) === JSON.stringify(want), 2000).catch(() => { throw new Error("drop did not reorder the blocks to 2,3,1"); });
+      if (_hooks().getHistoryCounts().past !== p1 + 1) throw new Error("reorder did not make exactly one undo step");
+      document.activeElement?.blur?.(); _key("z", { ctrlKey: true });
+      await _waitFor(() => JSON.stringify(_wp5ImgSrcs()) === JSON.stringify(before), 2000).catch(() => { throw new Error("one undo did not restore the order"); });
+    });
+  }},
+  { name: "Esc during a tile drag cancels with no change", fn: async () => {
+    await _wp5OnSlide("WP5 reorder esc", 3, {}, async (vp) => {
+      const before = _wp5ImgSrcs();
+      const cells = _$$("[data-testid='image-grid-cell']", vp);
+      cells[0].querySelector("img").dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
+      const h = await _waitFor(() => _$("[data-testid='tile-drag-handle']", cells[0]), 2000);
+      const hr = h.getBoundingClientRect(), c0 = cells[0].getBoundingClientRect(), t = cells[2].getBoundingClientRect();
+      const p1 = _hooks().getHistoryCounts().past;
+      h.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, cancelable: true, button: 0, pointerId: 1, isPrimary: true, clientX: hr.x + 4, clientY: hr.y + 4 }));
+      await _mrdFrame();
+      window.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, pointerId: 1, clientX: t.x + t.width / 2, clientY: t.y + t.height / 2 }));
+      await _waitFor(() => Math.abs(cells[0].getBoundingClientRect().left - c0.left) > 2, 1500).catch(() => { throw new Error("drag did not start"); });
+      document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+      await _mrdFrame();
+      window.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, pointerId: 1, clientX: t.x + t.width / 2, clientY: t.y + t.height / 2 }));
+      await _wait(300);
+      if (JSON.stringify(_wp5ImgSrcs()) !== JSON.stringify(before)) throw new Error("Esc did not cancel the reorder");
+      if (_hooks().getHistoryCounts().past !== p1) throw new Error("a cancelled drag wrote history");
+      if (Math.abs(cells[0].getBoundingClientRect().left - c0.left) > 0.5) throw new Error("tile did not go back after cancel");
+    });
+  }},
+]);
+
+uiSuite("wp5-story-motion-gallery", [
+  { name: "reduced motion: zoom in and out are instant (no fly animation)", fn: async () => {
+    await _wp5OnSlide("WP5 motion", 3, { story: true }, async () => {
+      await _wp5Enter();
+      await _wp5Step("ArrowRight", () => _wp5ZoomedAt(1), "image 1 (motion)");
+      if (!/350ms/.test(_$("[data-story-image]")?.style.transition || "")) throw new Error("control: no fly-zoom transition with motion allowed");
+      await _wp5Step("ArrowLeft", _wp5Grid, "grid (motion)");
+      const mm = window.matchMedia;
+      window.matchMedia = (q) => (/prefers-reduced-motion/.test(String(q))
+        ? { matches: true, media: String(q), onchange: null, addListener() {}, removeListener() {}, addEventListener() {}, removeEventListener() {}, dispatchEvent() { return false; } }
+        : mm.call(window, q));
+      await _wp5Step("ArrowRight", () => _wp5ZoomedAt(1), "image 1 (reduced)");
+      const box = _$("[data-story-image]"), rail = _$("[data-story-rail]");
+      if (box.style.transition !== "none" || box.style.transform !== "" || box.style.opacity !== "") throw new Error(`reduced motion still animates: transition=${box.style.transition}, transform=${box.style.transform}`);
+      if (rail.style.opacity !== "") throw new Error("reduced motion: rail fades in");
+      document.activeElement?.blur?.(); _key("ArrowLeft");
+      await _mrdFrame();
+      if (_wp5Layer()) throw new Error("reduced motion: zoom out is not instant");
+    });
+  }},
+  { name: "FX2b: with the Present gallery open, arrows do not step the story", fn: async () => {
+    await _wp5OnSlide("WP5 gallery", 3, { story: true }, async () => {
+      const here = _wp5Key();
+      await _wp5Enter();
+      document.activeElement?.blur?.(); _key("g");
+      await _waitFor(() => _mrdGalleryOpen(), 2000).catch(() => { throw new Error("gallery did not open in Present"); });
+      document.activeElement?.blur?.(); _key("ArrowRight");
+      await _waitFor(() => _wp5Key() !== here, 2000).catch(() => { throw new Error("ArrowRight in the gallery did not move as a plain slide"); });
+      if (_wp5Layer()) throw new Error("ArrowRight in the gallery stepped the story");
+      document.activeElement?.blur?.(); _key("ArrowLeft");
+      await _waitFor(() => _wp5Key() === here, 2000).catch(() => { throw new Error("ArrowLeft in the gallery did not go back"); });
+      await _wait(150);
+      if (_wp5Layer()) throw new Error("ArrowLeft in the gallery entered the story zoomed");
+      document.activeElement?.blur?.(); _key("Escape");
+      await _waitFor(() => !_mrdGalleryOpen(), 2000);
+      await _wp5Step("ArrowRight", () => _wp5ZoomedAt(1), "image 1 after the gallery closes");
+    });
+  }},
+]);
+
+uiSuite("wp5-image-drop", [
+  { name: "OS drop keeps file order; stored src is a safe JPEG data URI; no blob:", fn: async () => {
+    await _wp5OnSlide("WP5 drop", 0, {}, async (vp) => {
+      const title = _wp5Deck().deckTitle;
+      const files = [await _rfiPng(200, 100, 0), await _rfiPng(300, 100, 1), await _rfiPng(400, 100, 2)];
+      const ev = _wp5Drop(vp, files);
+      if (!ev.defaultPrevented) throw new Error("image drop was not taken by the slide panel");
+      await _waitFor(() => _wp5ImgSrcs().length === 3, 10000).catch(() => { throw new Error(`slide has ${_wp5ImgSrcs().length} images after the drop`); });
+      const src = _wp5ImgSrcs();
+      src.forEach((s, i) => { if (!SAFE_RASTER_DATA_IMAGE.test(s) || !/^data:image\/jpeg;base64,/i.test(s)) throw new Error(`image ${i + 1} src is not a safe JPEG data URI`); });
+      const asp = await Promise.all(src.map(_wp5Aspect));
+      if (![2, 3, 4].every((a, i) => Math.abs(asp[i] - a) < 0.1)) throw new Error(`drop order lost: aspects ${asp.map((a) => a.toFixed(2)).join(",")}`);
+      _wp5NoBlob();
+      if (_wp5Deck().deckTitle !== title) throw new Error("image drop changed the deck");
+    });
+  }},
+  { name: "mixed drop: SVG, oversize and .vela files are rejected, images kept, deck kept", fn: async () => {
+    await _wp5OnSlide("WP5 drop mixed", 0, {}, async (vp) => {
+      const title = _wp5Deck().deckTitle;
+      const svg = new File(['<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><rect width="10" height="10"/></svg>'], "a.svg", { type: "image/svg+xml" });
+      const big = new File([new Uint8Array(26 * 1024 * 1024)], "big.png", { type: "image/png" });
+      const vela = new File([JSON.stringify({ deckTitle: "WP5 must not load", lanes: [] })], "deck.vela", { type: "" });
+      const files = [await _rfiPng(200, 100, 0), svg, big, vela, await _rfiPng(300, 100, 1)];
+      const ev = _wp5Drop(vp, files);
+      if (!ev.defaultPrevented) throw new Error("mixed drop was not taken by the slide panel");
+      const msg = await _waitFor(() => _wp5Toast(/not added/), 10000).catch(() => { throw new Error("no reject notice"); });
+      if (msg !== "Added 2 · 3 not added") throw new Error(`notice is ${JSON.stringify(msg)}`);
+      const src = _wp5ImgSrcs();
+      if (src.length !== 2) throw new Error(`slide has ${src.length} images, expected 2`);
+      if (!src.every((s) => /^data:image\/jpeg;base64,/i.test(s) && SAFE_RASTER_DATA_IMAGE.test(s))) throw new Error("a kept src is not a safe JPEG data URI");
+      const asp = await Promise.all(src.map(_wp5Aspect));
+      if (Math.abs(asp[0] - 2) > 0.1 || Math.abs(asp[1] - 3) > 0.1) throw new Error("mixed drop lost the image order");
+      _wp5NoBlob();
+      await _wait(300);
+      if (_wp5Deck().deckTitle !== title) throw new Error("the .vela file in a mixed drop loaded as a deck");
+    });
+  }},
+  { name: "FX2a: images-only drop in Present shows a toast; deck unchanged", fn: async () => {
+    await _wp5OnSlide("WP5 drop present", 2, {}, async () => {
+      await _wp5Enter();
+      const title = _wp5Deck().deckTitle, before = JSON.stringify(_wp5Cur());
+      const target = document.elementFromPoint(innerWidth / 2, innerHeight / 2) || document.body;
+      const files = [await _rfiPng(200, 100, 0), await _rfiPng(300, 100, 1)];
+      _wp5Drop(target, files, ["dragenter", "dragover"]);
+      await _waitFor(() => _$text("Exit Present to add images"), 2000).catch(() => { throw new Error("drag overlay does not say to exit Present"); });
+      _wp5Drop(target, files, ["drop"]);
+      await _waitFor(() => _wp5Toast(/^Exit Present to add images$/), 2000).catch(() => { throw new Error("no 'Exit Present to add images' toast"); });
+      await _wait(800);
+      const leaf = _$$("*").filter((el) => el.children.length === 0 && (el.textContent || "").includes("Exit Present to add images"));
+      if (leaf.some((el) => !el.closest(".nav-toast-in, .nav-toast-out"))) throw new Error("drag overlay still shown after the drop");
+      if (!_wp5Fs()) throw new Error("drop left Present");
+      if (_wp5Deck().deckTitle !== title || JSON.stringify(_wp5Cur()) !== before) throw new Error("drop in Present changed the deck");
+    });
+  }},
+  { name: "a .vela-only drop still loads a deck", fn: async () => {
+    await _wp5Exit(); await _selectFirstModule();
+    const title = _wp5Deck().deckTitle;
+    const deck = { deckTitle: "WP5 dropped deck", lanes: [{ id: "wp5l", title: "WP5 lane", items: [{ id: "wp5m", title: "WP5 dropped module", slides: [{ blocks: [{ type: "heading", text: "WP5 DROPPED DECK" }] }] }] }] };
+    const vela = new File([JSON.stringify(deck)], "wp5.vela", { type: "" });
+    try {
+      _wp5Drop(_mrdViewport(), [vela]);
+      await _waitFor(() => _wp5Deck().deckTitle === "WP5 dropped deck", 5000).catch(() => { throw new Error(`deck not loaded, title is ${JSON.stringify(_wp5Deck().deckTitle)}`); });
+      _wp5NoBlob();
+    } finally {
+      if (!_hooks().restoreStartupDeck?.()) throw new Error("could not restore the demo deck");
+      await _waitFor(() => _wp5Deck().deckTitle === title, 3000).catch(() => { throw new Error("demo deck not restored"); });
+      await _selectFirstModule();
+    }
+  }},
+]);
+
 // ━━━ UI TEST RUNNER COMPONENT ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 // Demo deck guard — UI tests only run against the original demo deck
