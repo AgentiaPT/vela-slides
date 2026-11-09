@@ -1,6 +1,8 @@
 // © 2025-present Rui Quintino. Vela Slides — licensed under ELv2. See LICENSE.
 // ━━━ Modal Backdrop (shared) ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 function ModalBackdrop({ onClose, onEnter, extraKeys, children }) {
+  // Registered for SlidePanel's Esc check (see VELA_OPEN_CHROME in part-blocks.jsx).
+  useEffect(() => { const t = {}; VELA_OPEN_CHROME.modals.add(t); return () => { VELA_OPEN_CHROME.modals.delete(t); }; }, []);
   useEffect(() => {
     const h = (e) => {
       if (e.key === "Escape") { e.preventDefault(); onClose(); return; }

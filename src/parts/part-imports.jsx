@@ -981,6 +981,11 @@ function sanitizeSvgMarkup(raw) {
           for (const a of attrs) {
             const name = a.name.toLowerCase();
             if (name.startsWith("on")) { child.removeAttribute(a.name); continue; }
+            // UI-integrity (namespace forgery, §3.13): the app marks its own chrome
+            // and export plumbing with data-* attributes and queries them. No deck
+            // feature needs data-* in SVG, so drop every one (both spellings: a
+            // prefixed name keeps "data-…" as its localName).
+            if (name.startsWith("data-") || (a.localName || "").toLowerCase().startsWith("data-")) { child.removeAttribute(a.name); continue; }
             // src/srcset never appear on legitimate SVG elements (SVG uses href/
             // xlink:href), so they survive the SVG parse inert — but the sanitized
             // string is later parsed in an HTML context (dangerouslySetInnerHTML into a

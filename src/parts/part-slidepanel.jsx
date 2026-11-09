@@ -640,9 +640,10 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
         stopAlternatives();
         const dir = (e.key === "ArrowLeft" || e.key === "ArrowUp") ? -1 : 1;
         const order = [];
+        // A collapsed lane is skipped, except the current module: without the
+        // anchor, findIndex is -1 and the step jumps to the start of the deck.
         for (const lane of (lanes || [])) {
-          if (lane.collapsed) continue;
-          for (const item of lane.items) (item.slides || []).forEach((sl, i) => { if (!sl.reviewed || (item.id === concept.id && i === slideIndex)) order.push({ id: item.id, i, title: item.title }); });
+          for (const item of lane.items) if (!lane.collapsed || item.id === concept.id) (item.slides || []).forEach((sl, i) => { if (!sl.reviewed || (item.id === concept.id && i === slideIndex)) order.push({ id: item.id, i, title: item.title }); });
         }
         const t = order[order.findIndex((o) => o.id === concept.id && o.i === slideIndex) + dir];
         if (t) {
@@ -731,7 +732,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       // Esc leaves Present mode. Browser fullscreen normally does this itself, but in a
       // sandboxed iframe (Claude.ai artifact) requestFullscreen fails, so the key lands here.
       // An open modal takes Esc first (it closes on the same keydown).
-      if (e.key === "Escape" && fullscreen && !document.querySelector("[data-vela-modal]")) { e.preventDefault(); stopAlternatives(); dispatch({ type: "SET_FULLSCREEN", value: false }); return; }
+      if (e.key === "Escape" && fullscreen && VELA_OPEN_CHROME.modals.size === 0) { e.preventDefault(); stopAlternatives(); dispatch({ type: "SET_FULLSCREEN", value: false }); return; }
       // Ctrl+C → copy ALL selected slides (multi-select) to system clipboard,
       // in slide order. Falls back to the active slide when nothing is multi-selected.
       if ((e.ctrlKey || e.metaKey) && e.key === "c" && slidesRef.current.length > 0 && !["INPUT", "TEXTAREA"].includes(document.activeElement?.tagName) && !window.getSelection()?.toString()) {
@@ -799,7 +800,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
     // layering here: a zoom, gallery or presenter view closes first and Present stays.
     const onFsChange = () => {
       if (document.fullscreenElement || !fullscreen) return;
-      if (document.querySelector("[data-vela-zoom]")) { window.dispatchEvent(new Event("vela-close-zoom")); return; }
+      if (VELA_OPEN_CHROME.zooms.size > 0) { window.dispatchEvent(new Event("vela-close-zoom")); return; }
       if (showGalleryRef.current) { setGallery(false); return; }
       if (showPresenterViewRef.current) { setPresenterView(false); return; }
       dispatch({ type: "SET_FULLSCREEN", value: false });
@@ -903,8 +904,12 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
   };
 
   // ── Block-Targeted Edit (single block, prompt-based) ──
-  const runBlockEdit = async (blockIndex, prompt) => {
-    if (!prompt || blockEditing || !slides[slideIndex]?.blocks?.[blockIndex]) return;
+  // slot = [key, array, index] from SlideContent's blockSlot: a cols slide
+  // numbers its L/R column blocks after `blocks`, so the edit goes to that array.
+  const runBlockEdit = async (blockIndex, prompt, slot) => {
+    const key = slot && (slot[0] === "L" || slot[0] === "R") ? slot[0] : "blocks";
+    const j = key === "blocks" ? blockIndex : slot[2];
+    if (!prompt || blockEditing || !slides[slideIndex]?.[key]?.[j]) return;
     const operationEpoch = state._deckEpoch;
     const operationOwner = claimOperation("blockEdit");
     const operationIsCurrent = () => ownsOperation("blockEdit", operationOwner, operationEpoch);
@@ -912,18 +917,18 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
     dispatch({ type: "SET_AI_WORK", value: { itemId: concept.id, slideIdx: slideIndex } }); // CR5
     try {
       const newBlocks = await blockEditSlide(
-        slides[slideIndex], blockIndex, prompt,
-        concept.title, slideIndex + 1, slides.length, branding, guidelines
+        slides[slideIndex], j, prompt,
+        concept.title, slideIndex + 1, slides.length, branding, guidelines, key
       );
       if (!operationIsCurrent()) return;
       if (newBlocks && newBlocks.length > 0) {
-        const curBlocks = [...(slides[slideIndex].blocks || [])];
-        curBlocks.splice(blockIndex, 1, ...newBlocks);
+        const curBlocks = [...(slides[slideIndex][key] || [])];
+        curBlocks.splice(j, 1, ...newBlocks);
         const ts = new Date().toLocaleString("en-GB", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
-        const logEntry = `[🎯 ${ts}] block[${blockIndex}] "${prompt}"`;
+        const logEntry = `[🎯 ${ts}] ${key === "blocks" ? "block" : key}[${j}] "${prompt}"`;
         const existing = slides[slideIndex]?.notes?.trim() || "";
         setRevealKey(`be-${Date.now()}`);
-        dispatch({ type: "UPDATE_SLIDE", id: concept.id, index: slideIndex, patch: { blocks: curBlocks, notes: existing ? `${existing}\n${logEntry}` : logEntry }, merge: true });
+        dispatch({ type: "UPDATE_SLIDE", id: concept.id, index: slideIndex, patch: { [key]: curBlocks, notes: existing ? `${existing}\n${logEntry}` : logEntry }, merge: true });
       }
     } catch (e) {
       console.error("Block edit failed:", e);

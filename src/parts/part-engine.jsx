@@ -832,9 +832,10 @@ ${DESIGN_PROMPT_FOOTER}`;
   return result;
 }
 
-async function blockEditSlide(slideJson, blockIndex, userPrompt, conceptTitle, slideNum, totalSlides, branding, guidelines) {
+// key: the slide array that holds the block — "blocks", or "L"/"R" for a cols slide.
+async function blockEditSlide(slideJson, blockIndex, userPrompt, conceptTitle, slideNum, totalSlides, branding, guidelines, key = "blocks") {
   const { brandingCtx, guidelinesCtx } = buildDesignCtx(branding, guidelines);
-  const block = slideJson.blocks[blockIndex];
+  const block = slideJson[key][blockIndex];
   const blockDesc = block.type + (block.text ? `: "${block.text.slice(0, 60)}"` : block.title ? `: "${block.title.slice(0, 60)}"` : block.label ? `: "${block.label.slice(0, 60)}"` : "");
   const sysPrompt = `You are Vera, an expert slide block editor.
 
@@ -842,7 +843,7 @@ async function blockEditSlide(slideJson, blockIndex, userPrompt, conceptTitle, s
 Edit ONE block in a slide. Return ONLY that block's JSON — NOT the full slide.
 
 ## TARGET BLOCK
-Index ${blockIndex}, type "${block.type}" — ${blockDesc}
+${key === "blocks" ? "Index" : `Column "${key}" index`} ${blockIndex}, type "${block.type}" — ${blockDesc}
 
 ## CRITICAL RULES
 - Return ONLY the modified block object as JSON. Example: {"type":"heading","text":"New Title","size":"2xl"}
@@ -861,10 +862,11 @@ ${ICON_LIST}`;
   if (!result) throw new Error("Failed to parse block edit response");
 
   // Safeguard: if AI returned a full slide (has "blocks" array), extract the target block
-  if (result.blocks && Array.isArray(result.blocks) && !result.type) {
+  const fromSlide = !result.type && [result[key], result.blocks].find(Array.isArray);
+  if (fromSlide) {
     console.warn("blockEditSlide: AI returned full slide, extracting block", blockIndex);
-    const extracted = result.blocks[blockIndex];
-    if (extracted) result = extracted; else result = result.blocks[0];
+    const extracted = fromSlide[blockIndex];
+    if (extracted) result = extracted; else result = fromSlide[0];
   }
 
   // Handle single block or array of blocks (for split operations)

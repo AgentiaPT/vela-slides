@@ -278,6 +278,20 @@ export default function App() {
         } : null;
       },
       getVeraMode: () => _localSyncState.current?.veraMode || null,
+      // A copy of the current slide, and a lane collapse for the selected module
+      // (TOGGLE_LANE has no UI path; a deck can arrive with a collapsed lane).
+      getCurrentSlideForTest: () => {
+        const s = _localSyncState.current;
+        for (const l of (s?.lanes || [])) { const it = (l.items || []).find((i) => i.id === s.selectedId); if (it) return JSON.parse(JSON.stringify(it.slides?.[s.slideIndex] || null)); }
+        return null;
+      },
+      toggleSelectedLaneForTest: () => {
+        const s = _localSyncState.current;
+        const lane = (s?.lanes || []).find((l) => (l.items || []).some((i) => i.id === s.selectedId));
+        if (!lane) return false;
+        dispatch({ type: "TOGGLE_LANE", id: lane.id });
+        return true;
+      },
       restoreStartupDeck: () => {
         if (!VELA_TEST_STARTUP_PATCH) return false;
         const raw = JSON.parse(JSON.stringify(VELA_TEST_STARTUP_PATCH));
