@@ -550,6 +550,7 @@ def test_security():
         ("tests/test_icon_picker_escape.cjs", "Icon picker Escape (CR5)"),
         ("tests/test_deck_key_allowlist.cjs", "Deck-ingress key allowlist (drop/survive/clamp/depth)"),
         ("tests/test_story_logic.cjs",        "Story images (state machine, drop filter, grid plans)"),
+        ("tests/test_narrow_layout.cjs",      "Narrow (portrait) layout rules (grid columns, flow direction, safe widths)"),
         ("tests/test_reducer.cjs",            "Reducer state transitions (62 actions + UNDO/REDO)"),
         ("tests/test_engine_tools.cjs",       "Vera engine tools + ReAct caps (G1/G3/G4)"),
         ("tests/test_block_render.cjs",       "Block renderers (27 types via renderToStaticMarkup)"),

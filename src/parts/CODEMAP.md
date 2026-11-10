@@ -39,7 +39,7 @@ that symbol in the named part for the line. No line numbers here — they rot.
 - Block Helpers: stg COL_TOOLBAR_PAD patchItemAt removeItemAt setItemLink itemLinkOf addItemAt moveItemAt _noPin reorderCtl itemReorder blankItemFor PLACEHOLDER_FIELDS cloneGridCell clonePoint newItemFor
 - Add-Item Affordance — "+ add" button shown only in edit mode: AddItem ItemText IconBubble
 - Link Badge — one placement rule for every link badge (CR17): linkBadgeTextEnd LinkBadge
-- Per-Item Chrome — hover toolbar (🔗 link + ✕ delete) for one item of a multi-item block: ItemHoverContext itemChromeBtn reorderArrowBtn placeItemCluster ItemChrome
+- Narrow (portrait) layout: SlideNarrowContext NARROW_SIZE_PX NARROW_SIZE_ORDER NARROW_LIGHT_TYPES NARROW_WIDE_TYPES narrowTextW narrowPadPx narrowTextLoad narrowTplCols narrowGap narrowGridCols narrowTableCols narrowMaxWidth NARROW_VIEWS narrowBlockView ItemHoverContext itemChromeBtn reorderArrowBtn placeItemCluster ItemChrome
 - Icon Row Item (per-item link + delete): IconRowItem
 - Bullet Item (per-item link + delete): BulletItem
 - Grid Cell Block (with per-block link editing): GridCellBlock
@@ -54,7 +54,7 @@ that symbol in the named part for the line. No line numbers here — they rot.
 
 ### part-canvas.jsx
 - Story zoom layer (story images in Present): STORY_RAIL_W STORY_THUMB_H storyPrefersReducedMotion storyContainBox StoryZoomLayer
-- Inline Comment Card (review mode): InlineCommentCard SlideContent
+- Inline Comment Card (review mode): InlineCommentCard NARROW_PAD_X SlideContent
 
 ### part-reducer.jsx
 - Reducer: init _activeDeckEpoch velaPrepareDeckReplacement velaSyncDeckEpoch velaDeckEpochIsCurrent nextDeckEpoch NO_HISTORY MAX_HISTORY innerReducer
@@ -75,7 +75,7 @@ that symbol in the named part for the line. No line numbers here — they rot.
 ### part-slides.jsx
 - Slide Panel: VIRTUAL_W PREVIEW_RATIOS computeVirtualDims loadHtml2Canvas captureSlide
 - Slide Layout Stats (DOM-measured): computeSlideLayoutStats
-- Virtual Slide: VirtualSlide FullscreenSlide
+- Virtual Slide: NARROW_FILL_RATIO VirtualSlide FullscreenSlide
 - Scope Selector (shared by improve + timing): ScopeSelector BrandingPanel
 - Cinema Tip — bookmarklet helper for browser fullscreen in artifacts: CINEMA_BOOKMARKLET CinemaTip
 - Presenter TOC — slide-out panel on left edge in fullscreen: getSlideSource getSlideTitle SEARCH_PROSE_KEYS PRESENT_SEARCH_SKIP SEARCH_SLIDE_KEYS slideSearchTexts searchRenderIndex searchSnippet matchSlide matchPresentSlide searchDeck splitHighlight HighlightText useSearchNav SearchResultRow detourReturnTitle PresenterTOC
@@ -143,6 +143,7 @@ that symbol in the named part for the line. No line numbers here — they rot.
 - Session end: editor toolbar, dialog, live ingress, bar geometry (v13.80, P3): _sesTbBtn _sesTbIs _sesTbDesc _sesTbOpen _sesSecs _sesShape _sesRgb _sesImport
 - Session end: review fixes (v13.80): _sesSig _sesWheel _sesSwipe
 - Present clock chip (v13.80, C key). Each test restores: chip off,: _clkChip _clkBtn _clkKey _clkStored _clkNowOk _clkLeave _clkOn
+- Narrow (portrait) layout: _nrwContent _nrwGrid _nrwTracks _nrwByText _nrwAllInside _nrwCard _nrwOnSlide _nrwPhonePresent
 - UI TEST RUNNER COMPONENT: computeDeckFingerprint DEMO_DECK_FP_TITLE VelaUITestRunner
 
 ### part-demo.jsx
@@ -340,17 +341,18 @@ add_lane add_item batch_add_items remove_item remove_lane rename_item rename_lan
 
 ## Navigability debt (WARN — candidates for banners or splits)
 
-- part-imports.jsx: 929-line unbannered stretch after line 519
-- part-blocks.jsx: 806-line unbannered stretch after line 1265
-- part-canvas.jsx: 581-line unbannered stretch after line 150
-- part-slides.jsx: 548-line unbannered stretch after line 380
-- part-slidepanel.jsx: 483-line unbannered stretch after line 1515
+- part-imports.jsx: 929-line unbannered stretch after line 520
+- part-blocks.jsx: 826-line unbannered stretch after line 1406
+- part-canvas.jsx: 662-line unbannered stretch after line 153
+- part-canvas.jsx: 355-line unbannered stretch after line 828
+- part-slides.jsx: 548-line unbannered stretch after line 396
+- part-slidepanel.jsx: 502-line unbannered stretch after line 1516
 - part-uitest.jsx: 616-line unbannered stretch after line 1230
 - part-uitest2.jsx: 448-line unbannered stretch after line 2
 - part-uitest2.jsx: 593-line unbannered stretch after line 1457
 - part-uitest2.jsx: 853-line unbannered stretch after line 2323
 - part-uitest2.jsx: 376-line unbannered stretch after line 4104
-- part-uitest2.jsx: 1090-line unbannered stretch after line 4480
+- part-uitest2.jsx: 1094-line unbannered stretch after line 4480
 - part-demo.jsx: 407-line unbannered stretch after line 510
 - part-demo.jsx: 373-line unbannered stretch after line 917
 - part-pdf.jsx: 414-line unbannered stretch after line 582

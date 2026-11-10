@@ -38,7 +38,7 @@ function storyContainBox(r, a) {
   const w = Math.min(r.width, r.height * a);
   return { cx, cy, w, h: w / a };
 }
-function StoryZoomLayer({ items, story, animate, onJump, onZoomOut, hostRef, pad, accent }) {
+function StoryZoomLayer({ items, story, animate, onJump, onZoomOut, hostRef, pad, accent, narrow }) {
   const n = items.length;
   const zoomed = !!story && story.zoomed === true && Number.isInteger(story.k) && story.k >= 1 && story.k <= n;
   const kNow = zoomed ? story.k : 0;
@@ -123,16 +123,19 @@ function StoryZoomLayer({ items, story, animate, onJump, onZoomOut, hostRef, pad
   const live = zoomed;
   return (
     <div data-story-layer="" role="group" aria-label={`Image ${displayK} of ${n}`} onClick={live && onZoomOut ? (e) => { e.stopPropagation(); onZoomOut(); } : undefined}
-      style={{ position: "absolute", inset: 0, padding: pad, boxSizing: "border-box", zIndex: 4, display: "flex", flexDirection: "row", gap: 8, cursor: live && onZoomOut ? "zoom-out" : "default", pointerEvents: live ? "auto" : "none" }}>
+      style={{ position: "absolute", inset: 0, padding: pad, boxSizing: "border-box", zIndex: 4, display: "flex", flexDirection: narrow ? "column" : "row", gap: 8, cursor: live && onZoomOut ? "zoom-out" : "default", pointerEvents: live ? "auto" : "none" }}>
       <div ref={boxRef} data-story-image="" style={{ flex: 1, minWidth: 0, minHeight: 0, position: "relative" }}>
         <img key={displayK} ref={imgRef} src={item.src} alt={item.alt || `Image ${displayK} of ${n}`} draggable={false} style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "contain", display: "block" }} />
         {/* Screen readers hear the step; no visual change (clipped 1px box). */}
         <span aria-live="polite" style={{ position: "absolute", width: 1, height: 1, overflow: "hidden", clip: "rect(0 0 0 0)", whiteSpace: "nowrap" }}>{`Image ${displayK} of ${n}`}</span>
       </div>
-      <div ref={railRef} data-story-rail="" style={{ width: STORY_RAIL_W + 6, flexShrink: 0, padding: 3, boxSizing: "border-box", display: "flex", flexDirection: "column", justifyContent: "center", gap: 6, minHeight: 0, overflow: "hidden" }}>
+      {/* Narrow canvas: the index is a row under the image, so the image keeps the full width. */}
+      <div ref={railRef} data-story-rail="" style={narrow
+        ? { height: STORY_THUMB_H + 6, flexShrink: 0, padding: 3, boxSizing: "border-box", display: "flex", flexDirection: "row", justifyContent: "center", gap: 6, minWidth: 0, overflow: "hidden" }
+        : { width: STORY_RAIL_W + 6, flexShrink: 0, padding: 3, boxSizing: "border-box", display: "flex", flexDirection: "column", justifyContent: "center", gap: 6, minHeight: 0, overflow: "hidden" }}>
         {items.map((it, j) => {
           const cur = j + 1 === displayK;
-          const ts = { width: STORY_RAIL_W, height: STORY_THUMB_H, flex: `0 1 ${STORY_THUMB_H}px`, minHeight: 12, padding: 0, margin: 0, border: "none", borderRadius: 4, overflow: "hidden", boxSizing: "border-box", background: "rgba(127,127,127,0.16)", opacity: cur ? 1 : 0.55, outline: cur ? `2px solid ${accent}` : "none", outlineOffset: 1, cursor: onJump ? "pointer" : "default", display: "block" };
+          const ts = { ...(narrow ? { height: STORY_THUMB_H, width: "auto", flex: `0 1 ${STORY_RAIL_W}px`, minWidth: 12 } : { width: STORY_RAIL_W, height: STORY_THUMB_H, flex: `0 1 ${STORY_THUMB_H}px`, minHeight: 12 }), padding: 0, margin: 0, border: "none", borderRadius: 4, overflow: "hidden", boxSizing: "border-box", background: "rgba(127,127,127,0.16)", opacity: cur ? 1 : 0.55, outline: cur ? `2px solid ${accent}` : "none", outlineOffset: 1, cursor: onJump ? "pointer" : "default", display: "block" };
           const thumb = <img src={it.src} alt="" draggable={false} style={{ width: "100%", height: "100%", objectFit: "contain", display: "block", pointerEvents: "none" }} />;
           // Thumbs are buttons only when the surface can jump (Present). A mouse
           // click must not focus the button: Space would then press it again.
@@ -164,7 +167,9 @@ function InlineCommentCard({ comment, itemId, slideIndex, dispatch }) {
   );
 }
 
-function SlideContent({ slide, index, total, branding, editable, onEdit, presenting, onBlockEdit, blockEditing, fontScale = 1, reviewMode, itemId, dispatch: externalDispatch, displayIndex, displayTotal, hideSlideNumber, story, storyAnimate, onStoryJump, onStoryZoomOut, presentSurface, flashBlock = -1 }) {
+// Narrow (portrait) canvas padding, in virtual px.
+const NARROW_PAD_X = 22, NARROW_PAD_TOP = 30;
+function SlideContent({ slide, index, total, branding, editable, onEdit, presenting, onBlockEdit, blockEditing, fontScale = 1, reviewMode, itemId, dispatch: externalDispatch, displayIndex, displayTotal, hideSlideNumber, story, storyAnimate, onStoryJump, onStoryZoomOut, presentSurface, flashBlock = -1, narrowW = 0 }) {
   const st = { text: slide.color || T.text, muted: slide.mutedColor || T.textMuted, textDim: T.textDim, accent: slide.accent || T.accent, border: T.border, codeBg: T.codeBg };
   // Hidden elements (CR: hide any element). In presentation they are removed
   // entirely — no render, no layout — so a slide can carry a title that only
@@ -182,6 +187,12 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
     && blocks.some((b) => b && b.type !== "image" && b.type !== "spacer" && b.type !== "divider");
   const colsL = isCols ? _vis(slide.L) : [];
   const colsR = isCols ? _vis(slide.R) : [];
+  // Narrow (portrait) canvas: every layout is one stacked column. The block
+  // index model (blocks, then L, then R) does not change, so edits still map
+  // to the same arrays. rowCols / rowSplit are the side-by-side layouts.
+  const narrow = narrowW > 0;
+  const rowCols = isCols && !narrow, rowSplit = isSplit && !narrow;
+  const allBlocks = isCols ? [...blocks, ...colsL, ...colsR] : blocks;
   const isMediaOnlyColumn = (column) =>
     column.some((b) => b && b.type === "image") &&
     column.every((b) => b && (b.type === "image" || b.type === "spacer" || b.type === "divider"));
@@ -218,7 +229,7 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
     return null;
   };
   const explicitJustify = verticalAlignToJustify(slide.verticalAlign);
-  const requestedJustify = explicitJustify || (align === "center" ? "center" : "flex-start");
+  const requestedJustify = explicitJustify || (narrow ? "safe center" : align === "center" ? "center" : "flex-start");
   // bg/bgGradient are encoder-gated (cssColor/cssGradient) the same way accent
   // and bgImage already are — defense-in-depth so this fetching sink can't be
   // reached even by a future sanitizer gap, not just today's scrubber. (v13.26)
@@ -230,7 +241,7 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
   const outerRef = useRef(null);
   const innerRef = useRef(null);
   const layoutContentKey = JSON.stringify({
-    index, presenting, reviewMode, fontScale, layout, align,
+    index, presenting, reviewMode, fontScale, layout, align, narrowW,
     verticalAlign: slide.verticalAlign ?? null,
     padding: slide.padding ?? null,
     gap: slide.gap ?? null,
@@ -254,6 +265,9 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
   const currentLayoutGeneration = useRef(layoutGeneration);
   currentLayoutGeneration.current = layoutGeneration;
   const [fitScale, setFitScale] = useState(1);
+  // Narrow only: a last uniform shrink (no reflow) when widening the column
+  // cannot make the content fit, e.g. a tall diagram that grows with the width.
+  const [fitShrink, setFitShrink] = useState(1);
   const [fitJustify, setFitJustify] = useState(requestedJustify);
   const [splitImgMaxH, setSplitImgMaxH] = useState(null); // px cap so a side image conforms to the content column's height
   const [colsImageFit, setColsImageFit] = useState(null);
@@ -400,20 +414,22 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
     const pendingReasons = new Set();
     const isCurrent = () => !cancelled && currentLayoutGeneration.current === generation;
 
-    const applyGeometry = (inner, scale) => {
-      const scaled = scale < 0.9995;
-      inner.style.transform = scaled ? `scale(${scale})` : "none";
+    const applyGeometry = (inner, scale, shrink = 1) => {
+      const k = scale * shrink;
+      const scaled = k < 0.9995;
+      // The shrunk column is narrower than the slide: translate centers it.
+      inner.style.transform = scaled ? `${shrink < 0.9995 ? `translateX(${(1 - shrink) / 2 * scale * 100}%) ` : ""}scale(${k})` : "none";
       inner.style.width = scaled ? `${100 / scale}%` : "100%";
       inner.style.maxWidth = scaled ? `${100 / scale}%` : "100%";
-      inner.style.height = scaled && (isSplit || isCols)
-        ? `${100 / scale}%`
-        : (isSplit || (isCols && hasDirectColumnImage) ? "100%" : "auto");
+      inner.style.height = scaled && (rowSplit || rowCols || narrow)
+        ? `${100 / k}%`
+        : (rowSplit || (rowCols && hasDirectColumnImage) ? "100%" : "auto");
       // Unscaled, the inner box fills the slide (the same flex:1 the render gives
       // it). Set it here too: a render still scaled from an earlier state has no
       // flex yet, and then a flex-sized image grid would measure at its floor.
       // (The shorthand resets flex-shrink, so it goes first.)
       inner.style.flex = scaled ? "" : "1";
-      inner.style.flexShrink = scaled && (isSplit || isCols) ? "0" : "";
+      inner.style.flexShrink = scaled && (rowSplit || rowCols || narrow) ? "0" : "";
       void inner.offsetHeight;
     };
 
@@ -544,7 +560,7 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
         }
       };
 
-      if (isCols && hasDirectColumnImage) {
+      if (rowCols && hasDirectColumnImage) {
         const natural = evaluateColumns(1);
         const fullOverflow = Math.max(
           natural.innerOverflow,
@@ -620,30 +636,96 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
       }
 
       setColsImageFit(null);
+      // Narrow: a grid's tight height cap (render state) must not limit this
+      // measurement, or a box could never grow again. Lift it, restore it below.
+      const narrowGrids = narrow ? Array.from(inner.querySelectorAll("[data-image-grid-key]")) : [];
+      narrowGrids.forEach((g) => { g.style.maxHeight = "100%"; });
       applyGeometry(inner, 1);
       // In a side-by-side layout the content column drives the scale. The image
       // cap is computed only after the reciprocal final height is active.
-      const contentEl = isSplit ? inner.querySelector("[data-split-content]") : null;
+      const contentEl = rowSplit ? inner.querySelector("[data-split-content]") : null;
       const contentH = contentEl ? contentEl.scrollHeight : 0;
       // CR25: a stack with an image grid fills the slide exactly (the grid takes
       // the free height). Measure its layout boxes, not scrollHeight: a block's
       // entrance-animation offset would read as overflow and shrink the slide,
       // and a shrunk slide collapses the grid to its floor.
-      const stackKids = isSplit ? [] : Array.from(inner.children);
-      const ih = isSplit ? contentH
+      const stackKids = rowSplit ? [] : Array.from(inner.children);
+      // Narrow: the scaled column keeps a definite height (its image grids
+      // flex in it), so its content height is the extent of its children.
+      const stackH = () => narrow
+        ? Math.max(0, ...stackKids.map((c) => c.offsetTop + c.offsetHeight)) - Math.min(...stackKids.map((c) => c.offsetTop), 0)
         : stackKids.some((c) => c.hasAttribute("data-image-grid-key"))
           ? Math.max(0, ...stackKids.map((c) => c.offsetTop + c.offsetHeight))
           : inner.scrollHeight;
-      const finalScale = ih > availH && ih > 0 ? Math.max(availH / ih, SCALE_FLOOR) : 1;
+      // Width the in-flow content needs, as a ratio of the column width.
+      // Absolutely positioned chrome (link badges, toolbars) does not count.
+      const flowOver = () => {
+        const box = inner.getBoundingClientRect();
+        if (!(box.width > 0)) return 1;
+        let left = box.left, right = box.right;
+        // Only a box past an edge needs the (costly) position check.
+        const inFlow = (el) => {
+          for (let p = el; p && p !== inner; p = p.parentElement) {
+            const pos = getComputedStyle(p).position;
+            if (pos === "absolute" || pos === "fixed") return false;
+          }
+          return true;
+        };
+        for (const c of inner.querySelectorAll("*")) {
+          // An <svg> is one box: its shapes can lie outside the viewBox.
+          if (c.ownerSVGElement) continue;
+          const r = c.getBoundingClientRect();
+          if (!(r.width > 0) || (r.right <= right + 0.5 && r.left >= left - 0.5) || !inFlow(c)) continue;
+          // A centered block overflows on the two sides.
+          right = Math.max(right, r.right); left = Math.min(left, r.left);
+        }
+        return (right - left) / box.width;
+      };
+      const ih = rowSplit ? contentH : stackH();
+      let finalScale = ih > availH && ih > 0 ? Math.max(availH / ih, SCALE_FLOOR) : 1;
+      if (narrow && finalScale < 1) {
+        // A scaled column is wider, so its text wraps less and it gets shorter
+        // than availH / ih predicts. Search for the largest scale that fits.
+        const fits = (sc) => { applyGeometry(inner, sc); return stackH() * sc <= availH + 0.5; };
+        let low = finalScale, high = 1;
+        for (let pass = 0; pass < 6 && high - low > 0.01; pass++) {
+          const probe = (low + high) / 2;
+          if (fits(probe)) low = probe; else high = probe;
+        }
+        finalScale = low;
+      }
+      if (narrow) {
+        // A block wider than the column (a long word, a wide table) scales the
+        // slide down until it fits the width.
+        for (let pass = 0; pass < 3; pass++) {
+          applyGeometry(inner, finalScale);
+          const over = flowOver();
+          if (!(over > 1.004) || finalScale <= SCALE_FLOOR) break;
+          finalScale = Math.max(SCALE_FLOOR, finalScale / over);
+        }
+      }
       // CR23: record each image grid's free box at the natural (unscaled) size.
       // The box is flex-driven (it does not depend on the grid's column count),
-      // so it is a stable input for bestImageGridCols().
+      // so it is a stable input for bestImageGridCols(). Narrow: the box at the
+      // final scale, because the tight height cap is made from it.
+      let finalShrink = 1;
+      if (narrow) {
+        applyGeometry(inner, finalScale);
+        // Content that grows with the column width (a pinned image, a tall
+        // diagram) can still be too tall. Shrink it as one piece, so a narrow
+        // slide never runs off the canvas.
+        const tall = stackH() * finalScale;
+        if (tall > availH + 0.5) finalShrink = Math.max(SCALE_FLOOR, availH / tall);
+        applyGeometry(inner, finalScale, finalShrink);
+      }
       const boxes = {};
       inner.querySelectorAll("[data-image-grid-key]").forEach((g) => { boxes[g.getAttribute("data-image-grid-key")] = [g.clientWidth, g.clientHeight]; });
       setGridBoxes((prev) => JSON.stringify(prev) === JSON.stringify(boxes) ? prev : boxes);
-      applyGeometry(inner, finalScale);
+      narrowGrids.forEach((g) => { g.style.maxHeight = g.getAttribute("data-tight-max") || "100%"; });
+      applyGeometry(inner, finalScale, finalShrink);
+      setFitShrink(finalShrink);
       let splitCap = null;
-      if (isSplit && contentEl) {
+      if (rowSplit && contentEl) {
         const imageCol = inner.querySelector("[data-split-image]");
         const finalContentH = contentEl.scrollHeight;
         const finalImageH = Math.max(0, (imageCol?.clientHeight || 0) - (EDGE_ALLOWANCE_VISUAL * 2) / finalScale);
@@ -653,7 +735,9 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
       }
       setSplitImgMaxH(splitCap);
       setFitScale(finalScale);
-      setFitJustify(finalScale < 0.9995 ? (explicitJustify || "flex-start") : requestedJustify);
+      // Narrow: keep the (safe) centering when scaled. A width-driven scale
+      // leaves free height, and safe alignment never clips an overflow.
+      setFitJustify(finalScale < 0.9995 && !narrow ? (explicitJustify || "flex-start") : requestedJustify);
     };
 
     const scheduleMeasure = (reason) => {
@@ -719,7 +803,7 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
   useEffect(() => { aspectLiveRef.current = true; return () => { aspectLiveRef.current = false; }; }, []);
   useEffect(() => {
     const loads = aspectLoadsRef.current;
-    const pending = new Set(blocks.filter((b) => b && b.type === "image" && typeof b.src === "string" && b.src && !IMAGE_ASPECT_CACHE.has(b.src) && !loads.has(b.src)).map((b) => b.src));
+    const pending = new Set((narrow ? allBlocks : blocks).filter((b) => b && b.type === "image" && typeof b.src === "string" && b.src && !IMAGE_ASPECT_CACHE.has(b.src) && !loads.has(b.src)).map((b) => b.src));
     pending.forEach((src) => {
       loads.add(src);
       imageAspect(src).then((a) => { loads.delete(src); rememberImageAspect(src, a); if (aspectLiveRef.current) setAspectTick((t) => t + 1); });
@@ -733,7 +817,12 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
 
   const rawPad = typeof slide.padding === "number" ? `${slide.padding}px` : slide.padding || "36px 48px";
   const isSoloImage = blocks.length === 1 && blocks[0].type === "image";
-  const pad = isSoloImage ? "0px" : String(rawPad).split(/\s+/).map((v) => Math.max(parseInt(v) || 24, 24) + "px").join(" ");
+  const padParts = String(rawPad).split(/\s+/).map((v) => Math.max(parseInt(v) || 24, 24));
+  // Narrow: small side and top padding (the phone Present controls are in a bar
+  // under the slide, so nothing floats over it); the bottom clears the footer.
+  const pad = isSoloImage ? "0px" : narrow
+    ? `${NARROW_PAD_TOP}px ${NARROW_PAD_X}px ${Math.max(44, Math.min(56, padParts[2] ?? padParts[0]))}px`
+    : padParts.map((v) => v + "px").join(" ");
 
   // Render a single block with all editable chrome (hover, edit popup, link, etc.)
   // ── Per-block editor chrome: hover toolbar, AI/link/comment popups, badges ──
@@ -871,19 +960,35 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
     // never re-inserts nodes. Without a drag, seq === idxs (render unchanged).
     const drag = tileDrag && tileDrag.key === gridKey && tileDrag.idxs.length === runLen && tileDrag.idxs.every((v, q) => v === idxs[q]) ? tileDrag : null;
     const seq = drag ? drag.order.map((p) => idxs[p]) : idxs;
-    const canReorder = !!(editable && onEdit && !presenting && !presentSurface && runLen >= 2 && !isSoloImage);
+    // The drop writes slide.blocks, so a run from a column (narrow) has no drag.
+    const canReorder = !!(editable && onEdit && !presenting && !presentSurface && runLen >= 2 && !isSoloImage && idxs.every((bi) => bi < blocks.length));
     // A story-active grid gives every cell one uniform caption row (_storyRow),
     // so tiles with and without a caption align. Other grids: no flag, unchanged.
     const storyRow = storyActive && runLen >= 2 && idxs.some((bi) => storyNumOf.has(bi));
-    const maxW = seq.map((bi) => { const z = IMAGE_NATURAL_SIZE.get(blocks[bi].src); return z && z.w > 0 ? z.w * GRID_IMG_MAX_UPSCALE : 0; });
-    const plan = imageGridPlan(seq.map((bi) => IMAGE_ASPECT_CACHE.get(blocks[bi].src)), box?.[0], box?.[1], gap, gridColsFor(runLen, region), slide.imageCols ? Math.min(6, Math.max(1, slide.imageCols | 0)) : 0, maxW);
+    const maxW = seq.map((bi) => { const z = IMAGE_NATURAL_SIZE.get(allBlocks[bi].src); return z && z.w > 0 ? z.w * GRID_IMG_MAX_UPSCALE : 0; });
+    const aspects = seq.map((bi) => IMAGE_ASPECT_CACHE.get(allBlocks[bi].src));
+    const plan = imageGridPlan(aspects, box?.[0], box?.[1], gap, gridColsFor(runLen, region), slide.imageCols ? Math.min(6, Math.max(1, slide.imageCols | 0)) : 0, maxW);
     const rows = plan.rows.length;
-    const hwSum = plan.rows.reduce((t, r) => t + r.hw, 0) || 1, gapsH = gap * (rows - 1);
+    const gapsH = gap * (rows - 1);
+    // Narrow: a row gets the height its images need at full cell width (plus a
+    // caption line), and the grid is capped at the sum. So the grid hugs its
+    // images, and the slide centers the stack instead of leaving bands of
+    // free space inside the grid box.
+    let rowW = plan.rows.map((r) => r.hw), tightH = null;
+    if (narrow && box && plan.area > 0) {
+      const need = plan.rows.map((row) => Math.max(1, ...row.cells.map((c) => {
+        const cw = (box[0] - gap * row.gc) * c.f, bl = allBlocks[seq[c.i]];
+        return Math.min(cw, maxW[c.i] > 0 ? maxW[c.i] : cw) / aspects[c.i] + (storyRow || (bl && bl.caption) ? 34 : 0);
+      })));
+      rowW = need;
+      tightH = Math.ceil(need.reduce((t, v) => t + v, 0) + gapsH);
+    }
+    const hwSum = rowW.reduce((t, v) => t + v, 0) || 1;
     const len = (pct, px) => `calc(${pct * 100}% + ${px}px)`;
     const cellPos = [];
     let cumH = 0;
     plan.rows.forEach((row, r) => {
-      const h = row.hw / hwSum, sumF = row.cells.reduce((t, c) => t + c.f, 0), rowGaps = gap * row.gc;
+      const h = rowW[r] / hwSum, sumF = row.cells.reduce((t, c) => t + c.f, 0), rowGaps = gap * row.gc;
       let cumF = 0;
       // A short row also has fewer gaps than rowGaps reserves: split the unused
       // gaps (gc - (cells - 1)) evenly on both sides, so the row centers exactly.
@@ -909,12 +1014,12 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
     // requests alignment. The default path still fills all available height.
     const gridHeight = alignWithinColumn ? Math.min(splitImgMaxH || rows * 140, rows * 140) : null;
     return (
-      <div key={`__imgrid-${idxs[0]}`} data-testid="image-grid" data-image-grid={region} data-image-count={runLen} data-image-grid-key={gridKey} data-image-cols={plan.cols} data-image-rows={rows}
-        style={{ position: "relative", flex: gridHeight == null ? "1 1 0" : "0 0 auto", height: gridHeight == null ? undefined : gridHeight, maxHeight: "100%", minHeight: minGridH, minWidth: 0, width: "100%" }}>
+      <div key={`__imgrid-${idxs[0]}`} data-testid="image-grid" data-image-grid={region} data-image-count={runLen} data-image-grid-key={gridKey} data-image-cols={plan.cols} data-image-rows={rows} data-tight-max={tightH != null ? `${tightH}px` : undefined}
+        style={{ position: "relative", flex: gridHeight == null ? "1 1 0" : "0 0 auto", height: gridHeight == null ? undefined : gridHeight, maxHeight: tightH != null ? tightH : "100%", minHeight: minGridH, minWidth: 0, width: "100%" }}>
         {idxs.map((bi, p) => {
           const k = drag ? drag.order.indexOf(p) : p;
           // A solo image fills the slide: keep its _solo flag, so it is not click-to-zoom.
-          const rendered = renderBlockWithComments({ ...blocks[bi], _gridCell: true, ...(storyRow ? { _storyRow: true } : {}), ...(isSoloImage ? { _solo: true } : {}), ...(isSoloImage && blocks[bi].rounded == null ? { rounded: 0 } : {}) }, bi);
+          const rendered = renderBlockWithComments({ ...allBlocks[bi], _gridCell: true, ...(storyRow ? { _storyRow: true } : {}), ...(isSoloImage ? { _solo: true } : {}), ...(isSoloImage && allBlocks[bi].rounded == null ? { rounded: 0 } : {}) }, bi);
           const [blockEl, ...rest] = rendered;
           // Make the block wrapper fill its cell height so the image (height:100%)
           // and objectFit:contain letterbox uniformly across mixed aspect ratios.
@@ -946,25 +1051,28 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
 
   // Walk the stacked blocks and replace each maximal run of >=2 adjacent image
   // blocks with a balanced image grid (full region). Single images render as before.
-  const renderStackWithImageGrids = () => {
+  // `list` holds block indices (default: every stacked block, in order). The
+  // narrow layout passes the indices of a column or of one side of a split.
+  const renderStackWithImageGrids = (list) => {
     const out = [];
+    const ix = list || blocks.map((_, k) => k);
     let i = 0;
-    while (i < blocks.length) {
-      if (blocks[i].type === "image") {
+    while (i < ix.length) {
+      if (allBlocks[ix[i]].type === "image") {
         let j = i;
-        while (j < blocks.length && blocks[j].type === "image") j++;
+        // A run stays inside one array (blocks, L or R) and has no index gap.
+        while (j < ix.length && allBlocks[ix[j]].type === "image" && ix[j] === ix[i] + (j - i) && blockSlot(ix[j])[0] === blockSlot(ix[i])[0]) j++;
         // CR24/CR25: a lone stacked image also takes the grid path (unless the
         // author pinned its width), so it fills the free height below/above the
         // text and shrinks, instead of pushing the other blocks off the slide.
-        if (j - i >= 2 || blocks[i].maxWidth == null) {
-          const idxs = [];
-          for (let k = i; k < j; k++) idxs.push(k);
-          out.push(renderImageGrid(idxs, "full"));
+        // Narrow: also an image pinned to the column width, or it could not shrink.
+        if (j - i >= 2 || allBlocks[ix[i]].maxWidth == null || (narrow && narrowMaxWidth(allBlocks[ix[i]].maxWidth) === "100%")) {
+          out.push(renderImageGrid(ix.slice(i, j), "full"));
           i = j;
           continue;
         }
       }
-      out.push(...renderBlockWithComments(blocks[i], i));
+      out.push(...renderBlockWithComments(allBlocks[ix[i]], ix[i]));
       i++;
     }
     return out;
@@ -972,6 +1080,16 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
 
   // Build content: split layout or standard stacked layout
   const renderBlocks = () => {
+    if (narrow && (isCols || isSplit)) {
+      // One column: the header blocks, then the left and the right column; or
+      // the content and the images of a split, images first for image-left.
+      const idx = allBlocks.map((_, k) => k);
+      if (isCols) return renderStackWithImageGrids(idx);
+      const imgs = idx.filter((k) => blocks[k].type === "image"), rest = idx.filter((k) => blocks[k].type !== "image");
+      return layout === "image-left"
+        ? [...renderStackWithImageGrids(imgs), ...renderStackWithImageGrids(rest)]
+        : [...renderStackWithImageGrids(rest), ...renderStackWithImageGrids(imgs)];
+    }
     if (isCols) {
       const headerBlocks = blocks.flatMap((b, i) => renderBlockWithComments(b, i));
       // Balance fitting sides around media. If the generic side drives an
@@ -1034,15 +1152,18 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
     return renderStackWithImageGrids();
   };
 
+  const fitK = fitScale * fitShrink;
   return (
     <SlideErrorBoundary>
-      <div ref={outerRef} data-vela-slide-content="" style={{ height: "100%", padding: pad, position: "relative", overflow: "visible", boxSizing: "border-box", display: "flex", flexDirection: "column", ...bgStyle }}>
-        <div ref={innerRef} style={{ position: "relative", zIndex: 2, display: "flex", flexDirection: isSplit ? "row" : "column", justifyContent: isSplit ? "stretch" : fitJustify, alignItems: isSplit ? "stretch" : (align === "center" ? "center" : "stretch"), textAlign: align, gap: isSplit ? (slide.splitGap || 32) : (slide.gap || 12), transform: fitScale < 1 ? `scale(${fitScale})` : "none", transformOrigin: "top left", width: fitScale < 1 ? `${100 / fitScale}%` : "100%", height: fitScale < 1 ? `${100 / fitScale}%` : "100%", maxWidth: fitScale < 1 ? `${100 / fitScale}%` : "100%", flex: fitScale < 1 ? undefined : 1, flexShrink: fitScale < 1 && (isSplit || isCols) ? 0 : undefined, boxSizing: "border-box", ...(storyZoomed ? { visibility: "hidden" } : {}) }}>
+      <div ref={outerRef} data-vela-slide-content="" data-vela-narrow={narrow ? "" : undefined} style={{ height: "100%", padding: pad, position: "relative", overflow: "visible", boxSizing: "border-box", display: "flex", flexDirection: "column", ...bgStyle }}>
+        <div ref={innerRef} style={{ position: "relative", zIndex: 2, display: "flex", flexDirection: rowSplit ? "row" : "column", justifyContent: rowSplit ? "stretch" : fitJustify, alignItems: rowSplit ? "stretch" : (align === "center" ? "center" : "stretch"), textAlign: align, gap: rowSplit ? (slide.splitGap || 32) : (slide.gap || 12), transform: fitK < 1 ? `${fitShrink < 1 ? `translateX(${(1 - fitShrink) / 2 * fitScale * 100}%) ` : ""}scale(${fitK})` : "none", transformOrigin: "top left", width: fitK < 1 ? `${100 / fitScale}%` : "100%", height: fitK < 1 ? `${100 / fitK}%` : "100%", maxWidth: fitK < 1 ? `${100 / fitScale}%` : "100%", flex: fitK < 1 ? undefined : 1, flexShrink: fitK < 1 && (rowSplit || rowCols || narrow) ? 0 : undefined, boxSizing: "border-box", ...(storyZoomed ? { visibility: "hidden" } : {}) }}>
           <ItemHoverContext.Provider value={setItemHovered}>
-            {renderBlocks()}
+            <SlideNarrowContext.Provider value={narrow ? Math.max(240, narrowW - 2 * NARROW_PAD_X) : 0}>
+              {renderBlocks()}
+            </SlideNarrowContext.Provider>
           </ItemHoverContext.Provider>
         </div>
-        {storyActive && story && <StoryZoomLayer key={story.key} items={storyList} story={story} animate={!!storyAnimate} onJump={onStoryJump} onZoomOut={onStoryZoomOut} hostRef={outerRef} pad={pad} accent={cssColor(slide.accent) || T.accent} />}
+        {storyActive && story && <StoryZoomLayer key={story.key} items={storyList} story={story} animate={!!storyAnimate} onJump={onStoryJump} onZoomOut={onStoryZoomOut} hostRef={outerRef} pad={narrow ? `${NARROW_PAD_TOP}px 6px 44px` : pad} narrow={narrow} accent={cssColor(slide.accent) || T.accent} />}
         {/* Slide-level comments (no blockIndex) — top-right */}
         {reviewMode && externalDispatch && (() => {
           const unanchored = slideComments.filter((c) => c.blockIndex == null);

@@ -138,8 +138,9 @@ const velaClipboardReadSlides = async () => {
   return [];
 };
 
-const VELA_VERSION = "13.81";
+const VELA_VERSION = "13.82";
 const VELA_CHANGELOG = [
+  { v: "13.82", d: ["Phone (portrait): slides use a one-column layout that fills the screen; text stays near real size.", "Phone: side-by-side columns, split images and grids stack; short cards stay two per row.", "Phone: flows and timelines run top to bottom; stat rows and tables fit the width.", "Phone: images take the full width and shrink before text does; a slide does not run off the screen.", "Phone: story mode shows each image at full width, with the index row under it.", "Phone Present: a bar under the slide has previous, next, slide count and exit; nothing covers the slide.", "Phone editor: the slide tab shows the portrait layout, not a small 16:9 box.", "Wide (desktop) view: no layout change."] },
   { v: "13.81", d: ["Editor: search in the slide list (Ctrl+E or /), same engine as Present", "Search: ↑↓ + Enter, highlighted matches, match count; finds text in column layouts, notes and section names (editor)", "Editor: short outline on the matched block when a result opens"] },
   { v: "13.80", d: ["Session end time: set it from the toolbar or the Presenter View.", "Presenter View: clock, time left and pace guidance (ahead / on pace / behind).", "Present: thin pace bar on the slide edge (T hides it).", "Present: optional clock on the slide (C key)."] },
   { v: "13.79", d: ["Present: Ctrl+E search also matches slide text, with a snippet.", "Present: while typing, search also lists hidden slides and slides in collapsed lanes (a detour).", "Present: after a detour, arrows, wheel or Esc return to the slide you left.", "Present: a detour slide shows no slide number; Presenter view shows where you will return."] },
@@ -2844,6 +2845,7 @@ const getCss = () => `
   .magic-reveal,.magic-reveal::after{animation:none}
 }
 [class^="stg-"]{max-width:100%;box-sizing:border-box}
+[data-narrow-svg]>svg{max-width:100%;height:auto}
 .stg-1{animation:stg .4s ease-out .05s both}.stg-2{animation:stg .4s ease-out .12s both}.stg-3{animation:stg .4s ease-out .19s both}
 .stg-4{animation:stg .4s ease-out .26s both}.stg-5{animation:stg .4s ease-out .33s both}.stg-6{animation:stg .4s ease-out .4s both}.stg-7{animation:stg .4s ease-out .47s both}
 .mob-tab{display:flex;flex-direction:column;align-items:center;gap:2px;padding:6px 0;flex:1;cursor:pointer;border:none;background:transparent;font-family:${FONT.mono};font-size:8px;font-weight:600;letter-spacing:0.03em;transition:color .15s}
@@ -4132,6 +4134,147 @@ function LinkBadge({ fallback, style, label, gap = 4, children, ...rest }) {
 // placeItemCluster moves it to a free spot just outside the item. Hovering an item also notifies
 // ItemHoverContext, which the block lets read to hide its own (block-level) toolbar — so
 // the item toolbar and the block toolbar are never shown stacked on the same corner.
+// ── Narrow (portrait) layout ──
+// A slide drawn on a portrait canvas (a phone) has about 400 virtual px of
+// width. SlideContent sets this context to true there, and RenderBlock then
+// lays each block out for one narrow column. Deck data does not change:
+// narrowBlockView returns a render-only copy that differs only in scalar
+// layout fields (never `items`), so an edit made on a narrow canvas writes the
+// same patch as an edit on a wide canvas.
+// Value: the column width in virtual px (0 = a normal, wide canvas).
+const SlideNarrowContext = React.createContext(0);
+const NARROW_SIZE_PX = { xs: 13.6, sm: 15.2, md: 16.8, lg: 19.2, xl: 24, "2xl": 32, "3xl": 41.6, "4xl": 51.2 };
+const NARROW_SIZE_ORDER = ["xs", "sm", "md", "lg", "xl", "2xl", "3xl", "4xl"];
+const NARROW_LIGHT_TYPES = new Set(["heading", "text", "badge", "metric", "icon", "spacer", "divider"]);
+// Blocks that take the full width of a narrow grid cell (a centered cell shrinks them to their content).
+const NARROW_WIDE_TYPES = new Set(["funnel", "cycle", "comparison", "table", "progress", "matrix", "checklist", "timeline", "steps", "flow", "code", "number-row", "callout", "grid", "svg"]);
+// Estimated width (px) of one line of `text` at font size `px`.
+function narrowTextW(text, px) { return String(text || "").replace(/\*\*|\+\+|~~/g, "").length * px * 0.54; }
+function narrowPadPx(v) {
+  if (typeof v === "number") return v;
+  const m = String(v || "").trim().split(/\s+/).map((x) => parseFloat(x) || 0);
+  return m.length >= 2 ? m[1] : (m[0] || 0);
+}
+// Estimated lines the texts of `blocks` need in a column `w` px wide: [most lines of one text, widest word].
+function narrowTextLoad(blocks, w) {
+  let lines = 0, word = 0;
+  for (const b of blocks || []) {
+    if (!b || typeof b !== "object") continue;
+    const strs = b.type === "metric" ? [[b.value, NARROW_SIZE_PX[b.size || "4xl"]], [b.label, NARROW_SIZE_PX.xs * 1.1]]
+      : b.type === "icon" ? [[b.label, NARROW_SIZE_PX.xs]]
+      : [[b.text, (NARROW_SIZE_PX[b.size || (b.type === "heading" ? "2xl" : b.type === "badge" ? "xs" : "md")] || 16.8) * (b.type === "badge" ? 1.25 : 1)]];
+    for (const [t, px] of strs) {
+      if (!t) continue;
+      for (const ln of String(t).split("\n")) lines = Math.max(lines, Math.ceil(narrowTextW(ln, px) / Math.max(40, w)));
+      for (const wd of String(t).split(/[\s/]+/)) word = Math.max(word, narrowTextW(wd, px));
+    }
+  }
+  return [lines, word];
+}
+// Columns for a grid on a narrow canvas. Cards with short texts stay 2-up (or
+// 3-up when each text is one short line); a cell with a paragraph, an image
+// beside text, code, a diagram or another multi-column block gets a full row.
+// Column count an author set with style.gridTemplateColumns: a plain track
+// list ("1fr 2.2fr") or repeat(N, ...). 0 = not set or not readable. Type-check
+// first: a deck style value can be a number.
+function narrowTplCols(style) {
+  const t = style && typeof style.gridTemplateColumns === "string" ? style.gridTemplateColumns.trim() : "";
+  if (!t) return 0;
+  const m = /^repeat\(\s*(\d{1,2})\s*,/.exec(t);
+  if (m) return Number(m[1]);
+  return t.includes("(") ? 0 : t.split(/\s+/).length;
+}
+const narrowGap = (g, max) => Math.min(Number.isFinite(g) && g >= 0 ? g : 24, max);
+function narrowGridCols(block, colW) {
+  const items = Array.isArray(block.items) ? block.items.filter((c) => c && typeof c === "object") : [];
+  const cols = Math.max(1, narrowTplCols(block.style) || (Number.isFinite(block.cols) ? block.cols : 2));
+  if (cols <= 1 || items.length <= 1) return 1;
+  const oneCol = (b) => (Number.isFinite(b.cols) ? b.cols : 2) === 1 && narrowTplCols(b.style) <= 1;
+  const flat = (cell) => (Array.isArray(cell.blocks) ? cell.blocks : []).flatMap((b) => b && b.type === "grid" && oneCol(b) ? (Array.isArray(b.items) ? b.items : []).flatMap((c) => (c && Array.isArray(c.blocks) ? c.blocks : [])) : [b]);
+  const cells = items.map(flat);
+  const imagesOnly = cells.every((bs) => bs.some((b) => b && b.type === "image") && bs.every((b) => b && (b.type === "image" || NARROW_LIGHT_TYPES.has(b.type))) && narrowTextLoad(bs, 170)[0] <= 2);
+  if (imagesOnly) return Math.min(cols, 2);
+  if (items.some((c) => c.direction === "row") || cells.some((bs) => bs.some((b) => !b || !NARROW_LIGHT_TYPES.has(b.type)))) return 1;
+  const fits = (n) => {
+    const gap = narrowGap(block.gap, 12), cellW = (colW - gap * (n - 1)) / n;
+    return items.every((c, i) => {
+      const w = cellW - 2 * narrowPadPx(c.padding != null ? c.padding : c.style && c.style.padding);
+      const [lines, word] = narrowTextLoad(cells[i], w);
+      return lines <= (n === 2 ? 4 : 1) && word <= w;
+    });
+  };
+  if (cols >= 3 && items.length >= 3 && fits(3)) return 3;
+  // Three cards: one per row. Two and one gives cards of unequal width.
+  if (items.length === 3) return 1;
+  return fits(2) ? 2 : 1;
+}
+// Grid template for a table in a narrow column: one weight per column, from
+// its longest word (a header is wide uppercase mono) and its text length.
+// Built from numbers only.
+function narrowTableCols(headers, rows, cols) {
+  const w = [];
+  for (let j = 0; j < cols; j++) {
+    const cells = (rows || []).map((r) => String((r || [])[j] ?? ""));
+    const word = (t) => Math.max(0, ...String(t ?? "").split(/\s+/).map((x) => x.length));
+    const longest = Math.max(word((headers || [])[j]) * 1.3, ...cells.map(word));
+    const avg = cells.length ? cells.reduce((t, c) => t + c.length, 0) / cells.length : 0;
+    w.push(Math.round(Math.min(26, Math.max(4, longest, avg * 0.55)) * 10) / 10);
+  }
+  return w.map((v) => `minmax(0, ${v}fr)`).join(" ");
+}
+// Landscape widths (a % of the 960 canvas, or px) as a cap for a narrow column.
+function narrowMaxWidth(v) {
+  if (v == null) return v;
+  // Type-check first: only a number or a string is parsed; the result is built
+  // from the parsed number, so no deck string reaches CSS from here.
+  const n = typeof v === "number" ? v : typeof v !== "string" ? NaN : /^\s*[\d.]+px\s*$/.test(v) ? parseFloat(v) : /^\s*[\d.]+%\s*$/.test(v) ? parseFloat(v) * 8.6 : NaN;
+  return Number.isFinite(n) && n > 0 && n < 280 ? `min(100%, ${Math.round(n)}px)` : "100%";
+}
+// One view function per block type that changes on a narrow canvas. (A lookup,
+// not a switch: source-pattern tests find a block renderer by its `case` text.)
+const NARROW_VIEWS = {
+  grid: (block, colW) => {
+    const c = narrowGridCols(block, colW);
+    const restStyle = { ...(block.style || {}) };
+    delete restStyle.width; delete restStyle.minWidth;
+    return { ...block, cols: c, gap: narrowGap(block.gap, c === 1 ? 18 : 12), style: { ...restStyle, gridTemplateColumns: `repeat(${c}, minmax(0, 1fr))` } };
+  },
+  flow: (block, colW) => {
+    if (block.direction === "vertical") return block;
+    const items = Array.isArray(block.items) ? block.items : [], n = items.length || 1;
+    const px = NARROW_SIZE_PX[block.labelSize || "sm"] || 15.2;
+    const itemW = (colW - (n - 1) * (block.type === "flow" ? 30 : 0)) / n;
+    const tight = items.some((it) => it && (narrowTextW(it.label || it.title, px) > itemW * 2 || String(it.label || it.title || "").split(/\s+/).some((w) => narrowTextW(w, px) > itemW) || narrowTextW(it.sublabel || it.text, 13.6) > itemW * 3));
+    return n > 3 || tight ? { ...block, direction: "vertical" } : block;
+  },
+  timeline: (block, colW) => NARROW_VIEWS["flow"](block, colW),
+  "icon-row": (block, colW) => (block.cols || 1) > 1 ? { ...block, cols: (block.items || []).some((it) => it && it.text) ? 1 : Math.min(block.cols, 2) } : block,
+  heading: (block, colW) => {
+    // Step the size down until the widest word fits the column.
+    let size = block.size || "2xl";
+    const words = String(block.text || "").split(/\s+/), room = colW - (block.icon ? 44 : 0);
+    while (NARROW_SIZE_ORDER.indexOf(size) > 2 && words.some((w) => narrowTextW(w, NARROW_SIZE_PX[size] * 1.08) > room)) size = NARROW_SIZE_ORDER[NARROW_SIZE_ORDER.indexOf(size) - 1];
+    return size === (block.size || "2xl") && block.maxWidth == null ? block : { ...block, size, maxWidth: undefined };
+  },
+  text: (block, colW) => block.maxWidth == null ? block : { ...block, maxWidth: undefined },
+  svg: (block, colW) => ({ ...block, maxWidth: "100%" }),
+  image: (block, colW) => block.maxWidth == null ? block : { ...block, maxWidth: narrowMaxWidth(block.maxWidth) },
+  spacer: (block, colW) => ({ ...block, h: Math.min(28, Math.round((block.h || 24) * 0.75)) }),
+  "number-row": (block, colW) => {
+    // Step the value size down until the widest value fits its column.
+    const items = Array.isArray(block.items) ? block.items : [], n = items.length || 1;
+    const itemW = colW / (n > 3 ? 2 : n) - 14;
+    let size = block.size || (block.compact ? "2xl" : "3xl");
+    while (NARROW_SIZE_ORDER.indexOf(size) > 3 && items.some((it) => it && narrowTextW(it.value, NARROW_SIZE_PX[size] * 1.15) > itemW)) size = NARROW_SIZE_ORDER[NARROW_SIZE_ORDER.indexOf(size) - 1];
+    return { ...block, size };
+  },
+};
+function narrowBlockView(block, colW) {
+  if (!block || typeof block !== "object") return block;
+  // block.type is a deck value: use an own key only.
+  const view = typeof block.type === "string" && Object.prototype.hasOwnProperty.call(NARROW_VIEWS, block.type) ? NARROW_VIEWS[block.type] : null;
+  return view ? view(block, colW) : block;
+}
 const ItemHoverContext = React.createContext(null);
 const itemChromeBtn = (bg, border, color) => ({ width: 18, height: 18, borderRadius: "50%", background: bg, border: `1px solid ${border}`, color, fontSize: 9, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", lineHeight: 1, padding: 0, boxShadow: "0 2px 6px rgba(0,0,0,0.4)" });
 // Reorder arrow — a full-size round button (same footprint as the link/delete
@@ -4288,7 +4431,7 @@ function BulletItem({ item, index, block, editable, onChange, st, SIZES, stagger
 }
 
 // ━━━ Grid Cell Block (with per-block link editing) ━━━━━━━━━━━━━━━
-function GridCellBlock({ block, staggerIdx, slideTheme, editable, onChange, slideAlign, fontScale, presenting }) {
+function GridCellBlock({ block, staggerIdx, slideTheme, editable, onChange, slideAlign, fontScale, presenting, stretch }) {
   const [hovered, setHovered] = useState(false);
   const [editingLink, setEditingLink] = useState(false);
   const link = block.link;
@@ -4297,7 +4440,7 @@ function GridCellBlock({ block, staggerIdx, slideTheme, editable, onChange, slid
   const setLink = (url) => onChange?.({ link: url || undefined });
 
   return (
-    <div style={{ position: "relative", ...(link ? { cursor: "pointer" } : {}) }}
+    <div style={{ position: "relative", ...(stretch ? { alignSelf: "stretch", minWidth: 0 } : {}), ...(link ? { cursor: "pointer" } : {}) }}
       title={link ? linkPreview(link, block.text || block.value || block.title) : undefined}
       data-pdf-link={link || undefined}
       onClick={link ? (e) => { e.stopPropagation(); openExternalLink(link); } : undefined}
@@ -4510,12 +4653,14 @@ function CalloutBlock({ block, cls, st, editable, onChange, SIZES }) {
 // ━━━ Block Renderer ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChange, slideAlign, fontScale = 1, presenting = false }) {
   // Runtime guard: ensure .style is always a plain object
+  const narrowW = React.useContext(SlideNarrowContext), narrow = narrowW > 0;
   const block = useMemo(() => {
+    let b = rawBlock;
     if (rawBlock.style && (typeof rawBlock.style !== "object" || Array.isArray(rawBlock.style))) {
-      const { style: _, ...rest } = rawBlock; return rest;
+      const { style: _, ...rest } = rawBlock; b = rest;
     }
-    return rawBlock;
-  }, [rawBlock]);
+    return narrow ? narrowBlockView(b, narrowW) : b;
+  }, [rawBlock, narrowW]);
   const SIZES = useMemo(() => {
     if (!fontScale || fontScale === 1) return BASE_SIZES;
     const s = {};
@@ -4624,18 +4769,25 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
     case "grid":
       return <div className={cls} style={{ display: "grid", gridTemplateColumns: `repeat(${block.cols || 2}, 1fr)`, gap: block.gap || 24, ...block.style }}>{(block.items || []).map((cell, ci) => {
         const cellStyle = { display: "flex", flexDirection: cell.direction || "column", alignItems: cell.direction === "row" ? "center" : (cell.align ? ({ left: "flex-start", center: "center", right: "flex-end" }[cell.align] || cell.align) : "center"), gap: cell.direction === "row" ? 12 : 8 };
+        // Narrow: text wraps in most cells, so a centered cell centers the lines
+        // of its headings and texts (not of code, lists or tables), and a block
+        // that needs width (a table, a funnel, a checklist) takes the full cell.
+        const colCell = narrow && cell.direction !== "row";
+        const centerCell = colCell && (!cell.align || cell.align === "center");
         if (cell.bg) { const c = cssColor(cell.bg); if (c) cellStyle.background = c; }
         if (cell.padding) cellStyle.padding = cell.padding;
         if (cell.borderRadius) cellStyle.borderRadius = cell.borderRadius;
         if (cell.border) cellStyle.border = cell.border;
         const safeStyle = cell.style && typeof cell.style === "object" && !Array.isArray(cell.style) ? cell.style : {};
         const cellLink = (cell.blocks || []).find(b => b.link)?.link;
+        const lastAlone = narrow && block.cols > 1 && ci === (block.items || []).length - 1 && (block.items || []).length % block.cols === 1;
         return <ItemChrome key={ci} editable={editable} presenting={presenting}
-          wrapStyle={{ ...cellStyle, ...safeStyle }}
+          wrapStyle={{ ...cellStyle, ...safeStyle, ...(narrow ? { minWidth: 0 } : {}), ...(lastAlone ? { gridColumn: "1 / -1" } : {}) }}
           link={cellLink} noLinkBadge linkLabel={cell.text || cell.value || cell.title}
           reorder={itemReorder(block, onChange, ci, _pin)}
           onDelete={onChange ? () => removeItemAt(block, onChange, ci) : undefined}
-          anchor={{ top: 2, left: 2, right: "auto" }}>{(cell.blocks || []).map((b, bj) => <GridCellBlock key={bj} block={b} staggerIdx={staggerIdx + ci + bj} slideTheme={st} slideAlign={slideAlign} fontScale={fontScale} presenting={presenting}
+          anchor={{ top: 2, left: 2, right: "auto" }}>{(cell.blocks || []).map((b, bj) => <GridCellBlock key={bj} block={centerCell && b && (b.type === "heading" || b.type === "text") && b.align == null ? { ...b, align: "center" } : b} staggerIdx={staggerIdx + ci + bj} slideTheme={st} slideAlign={centerCell ? "center" : slideAlign} fontScale={fontScale} presenting={presenting}
+        stretch={colCell && !!b && NARROW_WIDE_TYPES.has(b.type)}
         editable={editable}
         onChange={onChange ? (patch) => {
           const newItems = (block.items || []).map((c, i) => i === ci
@@ -4680,7 +4832,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
       // the prior regex chain let unquoted/obfuscated javascript: URIs through.
       processed = sanitizeSvgMarkup(processed);
       return <ZoomWrap enabled={!!block.markup} link={block.link}><div className={cls} style={{ maxWidth: block.maxWidth || "100%", margin: block.align === "center" ? "0 auto" : block.align === "right" ? "0 0 0 auto" : "0", background: cssColor(block.bg) || "transparent", padding: block.padding || "0", borderRadius: block.rounded ? 8 : 0, ...block.style }}>
-        <div dangerouslySetInnerHTML={{ __html: processed }} style={{ display: "flex", justifyContent: "center" }} />
+        <div dangerouslySetInnerHTML={{ __html: processed }} data-narrow-svg={narrow ? "" : undefined} style={{ display: "flex", justifyContent: "center" }} />
         {block.caption && <EditableText text={block.caption} editable={textEditable} onSave={(v) => onChange?.({ caption: v })} style={{ textAlign: "center", color: block.captionColor || st.muted, fontSize: SIZES[block.captionSize || "sm"], marginTop: 8, fontStyle: "italic", fontFamily: FONT.body }} />}
       </div></ZoomWrap>;
     }
@@ -4750,11 +4902,17 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
           ? <div style={{ width: arrowW, height: 2, borderTop: `2px dashed ${arrowCol}`, opacity: 0.5 }} />
           : <svg width={arrowW} height={arrowH} viewBox="0 0 24 12" fill="none"><path d={cStyle === "line" ? "M0 6 L24 6" : "M0 6 L18 6 M14 2 L20 6 L14 10"} stroke={arrowCol} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" opacity="0.6" /></svg>;
       };
+      // Narrow vertical flow: each step is a row (icon, then label and sublabel),
+      // about half the height of the stacked step. It needs an icon on every step.
+      const rowSteps = narrow && isVert && items.length > 0 && items.every((it) => it && it.icon);
+      const stepAlign = rowSteps ? "left" : "center";
       const els = [];
       items.forEach((item, i) => {
+        const stepLabel = <ItemText block={block} onChange={onChange} editable={textEditable} idx={i} prop="label" style={{ fontFamily: FONT.display, fontSize: SIZES[block.labelSize || "sm"], fontWeight: 600, color: item.labelColor || block.labelColor || st.text, textAlign: stepAlign, lineHeight: 1.3 }} />;
+        const stepSub = item.sublabel ? <ItemText block={block} onChange={onChange} editable={textEditable} idx={i} prop="sublabel" style={{ fontFamily: FONT.body, fontSize: SIZES[block.sublabelSize || "xs"], color: block.sublabelColor || st.muted, textAlign: stepAlign, lineHeight: 1.4 }} /> : null;
         els.push(
           <ItemChrome key={`item-${i}`} editable={editable} presenting={presenting} className={stg(staggerIdx, i)}
-            wrapStyle={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6, minWidth: 0, flex: isVert ? undefined : "1 1 0" }}
+            wrapStyle={rowSteps ? { display: "flex", flexDirection: "row", alignItems: "center", gap: 12, minWidth: 0 } : { display: "flex", flexDirection: "column", alignItems: "center", gap: 6, minWidth: 0, flex: isVert ? undefined : "1 1 0" }}
             link={itemLinkOf(item)} linkLabel={item.label}
             reorder={itemReorder(block, onChange, i, _pin)}
             onSetLink={onChange ? (url) => setItemLink(block, onChange, i, url) : undefined}
@@ -4762,15 +4920,14 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
             <EditableIcon editable={editable && !presenting} value={item.icon} size={iconSz} onPick={onChange ? (name) => patchItemAt(block, onChange, i, { icon: name }) : undefined}>
               {item.icon ? <IconBubble icon={item.icon} size={iconSz} color={item.iconColor || st.accent} bg={item.iconBg || block.iconBg || `${st.accent}15`} /> : null}
             </EditableIcon>
-            <ItemText block={block} onChange={onChange} editable={textEditable} idx={i} prop="label" style={{ fontFamily: FONT.display, fontSize: SIZES[block.labelSize || "sm"], fontWeight: 600, color: item.labelColor || block.labelColor || st.text, textAlign: "center", lineHeight: 1.3 }} />
-            {item.sublabel && <ItemText block={block} onChange={onChange} editable={textEditable} idx={i} prop="sublabel" style={{ fontFamily: FONT.body, fontSize: SIZES[block.sublabelSize || "xs"], color: block.sublabelColor || st.muted, textAlign: "center", lineHeight: 1.4 }} />}
+            {rowSteps ? <div style={{ display: "flex", flexDirection: "column", gap: 2, minWidth: 0 }}>{stepLabel}{stepSub}</div> : <>{stepLabel}{stepSub}</>}
           </ItemChrome>
         );
         if (i < items.length - 1) {
           const hasGate = item.gate;
           const gc = block.gateColor || st.accent;
           els.push(
-            <div key={`conn-${i}`} style={{ display: "flex", flexDirection: isVert ? "column" : "row", alignItems: "center", justifyContent: "center", alignSelf: isVert ? "center" : "flex-start", height: isVert ? undefined : iconH, flexShrink: 0, gap: 2 }}>
+            <div key={`conn-${i}`} style={{ display: "flex", flexDirection: isVert ? "column" : "row", alignItems: "center", justifyContent: "center", alignSelf: rowSteps || !isVert ? "flex-start" : "center", width: rowSteps ? iconH : undefined, height: isVert ? undefined : iconH, flexShrink: 0, gap: 2 }}>
               {hasGate && <div style={{ display: "flex", flexDirection: "column", alignItems: "center", position: "relative" }}>
                 <div style={{ width: 22, height: 22, borderRadius: "50%", border: `2px dashed ${gc}`, display: "flex", alignItems: "center", justifyContent: "center" }}>
                   {getIcon(block.gateIcon || "UserCheck", { size: 10, color: gc })}
@@ -4782,7 +4939,9 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
           );
         }
       });
-      const flowStyle = { display: "flex", flexDirection: isVert ? "column" : "row", alignItems: isVert ? "center" : "flex-start", justifyContent: "center", gap: 0, ...block.style };
+      const flowStyle = { display: "flex", flexDirection: isVert ? "column" : "row", alignItems: rowSteps ? "stretch" : isVert ? "center" : "flex-start", justifyContent: "center", gap: rowSteps ? 2 : 0, ...block.style };
+      // Narrow: a vertical flow hugs its steps, so the loop line sits beside them.
+      if (narrow && isVert) { flowStyle.width = "fit-content"; flowStyle.maxWidth = "100%"; flowStyle.margin = "0 auto"; }
       if (block.loop) { flowStyle.position = "relative"; flowStyle.paddingBottom = isVert ? 0 : 36; if (isVert) flowStyle.paddingRight = 36; }
       const loopCol = block.loopColor || `${arrowCol}80`;
       const loopDash = block.loopStyle === "dotted" ? "2,4" : block.loopStyle === "solid" ? "none" : "6,4";
@@ -4803,7 +4962,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
             <line x1="4" y1={`${y2}%`} x2="20" y2={`${y2}%`} stroke={loopCol} strokeWidth="1.5" strokeDasharray={loopDash} strokeLinecap="round" />
             <line x1="20" y1={`${y2}%`} x2="20" y2={`${y1}%`} stroke={loopCol} strokeWidth="1.5" strokeDasharray={loopDash} strokeLinecap="round" />
             <line x1="20" y1={`${y1}%`} x2="4" y2={`${y1}%`} stroke={loopCol} strokeWidth="1.5" strokeDasharray={loopDash} strokeLinecap="round" markerEnd={`url(#loopArrV-${staggerIdx})`} />
-            {(block.loopLabel || textEditable) && <SvgEditText text={block.loopLabel} editable={textEditable} onSave={(v) => onChange?.({ loopLabel: v })} x="28" y="50%" textAnchor="middle" fill={loopCol} fontSize="10" fontFamily="monospace" style={{ fontStyle: "italic" }} transform={`rotate(90, 28, 50%)`} dominantBaseline="middle" />}
+            {(block.loopLabel || textEditable) && <SvgEditText text={block.loopLabel} editable={textEditable} onSave={(v) => onChange?.({ loopLabel: v })} x="28" y="50%" textAnchor="middle" fill={loopCol} fontSize="10" fontFamily="monospace" style={narrow ? { fontStyle: "italic", transformBox: "fill-box", transformOrigin: "center", transform: "rotate(90deg)" } : { fontStyle: "italic" }} transform={narrow ? undefined : `rotate(90, 28, 50%)`} dominantBaseline="middle" />}
           </>; })()}
         </svg>}
       </div></ZoomWrap>
@@ -4819,17 +4978,20 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
       const hdrColor = block.headerColor || (block.headerBg ? "#fff" : st.accent);
       const cellColor = block.cellColor || st.muted;
       const brdColor = block.borderColor || st.border;
+      // Narrow: a column gets width by its longest word (header and cells), so
+      // a long header is not split inside a word while a short column has room.
+      const colTpl = narrow ? narrowTableCols(headers, rows, cols) : `repeat(${cols}, 1fr)`;
       return <div className={cls} style={{ borderRadius: 8, overflow: "hidden", border: `1px solid ${brdColor}`, ...block.style }}>
-        {headers.length > 0 && <div style={{ display: "grid", gridTemplateColumns: `repeat(${cols}, 1fr)`, background: hdrBg }}>
+        {headers.length > 0 && <div style={{ display: "grid", gridTemplateColumns: colTpl, background: hdrBg }}>
           {headers.map((h, hi) => <EditableText key={hi} text={h} editable={textEditable} onSave={(v) => {
             const nh = [...headers]; nh[hi] = v; onChange?.({ headers: nh });
-          }} style={{ padding: "10px 14px", fontFamily: FONT.mono, fontSize: SIZES[block.size || "xs"], fontWeight: 700, color: hdrColor, letterSpacing: "0.03em", textTransform: "uppercase", borderRight: hi < cols - 1 ? `1px solid ${brdColor}` : "none" }} />)}
+          }} style={{ padding: narrow ? "8px 7px" : "10px 14px", minWidth: narrow ? 0 : undefined, overflowWrap: narrow ? "anywhere" : undefined, fontFamily: FONT.mono, fontSize: SIZES[block.size || "xs"], fontWeight: 700, color: hdrColor, letterSpacing: narrow ? 0 : "0.03em", textTransform: "uppercase", borderRight: hi < cols - 1 ? `1px solid ${brdColor}` : "none" }} />)}
         </div>}
-        {rows.map((row, ri) => <div key={ri} className={stg(staggerIdx, ri + 1)} style={{ display: "grid", gridTemplateColumns: `repeat(${cols}, 1fr)`, background: block.striped && ri % 2 === 1 ? `${st.accent}08` : "transparent", borderTop: `1px solid ${brdColor}` }}>
+        {rows.map((row, ri) => <div key={ri} className={stg(staggerIdx, ri + 1)} style={{ display: "grid", gridTemplateColumns: colTpl, background: block.striped && ri % 2 === 1 ? `${st.accent}08` : "transparent", borderTop: `1px solid ${brdColor}` }}>
           {(row || []).map((cell, ci) => <EditableText key={ci} text={String(cell)} editable={textEditable} onSave={(v) => {
             const nr = rows.map((r, i) => i === ri ? r.map((c, j) => j === ci ? v : c) : r);
             onChange?.({ rows: nr });
-          }} style={{ padding: "9px 14px", fontFamily: FONT.body, fontSize: SIZES[block.size || "sm"], color: ci === 0 ? st.text : cellColor, fontWeight: ci === 0 ? 500 : 400, lineHeight: 1.5, borderRight: ci < cols - 1 ? `1px solid ${brdColor}` : "none" }} />)}
+          }} style={{ padding: narrow ? "7px 7px" : "9px 14px", minWidth: narrow ? 0 : undefined, overflowWrap: narrow ? "anywhere" : undefined, fontFamily: FONT.body, fontSize: SIZES[block.size || "sm"], color: ci === 0 ? st.text : cellColor, fontWeight: ci === 0 ? 500 : 400, lineHeight: 1.5, borderRight: ci < cols - 1 ? `1px solid ${brdColor}` : "none" }} />)}
         </div>)}
         {canEdit && <AddItem label="Add row" accent={st.accent} style={{ borderRadius: 0, border: "none", borderTop: `1px solid ${brdColor}` }} onAdd={() => onChange({ rows: [...rows, Array.from({ length: cols }, (_, j) => j === 0 ? "New row" : "Value")] })} />}
       </div>;
@@ -4910,7 +5072,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
     case "tag-group": {
       const items = block.items || [];
       const variant = block.variant || "filled";
-      return <div className={cls} style={{ display: "flex", flexWrap: "wrap", gap: block.gap || 8, ...block.style }}>
+      return <div className={cls} style={{ display: "flex", flexWrap: "wrap", gap: block.gap || 8, justifyContent: narrow && slideAlign === "center" ? "center" : undefined, ...block.style }}>
         {items.map((item, i) => {
           const col = cssColor(item.color) || st.accent;
           const vs = variant === "outline"
@@ -5019,8 +5181,8 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
       const setPointText = (side, pi, v) => onChange?.({ items: items.map((col, k) => k !== side ? col : { ...col, items: (col.items || []).map((p, j) => j !== pi ? p : (typeof p === "string" ? v : { ...p, text: v })) }) });
       const pointReorder = (side, pts, pi) => (onChange && (pts || []).length > 1)
         ? reorderCtl(pts.length, pi, (dir) => movePoint(side, pi, dir), (k) => `c${side}_${k}`, _pin) : undefined;
-      return <div className={cls} style={{ display: "flex", gap: 0, flex: 1, alignItems: "stretch", ...block.style }}>
-        <div style={{ flex: 1, background: `${leftColor}08`, border: `1px solid ${leftColor}30`, borderRadius: "12px 0 0 12px", padding: "20px 22px", display: "flex", flexDirection: "column", alignItems: "center" }}>
+      return <div className={cls} style={{ display: "flex", gap: 0, flex: narrow ? undefined : 1, alignItems: "stretch", ...block.style, ...(narrow ? { flexDirection: "column" } : {}) }}>
+        <div style={{ flex: narrow ? undefined : 1, background: `${leftColor}08`, border: `1px solid ${leftColor}30`, borderRadius: narrow ? "12px 12px 0 0" : "12px 0 0 12px", padding: narrow ? "16px 18px 22px" : "20px 22px", display: "flex", flexDirection: "column", alignItems: narrow ? "stretch" : "center" }}>
           <div style={{ display: "flex", flexDirection: "column", gap: 10, maxWidth: "100%" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
               <EditableIcon editable={editable && !presenting} value={left.icon} size={18} onPick={onChange ? (name) => onChange({ items: items.map((c, k) => k === 0 ? { ...c, icon: name || undefined } : c) }) : undefined}>
@@ -5042,10 +5204,10 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
             {canEdit && <AddItem variant="chip" label="Add point" accent={leftColor} onAdd={() => addPoint(0)} />}
           </div>
         </div>
-        {block.hideDivider ? null : <div style={{ display: "flex", alignItems: "center", justifyContent: "center", zIndex: 2, margin: "0 -18px" }}>
+        {block.hideDivider ? null : <div style={{ display: "flex", alignItems: "center", justifyContent: "center", zIndex: 2, margin: narrow ? "-18px 0" : "0 -18px" }}>
           <div style={{ width: 36, height: 36, borderRadius: "50%", background: st.bg || "#1e293b", border: `2px solid ${st.border || "#475569"}`, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: FONT.mono, fontSize: 11, fontWeight: 700, color: st.muted }}><EditableText text={dividerLabel} editable={textEditable} onSave={(v) => onChange?.({ dividerLabel: v || undefined })} /></div>
         </div>}
-        <div style={{ flex: 1, background: `${rightColor}08`, border: `1px solid ${rightColor}30`, borderRadius: "0 12px 12px 0", padding: "20px 22px", display: "flex", flexDirection: "column", alignItems: "center" }}>
+        <div style={{ flex: narrow ? undefined : 1, background: `${rightColor}08`, border: `1px solid ${rightColor}30`, borderRadius: narrow ? "0 0 12px 12px" : "0 12px 12px 0", padding: narrow ? "22px 18px 16px" : "20px 22px", display: "flex", flexDirection: "column", alignItems: narrow ? "stretch" : "center" }}>
           <div style={{ display: "flex", flexDirection: "column", gap: 10, maxWidth: "100%" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
               <EditableIcon editable={editable && !presenting} value={right.icon} size={18} onPick={onChange ? (name) => onChange({ items: items.map((c, k) => k === 1 ? { ...c, icon: name || undefined } : c) }) : undefined}>
@@ -5158,13 +5320,14 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
     case "number-row": {
       const items = block.items || [];
       const showIcons = block.showIcons !== false;
-      return <><div className={cls} style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 0, width: "100%", ...(block.bordered ? { background: `${st.text}05`, border: `1px solid ${st.border}`, borderRadius: 12, padding: "20px 0" } : {}), ...block.style }}>
+      const nrWrap = narrow && items.length > 3;
+      return <><div className={cls} style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 0, width: "100%", ...(block.bordered ? { background: `${st.text}05`, border: `1px solid ${st.border}`, borderRadius: 12, padding: "20px 0" } : {}), ...block.style, ...(narrow ? { alignItems: "flex-start" } : {}), ...(nrWrap ? { display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))" } : {}) }}>
         {items.map((item, i) => {
           const col = cssColor(item.color) || st.accent;
           return <React.Fragment key={i}>
-            {i > 0 && <div style={{ width: 1, height: block.compact ? 56 : 80, background: st.border || "#334155", flexShrink: 0 }} />}
+            {i > 0 && !nrWrap && <div style={{ width: 1, height: block.compact ? 56 : 80, background: st.border || "#334155", flexShrink: 0 }} />}
             <ItemChrome editable={editable} presenting={presenting} className={stg(staggerIdx, i)}
-              wrapStyle={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 8, padding: block.compact ? "16px 12px" : "24px 16px" }}
+              wrapStyle={{ flex: 1, ...(narrow ? { minWidth: 0 } : {}), display: "flex", flexDirection: "column", alignItems: "center", gap: 8, padding: narrow ? "14px 6px" : block.compact ? "16px 12px" : "24px 16px", ...(nrWrap && i === items.length - 1 && items.length % 2 === 1 ? { gridColumn: "1 / -1" } : {}) }}
               link={itemLinkOf(item)} linkLabel={item.label}
               reorder={itemReorder(block, onChange, i, _pin)}
               onSetLink={onChange ? (url) => setItemLink(block, onChange, i, url) : undefined}
@@ -5175,7 +5338,7 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
                 </div> : null}
               </EditableIcon>}
               <EditableText text={String(item.value || "")} editable={textEditable} onSave={(v) => patchItemAt(block, onChange, i, { value: v })} style={{ fontFamily: FONT.display, fontSize: SIZES[block.size || (block.compact ? "2xl" : "3xl")], fontWeight: 800, color: col, lineHeight: 1 }} />
-              {item.label && <ItemText block={block} onChange={onChange} editable={textEditable} idx={i} prop="label" style={{ fontFamily: FONT.mono, fontSize: SIZES.xs, fontWeight: 600, letterSpacing: "0.1em", textTransform: "uppercase", color: st.muted }} />}
+              {item.label && <ItemText block={block} onChange={onChange} editable={textEditable} idx={i} prop="label" style={{ fontFamily: FONT.mono, fontSize: SIZES.xs, fontWeight: 600, letterSpacing: narrow ? "0.04em" : "0.1em", textAlign: narrow ? "center" : undefined, textTransform: "uppercase", color: st.muted }} />}
             </ItemChrome>
           </React.Fragment>;
         })}
@@ -5408,7 +5571,7 @@ function storyContainBox(r, a) {
   const w = Math.min(r.width, r.height * a);
   return { cx, cy, w, h: w / a };
 }
-function StoryZoomLayer({ items, story, animate, onJump, onZoomOut, hostRef, pad, accent }) {
+function StoryZoomLayer({ items, story, animate, onJump, onZoomOut, hostRef, pad, accent, narrow }) {
   const n = items.length;
   const zoomed = !!story && story.zoomed === true && Number.isInteger(story.k) && story.k >= 1 && story.k <= n;
   const kNow = zoomed ? story.k : 0;
@@ -5493,16 +5656,19 @@ function StoryZoomLayer({ items, story, animate, onJump, onZoomOut, hostRef, pad
   const live = zoomed;
   return (
     <div data-story-layer="" role="group" aria-label={`Image ${displayK} of ${n}`} onClick={live && onZoomOut ? (e) => { e.stopPropagation(); onZoomOut(); } : undefined}
-      style={{ position: "absolute", inset: 0, padding: pad, boxSizing: "border-box", zIndex: 4, display: "flex", flexDirection: "row", gap: 8, cursor: live && onZoomOut ? "zoom-out" : "default", pointerEvents: live ? "auto" : "none" }}>
+      style={{ position: "absolute", inset: 0, padding: pad, boxSizing: "border-box", zIndex: 4, display: "flex", flexDirection: narrow ? "column" : "row", gap: 8, cursor: live && onZoomOut ? "zoom-out" : "default", pointerEvents: live ? "auto" : "none" }}>
       <div ref={boxRef} data-story-image="" style={{ flex: 1, minWidth: 0, minHeight: 0, position: "relative" }}>
         <img key={displayK} ref={imgRef} src={item.src} alt={item.alt || `Image ${displayK} of ${n}`} draggable={false} style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "contain", display: "block" }} />
         {/* Screen readers hear the step; no visual change (clipped 1px box). */}
         <span aria-live="polite" style={{ position: "absolute", width: 1, height: 1, overflow: "hidden", clip: "rect(0 0 0 0)", whiteSpace: "nowrap" }}>{`Image ${displayK} of ${n}`}</span>
       </div>
-      <div ref={railRef} data-story-rail="" style={{ width: STORY_RAIL_W + 6, flexShrink: 0, padding: 3, boxSizing: "border-box", display: "flex", flexDirection: "column", justifyContent: "center", gap: 6, minHeight: 0, overflow: "hidden" }}>
+      {/* Narrow canvas: the index is a row under the image, so the image keeps the full width. */}
+      <div ref={railRef} data-story-rail="" style={narrow
+        ? { height: STORY_THUMB_H + 6, flexShrink: 0, padding: 3, boxSizing: "border-box", display: "flex", flexDirection: "row", justifyContent: "center", gap: 6, minWidth: 0, overflow: "hidden" }
+        : { width: STORY_RAIL_W + 6, flexShrink: 0, padding: 3, boxSizing: "border-box", display: "flex", flexDirection: "column", justifyContent: "center", gap: 6, minHeight: 0, overflow: "hidden" }}>
         {items.map((it, j) => {
           const cur = j + 1 === displayK;
-          const ts = { width: STORY_RAIL_W, height: STORY_THUMB_H, flex: `0 1 ${STORY_THUMB_H}px`, minHeight: 12, padding: 0, margin: 0, border: "none", borderRadius: 4, overflow: "hidden", boxSizing: "border-box", background: "rgba(127,127,127,0.16)", opacity: cur ? 1 : 0.55, outline: cur ? `2px solid ${accent}` : "none", outlineOffset: 1, cursor: onJump ? "pointer" : "default", display: "block" };
+          const ts = { ...(narrow ? { height: STORY_THUMB_H, width: "auto", flex: `0 1 ${STORY_RAIL_W}px`, minWidth: 12 } : { width: STORY_RAIL_W, height: STORY_THUMB_H, flex: `0 1 ${STORY_THUMB_H}px`, minHeight: 12 }), padding: 0, margin: 0, border: "none", borderRadius: 4, overflow: "hidden", boxSizing: "border-box", background: "rgba(127,127,127,0.16)", opacity: cur ? 1 : 0.55, outline: cur ? `2px solid ${accent}` : "none", outlineOffset: 1, cursor: onJump ? "pointer" : "default", display: "block" };
           const thumb = <img src={it.src} alt="" draggable={false} style={{ width: "100%", height: "100%", objectFit: "contain", display: "block", pointerEvents: "none" }} />;
           // Thumbs are buttons only when the surface can jump (Present). A mouse
           // click must not focus the button: Space would then press it again.
@@ -5534,7 +5700,9 @@ function InlineCommentCard({ comment, itemId, slideIndex, dispatch }) {
   );
 }
 
-function SlideContent({ slide, index, total, branding, editable, onEdit, presenting, onBlockEdit, blockEditing, fontScale = 1, reviewMode, itemId, dispatch: externalDispatch, displayIndex, displayTotal, hideSlideNumber, story, storyAnimate, onStoryJump, onStoryZoomOut, presentSurface, flashBlock = -1 }) {
+// Narrow (portrait) canvas padding, in virtual px.
+const NARROW_PAD_X = 22, NARROW_PAD_TOP = 30;
+function SlideContent({ slide, index, total, branding, editable, onEdit, presenting, onBlockEdit, blockEditing, fontScale = 1, reviewMode, itemId, dispatch: externalDispatch, displayIndex, displayTotal, hideSlideNumber, story, storyAnimate, onStoryJump, onStoryZoomOut, presentSurface, flashBlock = -1, narrowW = 0 }) {
   const st = { text: slide.color || T.text, muted: slide.mutedColor || T.textMuted, textDim: T.textDim, accent: slide.accent || T.accent, border: T.border, codeBg: T.codeBg };
   // Hidden elements (CR: hide any element). In presentation they are removed
   // entirely — no render, no layout — so a slide can carry a title that only
@@ -5552,6 +5720,12 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
     && blocks.some((b) => b && b.type !== "image" && b.type !== "spacer" && b.type !== "divider");
   const colsL = isCols ? _vis(slide.L) : [];
   const colsR = isCols ? _vis(slide.R) : [];
+  // Narrow (portrait) canvas: every layout is one stacked column. The block
+  // index model (blocks, then L, then R) does not change, so edits still map
+  // to the same arrays. rowCols / rowSplit are the side-by-side layouts.
+  const narrow = narrowW > 0;
+  const rowCols = isCols && !narrow, rowSplit = isSplit && !narrow;
+  const allBlocks = isCols ? [...blocks, ...colsL, ...colsR] : blocks;
   const isMediaOnlyColumn = (column) =>
     column.some((b) => b && b.type === "image") &&
     column.every((b) => b && (b.type === "image" || b.type === "spacer" || b.type === "divider"));
@@ -5588,7 +5762,7 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
     return null;
   };
   const explicitJustify = verticalAlignToJustify(slide.verticalAlign);
-  const requestedJustify = explicitJustify || (align === "center" ? "center" : "flex-start");
+  const requestedJustify = explicitJustify || (narrow ? "safe center" : align === "center" ? "center" : "flex-start");
   // bg/bgGradient are encoder-gated (cssColor/cssGradient) the same way accent
   // and bgImage already are — defense-in-depth so this fetching sink can't be
   // reached even by a future sanitizer gap, not just today's scrubber. (v13.26)
@@ -5600,7 +5774,7 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
   const outerRef = useRef(null);
   const innerRef = useRef(null);
   const layoutContentKey = JSON.stringify({
-    index, presenting, reviewMode, fontScale, layout, align,
+    index, presenting, reviewMode, fontScale, layout, align, narrowW,
     verticalAlign: slide.verticalAlign ?? null,
     padding: slide.padding ?? null,
     gap: slide.gap ?? null,
@@ -5624,6 +5798,9 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
   const currentLayoutGeneration = useRef(layoutGeneration);
   currentLayoutGeneration.current = layoutGeneration;
   const [fitScale, setFitScale] = useState(1);
+  // Narrow only: a last uniform shrink (no reflow) when widening the column
+  // cannot make the content fit, e.g. a tall diagram that grows with the width.
+  const [fitShrink, setFitShrink] = useState(1);
   const [fitJustify, setFitJustify] = useState(requestedJustify);
   const [splitImgMaxH, setSplitImgMaxH] = useState(null); // px cap so a side image conforms to the content column's height
   const [colsImageFit, setColsImageFit] = useState(null);
@@ -5770,20 +5947,22 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
     const pendingReasons = new Set();
     const isCurrent = () => !cancelled && currentLayoutGeneration.current === generation;
 
-    const applyGeometry = (inner, scale) => {
-      const scaled = scale < 0.9995;
-      inner.style.transform = scaled ? `scale(${scale})` : "none";
+    const applyGeometry = (inner, scale, shrink = 1) => {
+      const k = scale * shrink;
+      const scaled = k < 0.9995;
+      // The shrunk column is narrower than the slide: translate centers it.
+      inner.style.transform = scaled ? `${shrink < 0.9995 ? `translateX(${(1 - shrink) / 2 * scale * 100}%) ` : ""}scale(${k})` : "none";
       inner.style.width = scaled ? `${100 / scale}%` : "100%";
       inner.style.maxWidth = scaled ? `${100 / scale}%` : "100%";
-      inner.style.height = scaled && (isSplit || isCols)
-        ? `${100 / scale}%`
-        : (isSplit || (isCols && hasDirectColumnImage) ? "100%" : "auto");
+      inner.style.height = scaled && (rowSplit || rowCols || narrow)
+        ? `${100 / k}%`
+        : (rowSplit || (rowCols && hasDirectColumnImage) ? "100%" : "auto");
       // Unscaled, the inner box fills the slide (the same flex:1 the render gives
       // it). Set it here too: a render still scaled from an earlier state has no
       // flex yet, and then a flex-sized image grid would measure at its floor.
       // (The shorthand resets flex-shrink, so it goes first.)
       inner.style.flex = scaled ? "" : "1";
-      inner.style.flexShrink = scaled && (isSplit || isCols) ? "0" : "";
+      inner.style.flexShrink = scaled && (rowSplit || rowCols || narrow) ? "0" : "";
       void inner.offsetHeight;
     };
 
@@ -5914,7 +6093,7 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
         }
       };
 
-      if (isCols && hasDirectColumnImage) {
+      if (rowCols && hasDirectColumnImage) {
         const natural = evaluateColumns(1);
         const fullOverflow = Math.max(
           natural.innerOverflow,
@@ -5990,30 +6169,96 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
       }
 
       setColsImageFit(null);
+      // Narrow: a grid's tight height cap (render state) must not limit this
+      // measurement, or a box could never grow again. Lift it, restore it below.
+      const narrowGrids = narrow ? Array.from(inner.querySelectorAll("[data-image-grid-key]")) : [];
+      narrowGrids.forEach((g) => { g.style.maxHeight = "100%"; });
       applyGeometry(inner, 1);
       // In a side-by-side layout the content column drives the scale. The image
       // cap is computed only after the reciprocal final height is active.
-      const contentEl = isSplit ? inner.querySelector("[data-split-content]") : null;
+      const contentEl = rowSplit ? inner.querySelector("[data-split-content]") : null;
       const contentH = contentEl ? contentEl.scrollHeight : 0;
       // CR25: a stack with an image grid fills the slide exactly (the grid takes
       // the free height). Measure its layout boxes, not scrollHeight: a block's
       // entrance-animation offset would read as overflow and shrink the slide,
       // and a shrunk slide collapses the grid to its floor.
-      const stackKids = isSplit ? [] : Array.from(inner.children);
-      const ih = isSplit ? contentH
+      const stackKids = rowSplit ? [] : Array.from(inner.children);
+      // Narrow: the scaled column keeps a definite height (its image grids
+      // flex in it), so its content height is the extent of its children.
+      const stackH = () => narrow
+        ? Math.max(0, ...stackKids.map((c) => c.offsetTop + c.offsetHeight)) - Math.min(...stackKids.map((c) => c.offsetTop), 0)
         : stackKids.some((c) => c.hasAttribute("data-image-grid-key"))
           ? Math.max(0, ...stackKids.map((c) => c.offsetTop + c.offsetHeight))
           : inner.scrollHeight;
-      const finalScale = ih > availH && ih > 0 ? Math.max(availH / ih, SCALE_FLOOR) : 1;
+      // Width the in-flow content needs, as a ratio of the column width.
+      // Absolutely positioned chrome (link badges, toolbars) does not count.
+      const flowOver = () => {
+        const box = inner.getBoundingClientRect();
+        if (!(box.width > 0)) return 1;
+        let left = box.left, right = box.right;
+        // Only a box past an edge needs the (costly) position check.
+        const inFlow = (el) => {
+          for (let p = el; p && p !== inner; p = p.parentElement) {
+            const pos = getComputedStyle(p).position;
+            if (pos === "absolute" || pos === "fixed") return false;
+          }
+          return true;
+        };
+        for (const c of inner.querySelectorAll("*")) {
+          // An <svg> is one box: its shapes can lie outside the viewBox.
+          if (c.ownerSVGElement) continue;
+          const r = c.getBoundingClientRect();
+          if (!(r.width > 0) || (r.right <= right + 0.5 && r.left >= left - 0.5) || !inFlow(c)) continue;
+          // A centered block overflows on the two sides.
+          right = Math.max(right, r.right); left = Math.min(left, r.left);
+        }
+        return (right - left) / box.width;
+      };
+      const ih = rowSplit ? contentH : stackH();
+      let finalScale = ih > availH && ih > 0 ? Math.max(availH / ih, SCALE_FLOOR) : 1;
+      if (narrow && finalScale < 1) {
+        // A scaled column is wider, so its text wraps less and it gets shorter
+        // than availH / ih predicts. Search for the largest scale that fits.
+        const fits = (sc) => { applyGeometry(inner, sc); return stackH() * sc <= availH + 0.5; };
+        let low = finalScale, high = 1;
+        for (let pass = 0; pass < 6 && high - low > 0.01; pass++) {
+          const probe = (low + high) / 2;
+          if (fits(probe)) low = probe; else high = probe;
+        }
+        finalScale = low;
+      }
+      if (narrow) {
+        // A block wider than the column (a long word, a wide table) scales the
+        // slide down until it fits the width.
+        for (let pass = 0; pass < 3; pass++) {
+          applyGeometry(inner, finalScale);
+          const over = flowOver();
+          if (!(over > 1.004) || finalScale <= SCALE_FLOOR) break;
+          finalScale = Math.max(SCALE_FLOOR, finalScale / over);
+        }
+      }
       // CR23: record each image grid's free box at the natural (unscaled) size.
       // The box is flex-driven (it does not depend on the grid's column count),
-      // so it is a stable input for bestImageGridCols().
+      // so it is a stable input for bestImageGridCols(). Narrow: the box at the
+      // final scale, because the tight height cap is made from it.
+      let finalShrink = 1;
+      if (narrow) {
+        applyGeometry(inner, finalScale);
+        // Content that grows with the column width (a pinned image, a tall
+        // diagram) can still be too tall. Shrink it as one piece, so a narrow
+        // slide never runs off the canvas.
+        const tall = stackH() * finalScale;
+        if (tall > availH + 0.5) finalShrink = Math.max(SCALE_FLOOR, availH / tall);
+        applyGeometry(inner, finalScale, finalShrink);
+      }
       const boxes = {};
       inner.querySelectorAll("[data-image-grid-key]").forEach((g) => { boxes[g.getAttribute("data-image-grid-key")] = [g.clientWidth, g.clientHeight]; });
       setGridBoxes((prev) => JSON.stringify(prev) === JSON.stringify(boxes) ? prev : boxes);
-      applyGeometry(inner, finalScale);
+      narrowGrids.forEach((g) => { g.style.maxHeight = g.getAttribute("data-tight-max") || "100%"; });
+      applyGeometry(inner, finalScale, finalShrink);
+      setFitShrink(finalShrink);
       let splitCap = null;
-      if (isSplit && contentEl) {
+      if (rowSplit && contentEl) {
         const imageCol = inner.querySelector("[data-split-image]");
         const finalContentH = contentEl.scrollHeight;
         const finalImageH = Math.max(0, (imageCol?.clientHeight || 0) - (EDGE_ALLOWANCE_VISUAL * 2) / finalScale);
@@ -6023,7 +6268,9 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
       }
       setSplitImgMaxH(splitCap);
       setFitScale(finalScale);
-      setFitJustify(finalScale < 0.9995 ? (explicitJustify || "flex-start") : requestedJustify);
+      // Narrow: keep the (safe) centering when scaled. A width-driven scale
+      // leaves free height, and safe alignment never clips an overflow.
+      setFitJustify(finalScale < 0.9995 && !narrow ? (explicitJustify || "flex-start") : requestedJustify);
     };
 
     const scheduleMeasure = (reason) => {
@@ -6089,7 +6336,7 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
   useEffect(() => { aspectLiveRef.current = true; return () => { aspectLiveRef.current = false; }; }, []);
   useEffect(() => {
     const loads = aspectLoadsRef.current;
-    const pending = new Set(blocks.filter((b) => b && b.type === "image" && typeof b.src === "string" && b.src && !IMAGE_ASPECT_CACHE.has(b.src) && !loads.has(b.src)).map((b) => b.src));
+    const pending = new Set((narrow ? allBlocks : blocks).filter((b) => b && b.type === "image" && typeof b.src === "string" && b.src && !IMAGE_ASPECT_CACHE.has(b.src) && !loads.has(b.src)).map((b) => b.src));
     pending.forEach((src) => {
       loads.add(src);
       imageAspect(src).then((a) => { loads.delete(src); rememberImageAspect(src, a); if (aspectLiveRef.current) setAspectTick((t) => t + 1); });
@@ -6103,7 +6350,12 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
 
   const rawPad = typeof slide.padding === "number" ? `${slide.padding}px` : slide.padding || "36px 48px";
   const isSoloImage = blocks.length === 1 && blocks[0].type === "image";
-  const pad = isSoloImage ? "0px" : String(rawPad).split(/\s+/).map((v) => Math.max(parseInt(v) || 24, 24) + "px").join(" ");
+  const padParts = String(rawPad).split(/\s+/).map((v) => Math.max(parseInt(v) || 24, 24));
+  // Narrow: small side and top padding (the phone Present controls are in a bar
+  // under the slide, so nothing floats over it); the bottom clears the footer.
+  const pad = isSoloImage ? "0px" : narrow
+    ? `${NARROW_PAD_TOP}px ${NARROW_PAD_X}px ${Math.max(44, Math.min(56, padParts[2] ?? padParts[0]))}px`
+    : padParts.map((v) => v + "px").join(" ");
 
   // Render a single block with all editable chrome (hover, edit popup, link, etc.)
   // ── Per-block editor chrome: hover toolbar, AI/link/comment popups, badges ──
@@ -6241,19 +6493,35 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
     // never re-inserts nodes. Without a drag, seq === idxs (render unchanged).
     const drag = tileDrag && tileDrag.key === gridKey && tileDrag.idxs.length === runLen && tileDrag.idxs.every((v, q) => v === idxs[q]) ? tileDrag : null;
     const seq = drag ? drag.order.map((p) => idxs[p]) : idxs;
-    const canReorder = !!(editable && onEdit && !presenting && !presentSurface && runLen >= 2 && !isSoloImage);
+    // The drop writes slide.blocks, so a run from a column (narrow) has no drag.
+    const canReorder = !!(editable && onEdit && !presenting && !presentSurface && runLen >= 2 && !isSoloImage && idxs.every((bi) => bi < blocks.length));
     // A story-active grid gives every cell one uniform caption row (_storyRow),
     // so tiles with and without a caption align. Other grids: no flag, unchanged.
     const storyRow = storyActive && runLen >= 2 && idxs.some((bi) => storyNumOf.has(bi));
-    const maxW = seq.map((bi) => { const z = IMAGE_NATURAL_SIZE.get(blocks[bi].src); return z && z.w > 0 ? z.w * GRID_IMG_MAX_UPSCALE : 0; });
-    const plan = imageGridPlan(seq.map((bi) => IMAGE_ASPECT_CACHE.get(blocks[bi].src)), box?.[0], box?.[1], gap, gridColsFor(runLen, region), slide.imageCols ? Math.min(6, Math.max(1, slide.imageCols | 0)) : 0, maxW);
+    const maxW = seq.map((bi) => { const z = IMAGE_NATURAL_SIZE.get(allBlocks[bi].src); return z && z.w > 0 ? z.w * GRID_IMG_MAX_UPSCALE : 0; });
+    const aspects = seq.map((bi) => IMAGE_ASPECT_CACHE.get(allBlocks[bi].src));
+    const plan = imageGridPlan(aspects, box?.[0], box?.[1], gap, gridColsFor(runLen, region), slide.imageCols ? Math.min(6, Math.max(1, slide.imageCols | 0)) : 0, maxW);
     const rows = plan.rows.length;
-    const hwSum = plan.rows.reduce((t, r) => t + r.hw, 0) || 1, gapsH = gap * (rows - 1);
+    const gapsH = gap * (rows - 1);
+    // Narrow: a row gets the height its images need at full cell width (plus a
+    // caption line), and the grid is capped at the sum. So the grid hugs its
+    // images, and the slide centers the stack instead of leaving bands of
+    // free space inside the grid box.
+    let rowW = plan.rows.map((r) => r.hw), tightH = null;
+    if (narrow && box && plan.area > 0) {
+      const need = plan.rows.map((row) => Math.max(1, ...row.cells.map((c) => {
+        const cw = (box[0] - gap * row.gc) * c.f, bl = allBlocks[seq[c.i]];
+        return Math.min(cw, maxW[c.i] > 0 ? maxW[c.i] : cw) / aspects[c.i] + (storyRow || (bl && bl.caption) ? 34 : 0);
+      })));
+      rowW = need;
+      tightH = Math.ceil(need.reduce((t, v) => t + v, 0) + gapsH);
+    }
+    const hwSum = rowW.reduce((t, v) => t + v, 0) || 1;
     const len = (pct, px) => `calc(${pct * 100}% + ${px}px)`;
     const cellPos = [];
     let cumH = 0;
     plan.rows.forEach((row, r) => {
-      const h = row.hw / hwSum, sumF = row.cells.reduce((t, c) => t + c.f, 0), rowGaps = gap * row.gc;
+      const h = rowW[r] / hwSum, sumF = row.cells.reduce((t, c) => t + c.f, 0), rowGaps = gap * row.gc;
       let cumF = 0;
       // A short row also has fewer gaps than rowGaps reserves: split the unused
       // gaps (gc - (cells - 1)) evenly on both sides, so the row centers exactly.
@@ -6279,12 +6547,12 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
     // requests alignment. The default path still fills all available height.
     const gridHeight = alignWithinColumn ? Math.min(splitImgMaxH || rows * 140, rows * 140) : null;
     return (
-      <div key={`__imgrid-${idxs[0]}`} data-testid="image-grid" data-image-grid={region} data-image-count={runLen} data-image-grid-key={gridKey} data-image-cols={plan.cols} data-image-rows={rows}
-        style={{ position: "relative", flex: gridHeight == null ? "1 1 0" : "0 0 auto", height: gridHeight == null ? undefined : gridHeight, maxHeight: "100%", minHeight: minGridH, minWidth: 0, width: "100%" }}>
+      <div key={`__imgrid-${idxs[0]}`} data-testid="image-grid" data-image-grid={region} data-image-count={runLen} data-image-grid-key={gridKey} data-image-cols={plan.cols} data-image-rows={rows} data-tight-max={tightH != null ? `${tightH}px` : undefined}
+        style={{ position: "relative", flex: gridHeight == null ? "1 1 0" : "0 0 auto", height: gridHeight == null ? undefined : gridHeight, maxHeight: tightH != null ? tightH : "100%", minHeight: minGridH, minWidth: 0, width: "100%" }}>
         {idxs.map((bi, p) => {
           const k = drag ? drag.order.indexOf(p) : p;
           // A solo image fills the slide: keep its _solo flag, so it is not click-to-zoom.
-          const rendered = renderBlockWithComments({ ...blocks[bi], _gridCell: true, ...(storyRow ? { _storyRow: true } : {}), ...(isSoloImage ? { _solo: true } : {}), ...(isSoloImage && blocks[bi].rounded == null ? { rounded: 0 } : {}) }, bi);
+          const rendered = renderBlockWithComments({ ...allBlocks[bi], _gridCell: true, ...(storyRow ? { _storyRow: true } : {}), ...(isSoloImage ? { _solo: true } : {}), ...(isSoloImage && allBlocks[bi].rounded == null ? { rounded: 0 } : {}) }, bi);
           const [blockEl, ...rest] = rendered;
           // Make the block wrapper fill its cell height so the image (height:100%)
           // and objectFit:contain letterbox uniformly across mixed aspect ratios.
@@ -6316,25 +6584,28 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
 
   // Walk the stacked blocks and replace each maximal run of >=2 adjacent image
   // blocks with a balanced image grid (full region). Single images render as before.
-  const renderStackWithImageGrids = () => {
+  // `list` holds block indices (default: every stacked block, in order). The
+  // narrow layout passes the indices of a column or of one side of a split.
+  const renderStackWithImageGrids = (list) => {
     const out = [];
+    const ix = list || blocks.map((_, k) => k);
     let i = 0;
-    while (i < blocks.length) {
-      if (blocks[i].type === "image") {
+    while (i < ix.length) {
+      if (allBlocks[ix[i]].type === "image") {
         let j = i;
-        while (j < blocks.length && blocks[j].type === "image") j++;
+        // A run stays inside one array (blocks, L or R) and has no index gap.
+        while (j < ix.length && allBlocks[ix[j]].type === "image" && ix[j] === ix[i] + (j - i) && blockSlot(ix[j])[0] === blockSlot(ix[i])[0]) j++;
         // CR24/CR25: a lone stacked image also takes the grid path (unless the
         // author pinned its width), so it fills the free height below/above the
         // text and shrinks, instead of pushing the other blocks off the slide.
-        if (j - i >= 2 || blocks[i].maxWidth == null) {
-          const idxs = [];
-          for (let k = i; k < j; k++) idxs.push(k);
-          out.push(renderImageGrid(idxs, "full"));
+        // Narrow: also an image pinned to the column width, or it could not shrink.
+        if (j - i >= 2 || allBlocks[ix[i]].maxWidth == null || (narrow && narrowMaxWidth(allBlocks[ix[i]].maxWidth) === "100%")) {
+          out.push(renderImageGrid(ix.slice(i, j), "full"));
           i = j;
           continue;
         }
       }
-      out.push(...renderBlockWithComments(blocks[i], i));
+      out.push(...renderBlockWithComments(allBlocks[ix[i]], ix[i]));
       i++;
     }
     return out;
@@ -6342,6 +6613,16 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
 
   // Build content: split layout or standard stacked layout
   const renderBlocks = () => {
+    if (narrow && (isCols || isSplit)) {
+      // One column: the header blocks, then the left and the right column; or
+      // the content and the images of a split, images first for image-left.
+      const idx = allBlocks.map((_, k) => k);
+      if (isCols) return renderStackWithImageGrids(idx);
+      const imgs = idx.filter((k) => blocks[k].type === "image"), rest = idx.filter((k) => blocks[k].type !== "image");
+      return layout === "image-left"
+        ? [...renderStackWithImageGrids(imgs), ...renderStackWithImageGrids(rest)]
+        : [...renderStackWithImageGrids(rest), ...renderStackWithImageGrids(imgs)];
+    }
     if (isCols) {
       const headerBlocks = blocks.flatMap((b, i) => renderBlockWithComments(b, i));
       // Balance fitting sides around media. If the generic side drives an
@@ -6404,15 +6685,18 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
     return renderStackWithImageGrids();
   };
 
+  const fitK = fitScale * fitShrink;
   return (
     <SlideErrorBoundary>
-      <div ref={outerRef} data-vela-slide-content="" style={{ height: "100%", padding: pad, position: "relative", overflow: "visible", boxSizing: "border-box", display: "flex", flexDirection: "column", ...bgStyle }}>
-        <div ref={innerRef} style={{ position: "relative", zIndex: 2, display: "flex", flexDirection: isSplit ? "row" : "column", justifyContent: isSplit ? "stretch" : fitJustify, alignItems: isSplit ? "stretch" : (align === "center" ? "center" : "stretch"), textAlign: align, gap: isSplit ? (slide.splitGap || 32) : (slide.gap || 12), transform: fitScale < 1 ? `scale(${fitScale})` : "none", transformOrigin: "top left", width: fitScale < 1 ? `${100 / fitScale}%` : "100%", height: fitScale < 1 ? `${100 / fitScale}%` : "100%", maxWidth: fitScale < 1 ? `${100 / fitScale}%` : "100%", flex: fitScale < 1 ? undefined : 1, flexShrink: fitScale < 1 && (isSplit || isCols) ? 0 : undefined, boxSizing: "border-box", ...(storyZoomed ? { visibility: "hidden" } : {}) }}>
+      <div ref={outerRef} data-vela-slide-content="" data-vela-narrow={narrow ? "" : undefined} style={{ height: "100%", padding: pad, position: "relative", overflow: "visible", boxSizing: "border-box", display: "flex", flexDirection: "column", ...bgStyle }}>
+        <div ref={innerRef} style={{ position: "relative", zIndex: 2, display: "flex", flexDirection: rowSplit ? "row" : "column", justifyContent: rowSplit ? "stretch" : fitJustify, alignItems: rowSplit ? "stretch" : (align === "center" ? "center" : "stretch"), textAlign: align, gap: rowSplit ? (slide.splitGap || 32) : (slide.gap || 12), transform: fitK < 1 ? `${fitShrink < 1 ? `translateX(${(1 - fitShrink) / 2 * fitScale * 100}%) ` : ""}scale(${fitK})` : "none", transformOrigin: "top left", width: fitK < 1 ? `${100 / fitScale}%` : "100%", height: fitK < 1 ? `${100 / fitK}%` : "100%", maxWidth: fitK < 1 ? `${100 / fitScale}%` : "100%", flex: fitK < 1 ? undefined : 1, flexShrink: fitK < 1 && (rowSplit || rowCols || narrow) ? 0 : undefined, boxSizing: "border-box", ...(storyZoomed ? { visibility: "hidden" } : {}) }}>
           <ItemHoverContext.Provider value={setItemHovered}>
-            {renderBlocks()}
+            <SlideNarrowContext.Provider value={narrow ? Math.max(240, narrowW - 2 * NARROW_PAD_X) : 0}>
+              {renderBlocks()}
+            </SlideNarrowContext.Provider>
           </ItemHoverContext.Provider>
         </div>
-        {storyActive && story && <StoryZoomLayer key={story.key} items={storyList} story={story} animate={!!storyAnimate} onJump={onStoryJump} onZoomOut={onStoryZoomOut} hostRef={outerRef} pad={pad} accent={cssColor(slide.accent) || T.accent} />}
+        {storyActive && story && <StoryZoomLayer key={story.key} items={storyList} story={story} animate={!!storyAnimate} onJump={onStoryJump} onZoomOut={onStoryZoomOut} hostRef={outerRef} pad={narrow ? `${NARROW_PAD_TOP}px 6px 44px` : pad} narrow={narrow} accent={cssColor(slide.accent) || T.accent} />}
         {/* Slide-level comments (no blockIndex) — top-right */}
         {reviewMode && externalDispatch && (() => {
           const unanchored = slideComments.filter((c) => c.blockIndex == null);
@@ -8302,6 +8586,9 @@ async function captureSlide(el, h2c) {
 // without screenshots. Returns a compact text report.
 function computeSlideLayoutStats(slideEl) {
   if (!slideEl) return null;
+  // A narrow (portrait) canvas is a view for a phone. The AI edits the 16:9
+  // slide, so it gets no layout data from that view.
+  if (slideEl.querySelector("[data-vela-narrow]")) return null;
   try {
     const canvasW = slideEl.offsetWidth || VIRTUAL_W;
     const canvasH = slideEl.offsetHeight || VIRTUAL_H;
@@ -8361,15 +8648,27 @@ function computeSlideLayoutStats(slideEl) {
 }
 
 // ━━━ Virtual Slide ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// A fill canvas at least this much taller than wide uses the narrow layout.
+const NARROW_FILL_RATIO = 1.2;
 function VirtualSlide({ slide, index, total, innerRef, branding, editable, onEdit, mode = "fit-width", onBlockEdit, blockEditing, fontScale, virtualW, virtualH, bordered, reviewMode, itemId, dispatch: externalDispatch, displayIndex, displayTotal, hideSlideNumber, forceEdit, story, storyAnimate, onStoryJump, onStoryZoomOut, flashBlock = -1 }) {
   const outerRef = useRef(null);
-  const isFill = mode === "fill";
+  // "fill-portrait" (the phone editor): the narrow canvas in a portrait
+  // container, and the fixed letterbox canvas (as fit-viewport) in any other.
+  const isFill = mode === "fill" || mode === "fill-portrait";
 
   // Compute fill dims eagerly from window size to avoid first-frame 16:9 flash
   // (fullscreen container is position:fixed inset:0, so window size = container size)
   const computeFillDims = (cw, ch) => {
     if (!cw || !ch) return null;
     const containerRatio = ch / cw;
+    // Portrait container (a phone): a narrow canvas close to real size (about
+    // 0.92 CSS px per virtual px). SlideContent stacks every layout in one
+    // column there (narrow), so text stays readable instead of one third size.
+    if (containerRatio >= NARROW_FILL_RATIO) {
+      const nw = Math.round(Math.min(620, Math.max(400, cw / 0.92)));
+      return { vw: nw, vh: Math.round(nw * containerRatio), narrow: true };
+    }
+    if (mode === "fill-portrait") return { vw: virtualW || VIRTUAL_W, vh: virtualH || VIRTUAL_H };
     const rh0 = Math.round(VIRTUAL_W * containerRatio);
     const heightRatio = rh0 / VIRTUAL_H;
     const zoom = heightRatio <= 1.05 ? 1 : Math.pow(heightRatio, 0.45);
@@ -8438,7 +8737,8 @@ function VirtualSlide({ slide, index, total, innerRef, branding, editable, onEdi
         transform: isFullscreen ? `translate(${offset.x}px, ${offset.y}px) scale(${scale})` : `scale(${scale})`,
         transformOrigin: "top left", background: bg, position: "absolute", top: 0, left: 0,
       }}>
-        {slide && <SlideContent key={`${index}-${vw}-${vh}`} slide={slide} index={index} total={total} branding={branding} editable={editable} onEdit={onEdit} presenting={((mode === "fit-viewport" || isFill) && !bordered) && !forceEdit} onBlockEdit={onBlockEdit} blockEditing={blockEditing} fontScale={fontScale} reviewMode={reviewMode} itemId={itemId} dispatch={externalDispatch} displayIndex={displayIndex} displayTotal={displayTotal} hideSlideNumber={hideSlideNumber} flashBlock={flashBlock}
+        {slide && <SlideContent key={`${index}-${vw}-${isFill && fillDims?.narrow ? "narrow" : vh}`} slide={slide} index={index} total={total} branding={branding} editable={editable} onEdit={onEdit} presenting={((mode === "fit-viewport" || isFill) && !bordered) && !forceEdit} onBlockEdit={onBlockEdit} blockEditing={blockEditing} fontScale={fontScale} reviewMode={reviewMode} itemId={itemId} dispatch={externalDispatch} displayIndex={displayIndex} displayTotal={displayTotal} hideSlideNumber={hideSlideNumber} flashBlock={flashBlock}
+          narrowW={isFill && fillDims?.narrow ? vw : 0}
           story={story} storyAnimate={storyAnimate === undefined ? presentSurface : !!storyAnimate} onStoryJump={onStoryJump} onStoryZoomOut={onStoryZoomOut} presentSurface={presentSurface} />}
       </div>
     </div>
@@ -10704,8 +11004,9 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
   // Touch swipe for mobile slide navigation (crosses module boundaries like keyboard)
   // A modal over the slide (session dialog, any ModalBackdrop) owns the swipe.
   const swipeBlocked = (e) => sessionDialogOpenRef.current || !!e?.target?.closest?.("[data-vela-modal]");
-  useSwipe(containerRef, {
-    onLeft: useCallback((e) => {
+  // goNext / goPrev: one step forward / back (story image, slide, then module).
+  // A swipe and the phone Present bar use the same two functions.
+  const goNext = useCallback((e) => {
       if (swipeBlocked(e)) return;
       if (storyStepRef.current(1)) return;
       const navSlides = fullscreen ? presSlides : slides;
@@ -10722,8 +11023,8 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
           showNavToast(next.title, changedLane ? next.laneTitle : null);
         }
       }
-    }, [slideIndex, slides.length, presSlides.length, fullscreen, dispatch, concept.id, flatModules, showNavToast]),
-    onRight: useCallback((e) => {
+    }, [slideIndex, slides.length, presSlides.length, fullscreen, dispatch, concept.id, flatModules, showNavToast]);
+  const goPrev = useCallback((e) => {
       if (swipeBlocked(e)) return;
       if (storyStepRef.current(-1)) return;
       if (slideIndex > 0) {
@@ -10742,8 +11043,8 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
           showNavToast(prev.title, changedLane ? prev.laneTitle : null);
         }
       }
-    }, [slideIndex, dispatch, fullscreen, concept.id, flatModules, showNavToast]),
-  });
+    }, [slideIndex, dispatch, fullscreen, concept.id, flatModules, showNavToast]);
+  useSwipe(containerRef, { onLeft: goNext, onRight: goPrev });
 
   // Paste-detection heuristic: a DISTINCTIVE subset of SAFE_SLIDE_KEYS
   // (part-imports.jsx) — not the whole allowlist, because keys shared with
@@ -11546,7 +11847,8 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       // without html2canvas we send no screenshot and rely on layout stats.
       const h2c = await loadHtml2Canvas();
       if (!operationIsCurrent()) return;
-      const base64 = h2c ? await captureSlide(el, h2c) : null;
+      // No screenshot of the narrow (portrait) view: the AI edits the 16:9 slide.
+      const base64 = h2c && !el.querySelector("[data-vela-narrow]") ? await captureSlide(el, h2c) : null;
       if (altCancelRef.current || !operationIsCurrent()) return;
 
       const slideJson = slides[slideIndex];
@@ -11691,7 +11993,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
             audience. Pointing at any button shows the whole group. The group
             itself takes no clicks, so the slide under it stays clickable. */}
         <div className={isMobile ? undefined : "vela-fs-toolbar"} style={{ position: "absolute", top: 0, right: 0, width: "100%", height: 0 }}>
-        <div className="slide-nav-btn" onClick={() => dispatch({ type: "SET_FULLSCREEN", value: false })} style={{ position: "absolute", top: isMobile ? 8 : 16, right: isMobile ? 8 : 16, padding: isMobile ? 12 : 8 }}><Minimize2 size={isMobile ? 22 : 18} color="#fff" /></div>
+        {!isMobile && <div className="slide-nav-btn" onClick={() => dispatch({ type: "SET_FULLSCREEN", value: false })} style={{ position: "absolute", top: 16, right: 16, padding: 8 }}><Minimize2 size={18} color="#fff" /></div>}
         {!isMobile && <div data-testid="student-toggle" className="slide-nav-btn" onClick={() => dispatch({ type: "SET_VERA_MODE", mode: isStudent ? "editor" : "student" })} title={isStudent ? "Exit student mode" : "Student mode — Vera teaches"} style={{ position: "absolute", top: 16, right: 52, padding: 8, background: isStudent ? T.accent + "30" : undefined, borderRadius: 6 }}><span style={{ fontSize: 16, color: "#fff" }}>🎓</span></div>}
         {/* Gallery is reached through the view switch (fs-view-switch), so it has no separate icon here. */}
         {!isMobile && <div data-testid="presenter-toggle" className="slide-nav-btn" onClick={() => setPresenterView((v) => !v)} title={showPresenterView ? "Exit presenter view (S)" : "Presenter view — notes, next slide, timer (S)"} style={{ position: "absolute", top: 16, right: 88, padding: 8, background: showPresenterView ? T.accent + "30" : undefined, borderRadius: 6 }}><span style={{ fontSize: 16, color: "#fff" }}>{"\u{1F5D2}\uFE0F"}</span></div>}
@@ -11729,6 +12031,22 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
             controls already exist in the non-fullscreen editor's dialog zone and
             SLIDE TOOLBAR strip below — exit Present (F) to reach them. */}
       </div>
+      {/* Phone Present bar: previous, slide count, next and exit in one row under
+          the slide, in thumb reach. Nothing floats over the slide, and a step
+          does not need a swipe across slide content (links, zoom, story tiles). */}
+      {isMobile && !showGallery && (() => {
+        const virtual = !!presSlides[slideIndex]?._virtual;
+        const at = globalSlideIndex - presOffset, total = Math.max(1, globalSlideTotal);
+        const btn = (dim) => ({ border: "none", background: "transparent", color: "#e2e8f0", opacity: dim ? 0.3 : 0.9, display: "flex", alignItems: "center", justifyContent: "center", padding: 0, cursor: "pointer", touchAction: "manipulation", WebkitTapHighlightColor: "transparent" });
+        const keep = (e) => e.preventDefault(); // focus stays on the slide (keyboard)
+        return <nav data-testid="present-nav-bar" aria-label="Slide navigation" style={{ flexShrink: 0, position: "relative", display: "flex", alignItems: "stretch", height: 46, boxSizing: "content-box", paddingBottom: "env(safe-area-inset-bottom, 0px)", background: "#0a0f1a", borderTop: "1px solid rgba(255,255,255,0.08)", userSelect: "none", WebkitUserSelect: "none" }}>
+          <div aria-hidden="true" style={{ position: "absolute", top: -1, left: 0, height: 2, width: `${Math.min(100, Math.max(0, (at + 1) / total * 100))}%`, background: T.accent, opacity: virtual ? 0 : 0.85 }} />
+          <button type="button" data-testid="present-nav-exit" aria-label="Exit Present" title="Exit Present" onMouseDown={keep} onClick={() => dispatch({ type: "SET_FULLSCREEN", value: false })} style={{ ...btn(false), width: 52, opacity: 0.6 }}><Minimize2 size={18} /></button>
+          <button type="button" data-testid="present-nav-prev" aria-label="Previous" title="Previous" onMouseDown={keep} onClick={() => goPrev()} style={{ ...btn(!virtual && at <= 0), flex: 1 }}><ChevronLeft size={24} /></button>
+          <div data-testid="present-nav-count" aria-live="off" style={{ minWidth: 84, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: FONT.mono, fontSize: 13, fontWeight: 600, color: "#94a3b8", fontVariantNumeric: "tabular-nums", letterSpacing: "0.04em" }}>{virtual ? "\u00b7" : `${at + 1} / ${total}`}</div>
+          <button type="button" data-testid="present-nav-next" aria-label="Next" title="Next" onMouseDown={keep} onClick={() => goNext()} style={{ ...btn(!virtual && at + 1 >= total), flex: 1 }}><ChevronRight size={24} /></button>
+        </nav>;
+      })()}
       </div>
       {isStudent && <StudentPanel state={state} dispatch={dispatch} lanes={lanes} selectedId={concept.id} slideIndex={slideIndex} />}
       {showGallery && <GalleryView lanes={lanes} currentConceptId={concept.id} slideIndex={slideIndex} dispatch={dispatch} onClose={() => setGallery(false)} branding={branding} headerExtra={<ViewSwitch testid="gallery-view-switch" mode={viewMode} onSet={setView} />} />}
@@ -11811,8 +12129,10 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
                   {/* CR3: always letterbox-fit to a fixed aspect box (960×540 for the
                       default "auto"/Fit ratio) so the editor viewport height is
                       content-independent and the toolbar below stays put. Elastic
-                      container-shaped "fill" is reserved for fullscreen/present. */}
-                  <VirtualSlide key={`deck-${state._deckEpoch}`} slide={displaySlide} index={slideIndex} total={slides.length} innerRef={slideRef} branding={branding} editable onEdit={handleSlideEdit} mode="fit-viewport" onBlockEdit={runBlockEdit} blockEditing={blockEditing} virtualW={isAuto ? VIRTUAL_W : vw} virtualH={isAuto ? VIRTUAL_H : vh} bordered reviewMode={state.reviewMode} itemId={concept.id} dispatch={dispatch} displayIndex={globalSlideIndex} displayTotal={globalSlideTotal}
+                      container-shaped "fill" is reserved for fullscreen/present, and
+                      for the phone editor ("Fit" ratio): there the tall slide tab
+                      takes the narrow portrait layout, not a small 16:9 letterbox. */}
+                  <VirtualSlide key={`deck-${state._deckEpoch}`} slide={displaySlide} index={slideIndex} total={slides.length} innerRef={slideRef} branding={branding} editable onEdit={handleSlideEdit} mode={isMobile && isAuto ? "fill-portrait" : "fit-viewport"} onBlockEdit={runBlockEdit} blockEditing={blockEditing} virtualW={isAuto ? VIRTUAL_W : vw} virtualH={isAuto ? VIRTUAL_H : vh} bordered reviewMode={state.reviewMode} itemId={concept.id} dispatch={dispatch} displayIndex={globalSlideIndex} displayTotal={globalSlideTotal}
                     flashBlock={searchFlash && !fullscreen && !showGallery && displaySlide === slides[slideIndex] && searchFlash.id === concept.id && searchFlash.index === slideIndex ? searchFlash.block : -1} />
                   {/* Comment badge overlay (top-right) — hidden when comments panel or popover is open */}
                   {!fullscreen && !state.commentsPanelOpen && !showCommentPopover && (() => {
@@ -21047,7 +21367,7 @@ uiSuite("wp5b-story-gaps", [
       await _waitFor(() => _$("[data-testid='story-preview']"), 2000).catch(() => { throw new Error("the editor toolbar did not come back"); });
     });
   }},
-  { name: "phone size: toolbar shows story icons only; zoomed rail stays on screen and clear of the image", fn: async () => {
+  { name: "phone size: toolbar shows story icons only; zoomed image takes the full width, index row sits under it", fn: async () => {
     await _wp5OnSlide("WP5b phone", 4, { story: true }, async () => {
       const here = _wp5Key();
       await _wp5bPhone(async (root) => {
@@ -21082,8 +21402,12 @@ uiSuite("wp5b-story-gaps", [
             if (!(t.width > 0 && t.height > 0)) throw new Error(`image ${k}: thumb ${i + 1} has no size`);
             if (!_wp5bInside(t, rail)) throw new Error(`image ${k}: thumb ${i + 1} ${_wp5bBox(t)} is outside the rail ${_wp5bBox(rail)}`);
             if (_wp5bOverlap(t, box) > 1) throw new Error(`image ${k}: thumb ${i + 1} overlaps the image box`);
-            if (i > 0 && t.top < thumbs[i - 1].bottom - 1) throw new Error(`image ${k}: thumbs ${i} and ${i + 1} overlap`);
+            if (i > 0 && t.left < thumbs[i - 1].right - 1) throw new Error(`image ${k}: thumbs ${i} and ${i + 1} overlap`);
           });
+          // Portrait canvas: the index is a row under the image (no side rail),
+          // so the image box keeps almost the full phone width.
+          if (rail.top < box.bottom - 1) throw new Error(`image ${k}: index row ${_wp5bBox(rail)} is not under the image box ${_wp5bBox(box)}`);
+          if (box.width < R.width - 24) throw new Error(`image ${k}: image box is ${Math.round(box.width)} px wide in a ${Math.round(R.width)} px phone`);
         }
         await _wp5Exit();
       });
@@ -23398,6 +23722,202 @@ uiSuite("session-clock-chip", [
       _key("C");
       await _waitFor(() => !_clkChip(), 1500).catch(() => { throw new Error("Caps Lock C did not hide the chip"); });
     } finally { await _clkLeave(); }
+  }},
+]);
+
+// ━━━ Narrow (portrait) layout ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// A portrait canvas (a phone) lays every slide out as one narrow column
+// (SlideContent narrowW, RenderBlock narrowBlockView). These run in the phone
+// box of _wp5bPhone and check real geometry: nothing leaves the canvas, the
+// layout really changes, and the deck data does not.
+const _nrwContent = () => _$$("[data-vela-slide-content]").filter((e) => e.getBoundingClientRect().width > 50).pop() || null;
+const _nrwGrid = (c) => _$$("div", c).find((d) => getComputedStyle(d).display === "grid") || null;
+const _nrwTracks = (g) => getComputedStyle(g).gridTemplateColumns.trim().split(/\s+/).length;
+const _nrwByText = (c, text) => _$$("*", c).filter((e) => e.children.length === 0 && (e.textContent || "").trim() === text).pop() || null;
+// Every block root, image and diagram of the slide lies inside the canvas box R.
+const _nrwAllInside = (c, R) => {
+  for (const e of _$$("[class^='stg-'], img, svg, pre", c)) {
+    if (e.closest("[data-no-pdf], [data-zoom-badge]") || e.ownerSVGElement) continue;
+    const r = e.getBoundingClientRect();
+    if (!(r.width > 0 && r.height > 0)) continue;
+    if (!_wp5bInside(r, R, 1.5)) throw new Error(`${e.tagName.toLowerCase()} ${_wp5bBox(r)} is outside the canvas ${_wp5bBox(R)} ("${(e.textContent || "").trim().slice(0, 24)}")`);
+  }
+};
+const _nrwCard = (title, text) => ({ blocks: [{ type: "heading", text: title, size: "lg" }, { type: "text", text, size: "sm" }] });
+// Put `blocks` on the second slide, run body(wide viewport), then undo.
+const _nrwOnSlide = async (blocks, extra, mark, body) => {
+  await _wp5Exit(); await _selectFirstModule();
+  const k0 = _wp5Key();
+  document.activeElement?.blur?.(); _key("ArrowRight");
+  await _waitFor(() => _wp5Key() && _wp5Key() !== k0, 2500).catch(() => { throw new Error("could not move to the second slide"); });
+  const past = _hooks().getHistoryCounts().past;
+  try {
+    await _mrdInject(blocks, { L: undefined, R: undefined, story: undefined, ...(extra || {}) }, (vp) => vp?.textContent.includes(mark) ? vp : null);
+    await body();
+  } finally {
+    await _wp5Exit().catch(() => {});
+    await _wp5UndoTo(past);
+  }
+};
+// Enter Present in the phone box; body(content element, canvas box).
+const _nrwPhonePresent = (body) => _wp5bPhone(async (root) => {
+  await _wp5Enter();
+  await _wait(700); await _mrdFrame(); // entrance animations end
+  const c = _nrwContent();
+  if (!c) throw new Error("no slide content in phone Present");
+  await body(c, root.getBoundingClientRect());
+  await _wp5Exit();
+});
+
+uiSuite("narrow-layout", [
+  { name: "phone Present: a 4-up card grid becomes 2-up, stays on the canvas, deck data is unchanged", fn: async () => {
+    const grid = { type: "grid", cols: 4, gap: 16, items: [_nrwCard("NRW Scope", "only the project"), _nrwCard("Deps", "audit first"), _nrwCard("Secrets", "out of reach"), _nrwCard("Costly", "a human step")] };
+    await _nrwOnSlide([{ type: "heading", text: "NRW grid" }, grid], null, "NRW grid", async () => {
+      await _nrwPhonePresent(async (c, R) => {
+        const g = _nrwGrid(c);
+        if (!g) throw new Error("no grid on the slide");
+        if (_nrwTracks(g) !== 2) throw new Error(`grid has ${_nrwTracks(g)} column(s) on a phone, expected 2`);
+        _nrwAllInside(c, R);
+      });
+      const b = (_wp5Cur().blocks || []).find((x) => x.type === "grid");
+      if (!b || b.cols !== 4 || (b.style && b.style.gridTemplateColumns)) throw new Error(`the narrow render changed the deck grid (cols ${b && b.cols})`);
+    });
+  }},
+  { name: "phone Present: paragraph cards take one column each", fn: async () => {
+    const long = "Only happy paths and trusted users were tested, so the signal never reached the cases that fail in production.";
+    const grid = { type: "grid", cols: 3, items: [_nrwCard("NRW para", long), _nrwCard("Second", long), _nrwCard("Third", long)] };
+    await _nrwOnSlide([grid], null, "NRW para", async () => {
+      await _nrwPhonePresent(async (c, R) => {
+        const g = _nrwGrid(c);
+        if (!g || _nrwTracks(g) !== 1) throw new Error(`grid has ${g ? _nrwTracks(g) : "no"} column(s), expected 1`);
+        _nrwAllInside(c, R);
+      });
+    });
+  }},
+  { name: "wide Present: the same card grid keeps its 4 columns", fn: async () => {
+    const grid = { type: "grid", cols: 4, gap: 16, items: [_nrwCard("NRW wide", "a"), _nrwCard("B", "b"), _nrwCard("C", "c"), _nrwCard("D", "d")] };
+    await _nrwOnSlide([grid], null, "NRW wide", async () => {
+      await _wp5Enter(); await _wait(300);
+      const g = _nrwGrid(_nrwContent());
+      if (!g || _nrwTracks(g) !== 4) throw new Error(`grid has ${g ? _nrwTracks(g) : "no"} column(s) on a wide canvas, expected 4`);
+    });
+  }},
+  { name: "phone Present: a two-column slide stacks left above right at full width", fn: async () => {
+    await _nrwOnSlide([{ type: "heading", text: "NRW cols" }], { layout: "cols", L: [{ type: "text", text: "NRW-LEFT" }], R: [{ type: "text", text: "NRW-RIGHT" }] }, "NRW-LEFT", async () => {
+      await _nrwPhonePresent(async (c, R) => {
+        const l = _nrwByText(c, "NRW-LEFT"), r = _nrwByText(c, "NRW-RIGHT");
+        if (!l || !r) throw new Error("column text not found");
+        const lr = l.getBoundingClientRect(), rr = r.getBoundingClientRect();
+        if (rr.top < lr.bottom - 1) throw new Error(`right column ${_wp5bBox(rr)} is not under the left column ${_wp5bBox(lr)}`);
+        if (Math.abs(lr.left - rr.left) > 2) throw new Error("the two columns do not share one left edge");
+        _nrwAllInside(c, R);
+      });
+    });
+  }},
+  { name: "phone Present: a 5-step flow runs top to bottom", fn: async () => {
+    const names = ["NRW-A", "NRW-B", "NRW-C", "NRW-D", "NRW-E"];
+    await _nrwOnSlide([{ type: "flow", items: names.map((label) => ({ label, icon: "Circle", sublabel: "step" })) }], null, "NRW-A", async () => {
+      await _nrwPhonePresent(async (c, R) => {
+        const tops = names.map((n) => { const e = _nrwByText(c, n); if (!e) throw new Error(`step ${n} not found`); return e.getBoundingClientRect().top; });
+        tops.forEach((t, i) => { if (i > 0 && t <= tops[i - 1] + 4) throw new Error(`step ${names[i]} is not below step ${names[i - 1]}`); });
+        _nrwAllInside(c, R);
+      });
+    });
+  }},
+  { name: "phone Present: a dense text slide scales down and stays on the canvas", fn: async () => {
+    const para = "NRW dense. Feedback lets the loop learn, fix and improve; without a check, every run repeats the same error and nobody sees it.";
+    await _nrwOnSlide(Array.from({ length: 14 }, () => ({ type: "text", text: para })), null, "NRW dense", async () => {
+      await _nrwPhonePresent(async (c, R) => {
+        const inner = c.firstElementChild;
+        if (!/scale\(0?\.\d+\)/.test(inner.style.transform)) throw new Error(`dense slide is not scaled (${inner.style.transform || "none"})`);
+        _nrwAllInside(c, R);
+      });
+    });
+  }},
+  { name: "phone Present: a tall diagram that grows with the width still fits", fn: async () => {
+    const svg = { type: "svg", markup: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 400" width="100%"><rect x="2" y="2" width="96" height="396" fill="none" stroke="{{accent}}"/></svg>' };
+    await _nrwOnSlide([{ type: "heading", text: "NRW tall" }, svg, { type: "text", text: "A line under the diagram" }], null, "NRW tall", async () => {
+      await _nrwPhonePresent(async (c, R) => { _nrwAllInside(c, R); });
+    });
+  }},
+  // The phone box of _wp5bPhone narrows Present only (the editor row keeps the
+  // window width), so the test gives the editor row the phone width itself.
+  { name: "phone editor: a portrait slide tab shows the portrait canvas; a wide tab and the wide editor keep 960x540", fn: async () => {
+    await _nrwOnSlide([{ type: "heading", text: "NRW editor" }], null, "NRW editor", async () => {
+      const is169 = () => { const v = _mrdViewport(); return !!v && v.offsetWidth === 960 && v.offsetHeight === 540; };
+      if (!is169()) throw new Error(`wide editor canvas is ${_mrdViewport()?.offsetWidth}x${_mrdViewport()?.offsetHeight}, expected 960x540`);
+      await _wp5bPhone(async () => {
+        const row = _$("[data-testid='editor-main-row']"); if (!row) throw new Error("no editor row");
+        const css = row.getAttribute("style");
+        try {
+          row.style.width = "390px"; row.style.maxWidth = "390px"; row.style.flex = "1 1 auto";
+          const vp = await _waitFor(() => { const v = _mrdViewport(); return v && v.offsetHeight > v.offsetWidth * 1.2 ? v : null; }, 2500)
+            .catch(() => { const v = _mrdViewport(); throw new Error(`phone editor canvas is ${v ? `${v.offsetWidth}x${v.offsetHeight}` : "missing"}, expected a portrait canvas`); });
+          if (vp.offsetWidth > 640) throw new Error(`portrait canvas is ${vp.offsetWidth} virtual px wide`);
+          if (!vp.querySelector("[data-vela-narrow]")) throw new Error("the portrait canvas does not use the narrow layout");
+          // The AI edits the 16:9 slide: it gets no layout data from this view.
+          if (computeSlideLayoutStats(vp) !== null) throw new Error("layout stats were returned for the narrow view");
+          // A height change of the tab must not mount the slide again (an open edit would be lost).
+          const node = vp.querySelector("[data-vela-slide-content]");
+          row.style.height = `${Math.round(row.getBoundingClientRect().height - 60)}px`; row.style.flex = "0 0 auto";
+          await _wait(250); await _mrdFrame();
+          if (!node.isConnected || _mrdViewport().querySelector("[data-vela-slide-content]") !== node) throw new Error("a height change of the slide tab mounted the slide again");
+        } finally {
+          if (css == null) row.removeAttribute("style"); else row.setAttribute("style", css);
+        }
+        // Phone layout with a wide slide tab: the fixed letterbox canvas, not a container-shaped one.
+        await _waitFor(is169, 2500).catch(() => { throw new Error(`a wide phone slide tab shows a ${_mrdViewport()?.offsetWidth}x${_mrdViewport()?.offsetHeight} canvas, expected 960x540`); });
+      });
+      await _waitFor(is169, 2500).catch(() => { throw new Error("the wide editor did not return to the 960x540 canvas"); });
+    });
+  }},
+  { name: "phone Present: the bar under the slide steps the slides and exits; no control floats over the slide", fn: async () => {
+    await _nrwOnSlide([{ type: "heading", text: "NRW bar" }], null, "NRW bar", async () => {
+      await _wp5bPhone(async (root) => {
+        await _wp5Enter(); await _wait(300); await _mrdFrame();
+        const R = root.getBoundingClientRect();
+        const bar = _$("[data-testid='present-nav-bar']");
+        if (!bar) throw new Error("no Present bar in the phone layout");
+        const br = bar.getBoundingClientRect(), c = _nrwContent().getBoundingClientRect();
+        if (!_wp5bInside(br, R, 1.5)) throw new Error(`bar ${_wp5bBox(br)} is outside the phone box ${_wp5bBox(R)}`);
+        if (br.top < c.bottom - 1.5) throw new Error(`bar ${_wp5bBox(br)} covers the slide ${_wp5bBox(c)}`);
+        if (_$$(".slide-nav-btn").some((b) => b.getBoundingClientRect().width > 0)) throw new Error("a floating control is over the slide in the phone layout");
+        for (const id of ["present-nav-prev", "present-nav-next", "present-nav-exit"]) {
+          const b = _$(`[data-testid='${id}']`).getBoundingClientRect();
+          if (b.width < 44 || b.height < 44) throw new Error(`${id} is ${Math.round(b.width)}x${Math.round(b.height)} px, under the 44 px touch size`);
+        }
+        const count = () => (_$("[data-testid='present-nav-count']").textContent || "").trim();
+        const k0 = _wp5Key(), c0 = count();
+        if (!/^\d+ \/ \d+$/.test(c0)) throw new Error(`slide count shows ${JSON.stringify(c0)}`);
+        _click("[data-testid='present-nav-next']");
+        await _waitFor(() => _wp5Key() !== k0, 2500).catch(() => { throw new Error("Next did not change the slide"); });
+        if (count() === c0) throw new Error("the slide count did not change after Next");
+        _click("[data-testid='present-nav-prev']");
+        await _waitFor(() => _wp5Key() === k0, 2500).catch(() => { throw new Error("Previous did not go back"); });
+        _click("[data-testid='present-nav-exit']");
+        await _waitFor(() => !_wp5Fs(), 2500).catch(() => { throw new Error("the exit button did not leave Present"); });
+      });
+      await _wp5Enter(); await _wait(200);
+      if (_$("[data-testid='present-nav-bar']")) throw new Error("the phone bar shows in wide Present");
+      if (!_$$(".slide-nav-btn").some((b) => b.getBoundingClientRect().width > 0)) throw new Error("wide Present lost its floating controls");
+    });
+  }},
+  { name: "phone Present: a table header word stays whole; a flow loop label is vertical", fn: async () => {
+    const table = { type: "table", headers: ["Metric", "Before", "Improvement"], rows: [["Latency", "120 ms", "3x"], ["NRW-table", "2.1%", "7x"]] };
+    const flow = { type: "flow", direction: "vertical", loop: true, loopLabel: "NRW loop label", items: [{ label: "One", icon: "Circle" }, { label: "Two", icon: "Circle" }, { label: "Three", icon: "Circle" }] };
+    await _nrwOnSlide([table, flow], null, "NRW-table", async () => {
+      await _nrwPhonePresent(async (c, R) => {
+        _nrwAllInside(c, R);
+        const h = _nrwByText(c, "Improvement");
+        if (!h) throw new Error("table header not found");
+        const one = parseFloat(getComputedStyle(h).lineHeight) || parseFloat(getComputedStyle(h).fontSize) * 1.5;
+        if (h.getBoundingClientRect().height > one * 1.6 + 18) throw new Error("the header word 'Improvement' is split over lines");
+        const lbl = _$$("text", c).find((t) => (t.textContent || "").includes("NRW loop label"));
+        if (!lbl) throw new Error("loop label not found");
+        const lr = lbl.getBoundingClientRect();
+        if (lr.height <= lr.width) throw new Error(`loop label box is ${Math.round(lr.width)}x${Math.round(lr.height)}, expected a vertical label`);
+      });
+    });
   }},
 ]);
 
