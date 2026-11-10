@@ -20,10 +20,12 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full map. Quick referen
 |---|---|
 | Block rendering (how slides look) | `src/parts/part-blocks.jsx` |
 | AI behavior, system prompts | `src/parts/part-engine.jsx` |
-| PDF/markdown export | `src/parts/part-pdf.jsx` |
+| PDF export | `src/parts/part-pdf.jsx`, `src/parts/part-pdf-vector.jsx` |
+| Markdown/HTML export | `src/parts/part-export-md.jsx` |
 | State management | `src/parts/part-reducer.jsx` |
 | Import/export, sanitization | `src/parts/part-imports.jsx` |
-| Slide panel, presenter mode | `src/parts/part-slides.jsx` |
+| Slide panel | `src/parts/part-slidepanel.jsx` |
+| Presenter mode, gallery | `src/parts/part-slides.jsx` |
 | Chat panel | `src/parts/part-chat.jsx` |
 | Top-level app shell | `src/parts/part-app.jsx` |
 

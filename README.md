@@ -151,10 +151,10 @@ Code blocks ship with a one-click copy button. Callouts can be set to `reveal: t
 Decks use the `.vela` extension — a standard JSON file with a dedicated identity. All CLI tools, the local server, and imports recognize both `.vela` and `.json`.
 
 ### Presenter Mode
-Fullscreen presentation with arrow keys (Up/Down/Left/Right), Space, and Escape — PowerPoint-style navigation across slides and modules. Designed for 16:9 projection.
+Fullscreen presentation with arrow keys (Up/Down/Left/Right), Space, and Escape — PowerPoint-style navigation across slides and modules. Designed for 16:9 projection. Story mode (`story: true`) presents a slide's images one by one.
 
-### Vector PDF Export
-Canvas-rendered PDF output with clickable links, branding overlays, and watermarks. Every slide exports as a crisp vector page.
+### Vector PDF & PowerPoint Export
+Canvas-rendered PDF output with clickable links, branding overlays, and watermarks. Every slide exports as a crisp vector page. Native, editable `.pptx` export is built in too. Story slides can expand to one page per image.
 
 ### Dark & Light Themes
 Full dark/light mode with 7+ theme directions (midnight, warm, editorial, minimal, vibrant). Themes propagate to all block types including SVG diagrams via token injection.
@@ -163,10 +163,10 @@ Full dark/light mode with 7+ theme directions (midnight, warm, editorial, minima
 Decks save across sessions automatically — to Claude.ai's artifact storage API in the artifact runtime, and to the local filesystem in the server and desktop runtimes. No manual export needed to keep your work.
 
 ### WYSIWYG Editing
-Click any text on a slide to edit it inline. Supports bold, italic, and markdown formatting.
+Click any text on a slide to edit it inline. Supports bold, italic, underline (Ctrl+U, saved as `++text++`), and markdown formatting.
 
 ### Drag & Drop
-Reorder slides and modules by dragging. Reorganize your deck structure without leaving the app.
+Reorder slides and modules by dragging. Reorganize your deck structure without leaving the app. Drag image files from your computer onto a slide (up to 10 images per slide; extra images go to a new slide), and drag image tiles to reorder them.
 
 ---
 
@@ -244,8 +244,8 @@ vela-slides/
 │   └── *.vela                 ← Themed example decks
 ├── evals/                     ← Version benchmarking infrastructure
 ├── tests/
-│   ├── test_vela.py           ← Core engine tests (361 tests)
-│   └── test_serve.py          ← Server endpoint & security tests (121 tests)
+│   ├── test_vela.py           ← Core engine tests (610 tests)
+│   └── test_serve.py          ← Server endpoint & security tests (175 tests)
 ├── LICENSE                    ← Elastic License v2
 ├── CONTRIBUTING.md
 └── README.md

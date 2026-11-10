@@ -50,7 +50,7 @@ node decks/screenshot.mjs
 
 ### 2. Full deck screenshots (requires server)
 
-The Vela server compiles JSX via in-browser Babel — the 1MB monolith takes **15-30+ seconds** to render. Key gotchas:
+The Vela server compiles JSX via in-browser Babel — the ~2MB monolith takes **15-30+ seconds** to render. Key gotchas:
 
 **Server must run in the same bash invocation as the node script.** Background processes (`&`) don't persist across separate Bash tool calls. Use this pattern:
 
