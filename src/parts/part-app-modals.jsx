@@ -611,14 +611,15 @@ function SessionEndDialog({ session, stored, lanes, onSet, onClear, onClose }) {
   const endRef = useRef(null);
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
-  // Base date: an unchanged Start of a live session keeps that session's own
-  // date (a session that crosses midnight re-sets unchanged); else today.
-  const base = live && start === fmtClock(live.start) ? live.start : openNow;
+  // Base date: the start date of the live session (a session that crosses
+  // midnight keeps its date when edited), else today. A session that is all
+  // in the past moves to the next day (resolveSessionTimes with openNow).
+  const base = sessionDialogBase(live, openNow);
   const startMs = (hhmm) => { const r = resolveSessionTimes(hhmm, hhmm, base); return r ? r.start : null; };
-  const resolved = resolveSessionTimes(start, end, base);
+  const resolved = resolveSessionTimes(start, end, base, openNow);
   const parseMin = (v) => (/^\d{1,4}$/.test(v) && +v >= 1 && +v <= 1440 ? +v : null);
   const endFor = (st, n) => { const s0 = startMs(st); return s0 == null || n == null ? null : fmtClock(s0 + n * 60000); };
-  const minFor = (st, en) => { const r = resolveSessionTimes(st, en, base); return r ? String(Math.round((r.end - r.start) / 60000)) : ""; };
+  const minFor = (st, en) => { const r = resolveSessionTimes(st, en, base, openNow); return r ? String(Math.round((r.end - r.start) / 60000)) : ""; };
   const onStart = (v) => {
     setStart(v);
     const n = parseMin(minutes);
@@ -629,7 +630,7 @@ function SessionEndDialog({ session, stored, lanes, onSet, onClear, onClose }) {
   // Set needs a valid End AND a valid Minutes field (1..1440): an invalid
   // Minutes value (0, 1441) leaves End unchanged, so End alone is not enough.
   const canSet = !!resolved && parseMin(minutes) != null;
-  const set = () => { const r = resolveSessionTimes(start, end, base); if (r && parseMin(minutes) != null) onSet(r); };
+  const set = () => { const r = resolveSessionTimes(start, end, base, openNow); if (r && parseMin(minutes) != null) onSet(r); };
   const needMin = Math.round(sessionEstimates(presentSequence(lanes)).total / 60);
   const lenMin = resolved ? Math.round((resolved.end - resolved.start) / 60000) : null;
   useEffect(() => {
@@ -680,8 +681,9 @@ function SessionEndDialog({ session, stored, lanes, onSet, onClear, onClose }) {
           ))}
         </div>
         <div data-testid="session-summary" style={{ fontFamily: FONT.mono, fontSize: 13, color: canSet ? T.text : T.red, marginBottom: 6 }}>
-          {canSet ? `Now ${fmtClock(Date.now())} → ends ${fmtClock(resolved.end)} (${lenMin} min)` : "Enter a start and an end (1 min to 24 h)"}
+          {canSet ? `Now ${fmtClock(Date.now())}${resolved.start > Date.now() ? ` · starts in ${fmtCountdown((resolved.start - Date.now()) / 1000)}` : ""} → ends ${fmtClock(resolved.end)} (${lenMin} min)` : "Enter a start and an end (1 min to 24 h)"}
         </div>
+        <div data-testid="session-file-note" style={{ fontFamily: FONT.mono, fontSize: 13, color: T.textMuted, marginBottom: 6 }}>Saved in the deck file (also in exports of the deck).</div>
         <div data-testid="session-precheck" style={{ fontFamily: FONT.mono, fontSize: 13, color: T.textMuted, marginBottom: 18 }}>
           {`Deck needs ~${needMin} min`}{lenMin != null ? ` · session is ${lenMin} min` : ""}
         </div>

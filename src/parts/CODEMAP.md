@@ -23,7 +23,7 @@ that symbol in the named part for the line. No line numbers here — they rot.
 - Themes: themes T statusColor FONT buildTitleCardSlide
 - Vela Logo Icon: VelaIcon BASE_SIZES
 - Style Factories & Helpers: saveKV delKV extractSave extractMaster collectComments formatCommentsForAgent allItemIds findItem fmtSize fmtTime fmtTimeMin visibleSlides sumDurations sumVisibleDurations
-- Session end: pure pace helpers (v13.80): liveSession presentSequence sessionSeqIndex sessionEstimates SESSION_PACE_COLORS pad2 fmtClock fmtCountdown computeSessionPace sessionBarGeom SESSION_HHMM resolveSessionTimes S
+- Session end: pure pace helpers (v13.80): liveSession presentSequence sessionSeqIndex sessionEstimates SESSION_PACE_COLORS pad2 fmtClock fmtCountdown sessionOnSlideSec computeSessionPace sessionBarGeom SESSION_HHMM resolveSessionTimes sessionDialogBase S
 - CSS Generator: getCss
 - Mobile Detection: MOBILE_BP useIsMobile useSwipe
 - Shared Prompt Constants (deduped from 3 system prompts): BLOCK_REFERENCE ICON_LIST DESIGN_RULES
@@ -139,6 +139,7 @@ that symbol in the named part for the line. No line numbers here — they rot.
 - Session end (v13.80): sanitizer, pace math, deck ingress: _SS_T0 _ssEq _ssNoNaN _ssSeq _ssSes
 - Session end: Present-side UI (v13.80, P2): _sesUiRoot _sesUiPresent _sesUiLeave _sesUiSet _sesUiOpenPresenter _sesUiNeedHooks
 - Session end: editor toolbar, dialog, live ingress, bar geometry (v13.80, P3): _sesTbBtn _sesTbIs _sesTbDesc _sesTbOpen _sesSecs _sesShape _sesRgb _sesImport
+- Session end: review fixes (v13.80): _sesSig _sesWheel _sesSwipe
 - UI TEST RUNNER COMPONENT: computeDeckFingerprint DEMO_DECK_FP_TITLE VelaUITestRunner
 
 ### part-demo.jsx
@@ -339,7 +340,7 @@ add_lane add_item batch_add_items remove_item remove_lane rename_item rename_lan
 - part-imports.jsx: 929-line unbannered stretch after line 518
 - part-blocks.jsx: 806-line unbannered stretch after line 1265
 - part-canvas.jsx: 581-line unbannered stretch after line 150
-- part-slidepanel.jsx: 459-line unbannered stretch after line 1442
+- part-slidepanel.jsx: 459-line unbannered stretch after line 1451
 - part-uitest.jsx: 616-line unbannered stretch after line 1230
 - part-uitest2.jsx: 448-line unbannered stretch after line 2
 - part-uitest2.jsx: 593-line unbannered stretch after line 1457

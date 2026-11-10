@@ -3772,22 +3772,27 @@ def test_deck_session():
         else:
             fail(f"validate.py accepts session {label} without warning", r.stdout + r.stderr)
 
-    for val, label in [
-        ("x", "string"), (None, "null"), ([T0, T0 + 60000], "array"),
-        ({"start": str(T0), "end": T0 + 60000}, "numeric string"),
-        ({"start": T0 + 0.5, "end": T0 + 60000}, "float"),
-        ({"start": True, "end": T0 + 60000}, "bool"),
-        ({"start": T0, "end": T0}, "end == start"),
-        ({"start": T0, "end": T0 - 60000}, "end < start"),
-        ({"start": T0, "end": T0 + 59999}, "< 1 min"),
-        ({"start": T0, "end": T0 + 86400001}, "> 24 h"),
-        ({"start": 946684799999, "end": 946684799999 + 60000}, "before 2000"),
-        ({"start": 4102444800001 - 60000, "end": 4102444800001}, "after 2100"),
-        ({"start": T0}, "missing end"),
+    # Each warning states the real reason (static text, never deck text).
+    OBJ, TYPE, RANGE = "must be an object", "whole-number epoch milliseconds", "out of range"
+    ORDER, LEN = "end must be after start", "length must be 1 min to 24 h"
+    for val, label, why in [
+        ("x", "string", OBJ), (None, "null", OBJ), ([T0, T0 + 60000], "array", OBJ),
+        ({"start": str(T0), "end": T0 + 60000}, "numeric string", TYPE),
+        ({"start": T0 + 0.5, "end": T0 + 60000}, "float", TYPE),
+        ({"start": True, "end": T0 + 60000}, "bool", TYPE),
+        ({"start": T0, "end": T0}, "end == start", ORDER),
+        ({"start": T0, "end": T0 - 60000}, "end < start", ORDER),
+        ({"start": T0, "end": T0 + 59999}, "< 1 min", LEN),
+        ({"start": T0, "end": T0 + 86400001}, "> 24 h", LEN),
+        ({"start": 946684799999, "end": 946684799999 + 60000}, "before 2000", RANGE),
+        ({"start": 4102444800001 - 60000, "end": 4102444800001}, "after 2100", RANGE),
+        ({"start": 4102444800001, "end": T0}, "start after 2100, end in range", RANGE),
+        ({"start": T0, "end": 946684799999}, "end before 2000", RANGE),
+        ({"start": T0}, "missing end", TYPE),
     ]:
         r = run_validate(deck_with({"session": val}))
-        if r.returncode == 0 and "session ignored by the app" in r.stdout:
-            ok(f"validate.py warns (exit 0) on session {label}")
+        if r.returncode == 0 and "session ignored by the app" in r.stdout and why in r.stdout:
+            ok(f"validate.py warns (exit 0) on session {label}: {why}")
         else:
             fail(f"validate.py warns (exit 0) on session {label}", f"rc={r.returncode} " + r.stdout + r.stderr)
 

@@ -122,10 +122,12 @@ def _check_session(deck, warnings):
         reason = "must be an object {start, end}"
     elif type(v.get("start")) is not int or type(v.get("end")) is not int:
         reason = "start and end must be whole-number epoch milliseconds"
-    elif v["start"] < SESSION_EPOCH_MIN or v["end"] > SESSION_EPOCH_MAX:
-        reason = "start/end out of range (years 2000-2100)"
+    elif not all(SESSION_EPOCH_MIN <= v[k] <= SESSION_EPOCH_MAX for k in ("start", "end")):
+        reason = "start or end out of range (years 2000-2100)"
+    elif v["end"] <= v["start"]:
+        reason = "end must be after start"
     elif not (60000 <= v["end"] - v["start"] <= 86400000):
-        reason = "length must be 1 min to 24 h (end after start)"
+        reason = "length must be 1 min to 24 h"
     if reason:
         warnings.append(f"session ignored by the app: {reason}")
 

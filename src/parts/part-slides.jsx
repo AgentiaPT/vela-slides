@@ -875,7 +875,7 @@ function PresenterView({ current, next, index, total, duration, elapsed, brandin
           <div style={{ flex: 1, minHeight: 0, borderRadius: 10, overflow: "hidden", border: "2px solid #3b82f6", boxShadow: "0 0 24px rgba(59,130,246,0.25)", display: "flex", alignItems: "center" }}>
             {current ? <GalleryThumb slide={current} slideIdx={index} total={total} branding={branding} story={currentStory} /> : <div style={{ width: "100%", padding: 40, textAlign: "center", color: "#64748b" }}>No slide</div>}
           </div>
-          <div data-testid="presenter-notes" style={{ flexShrink: 0, maxHeight: "38%", overflowY: "auto", background: "rgba(255,255,255,0.05)", borderRadius: 8, padding: 14 }}>
+          <div data-testid="presenter-notes" data-scroll-container style={{ flexShrink: 0, maxHeight: "38%", overflowY: "auto", background: "rgba(255,255,255,0.05)", borderRadius: 8, padding: 14 }}>
             <div style={{ fontFamily: FONT.mono, fontSize: 10, color: "#64748b", letterSpacing: "0.05em", marginBottom: 6 }}>📝 SPEAKER NOTES</div>
             {notes ? <div style={{ fontSize: 14, lineHeight: 1.6, whiteSpace: "pre-wrap" }}>{notes}</div> : <div style={{ fontSize: 13, color: "#64748b", fontStyle: "italic" }}>No notes</div>}
             {studyNotes && <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px solid rgba(255,255,255,0.08)" }}>
@@ -884,7 +884,7 @@ function PresenterView({ current, next, index, total, duration, elapsed, brandin
             </div>}
           </div>
         </div>
-        <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 8, minWidth: 180, maxWidth: 320, minHeight: 0, overflowY: "auto" }}>
+        <div data-scroll-container style={{ flex: 1, display: "flex", flexDirection: "column", gap: 8, minWidth: 180, maxWidth: 320, minHeight: 0, overflowY: "auto" }}>
           <div style={{ fontFamily: FONT.mono, fontSize: 10, color: "#64748b", letterSpacing: "0.05em" }}>NEXT ▸{nextInSlide && <span data-testid="presenter-next-story"> {nextStoryLabel}</span>}</div>
           <div data-testid="presenter-next" style={{ flexShrink: 0, borderRadius: 8, overflow: "hidden", border: "1px solid rgba(255,255,255,0.15)", opacity: 0.85 }}>
             {/* One key for both NEXT thumbs: no remount (shimmer) when the story ends. */}

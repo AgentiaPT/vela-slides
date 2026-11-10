@@ -2675,6 +2675,17 @@ const pad2 = (n) => String(n).padStart(2, "0");
 const fmtClock = (ms) => { if (typeof ms !== "number" || !Number.isFinite(ms)) return "--:--"; const d = new Date(ms); if (Number.isNaN(d.getTime())) return "--:--"; return `${pad2(d.getHours())}:${pad2(d.getMinutes())}`; }; // local 24 h
 const fmtCountdown = (sec) => { const s = Math.max(0, Math.floor(typeof sec === "number" && Number.isFinite(sec) ? sec : 0)); const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), r = s % 60; return h > 0 ? `${h}:${pad2(m)}:${pad2(r)}` : `${m}:${pad2(r)}`; };
 
+// Seconds on the current slide that count as presenting time: from the later
+// of the slide entry and the session start (waiting on the slide before the
+// start is not presenting time, so it must not reduce "need"). Never NaN or < 0.
+function sessionOnSlideSec(nowMs, enterAt, session) {
+  if (typeof nowMs !== "number" || !Number.isFinite(nowMs)) return 0;
+  const enter = typeof enterAt === "number" && Number.isFinite(enterAt) ? enterAt : -Infinity;
+  const ses = session && typeof session.start === "number" && Number.isFinite(session.start) ? session.start : -Infinity;
+  const from = Math.max(enter, ses);
+  return Number.isFinite(from) ? Math.max(0, (nowMs - from) / 1000) : 0;
+}
+
 // Pace for seq position `idx` (0-based, clamped), `onSlideSec` on the current
 // slide, a session and `now` (ms). Returns null for an invalid session. The total
 // is recomputed from the (finite, capped) estimates, so no field can be NaN.
@@ -2728,18 +2739,25 @@ const sessionBarGeom = (pace) => {
 };
 
 // Dialog: "HH:MM" strings (input type=time) -> { start, end } or null.
-// Both on the local date of `now`; end <= start (time of day) -> next day.
-// new Date(y, m, d+1, hh, mm) keeps local wall time across DST.
+// Start on the local date of `base`; end <= start (time of day) -> next day.
+// With `now`: a session that is all in the past (end <= now) moves forward by
+// one calendar day. new Date(y, m, d+1, hh, mm) keeps local wall time across DST.
 const SESSION_HHMM = /^([01]\d|2[0-3]):([0-5]\d)$/;
-function resolveSessionTimes(startHHMM, endHHMM, now) {
+function resolveSessionTimes(startHHMM, endHHMM, base, now) {
   const a = SESSION_HHMM.exec(typeof startHHMM === "string" ? startHHMM : ""), b = SESSION_HHMM.exec(typeof endHHMM === "string" ? endHHMM : "");
   if (!a || !b) return null;
-  const d = new Date(now), sh = +a[1], sm = +a[2], eh = +b[1], em = +b[2];
-  const start = new Date(d.getFullYear(), d.getMonth(), d.getDate(), sh, sm).getTime();
+  const d = new Date(base), sh = +a[1], sm = +a[2], eh = +b[1], em = +b[2];
   const next = eh * 60 + em <= sh * 60 + sm ? 1 : 0;
-  const end = new Date(d.getFullYear(), d.getMonth(), d.getDate() + next, eh, em).getTime();
-  return sanitizeSession({ start, end });   // enforces 1 min .. 24 h, rejects NaN
+  const at = (k) => ({
+    start: new Date(d.getFullYear(), d.getMonth(), d.getDate() + k, sh, sm).getTime(),
+    end: new Date(d.getFullYear(), d.getMonth(), d.getDate() + k + next, eh, em).getTime(),
+  });
+  let r = at(0);
+  if (typeof now === "number" && Number.isFinite(now) && r.end <= now) r = at(1);
+  return sanitizeSession(r);   // enforces 1 min .. 24 h, rejects NaN
 }
+// Dialog base date: the start date of the stored LIVE session, else today.
+const sessionDialogBase = (live, now) => (live && typeof live.start === "number" && Number.isFinite(live.start) ? live.start : now);
 const S = {
   btn: (o = {}) => ({ padding: "3px 8px", fontSize: 10, fontFamily: FONT.mono, fontWeight: 700, background: "transparent", border: `1px solid ${T.border}`, borderRadius: 3, color: T.textDim, cursor: "pointer", ...o }),
   primaryBtn: (o = {}) => ({ padding: "4px 10px", fontSize: 10, fontFamily: FONT.mono, fontWeight: 700, background: T.accent, color: "#fff", border: "none", borderRadius: 3, cursor: "pointer", ...o }),
@@ -2850,8 +2868,8 @@ function useSwipe(ref, { onLeft, onRight, threshold = 50 } = {}) {
     const onEnd = (e) => {
       const t = e.changedTouches[0]; const dx = t.clientX - startX; const dy = t.clientY - startY;
       if (Math.abs(dx) > Math.abs(dy) && Math.abs(dx) > threshold) {
-        if (dx < 0 && onLeft) onLeft();
-        if (dx > 0 && onRight) onRight();
+        if (dx < 0 && onLeft) onLeft(e);
+        if (dx > 0 && onRight) onRight(e);
       }
     };
     el.addEventListener("touchstart", onStart, { passive: true });

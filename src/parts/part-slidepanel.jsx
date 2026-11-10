@@ -447,7 +447,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
   const paceSlideKey = fullscreen ? `${paceItemId}|${detour ? detour.ret.index : slideIndex}` : null;
   if (slideEnterRef.current.key !== paceSlideKey) slideEnterRef.current = { key: paceSlideKey, at: Date.now() };
   const sessionLive = fullscreen ? liveSession(state.session, nowMs) : null;
-  const sessionPace = sessionLive ? computeSessionPace(sessionSeq.est, paceIdx, Math.max(0, (nowMs - slideEnterRef.current.at) / 1000), sessionLive, nowMs) : null;
+  const sessionPace = sessionLive ? computeSessionPace(sessionSeq.est, paceIdx, sessionOnSlideSec(nowMs, slideEnterRef.current.at, sessionLive), sessionLive, nowMs) : null;
   const closeSessionDialog = () => { setSessionDialogOpen(false); containerRef.current?.focus({ preventScroll: true }); };
   const [showNewSlide, setShowNewSlide] = useState(false);
   const [newSlidePrompt, setNewSlidePrompt] = useState("");
@@ -634,8 +634,11 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
   useEffect(() => () => clearTimeout(navToastTimer.current), []);
 
   // Touch swipe for mobile slide navigation (crosses module boundaries like keyboard)
+  // A modal over the slide (session dialog, any ModalBackdrop) owns the swipe.
+  const swipeBlocked = (e) => sessionDialogOpenRef.current || !!e?.target?.closest?.("[data-vela-modal]");
   useSwipe(containerRef, {
-    onLeft: useCallback(() => {
+    onLeft: useCallback((e) => {
+      if (swipeBlocked(e)) return;
       if (storyStepRef.current(1)) return;
       const navSlides = fullscreen ? presSlides : slides;
       if (navSlides.length > 0 && slideIndex < navSlides.length - 1) {
@@ -652,7 +655,8 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
         }
       }
     }, [slideIndex, slides.length, presSlides.length, fullscreen, dispatch, concept.id, flatModules, showNavToast]),
-    onRight: useCallback(() => {
+    onRight: useCallback((e) => {
+      if (swipeBlocked(e)) return;
       if (storyStepRef.current(-1)) return;
       if (slideIndex > 0) {
         storyEnterBack();
@@ -1164,7 +1168,12 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
     if (!el || slides.length === 0) return;
     const handler = (e) => {
       if (["INPUT", "TEXTAREA"].includes(document.activeElement?.tagName)) return;
+      // A modal over the slide (session dialog, any ModalBackdrop) owns the wheel.
+      if (sessionDialogOpenRef.current || e.target.closest?.("[data-vela-modal]")) return;
       if (!fullscreen && e.target.closest?.("[data-scroll-container]")) return;
+      // Present: a scroll area of an overlay (Presenter View column, notes)
+      // scrolls when it can; elsewhere the wheel changes slides.
+      if (fullscreen) { const sc = e.target.closest?.("[data-scroll-container]"); if (sc && sc.scrollHeight > sc.clientHeight + 1) return; }
       if (e.target.closest?.("[data-teacher-panel]")) return;
       e.preventDefault();
       scrollAccum.current += e.deltaY;

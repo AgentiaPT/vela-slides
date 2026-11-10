@@ -5183,6 +5183,9 @@ const _sesUiLeave = async () => {
   const hooks = _hooks();
   if (_$("[data-testid='session-cancel']")) { _click("[data-testid='session-cancel']"); await _waitFor(() => !_$("[data-testid='session-dialog']"), 1500).catch(() => {}); }
   if (_$("[data-testid='presenter-view']")) { _click("[data-testid='presenter-toggle']"); await _waitFor(() => !_$("[data-testid='presenter-view']"), 1500).catch(() => {}); }
+  // T again while Present is open: resets the mounted SlidePanel state, not
+  // only the module flag (SlidePanel is not remounted on Present exit).
+  if (VELA_SESSION_BAR.hidden && _sesUiRoot()) { document.activeElement?.blur(); await _wait(50); _key("t"); await _waitFor(() => !VELA_SESSION_BAR.hidden, 1000).catch(() => {}); }
   hooks.setSessionForTest?.(null);
   VELA_SESSION_BAR.hidden = false;
   await _exitFullscreen();
@@ -5233,7 +5236,8 @@ uiSuite("session-presenter-panel", [
       _click("[data-testid='session-chip-30']");
       await _wait(80);
       const st = _$("[data-testid='session-start-input']").value, en = _$("[data-testid='session-end-input']").value;
-      const r = resolveSessionTimes(st, en, Date.now());
+      const t = Date.now();
+      const r = resolveSessionTimes(st, en, t, t);
       if (!r || r.end - r.start !== 1800000) throw new Error(`chip 30 gave ${st} -> ${en}`);
       if (_$("[data-testid='session-minutes-input']").value !== "30") throw new Error("minutes field not 30");
       _click("[data-testid='session-set']");
@@ -5466,6 +5470,7 @@ uiSuite("session-editor-dialog", [
     try {
       hooks.setSessionForTest(null);
       await _editorSetup();
+      const t0 = Date.now();
       await _sesTbOpen();
       _sesUiSet(_$("[data-testid='session-start-input']"), "09:00");
       _sesUiSet(_$("[data-testid='session-end-input']"), "10:15");
@@ -5473,10 +5478,11 @@ uiSuite("session-editor-dialog", [
       if (_$("[data-testid='session-minutes-input']").value !== "75") throw new Error("minutes not 75: " + _$("[data-testid='session-minutes-input']").value);
       if (!/ends 10:15 \(75 min\)/.test(_$("[data-testid='session-summary']").textContent)) throw new Error("summary: " + _$("[data-testid='session-summary']").textContent);
       if (_$("[data-testid='session-set']").disabled) throw new Error("Set disabled for a valid End");
-      const want = resolveSessionTimes("09:00", "10:15", Date.now());
       _click("[data-testid='session-set']");
       await _waitFor(() => !_$("[data-testid='session-dialog']"), 1500);
-      _ssEq(hooks.getSessionForTest(), want, "stored session");
+      const t1 = Date.now(); // the dialog's `now` is in [t0, t1]: accept either side of a day roll
+      const wants = [t0, t1].map((t) => JSON.stringify(resolveSessionTimes("09:00", "10:15", sessionDialogBase(null, t), t)));
+      if (!wants.includes(JSON.stringify(hooks.getSessionForTest()))) throw new Error(`stored session ${JSON.stringify(hooks.getSessionForTest())}, want one of ${wants.join(" / ")}`);
     } finally { await _sesUiLeave(); }
   }},
   { name: "SD2: End equal to Start is the next day (24 h) and is accepted", fn: async () => {
@@ -5484,10 +5490,22 @@ uiSuite("session-editor-dialog", [
     try {
       hooks.setSessionForTest(null);
       await _editorSetup();
+      const d0 = new Date(Date.now());
       await _sesTbOpen();
       _sesUiSet(_$("[data-testid='session-start-input']"), "14:20");
       _sesUiSet(_$("[data-testid='session-end-input']"), "14:20");
       await _wait(80);
+      // Same local-date arithmetic as the app: on a DST change day the wall-clock
+      // 24 h is 23 h or 25 h; 25 h is over the 24 h cap, so Set stays disabled.
+      const wallLen = new Date(d0.getFullYear(), d0.getMonth(), d0.getDate() + 1, 14, 20) - new Date(d0.getFullYear(), d0.getMonth(), d0.getDate(), 14, 20);
+      if (wallLen > 86400000) {
+        if (!_$("[data-testid='session-set']").disabled) throw new Error("Set enabled for a 25 h session (DST day)");
+        return;
+      }
+      if (wallLen < 86400000) {
+        if (_$("[data-testid='session-minutes-input']").value !== String(Math.round(wallLen / 60000))) throw new Error("minutes not 1380 on a DST day");
+        return;
+      }
       if (_$("[data-testid='session-minutes-input']").value !== "1440") throw new Error("minutes not 1440");
       if (_$("[data-testid='session-set']").disabled) throw new Error("Set disabled for a 24 h session");
       _click("[data-testid='session-set']");
@@ -5517,6 +5535,114 @@ uiSuite("session-editor-dialog", [
       await _waitFor(() => !_$("[data-testid='session-dialog']"), 1500);
       if (hooks.getSessionForTest() !== null) throw new Error("Cancel stored a session");
     } finally { await _sesUiLeave(); }
+  }},
+]);
+
+// ── Session end: review fixes (v13.80) ────────────────────────────
+const _sesSig = (hooks) => { const s = hooks.getDeckStateForTest(); return `${s.selectedId}#${s.slideIndex}`; };
+const _sesWheel = (el, n = 3) => { for (let i = 0; i < n; i++) el.dispatchEvent(new WheelEvent("wheel", { deltaY: 300, bubbles: true, cancelable: true })); };
+const _sesSwipe = (el) => {
+  const a = new Touch({ identifier: 7, target: el, clientX: 400, clientY: 300 }), b = new Touch({ identifier: 7, target: el, clientX: 100, clientY: 300 });
+  el.dispatchEvent(new TouchEvent("touchstart", { touches: [a], targetTouches: [a], changedTouches: [a], bubbles: true, cancelable: true }));
+  el.dispatchEvent(new TouchEvent("touchend", { touches: [], targetTouches: [], changedTouches: [b], bubbles: true, cancelable: true }));
+};
+
+uiSuite("session-review-fixes", [
+  { name: "SR1: wheel and swipe over the Present session dialog (chip and backdrop) do not change the slide or module", fn: async () => {
+    const hooks = _sesUiNeedHooks();
+    try {
+      hooks.setSessionForTest(null);
+      await _sesUiPresent();
+      await _sesUiOpenPresenter();
+      _click("[data-testid='presenter-session-set']");
+      await _waitFor(() => _$("[data-testid='session-dialog']"), 1500);
+      const chip = _click("[data-testid='session-chip-30']");
+      chip.focus(); await _wait(80);
+      const back = chip.closest("[data-vela-modal]");
+      if (!back) throw new Error("dialog backdrop has no data-vela-modal mark");
+      const before = _sesSig(hooks);
+      for (const [el, what] of [[chip, "chip"], [back, "backdrop"]]) {
+        _sesWheel(el); await _wait(150);
+        if (_sesSig(hooks) !== before) throw new Error(`wheel on the ${what} changed the slide: ${before} -> ${_sesSig(hooks)}`);
+        _sesSwipe(el); await _wait(150);
+        if (_sesSig(hooks) !== before) throw new Error(`swipe on the ${what} changed the slide: ${before} -> ${_sesSig(hooks)}`);
+      }
+      if (!_$("[data-testid='session-dialog']")) throw new Error("dialog closed");
+    } finally { await _sesUiLeave(); }
+  }},
+  { name: "SR2: on-slide time counts only from the session start", fn: async () => {
+    const S0 = _SS_T0, ses = { start: S0, end: S0 + 1800000 }, est = { est: [600, 600, 600] };
+    const on = sessionOnSlideSec(S0, S0 - 600000, ses); // entered 10 min before the start
+    _ssEq(on, 0, "on-slide sec at the start");
+    _ssEq(computeSessionPace(est, 0, on, ses, S0).verdict, "on pace", "verdict at the start (deck fits exactly)");
+    _ssEq(sessionOnSlideSec(S0 + 120000, S0 - 600000, ses), 120, "2 min after the start");
+    _ssEq(sessionOnSlideSec(S0 + 120000, S0 + 60000, ses), 60, "entered after the start");
+    _ssEq(sessionOnSlideSec(S0 - 60000, S0 - 600000, ses), 0, "before the start");
+    _ssEq(sessionOnSlideSec(S0 + 1000, S0, null), 1, "no session: from entry");
+    for (const bad of [NaN, Infinity, "x", undefined]) if (sessionOnSlideSec(bad, S0, ses) !== 0) throw new Error(`now ${String(bad)} not 0`);
+    if (sessionOnSlideSec(S0 + 1000, NaN, ses) !== 1) throw new Error("NaN entry did not fall back to the start");
+  }},
+  { name: "SR3: dialog dates: a past session moves to the next day; a live session keeps its start date", fn: async () => {
+    const at = (d, h, m) => new Date(2026, 5, d, h, m).getTime();
+    let now = at(10, 23, 55);
+    let r = resolveSessionTimes("00:05", "01:00", sessionDialogBase(null, now), now);
+    _ssEq(r && [r.start - now, r.end], [600000, at(11, 1, 0)], "23:55: 00:05-01:00 starts in 10 min");
+    now = at(10, 10, 30);
+    r = resolveSessionTimes("09:00", "10:00", sessionDialogBase(null, now), now);
+    _ssEq(r && [r.start, r.end], [at(11, 9, 0), at(11, 10, 0)], "10:30: 09:00-10:00 is tomorrow");
+    now = at(10, 8, 0);
+    r = resolveSessionTimes("09:00", "10:00", sessionDialogBase(null, now), now);
+    _ssEq(r && [r.start, r.end], [at(10, 9, 0), at(10, 10, 0)], "08:00: normal case");
+    let live = { start: at(9, 23, 30), end: at(10, 0, 30) };
+    now = at(10, 0, 10);
+    r = resolveSessionTimes("23:30", "00:45", sessionDialogBase(live, now), now);
+    _ssEq(r && [r.start, r.end], [live.start, at(10, 0, 45)], "live 23:30-00:30, End 00:45 at 00:10");
+    live = { start: at(9, 23, 0), end: at(10, 1, 0) };
+    now = at(10, 0, 20);
+    r = resolveSessionTimes("23:10", "01:00", sessionDialogBase(live, now), now);
+    _ssEq(r && [r.start, r.end], [at(9, 23, 10), at(10, 1, 0)], "live 23:00-01:00, Start 23:10 at 00:20");
+    // Over a DST change the next-day roll uses the local date (wall time kept).
+    const d1 = new Date(at(10, 9, 0) + 86400000 * 3);
+    _ssEq(new Date(resolveSessionTimes("09:00", "10:00", d1.getTime() + 7200000, d1.getTime() + 7200000).start).getHours(), 9, "rolled start keeps 09:00");
+  }},
+  { name: "SR4: a session in the past is set for tomorrow; the summary says starts in; the file note shows", fn: async () => {
+    const hooks = _sesUiNeedHooks();
+    try {
+      hooks.setSessionForTest(null);
+      await _editorSetup();
+      await _sesTbOpen();
+      const note = _$("[data-testid='session-file-note']");
+      if (!note || note.textContent !== "Saved in the deck file (also in exports of the deck).") throw new Error("file note missing: " + note?.textContent);
+      if (parseFloat(getComputedStyle(note).fontSize) < 13) throw new Error("file note below 13 px");
+      const t = Date.now();
+      _sesUiSet(_$("[data-testid='session-start-input']"), fmtClock(t - 7200000));
+      _sesUiSet(_$("[data-testid='session-end-input']"), fmtClock(t - 3600000));
+      await _wait(80);
+      const txt = _$("[data-testid='session-summary']").textContent;
+      if (!/starts in \d/.test(txt)) throw new Error("summary does not say starts in: " + txt);
+      _click("[data-testid='session-set']");
+      await _waitFor(() => !_$("[data-testid='session-dialog']"), 1500);
+      const s = hooks.getSessionForTest();
+      if (!s || !(s.start > Date.now()) || !liveSession(s, Date.now())) throw new Error("stored session is not a future live session: " + JSON.stringify(s));
+    } finally { await _sesUiLeave(); }
+  }},
+  { name: "SR5: wheel inside the Presenter View right column scrolls it and does not change the slide", fn: async () => {
+    const hooks = _sesUiNeedHooks();
+    let col = null;
+    try {
+      hooks.setSessionForTest({ start: Date.now() - 600000, end: Date.now() + 1200000 });
+      await _sesUiPresent();
+      await _sesUiOpenPresenter();
+      const panel = _$("[data-testid='presenter-session-panel']");
+      col = panel.parentElement;
+      while (col && getComputedStyle(col).overflowY !== "auto") col = col.parentElement;
+      if (!col) throw new Error("right column not found");
+      col.style.maxHeight = "120px"; await _wait(80); // a short viewport: the column overflows
+      if (!(col.scrollHeight > col.clientHeight + 1)) throw new Error("right column does not overflow");
+      const before = _sesSig(hooks);
+      _sesWheel(panel); await _wait(200);
+      if (_sesSig(hooks) !== before) throw new Error(`wheel in the right column changed the slide: ${before} -> ${_sesSig(hooks)}`);
+    } finally { if (col) col.style.maxHeight = ""; await _sesUiLeave(); }
   }},
 ]);
 
