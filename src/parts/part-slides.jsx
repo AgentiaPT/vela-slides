@@ -390,38 +390,207 @@ function getSlideSource(slide, idx) {
 }
 function getSlideTitle(slide, idx) { return getSlideSource(slide, idx).text; }
 
-// Present search text: every string in a slide's blocks (nested layouts too),
-// each flagged when it sits in a hidden block. Styling, media and id keys are
-// skipped so colours and data URIs never match. The text is only compared and
-// rendered as React text children, never as markup or a style/URL value.
+// Search text of one slide (shared by Present and the editor): every string in
+// the slide's blocks and in the column areas L / R (nested layouts too), each
+// flagged when it sits in a hidden block. Each entry: { text, hidden, area, block }
+// where area is "blocks" | "L" | "R" and block the TOP-LEVEL index in that area
+// (area null, block -1 for slide.title). Styling, media and id keys are skipped
+// so colours and data URIs never match. The walk only reads: own enumerable keys
+// (Object.keys), prototype-named keys skipped, depth cap 8 (a read walk emits
+// nothing at the cap, so returning there is correct). The text is only compared
+// and rendered as React text children, never as markup or a style/URL value.
 const PRESENT_SEARCH_SKIP = new Set(["type", "id", "src", "image", "images", "svg", "icon", "bg", "bgGradient", "color", "accent", "style", "href", "link", "url", "layout", "align", "variant", "size", "font", "comments"]);
 function slideSearchTexts(slide) {
   const out = [];
-  if (typeof slide?.title === "string" && slide.title) out.push({ text: slide.title, hidden: false });
-  const walk = (v, hidden, depth) => {
+  if (typeof slide?.title === "string" && slide.title) out.push({ text: slide.title, hidden: false, area: null, block: -1 });
+  const walk = (v, hidden, depth, area, block) => {
     if (v == null || depth > 8) return;
-    if (typeof v === "string") { if (v && !v.startsWith("data:")) out.push({ text: v, hidden }); return; }
-    if (Array.isArray(v)) { for (const x of v) walk(x, hidden, depth + 1); return; }
+    if (typeof v === "string") { if (v && !v.startsWith("data:")) out.push({ text: v, hidden, area, block }); return; }
+    if (Array.isArray(v)) { for (const x of v) walk(x, hidden, depth + 1, area, block); return; }
     if (typeof v === "object") {
       const h = hidden || v.hidden === true;
-      for (const k of Object.keys(v)) if (!PRESENT_SEARCH_SKIP.has(k)) walk(v[k], h, depth + 1);
+      for (const k of Object.keys(v)) {
+        if (PRESENT_SEARCH_SKIP.has(k) || k === "__proto__" || k === "constructor" || k === "prototype") continue;
+        walk(v[k], h, depth + 1, area, block);
+      }
     }
   };
-  walk(slide?.blocks, false, 0);
+  // Depth 1 for each top-level block: the same depth the old walk over the
+  // blocks array gave its items, so the depth cap does not change.
+  for (const area of ["blocks", "L", "R"]) {
+    const arr = Array.isArray(slide?.[area]) ? slide[area] : [];
+    arr.forEach((b, i) => walk(b, false, 1, area, i));
+  }
   return out;
 }
-// Match one slide against a lower-case query: title first, then visible block
-// text, then hidden block text. Returns null on no match.
-function matchPresentSlide(slide, idx, q) {
-  const title = getSlideTitle(slide, idx);
-  if (!q || title.toLowerCase().includes(q)) return { title, snippet: null, hiddenBlock: false };
-  const texts = slideSearchTexts(slide);
-  const hit = texts.find((t) => !t.hidden && t.text.toLowerCase().includes(q)) || texts.find((t) => t.hidden && t.text.toLowerCase().includes(q));
-  if (!hit) return null;
-  const flat = hit.text.replace(/\s+/g, " ");
+// Render index of a matched top-level block: the `i` that the editor canvas
+// (SlideContent → renderBlockItem) gives it. blocks → i; column L → after the
+// blocks; column R → after blocks + L. Column areas render only on a "cols"
+// slide; else (or when the index is not exact) -1 = no block.
+function searchRenderIndex(slide, area, idx) {
+  if (typeof idx !== "number" || idx < 0) return -1;
+  const nB = Array.isArray(slide?.blocks) ? slide.blocks.length : 0;
+  if (area === "blocks") return idx;
+  const isCols = slide?.layout === "cols" && (Array.isArray(slide.L) || Array.isArray(slide.R));
+  if (!isCols || (area !== "L" && area !== "R")) return -1;
+  const nL = Array.isArray(slide.L) ? slide.L.length : 0;
+  return area === "L" ? nB + idx : nB + nL + idx;
+}
+// Snippet around the first hit (indexOf on lower-case text; no regex from the
+// query). A UTF-16 surrogate pair (emoji) is never cut at either end.
+function searchSnippet(text, q) {
+  const flat = text.replace(/\s+/g, " ");
   const at = flat.toLowerCase().indexOf(q);
-  const from = Math.max(0, at - 24), to = Math.min(flat.length, at + q.length + 36);
-  return { title, snippet: (from > 0 ? "…" : "") + flat.slice(from, to) + (to < flat.length ? "…" : ""), hiddenBlock: hit.hidden };
+  const low = (i) => { const c = flat.charCodeAt(i); return c >= 0xDC00 && c <= 0xDFFF; };
+  let from = Math.max(0, at - 24), to = Math.min(flat.length, at + q.length + 36);
+  if (from > 0 && low(from)) from--;
+  if (to < flat.length && low(to)) to++;
+  return (from > 0 ? "…" : "") + flat.slice(from, to) + (to < flat.length ? "…" : "");
+}
+// One slide against a trimmed lower-case query: title first, then visible block
+// text, then hidden block text, then (opts.notes, editor only) slide.notes.
+// Returns null on no match, else { title, snippet, kind, area, block, hiddenBlock }.
+// kind: "title" | "block" | "hidden-block" | "notes". A title match carries no
+// block (no outline).
+function matchSlide(slide, idx, q, opts) {
+  const title = getSlideTitle(slide, idx);
+  if (!q || title.toLowerCase().includes(q)) return { title, snippet: null, kind: "title", area: null, block: -1, hiddenBlock: false };
+  const texts = slideSearchTexts(slide);
+  const has = (t) => t.text.toLowerCase().includes(q);
+  const hit = texts.find((t) => !t.hidden && has(t)) || texts.find((t) => t.hidden && has(t));
+  if (hit) return { title, snippet: searchSnippet(hit.text, q), kind: hit.hidden ? "hidden-block" : "block", area: hit.area, block: hit.block, hiddenBlock: hit.hidden };
+  if (opts?.notes && typeof slide?.notes === "string" && slide.notes.toLowerCase().includes(q))
+    return { title, snippet: searchSnippet(slide.notes, q), kind: "notes", area: null, block: -1, hiddenBlock: false };
+  return null;
+}
+// Present scope: no notes.
+function matchPresentSlide(slide, idx, q) { return matchSlide(slide, idx, q, null); }
+// Flat result list over all lanes (editor). One row per matching slide, in tree
+// order (lane order, then item `order`, as ModuleList). opts.notes: also search
+// slide notes. opts.sections: a section whose NAME matches with no matching
+// slide gives one row for its first slide (kind "section"); an empty section
+// gives no row. renderIdx: canvas render index of the matched block, or -1.
+function searchDeck(lanes, query, opts) {
+  const q = String(query || "").toLowerCase().trim();
+  if (!q) return [];
+  const rows = [];
+  for (const lane of (Array.isArray(lanes) ? lanes : [])) {
+    const items = [...(Array.isArray(lane?.items) ? lane.items : [])].sort((a, b) => (a.order ?? 999) - (b.order ?? 999));
+    for (const item of items) {
+      const slides = Array.isArray(item?.slides) ? item.slides : [];
+      const before = rows.length;
+      slides.forEach((s, i) => {
+        const m = matchSlide(s, i, q, opts);
+        if (m) rows.push({ key: item.id + ":" + i, sectionId: item.id, sectionTitle: item.title, laneId: lane.id, slideIdx: i,
+          title: m.title, snippet: m.snippet, kind: m.kind, block: m.block, renderIdx: m.area ? searchRenderIndex(s, m.area, m.block) : -1,
+          hiddenSlide: !!s?.hidden, collapsedLane: !!lane.collapsed });
+      });
+      if (opts?.sections && rows.length === before && slides.length && typeof item.title === "string" && item.title.toLowerCase().includes(q))
+        rows.push({ key: item.id + ":0", sectionId: item.id, sectionTitle: item.title, laneId: lane.id, slideIdx: 0,
+          title: getSlideTitle(slides[0], 0), snippet: searchSnippet(item.title, q), kind: "section", block: -1, renderIdx: -1,
+          hiddenSlide: !!slides[0]?.hidden, collapsedLane: !!lane.collapsed });
+    }
+  }
+  return rows;
+}
+// Split text into [{ t, hit }] at each case-insensitive occurrence of q (already
+// lower-case + trimmed). indexOf only, never a RegExp from the query.
+// Non-overlapping, left to right, at most maxHits hits. toLowerCase() can change
+// the length of a string (for example U+0130): then lower-case offsets do not
+// map to the original, so that string gets no highlight (the match still
+// counts). A hit that would cut a surrogate pair is not highlighted.
+function splitHighlight(text, q, maxHits = 50) {
+  const s = typeof text === "string" ? text : "";
+  if (!q || typeof q !== "string" || !s) return [{ t: s, hit: false }];
+  const lower = s.toLowerCase();
+  if (lower.length !== s.length) return [{ t: s, hit: false }];
+  const hi = (i) => { const c = s.charCodeAt(i); return c >= 0xD800 && c <= 0xDBFF; };
+  const lo = (i) => { const c = s.charCodeAt(i); return c >= 0xDC00 && c <= 0xDFFF; };
+  const out = [];
+  let pos = 0, from = 0, n = 0;
+  while (n < maxHits) {
+    const at = lower.indexOf(q, from);
+    if (at < 0) break;
+    const end = at + q.length;
+    if ((at > 0 && lo(at) && hi(at - 1)) || (end < s.length && lo(end) && hi(end - 1))) { from = at + 1; continue; }
+    if (at > pos) out.push({ t: s.slice(pos, at), hit: false });
+    out.push({ t: s.slice(at, end), hit: true });
+    pos = from = end; n++;
+  }
+  if (pos < s.length || !out.length) out.push({ t: s.slice(pos), hit: false });
+  return out;
+}
+// Highlighted text: React text children + a <span> with a static, code-authored
+// style (no deck value in any style). Min 13 px for the hit.
+function HighlightText({ text, q }) {
+  return <>{splitHighlight(text, q).map((p, i) => p.hit
+    ? <span key={i} data-testid="search-hit" style={{ background: T.amber + "55", color: "inherit", borderRadius: 2, fontSize: "max(13px, 1em)" }}>{p.t}</span>
+    : <React.Fragment key={i}>{p.t}</React.Fragment>)}</>;
+}
+// Keyboard selection over a flat result list. Up/Down stop at the ends (no wrap)
+// and act only when there are results (else the caret moves as usual). The
+// selection resets to the first result when resetKey (the query) changes.
+function useSearchNav(count, resetKey, { onOpen, onEscape }) {
+  const [sel, setSel] = useState(0);
+  useEffect(() => { setSel(0); }, [resetKey]);
+  const selRef = useRef(null); // DOM node of the selected row
+  useEffect(() => { selRef.current?.scrollIntoView?.({ block: "nearest" }); }, [sel, resetKey]);
+  const cur = Math.min(sel, Math.max(0, count - 1));
+  const onKey = (e) => { // from the input's onKeyDown; true when handled
+    if ((e.key === "ArrowDown" || e.key === "ArrowUp") && count > 0) {
+      e.preventDefault();
+      setSel(e.key === "ArrowDown" ? Math.min(count - 1, cur + 1) : Math.max(0, cur - 1));
+      return true;
+    }
+    if (e.key === "Enter") { e.preventDefault(); if (count > 0) onOpen(cur); return true; }
+    if (e.key === "Escape") { e.preventDefault(); onEscape(); return true; }
+    return false;
+  };
+  return { sel: cur, setSel, onKey, selRef };
+}
+// One search / TOC result row (PresenterTOC; the editor search reuses it).
+// selected = keyboard selection (accent outline, aria-selected); active = the
+// current slide (accent tint + left bar). The two looks differ on purpose.
+// size "present" keeps the Present panel sizes; "editor" uses 13 px text.
+function SearchResultRow({ title, snippet, kind, hiddenBlock, hiddenSlide, q, selected, active, dim, muted, num, onClick, rowRef, testid, size = "present" }) {
+  const ed = size === "editor";
+  const badge = (label, color, id) => <span data-testid={id} style={{ fontFamily: FONT.mono, fontSize: ed ? 13 : 8, fontWeight: 700, color, border: `1px solid ${color}60`, borderRadius: 3, padding: "0 3px", marginRight: 5, letterSpacing: "0.04em" }}>{label}</span>;
+  return (
+    <div
+      ref={rowRef}
+      data-testid={testid}
+      data-search-row={q ? "1" : undefined}
+      role={q ? "option" : undefined}
+      aria-selected={q ? !!selected : undefined}
+      onClick={onClick}
+      style={{
+        padding: "6px 16px 6px 24px", cursor: "pointer",
+        display: "flex", alignItems: "baseline", gap: 10,
+        background: active ? `${T.accent}18` : "transparent",
+        borderLeft: active ? `3px solid ${T.accent}` : "3px solid transparent",
+        outline: selected ? `2px solid ${T.accent}` : "none", outlineOffset: -2,
+        transition: "background 0.15s", opacity: dim && !active ? 0.6 : 1,
+      }}
+      onMouseEnter={(e) => { if (!active) e.currentTarget.style.background = T.isDark ? "rgba(255,255,255,0.04)" : "rgba(0,0,0,0.04)"; }}
+      onMouseLeave={(e) => { if (!active) e.currentTarget.style.background = "transparent"; }}
+    >
+      <span style={{ fontFamily: FONT.mono, fontSize: ed ? 13 : 9, color: active ? T.accent : T.textDim, minWidth: 14, textAlign: "right", flexShrink: 0 }}>{num}</span>
+      <span style={{ display: "flex", flexDirection: "column", minWidth: 0, gap: 2 }}>
+        <span style={{
+          fontFamily: FONT.display, fontSize: 13, fontWeight: active ? 600 : 400,
+          color: active ? T.text : muted ? T.textMuted : T.textDim,
+          lineHeight: 1.4, overflow: "hidden", textOverflow: "ellipsis",
+          display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical",
+        }}>{hiddenSlide && badge("HIDDEN", T.amber, "search-hidden-slide")}<HighlightText text={title} q={q} /></span>
+        {snippet && <span data-testid="toc-snippet" style={{ fontFamily: FONT.body, fontSize: ed ? 13 : 11, color: T.textDim, lineHeight: 1.35, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {hiddenBlock && badge("HIDDEN BLOCK", T.amber, "toc-hidden-block")}
+          {kind === "notes" && badge("NOTES", T.textMuted, "search-notes-badge")}
+          {kind === "section" && badge("SECTION", T.textMuted, "search-section-badge")}
+          <HighlightText text={snippet} q={q} />
+        </span>}
+      </span>
+    </div>
+  );
 }
 // "Module · slide title" for a detour's return point (Present index → raw slide).
 function detourReturnTitle(lanes, ret) {
@@ -564,48 +733,36 @@ function PresenterTOC({ slides, slideIndex, onJump, lanes, currentConceptId, dis
     setOpen(false);
   };
 
-  // Enter in the search box jumps to the first slide that matches (CR: theme jump).
-  const jumpFirstMatch = () => {
-    for (const g of grouped) {
-      const first = g.slides.find((s) => s.visible);
-      if (first) { handleJump(g.id, first.slideIdx); return; }
-    }
-    for (const g of detourGroups) { handleJump(g.id, g.slides[0].slideIdx, true); return; }
-  };
+  // Search results in one keyboard order: the presentation's own matches, then
+  // the detour matches (hidden slides / collapsed lanes). Enter opens the
+  // selected one (the first by default, CR: theme jump); a detour row starts the
+  // detour as a click does.
+  const q = search.toLowerCase().trim();
+  const flat = q ? [
+    ...grouped.flatMap((g) => g.slides.filter((s) => s.visible).map((s) => ({ g, s, detour: false }))),
+    ...detourGroups.flatMap((g) => g.slides.map((s) => ({ g, s, detour: true }))),
+  ] : [];
+  const nav = useSearchNav(flat.length, q, {
+    onOpen: (i) => handleJump(flat[i].g.id, flat[i].s.slideIdx, flat[i].detour),
+    onEscape: () => { if (search) setSearch(""); else { setOpen(false); setPinned(false); } },
+  });
+  const selItem = flat[nav.sel];
 
-  const renderRow = (group, { title, slideIdx, visible, snippet, hiddenBlock }, detour) => {
+  const renderRow = (group, s, detour) => {
+    const { title, slideIdx, visible, snippet, hiddenBlock } = s;
     if (!visible) return null;
     const active = group.isCurrent && slideIdx === slideIndex - currentOffset;
+    const selected = !!selItem && selItem.g === group && selItem.s === s;
     return (
-      <div
+      <SearchResultRow
         key={slideIdx}
-        ref={active ? activeRef : null}
-        data-testid={detour ? "toc-detour-row" : undefined}
+        rowRef={(el) => { if (active) activeRef.current = el; if (selected) nav.selRef.current = el; }}
+        testid={detour ? "toc-detour-row" : undefined}
         onClick={() => handleJump(group.id, slideIdx, detour)}
-        style={{
-          padding: "6px 16px 6px 24px", cursor: "pointer",
-          display: "flex", alignItems: "baseline", gap: 10,
-          background: active ? `${T.accent}18` : "transparent",
-          borderLeft: active ? `3px solid ${T.accent}` : "3px solid transparent",
-          transition: "background 0.15s", opacity: detour && !active ? 0.6 : 1,
-        }}
-        onMouseEnter={(e) => { if (!active) e.currentTarget.style.background = T.isDark ? "rgba(255,255,255,0.04)" : "rgba(0,0,0,0.04)"; }}
-        onMouseLeave={(e) => { if (!active) e.currentTarget.style.background = "transparent"; }}
-      >
-        <span style={{ fontFamily: FONT.mono, fontSize: 9, color: active ? T.accent : T.textDim, minWidth: 14, textAlign: "right", flexShrink: 0 }}>{detour ? "🙈" : slideIdx + 1}</span>
-        <span style={{ display: "flex", flexDirection: "column", minWidth: 0, gap: 2 }}>
-          <span style={{
-            fontFamily: FONT.display, fontSize: 13, fontWeight: active ? 600 : 400,
-            color: active ? T.text : group.isCurrent ? T.textMuted : T.textDim,
-            lineHeight: 1.4, overflow: "hidden", textOverflow: "ellipsis",
-            display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical",
-          }}>{title}</span>
-          {snippet && <span data-testid="toc-snippet" style={{ fontFamily: FONT.body, fontSize: 11, color: T.textDim, lineHeight: 1.35, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-            {hiddenBlock && <span data-testid="toc-hidden-block" style={{ fontFamily: FONT.mono, fontSize: 8, fontWeight: 700, color: T.amber, border: `1px solid ${T.amber}60`, borderRadius: 3, padding: "0 3px", marginRight: 5, letterSpacing: "0.04em" }}>HIDDEN BLOCK</span>}
-            {snippet}
-          </span>}
-        </span>
-      </div>
+        title={title} snippet={snippet} hiddenBlock={hiddenBlock} q={q}
+        selected={selected} active={active} dim={detour} muted={group.isCurrent}
+        num={detour ? "🙈" : slideIdx + 1}
+      />
     );
   };
 
@@ -645,8 +802,7 @@ function PresenterTOC({ slides, slideIndex, onJump, lanes, currentConceptId, dis
               // Ctrl/Cmd+E must still bubble to the global toggle so it closes the pane.
               if ((e.ctrlKey || e.metaKey) && (e.key === "e" || e.key === "E")) return;
               e.stopPropagation();
-              if (e.key === "Enter") { e.preventDefault(); jumpFirstMatch(); }
-              if (e.key === "Escape") { if (search) setSearch(""); else { setOpen(false); setPinned(false); } }
+              nav.onKey(e);
             }}
             placeholder="Search slides… (Enter jumps)"
             style={{
@@ -656,9 +812,13 @@ function PresenterTOC({ slides, slideIndex, onJump, lanes, currentConceptId, dis
             }}
           />
         </div>
+        {q && <div data-testid="search-count" style={{ display: "flex", justifyContent: "space-between", padding: "0 14px 6px", fontFamily: FONT.mono, fontSize: 13, color: T.textDim }}>
+          <span data-testid="search-count-pos">{flat.length ? nav.sel + 1 : 0} / {flat.length}</span>
+          <span data-testid="search-count-total">{flat.length} {flat.length === 1 ? "slide" : "slides"}</span>
+        </div>}
 
         {/* Grouped slide list */}
-        <div data-scroll-container style={{ flex: 1, overflowY: "auto", padding: "4px 0" }}>
+        <div data-scroll-container role={q ? "listbox" : undefined} aria-label={q ? "Search results" : undefined} style={{ flex: 1, overflowY: "auto", padding: "4px 0" }}>
           {grouped.map((group) => (
             <div key={group.id}>
               {/* Module header */}
@@ -691,7 +851,7 @@ function PresenterTOC({ slides, slideIndex, onJump, lanes, currentConceptId, dis
             </div>
           )}
           {grouped.length === 0 && detourGroups.length === 0 && search && (
-            <div style={{ padding: "20px 16px", fontFamily: FONT.body, fontSize: 13, color: T.textDim, textAlign: "center" }}>No matches</div>
+            <div data-testid="search-no-matches" style={{ padding: "20px 16px", fontFamily: FONT.body, fontSize: 13, color: T.textDim, textAlign: "center" }}>No matches</div>
           )}
         </div>
 

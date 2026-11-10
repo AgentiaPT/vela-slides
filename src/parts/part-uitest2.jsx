@@ -4922,6 +4922,272 @@ uiSuite("present-detour-search", [
   }},
 ], { setup: _selectFirstModule });
 
+// v13.81 shared search engine (pure): matchSlide / searchDeck / splitHighlight.
+const _seEq = (got, want, what) => { const g = JSON.stringify(got), w = JSON.stringify(want); if (g !== w) throw new Error(`${what}: got ${g}, want ${w}`); };
+const _seLoneSurrogate = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
+const _seH = (text) => ({ type: "heading", text });
+const _seT = (text, extra) => ({ type: "text", text, ...(extra || {}) });
+const _sePick = (m) => m && { kind: m.kind, area: m.area, block: m.block, hiddenBlock: m.hiddenBlock };
+uiSuite("search-engine", [
+  { name: "SE1: title, visible block, hidden block, no match, case and whitespace", fn: async () => {
+    const s = { blocks: [_seH("Alpha Tools"), _seT("find me here"), _seT("secret word", { hidden: true }), _seT("dup hidden", { hidden: true }), _seT("dup shown")] };
+    const t = matchSlide(s, 0, "tool", null);
+    _seEq([t.title, t.snippet, t.kind, t.block], ["Alpha Tools", null, "title", -1], "title match");
+    _seEq(_sePick(matchSlide(s, 0, "find me", null)), { kind: "block", area: "blocks", block: 1, hiddenBlock: false }, "visible block");
+    _seEq(_sePick(matchSlide(s, 0, "secret", null)), { kind: "hidden-block", area: "blocks", block: 2, hiddenBlock: true }, "hidden block");
+    _seEq(_sePick(matchSlide(s, 0, "dup", null)), { kind: "block", area: "blocks", block: 4, hiddenBlock: false }, "visible text before hidden text");
+    if (matchSlide(s, 0, "absent", null) !== null) throw new Error("no-match is not null");
+    if (!matchSlide(s, 0, "find me", null).snippet.includes("find me")) throw new Error("snippet misses the hit");
+    const lanes = [{ id: "l", items: [{ id: "a", title: "A", order: 1, slides: [s] }] }];
+    _seEq(searchDeck(lanes, "  FIND ME  ", null).map((r) => [r.key, r.kind, r.renderIdx]), [["a:0", "block", 1]], "upper case + spaces");
+    _seEq(searchDeck(lanes, "   ", null), [], "blank query");
+    _seEq(searchDeck(null, "x", null), [], "no lanes");
+    const st = { title: "Plain slide title zqx", blocks: [_seT("x")] };
+    _seEq([matchSlide(st, 0, "zqx", null).block, searchDeck([{ id: "l", items: [{ id: "b", title: "B", slides: [st] }] }], "zqx", null)[0].renderIdx], [-1, -1], "slide.title string: no block");
+  }},
+  { name: "SE2: special characters and emoji match literally and never throw", fn: async () => {
+    for (const q of ["(", "[", "*", "\\", "<", ">", "&", "\"", "a(b", "[x]", "<b>", "&amp;", "🚀", "$&", "$1"]) {
+      const s = { blocks: [_seH("H"), _seT(`pre ${q} post`)] };
+      const m = matchSlide(s, 0, q.toLowerCase(), null);
+      if (!m || m.kind !== "block") throw new Error(`no literal match for ${JSON.stringify(q)}`);
+      if (!m.snippet.includes(q)) throw new Error(`snippet lost ${JSON.stringify(q)}`);
+      if (matchSlide({ blocks: [_seH("H"), _seT("plain text")] }, 0, q.toLowerCase(), null) !== null) throw new Error(`false match for ${JSON.stringify(q)}`);
+      const parts = splitHighlight(`pre ${q} post`, q.toLowerCase());
+      _seEq(parts.filter((p) => p.hit).map((p) => p.t), [q], `highlight of ${JSON.stringify(q)}`);
+    }
+    for (const q of [".", ".*", "a|b", "^", "$"]) if (matchSlide({ blocks: [_seH("H"), _seT("abc")] }, 0, q, null) !== null) throw new Error(`regex semantics for ${q}`);
+    const a = matchSlide({ blocks: [_seH("H"), _seT("🚀".repeat(20) + "a" + "needle" + "b" + "🚀".repeat(30))] }, 0, "needle", null);
+    if (_seLoneSurrogate.test(a.snippet)) throw new Error("snippet cuts a surrogate pair: " + JSON.stringify(a.snippet));
+  }},
+  { name: "SE3: column text (L / R) is found with the canvas render index; nested text gives the top-level block", fn: async () => {
+    const cols = { layout: "cols", blocks: [_seH("Cols")], L: [_seT("left one"), _seT("left two")], R: [_seT("right one")] };
+    _seEq(_sePick(matchSlide(cols, 0, "left two", null)), { kind: "block", area: "L", block: 1, hiddenBlock: false }, "L match");
+    _seEq(_sePick(matchSlide(cols, 0, "right one", null)), { kind: "block", area: "R", block: 0, hiddenBlock: false }, "R match");
+    if (!matchPresentSlide(cols, 0, "right one")) throw new Error("Present does not find column text");
+    const lanes = [{ id: "l", items: [{ id: "c", title: "C", slides: [cols, { blocks: [_seH("N"), _seT("x")], L: [_seT("stray left")] }] }] }];
+    _seEq(searchDeck(lanes, "left two", null).map((r) => r.renderIdx), [2], "L render index");
+    _seEq(searchDeck(lanes, "right one", null).map((r) => r.renderIdx), [3], "R render index");
+    _seEq(searchDeck(lanes, "stray left", null).map((r) => r.renderIdx), [-1], "L on a non-cols slide: no index");
+    _seEq([searchRenderIndex(cols, "X", 0), searchRenderIndex(cols, "L", -1), searchRenderIndex(cols, "blocks", "1"), searchRenderIndex(null, "R", 0)], [-1, -1, -1, -1], "inexact mapping");
+    const nested = { blocks: [_seH("N"), { type: "grid", items: [{ title: "t", body: [{ text: "deep nested word" }] }] }] };
+    _seEq(_sePick(matchSlide(nested, 0, "nested word", null)), { kind: "block", area: "blocks", block: 1, hiddenBlock: false }, "nested");
+  }},
+  { name: "SE4: notes and section names only with their option; empty section gives no row; tree order", fn: async () => {
+    const s = { blocks: [_seH("Has notes")], notes: "speaker zqxnote here" };
+    if (matchSlide(s, 0, "zqxnote", null) !== null || matchPresentSlide(s, 0, "zqxnote") !== null) throw new Error("notes found without the option");
+    _seEq(_sePick(matchSlide(s, 0, "zqxnote", { notes: true })), { kind: "notes", area: null, block: -1, hiddenBlock: false }, "notes on");
+    const lanes = [
+      { id: "l1", items: [
+        { id: "b", title: "Second zqxsec", order: 2, slides: [{ blocks: [_seH("B0")], hidden: true }] },
+        { id: "a", title: "First zqxsec", order: 1, slides: [{ blocks: [_seH("A0")] }, s] },
+        { id: "e", title: "Empty zqxsec", order: 3, slides: [] },
+      ] },
+      { id: "l2", collapsed: true, items: [{ id: "c", title: "Other", order: 1, slides: [{ blocks: [_seH("zqxsec in C")] }] }] },
+    ];
+    _seEq(searchDeck(lanes, "zqxsec", null).map((r) => r.key), ["c:0"], "sections off");
+    _seEq(searchDeck(lanes, "zqxsec", { sections: true }).map((r) => [r.key, r.kind, r.hiddenSlide, r.collapsedLane]),
+      [["a:0", "section", false, false], ["b:0", "section", true, false], ["c:0", "title", false, true]], "sections on, tree order");
+    _seEq(searchDeck(lanes, "zqxnote", null), [], "deck notes off");
+    _seEq(searchDeck(lanes, "zqxnote", { notes: true }).map((r) => [r.key, r.kind, r.renderIdx]), [["a:1", "notes", -1]], "deck notes on");
+  }},
+  { name: "SE5: deep nesting, prototype keys, data: strings and skip keys never match", fn: async () => {
+    let deep = { text: "zqxdeep" }; for (let i = 0; i < 20; i++) deep = { child: deep };
+    const shallow = { type: "card", body: { inner: { text: "zqxshallow" } } };
+    const s = { blocks: [_seH("H"), deep, shallow] };
+    if (matchSlide(s, 0, "zqxdeep", null) !== null) throw new Error("text past the depth cap matched");
+    if (!matchSlide(s, 0, "zqxshallow", null)) throw new Error("text inside the depth cap not found");
+    const parsed = JSON.parse('{"blocks":[{"type":"heading","text":"H"},{"type":"text","text":"x","__proto__":{"t":"zqxproto"},"constructor":"zqxctor","prototype":"zqxproto2"}]}');
+    for (const q of ["zqxproto", "zqxctor", "zqxproto2"]) if (matchSlide(parsed, 0, q, null) !== null) throw new Error(`prototype key matched: ${q}`);
+    if (({}).t !== undefined) throw new Error("Object.prototype was changed");
+    const inh = Object.assign(Object.create({ text: "zqxinherited" }), { type: "text" });
+    if (matchSlide({ blocks: [_seH("H"), inh] }, 0, "zqxinherited", null) !== null) throw new Error("inherited key matched");
+    const media = { blocks: [_seH("H"), { type: "image", src: "zqxsrc", alt: "data:zqxdata", color: "zqxcolor", href: "zqxhref", style: { color: "zqxstyle" }, comments: [{ text: "zqxcomment" }] }] };
+    for (const q of ["zqxsrc", "zqxdata", "zqxcolor", "zqxhref", "zqxstyle", "zqxcomment"]) if (matchSlide(media, 0, q, null) !== null) throw new Error(`skip key matched: ${q}`);
+  }},
+  { name: "SE6: splitHighlight keeps the text and case; length change (U+0130) and surrogate cuts give no highlight", fn: async () => {
+    const chk = (text, q, want, what) => {
+      const parts = splitHighlight(text, q);
+      _seEq(parts.map((p) => (p.hit ? "[" + p.t + "]" : p.t)).join(""), want, what);
+      if (parts.map((p) => p.t).join("") !== (typeof text === "string" ? text : "")) throw new Error(`${what}: text changed`);
+      if (parts.some((p) => _seLoneSurrogate.test(p.t))) throw new Error(`${what}: a part cuts a surrogate pair`);
+    };
+    chk("abc", "x", "abc", "no hit");
+    chk("Hello World", "world", "Hello [World]", "one hit, case kept");
+    chk("aXbXc", "x", "a[X]b[X]c", "many");
+    chk("abab", "ab", "[ab][ab]", "adjacent, start and end");
+    chk("aaa", "aa", "[aa]a", "non-overlapping");
+    chk("", "x", "", "empty text");
+    chk(null, "x", "", "non-string text");
+    chk("abc", "", "abc", "empty query");
+    chk("İstanbul İzmir", "stanbul", "İstanbul İzmir", "U+0130 length change: no highlight");
+    if (!matchSlide({ blocks: [_seH("H"), _seT("İstanbul trip")] }, 0, "stanbul", null)) throw new Error("U+0130 text: the match must still count");
+    chk("😀😁", "\uDE00", "😀😁", "lone low surrogate query");
+    chk("x😀y", "😀", "x[😀]y", "emoji hit");
+    const many = splitHighlight("a".repeat(1000), "a");
+    if (many.filter((p) => p.hit).length !== 50 || many.map((p) => p.t).join("") !== "a".repeat(1000)) throw new Error("maxHits cap");
+  }},
+  { name: "SE7: a 100 000-char string is searched; the snippet stays short; under 50 ms", fn: async () => {
+    const long = "lorem ipsum ".repeat(8400) + "zqxneedle tail";
+    const s = { blocks: [_seH("H"), _seT(long)] };
+    const t0 = performance.now();
+    const m = matchSlide(s, 0, "zqxneedle", null);
+    const parts = splitHighlight(m.snippet, "zqxneedle");
+    const ms = performance.now() - t0;
+    if (!m || !m.snippet.includes("zqxneedle")) throw new Error("needle not found");
+    if (m.snippet.length > 24 + 9 + 36 + 2) throw new Error("snippet too long: " + m.snippet.length);
+    if (parts.filter((p) => p.hit).length !== 1) throw new Error("snippet highlight");
+    if (ms > 50) throw new Error(`long string took ${ms.toFixed(1)} ms`);
+  }},
+  { name: "SE8: 500-slide deck: one search under 50 ms", fn: async () => {
+    const lanes = [];
+    for (let l = 0; l < 5; l++) {
+      const items = [];
+      for (let it = 0; it < 10; it++) {
+        const slides = [];
+        for (let k = 0; k < 10; k++) {
+          const n = (l * 10 + it) * 10 + k;
+          slides.push({ layout: k % 3 === 0 ? "cols" : undefined, blocks: [_seH(`Slide ${n} heading`), _seT(`Body text of slide ${n} with several words in it`), { type: "bullets", items: [`point one ${n}`, `point two ${n}`, { text: `point three ${n}` }] }],
+            L: k % 3 === 0 ? [_seT(`left col ${n}`)] : undefined, R: k % 3 === 0 ? [_seT(`right col ${n}`)] : undefined, notes: `notes ${n}` });
+        }
+        if (l === 4 && it === 9) slides[9].blocks.push(_seT("zqxlastone"));
+        items.push({ id: `i${l}-${it}`, title: `Section ${l}-${it}`, order: it, slides });
+      }
+      lanes.push({ id: `l${l}`, items });
+    }
+    searchDeck(lanes, "warm", { notes: true, sections: true });
+    let worst = 0, rows = null, rare = null;
+    for (const q of ["point", "zqxlastone", "no such text at all"]) {
+      const t0 = performance.now();
+      const r = searchDeck(lanes, q, { notes: true, sections: true });
+      worst = Math.max(worst, performance.now() - t0);
+      if (q === "point") rows = r; if (q === "zqxlastone") rare = r;
+    }
+    if (rows.length !== 500) throw new Error("expected 500 rows for a common word, got " + rows.length);
+    _seEq(rare.map((r) => r.key), ["i4-9:9"], "rare word");
+    if (worst > 50) throw new Error(`500-slide search took ${worst.toFixed(1)} ms (bound 50 ms)`);
+  }},
+]);
+
+// v13.81 Present search keyboard model: first result selected, Up/Down stop at
+// the ends, Enter opens the selected row (detour rows too), count line, the
+// selected row looks different from the current-slide row, Esc clears then closes.
+const _psnInput = () => _$("input[placeholder^='Search slides']");
+const _psnRows = () => _$$("[data-search-row='1']").filter((r) => _hfeTocPanel()?.contains(r));
+const _psnSelIdx = () => _psnRows().findIndex((r) => r.getAttribute("aria-selected") === "true");
+const _psnCount = () => { const a = _$("[data-testid='search-count-pos']"), b = _$("[data-testid='search-count-total']"); return a && b ? `${a.textContent}|${b.textContent}` : null; };
+// Give the first two slides of the first module a known word, then return to slide 1.
+const _psnPrepare = async () => {
+  const past = _hooks().getHistoryCounts().past;
+  const s0 = _pdSel();
+  if (!s0) throw new Error("no module selected");
+  _hooks().injectBlocks([_seH("PSN one"), _seT("alpha zqxnav first")]);
+  await _wait(120);
+  document.activeElement?.blur?.();
+  _key("ArrowRight");
+  await _waitFor(() => { const s = _pdSel(); return s && s.itemId === s0.itemId && s.slideIdx === s0.slideIdx + 1; }, 1500)
+    .catch(() => { throw new Error("the first module needs 2 or more slides"); });
+  _hooks().injectBlocks([_seH("PSN two"), _seT("beta ZQXNAV second")]);
+  await _wait(120);
+  document.activeElement?.blur?.();
+  _key("ArrowLeft");
+  await _waitFor(() => _pdSame(_pdSel(), s0), 1500);
+  return { past, s0 };
+};
+const _psnOpen = async (word) => {
+  _key("e", { ctrlKey: true });
+  await _waitFor(_hfeTocOpen, 2000);
+  await _wait(150);
+  _type(_psnInput(), word);
+  await _wait(120);
+};
+uiSuite("present-search-nav", [
+  { name: "PSN1: first result selected; Down/Up move and stop at the ends; count line; selected differs from current; highlight", fn: async () => {
+    let p = null;
+    try {
+      p = await _psnPrepare();
+      await _pdEnterPresent();
+      await _psnOpen("zqxnav");
+      await _waitFor(() => _psnRows().length === 2, 1500).catch(() => { throw new Error("expected 2 result rows, got " + _psnRows().length); });
+      if (_psnSelIdx() !== 0) throw new Error("the first result is not selected");
+      _seEq(_psnCount(), "1 / 2|2 slides", "count line");
+      const cnt = _$("[data-testid='search-count']");
+      if (parseFloat(getComputedStyle(cnt).fontSize) < 13) throw new Error("count line under 13 px");
+      _key("ArrowUp"); await _wait(60);
+      if (_psnSelIdx() !== 0) throw new Error("ArrowUp at the top moved the selection");
+      _key("ArrowDown"); await _wait(60);
+      if (_psnSelIdx() !== 1) throw new Error("ArrowDown did not select the second result");
+      _seEq(_psnCount(), "2 / 2|2 slides", "count after ArrowDown");
+      _key("ArrowDown"); await _wait(60);
+      if (_psnSelIdx() !== 1) throw new Error("ArrowDown at the end moved the selection");
+      const [cur, sel] = _psnRows();
+      if (cur.style.borderLeft.indexOf("3px solid") < 0 || /transparent/.test(cur.style.borderLeft)) throw new Error("current-slide row lost its left bar");
+      if (cur.style.outlineStyle && cur.style.outlineStyle !== "none") throw new Error("the current (not selected) row has the selection outline");
+      if (!/solid/.test(sel.style.outline || "") || !/transparent/.test(sel.style.borderLeft)) throw new Error("the selected row does not look different from the current row");
+      const hits = sel.querySelectorAll("[data-testid='search-hit']");
+      if (!hits.length || [...hits].some((h) => h.textContent.toLowerCase() !== "zqxnav")) throw new Error("highlight text does not equal the query");
+      if (hits[0].textContent !== "ZQXNAV") throw new Error("highlight does not keep the case");
+      if ([...hits].some((h) => parseFloat(getComputedStyle(h).fontSize) < 13)) throw new Error("highlight under 13 px");
+      _key("ArrowUp"); await _wait(60);
+      if (_psnSelIdx() !== 0) throw new Error("ArrowUp did not move back");
+      _key("ArrowDown"); await _wait(60);
+      _key("Enter");
+      await _waitFor(() => !_hfeTocOpen(), 1500).catch(() => { throw new Error("Enter did not close the panel"); });
+      await _waitFor(() => { const s = _pdSel(); return s && s.itemId === p.s0.itemId && s.slideIdx === p.s0.slideIdx + 1; }, 1500)
+        .catch(() => { throw new Error("Enter did not open the selected (second) result"); });
+      if (_$("header")) throw new Error("Enter left Present");
+    } finally { await _exitFullscreen(); if (p) await _mrdUndoTo(p.past); }
+  }},
+  { name: "PSN2: no matches; Enter does nothing; Esc clears, then closes; Present stays", fn: async () => {
+    try {
+      await _pdEnterPresent();
+      const before = _pdSel();
+      await _psnOpen("zqxnomatch000");
+      await _waitFor(() => _$("[data-testid='search-no-matches']"), 1500).catch(() => { throw new Error("no 'No matches' state"); });
+      _seEq(_psnCount(), "0 / 0|0 slides", "count line with no match");
+      _key("ArrowDown"); _key("Enter"); await _wait(150);
+      if (!_hfeTocOpen() || !_pdSame(_pdSel(), before)) throw new Error("Enter with no result changed something");
+      _key("Escape"); await _wait(120);
+      if (_psnInput().value !== "" || _$("[data-testid='search-count']")) throw new Error("Esc did not clear the query and the count line");
+      if (!_hfeTocOpen()) throw new Error("the first Esc closed the panel");
+      _key("Escape");
+      await _waitFor(() => !_hfeTocOpen(), 1500).catch(() => { throw new Error("the second Esc did not close the panel"); });
+      if (_$("header")) throw new Error("Esc left Present");
+    } finally { await _exitFullscreen(); }
+  }},
+  { name: "PSN3: detour rows come after the normal rows in the same order; Enter on one starts the detour", fn: async () => {
+    let past = null;
+    try {
+      past = await _pdPrepare();
+      _hooks().injectBlocks([_seH("PSN visible"), _seT("visible zqxdetour text")]);
+      await _wait(120);
+      await _pdEnterPresent();
+      await _psnOpen("zqxdetour");
+      await _waitFor(() => _psnRows().length === 2, 1500).catch(() => { throw new Error("expected 1 normal + 1 detour row, got " + _psnRows().length); });
+      const rows = _psnRows();
+      if (rows[0].getAttribute("data-testid") === "toc-detour-row" || rows[1].getAttribute("data-testid") !== "toc-detour-row") throw new Error("detour row is not after the normal row");
+      _key("ArrowDown"); await _wait(60);
+      if (_psnSelIdx() !== 1) throw new Error("ArrowDown did not reach the detour row");
+      _key("Enter");
+      await _waitFor(() => _pdOnSlide("PDBACKUP"), 1500).catch(() => { throw new Error("Enter on the detour row did not show the hidden slide"); });
+      if (_slideCounterEl()) throw new Error("the detour slide shows a slide number");
+    } finally { await _exitFullscreen(); if (past != null) await _mrdUndoTo(past); }
+  }},
+  { name: "PSN4: the selected row scrolls into view", fn: async () => {
+    try {
+      await _pdEnterPresent();
+      await _psnOpen("e");
+      const n = _psnRows().length;
+      if (!n) throw new Error("no results for a one-letter query");
+      for (let i = 0; i < Math.min(n - 1, 40); i++) { _key("ArrowDown"); await _wait(25); }
+      await _wait(150);
+      const sel = _psnRows()[_psnSelIdx()];
+      const box = _hfeTocPanel().querySelector("[data-scroll-container]").getBoundingClientRect(), r = sel.getBoundingClientRect();
+      if (r.top < box.top - 1 || r.bottom > box.bottom + 1) throw new Error(`selected row is out of view (row ${r.top}-${r.bottom}, list ${box.top}-${box.bottom})`);
+      if (_psnSelIdx() !== Math.min(n - 1, 40)) throw new Error("selection index wrong");
+    } finally { await _exitFullscreen(); }
+  }},
+], { setup: _selectFirstModule });
+
 // ━━━ Session end (v13.80): sanitizer, pace math, deck ingress ━━━━━━━
 const _SS_T0 = 1700000000000;
 const _ssEq = (got, want, what) => { const g = JSON.stringify(got), w = JSON.stringify(want); if (g !== w) throw new Error(`${what}: got ${g}, want ${w}`); };

@@ -138,8 +138,9 @@ const velaClipboardReadSlides = async () => {
   return [];
 };
 
-const VELA_VERSION = "13.80";
+const VELA_VERSION = "13.81";
 const VELA_CHANGELOG = [
+  { v: "13.81", d: ["Editor: search in the slide list (Ctrl+E or /), same engine as Present", "Search: ↑↓ + Enter, highlighted matches, match count; finds text in column layouts, notes and section names (editor)", "Editor: short outline on the matched block when a result opens"] },
   { v: "13.80", d: ["Session end time: set it from the toolbar or the Presenter View.", "Presenter View: clock, time left and pace guidance (ahead / on pace / behind).", "Present: thin pace bar on the slide edge (T hides it).", "Present: optional clock on the slide (C key)"] },
   { v: "13.79", d: ["Present: Ctrl+E search also matches slide text, with a snippet.", "Present: while typing, search also lists hidden slides and slides in collapsed lanes (a detour).", "Present: after a detour, arrows, wheel or Esc return to the slide you left.", "Present: a detour slide shows no slide number; Presenter view shows where you will return."] },
   { v: "13.78", d: ["Images: up to 10 per slide; overflow goes to a new slide.", "Images: drag image files from your computer onto a slide.", "Images: drag tiles to reorder.", "Story mode: present a slide's images one by one.", "Export: expand story slides to one page per image (PDF/PPTX).", "Text: Ctrl+U underline is saved and shows everywhere (++text++).", "Images: dropped files use the same ordered, safe queue as pasted images.", "Story mode: grid tiles keep a one-line title row, so tiles align.", "Vector PDF: text after bold/italic/underline/link keeps its space and letter spacing.", "Drop: images dropped outside a slide show a hint; a deck file dropped with images still loads.", "Slide toolbar stays on one row; labels change to icons when space is short."] },

@@ -78,7 +78,7 @@ that symbol in the named part for the line. No line numbers here — they rot.
 - Virtual Slide: VirtualSlide FullscreenSlide
 - Scope Selector (shared by improve + timing): ScopeSelector BrandingPanel
 - Cinema Tip — bookmarklet helper for browser fullscreen in artifacts: CINEMA_BOOKMARKLET CinemaTip
-- Presenter TOC — slide-out panel on left edge in fullscreen: getSlideSource getSlideTitle PRESENT_SEARCH_SKIP slideSearchTexts matchPresentSlide detourReturnTitle PresenterTOC
+- Presenter TOC — slide-out panel on left edge in fullscreen: getSlideSource getSlideTitle PRESENT_SEARCH_SKIP slideSearchTexts searchRenderIndex searchSnippet matchSlide matchPresentSlide searchDeck splitHighlight HighlightText useSearchNav SearchResultRow detourReturnTitle PresenterTOC
 - Gallery Thumbnail — shimmer loading overlay until slide renders: GALLERY_SHIMMER_ID _ensureGalleryShimmer GalleryThumb
 - Comment Popover (review mode): CommentPopover
 - PresenterView — CR-08: single-screen speaker dashboard shown from: fmtElapsed PresenterSessionCard PresenterView GALLERY_MODULE_COLORS GalleryView
@@ -135,7 +135,7 @@ that symbol in the named part for the line. No line numbers here — they rot.
 - Bug-hunt round 1 fixes: image paste and placement: _h1Heavy _h1CellWidths _h1Imgs _h1Paste _h1Heading
 - WP7: Ctrl+U underline is saved as ++text++ and shows underlined: _ulSaved _ulOpenEditor
 - WP5: story images, image file drop, tile reorder: _wp5Sel _wp5Key _wp5Deck _wp5Fs _wp5Cur _wp5ImgSrcs _wp5Imgs _wp5Inject _wp5UndoTo _wp5Enter _wp5Exit _wp5Layer _wp5CurThumb _wp5ZoomedAt _wp5Grid _wp5Step _wp5OnSlide _wp5Toast _wp5Drop _wp5Aspect _wp5NoBlob
-- WP5b: story steps by wheel and swipe, Preview, phone layout, large images: _wp5bFsEl _wp5bWheel _wp5bState _wp5bWheelStep _wp5bTouch _wp5bSwipe _wp5bSwipeStep _wp5bHold _wp5bPhone _wp5bInside _wp5bOverlap _wp5bBox _wp5bBig _wp5bLayerImg _tbEl _tbButtons _tbOneRow _tbAtWidth _pdSel _pdOnSlide _pdSame _pdPrepare _pdEnterPresent _pdJump
+- WP5b: story steps by wheel and swipe, Preview, phone layout, large images: _wp5bFsEl _wp5bWheel _wp5bState _wp5bWheelStep _wp5bTouch _wp5bSwipe _wp5bSwipeStep _wp5bHold _wp5bPhone _wp5bInside _wp5bOverlap _wp5bBox _wp5bBig _wp5bLayerImg _tbEl _tbButtons _tbOneRow _tbAtWidth _pdSel _pdOnSlide _pdSame _pdPrepare _pdEnterPresent _pdJump _seEq _seLoneSurrogate _seH _seT _sePick _psnInput _psnRows _psnSelIdx _psnCount _psnPrepare _psnOpen
 - Session end (v13.80): sanitizer, pace math, deck ingress: _SS_T0 _ssEq _ssNoNaN _ssSeq _ssSes
 - Session end: Present-side UI (v13.80, P2): _sesUiRoot _sesUiPresent _sesUiLeave _sesUiSet _sesUiOpenPresenter _sesUiNeedHooks
 - Session end: editor toolbar, dialog, live ingress, bar geometry (v13.80, P3): _sesTbBtn _sesTbIs _sesTbDesc _sesTbOpen _sesSecs _sesShape _sesRgb _sesImport
@@ -338,16 +338,17 @@ add_lane add_item batch_add_items remove_item remove_lane rename_item rename_lan
 
 ## Navigability debt (WARN — candidates for banners or splits)
 
-- part-imports.jsx: 929-line unbannered stretch after line 518
+- part-imports.jsx: 929-line unbannered stretch after line 519
 - part-blocks.jsx: 806-line unbannered stretch after line 1265
 - part-canvas.jsx: 581-line unbannered stretch after line 150
+- part-slides.jsx: 488-line unbannered stretch after line 380
 - part-slidepanel.jsx: 478-line unbannered stretch after line 1470
 - part-uitest.jsx: 616-line unbannered stretch after line 1230
 - part-uitest2.jsx: 448-line unbannered stretch after line 2
 - part-uitest2.jsx: 593-line unbannered stretch after line 1457
 - part-uitest2.jsx: 837-line unbannered stretch after line 2323
 - part-uitest2.jsx: 376-line unbannered stretch after line 4088
-- part-uitest2.jsx: 461-line unbannered stretch after line 4464
+- part-uitest2.jsx: 727-line unbannered stretch after line 4464
 - part-demo.jsx: 407-line unbannered stretch after line 510
 - part-demo.jsx: 373-line unbannered stretch after line 917
 - part-pdf.jsx: 414-line unbannered stretch after line 582

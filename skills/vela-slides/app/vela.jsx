@@ -138,8 +138,9 @@ const velaClipboardReadSlides = async () => {
   return [];
 };
 
-const VELA_VERSION = "13.80";
+const VELA_VERSION = "13.81";
 const VELA_CHANGELOG = [
+  { v: "13.81", d: ["Editor: search in the slide list (Ctrl+E or /), same engine as Present", "Search: ↑↓ + Enter, highlighted matches, match count; finds text in column layouts, notes and section names (editor)", "Editor: short outline on the matched block when a result opens"] },
   { v: "13.80", d: ["Session end time: set it from the toolbar or the Presenter View.", "Presenter View: clock, time left and pace guidance (ahead / on pace / behind).", "Present: thin pace bar on the slide edge (T hides it).", "Present: optional clock on the slide (C key)"] },
   { v: "13.79", d: ["Present: Ctrl+E search also matches slide text, with a snippet.", "Present: while typing, search also lists hidden slides and slides in collapsed lanes (a detour).", "Present: after a detour, arrows, wheel or Esc return to the slide you left.", "Present: a detour slide shows no slide number; Presenter view shows where you will return."] },
   { v: "13.78", d: ["Images: up to 10 per slide; overflow goes to a new slide.", "Images: drag image files from your computer onto a slide.", "Images: drag tiles to reorder.", "Story mode: present a slide's images one by one.", "Export: expand story slides to one page per image (PDF/PPTX).", "Text: Ctrl+U underline is saved and shows everywhere (++text++).", "Images: dropped files use the same ordered, safe queue as pasted images.", "Story mode: grid tiles keep a one-line title row, so tiles align.", "Vector PDF: text after bold/italic/underline/link keeps its space and letter spacing.", "Drop: images dropped outside a slide show a hint; a deck file dropped with images still loads.", "Slide toolbar stays on one row; labels change to icons when space is short."] },
@@ -8624,38 +8625,207 @@ function getSlideSource(slide, idx) {
 }
 function getSlideTitle(slide, idx) { return getSlideSource(slide, idx).text; }
 
-// Present search text: every string in a slide's blocks (nested layouts too),
-// each flagged when it sits in a hidden block. Styling, media and id keys are
-// skipped so colours and data URIs never match. The text is only compared and
-// rendered as React text children, never as markup or a style/URL value.
+// Search text of one slide (shared by Present and the editor): every string in
+// the slide's blocks and in the column areas L / R (nested layouts too), each
+// flagged when it sits in a hidden block. Each entry: { text, hidden, area, block }
+// where area is "blocks" | "L" | "R" and block the TOP-LEVEL index in that area
+// (area null, block -1 for slide.title). Styling, media and id keys are skipped
+// so colours and data URIs never match. The walk only reads: own enumerable keys
+// (Object.keys), prototype-named keys skipped, depth cap 8 (a read walk emits
+// nothing at the cap, so returning there is correct). The text is only compared
+// and rendered as React text children, never as markup or a style/URL value.
 const PRESENT_SEARCH_SKIP = new Set(["type", "id", "src", "image", "images", "svg", "icon", "bg", "bgGradient", "color", "accent", "style", "href", "link", "url", "layout", "align", "variant", "size", "font", "comments"]);
 function slideSearchTexts(slide) {
   const out = [];
-  if (typeof slide?.title === "string" && slide.title) out.push({ text: slide.title, hidden: false });
-  const walk = (v, hidden, depth) => {
+  if (typeof slide?.title === "string" && slide.title) out.push({ text: slide.title, hidden: false, area: null, block: -1 });
+  const walk = (v, hidden, depth, area, block) => {
     if (v == null || depth > 8) return;
-    if (typeof v === "string") { if (v && !v.startsWith("data:")) out.push({ text: v, hidden }); return; }
-    if (Array.isArray(v)) { for (const x of v) walk(x, hidden, depth + 1); return; }
+    if (typeof v === "string") { if (v && !v.startsWith("data:")) out.push({ text: v, hidden, area, block }); return; }
+    if (Array.isArray(v)) { for (const x of v) walk(x, hidden, depth + 1, area, block); return; }
     if (typeof v === "object") {
       const h = hidden || v.hidden === true;
-      for (const k of Object.keys(v)) if (!PRESENT_SEARCH_SKIP.has(k)) walk(v[k], h, depth + 1);
+      for (const k of Object.keys(v)) {
+        if (PRESENT_SEARCH_SKIP.has(k) || k === "__proto__" || k === "constructor" || k === "prototype") continue;
+        walk(v[k], h, depth + 1, area, block);
+      }
     }
   };
-  walk(slide?.blocks, false, 0);
+  // Depth 1 for each top-level block: the same depth the old walk over the
+  // blocks array gave its items, so the depth cap does not change.
+  for (const area of ["blocks", "L", "R"]) {
+    const arr = Array.isArray(slide?.[area]) ? slide[area] : [];
+    arr.forEach((b, i) => walk(b, false, 1, area, i));
+  }
   return out;
 }
-// Match one slide against a lower-case query: title first, then visible block
-// text, then hidden block text. Returns null on no match.
-function matchPresentSlide(slide, idx, q) {
-  const title = getSlideTitle(slide, idx);
-  if (!q || title.toLowerCase().includes(q)) return { title, snippet: null, hiddenBlock: false };
-  const texts = slideSearchTexts(slide);
-  const hit = texts.find((t) => !t.hidden && t.text.toLowerCase().includes(q)) || texts.find((t) => t.hidden && t.text.toLowerCase().includes(q));
-  if (!hit) return null;
-  const flat = hit.text.replace(/\s+/g, " ");
+// Render index of a matched top-level block: the `i` that the editor canvas
+// (SlideContent → renderBlockItem) gives it. blocks → i; column L → after the
+// blocks; column R → after blocks + L. Column areas render only on a "cols"
+// slide; else (or when the index is not exact) -1 = no block.
+function searchRenderIndex(slide, area, idx) {
+  if (typeof idx !== "number" || idx < 0) return -1;
+  const nB = Array.isArray(slide?.blocks) ? slide.blocks.length : 0;
+  if (area === "blocks") return idx;
+  const isCols = slide?.layout === "cols" && (Array.isArray(slide.L) || Array.isArray(slide.R));
+  if (!isCols || (area !== "L" && area !== "R")) return -1;
+  const nL = Array.isArray(slide.L) ? slide.L.length : 0;
+  return area === "L" ? nB + idx : nB + nL + idx;
+}
+// Snippet around the first hit (indexOf on lower-case text; no regex from the
+// query). A UTF-16 surrogate pair (emoji) is never cut at either end.
+function searchSnippet(text, q) {
+  const flat = text.replace(/\s+/g, " ");
   const at = flat.toLowerCase().indexOf(q);
-  const from = Math.max(0, at - 24), to = Math.min(flat.length, at + q.length + 36);
-  return { title, snippet: (from > 0 ? "…" : "") + flat.slice(from, to) + (to < flat.length ? "…" : ""), hiddenBlock: hit.hidden };
+  const low = (i) => { const c = flat.charCodeAt(i); return c >= 0xDC00 && c <= 0xDFFF; };
+  let from = Math.max(0, at - 24), to = Math.min(flat.length, at + q.length + 36);
+  if (from > 0 && low(from)) from--;
+  if (to < flat.length && low(to)) to++;
+  return (from > 0 ? "…" : "") + flat.slice(from, to) + (to < flat.length ? "…" : "");
+}
+// One slide against a trimmed lower-case query: title first, then visible block
+// text, then hidden block text, then (opts.notes, editor only) slide.notes.
+// Returns null on no match, else { title, snippet, kind, area, block, hiddenBlock }.
+// kind: "title" | "block" | "hidden-block" | "notes". A title match carries no
+// block (no outline).
+function matchSlide(slide, idx, q, opts) {
+  const title = getSlideTitle(slide, idx);
+  if (!q || title.toLowerCase().includes(q)) return { title, snippet: null, kind: "title", area: null, block: -1, hiddenBlock: false };
+  const texts = slideSearchTexts(slide);
+  const has = (t) => t.text.toLowerCase().includes(q);
+  const hit = texts.find((t) => !t.hidden && has(t)) || texts.find((t) => t.hidden && has(t));
+  if (hit) return { title, snippet: searchSnippet(hit.text, q), kind: hit.hidden ? "hidden-block" : "block", area: hit.area, block: hit.block, hiddenBlock: hit.hidden };
+  if (opts?.notes && typeof slide?.notes === "string" && slide.notes.toLowerCase().includes(q))
+    return { title, snippet: searchSnippet(slide.notes, q), kind: "notes", area: null, block: -1, hiddenBlock: false };
+  return null;
+}
+// Present scope: no notes.
+function matchPresentSlide(slide, idx, q) { return matchSlide(slide, idx, q, null); }
+// Flat result list over all lanes (editor). One row per matching slide, in tree
+// order (lane order, then item `order`, as ModuleList). opts.notes: also search
+// slide notes. opts.sections: a section whose NAME matches with no matching
+// slide gives one row for its first slide (kind "section"); an empty section
+// gives no row. renderIdx: canvas render index of the matched block, or -1.
+function searchDeck(lanes, query, opts) {
+  const q = String(query || "").toLowerCase().trim();
+  if (!q) return [];
+  const rows = [];
+  for (const lane of (Array.isArray(lanes) ? lanes : [])) {
+    const items = [...(Array.isArray(lane?.items) ? lane.items : [])].sort((a, b) => (a.order ?? 999) - (b.order ?? 999));
+    for (const item of items) {
+      const slides = Array.isArray(item?.slides) ? item.slides : [];
+      const before = rows.length;
+      slides.forEach((s, i) => {
+        const m = matchSlide(s, i, q, opts);
+        if (m) rows.push({ key: item.id + ":" + i, sectionId: item.id, sectionTitle: item.title, laneId: lane.id, slideIdx: i,
+          title: m.title, snippet: m.snippet, kind: m.kind, block: m.block, renderIdx: m.area ? searchRenderIndex(s, m.area, m.block) : -1,
+          hiddenSlide: !!s?.hidden, collapsedLane: !!lane.collapsed });
+      });
+      if (opts?.sections && rows.length === before && slides.length && typeof item.title === "string" && item.title.toLowerCase().includes(q))
+        rows.push({ key: item.id + ":0", sectionId: item.id, sectionTitle: item.title, laneId: lane.id, slideIdx: 0,
+          title: getSlideTitle(slides[0], 0), snippet: searchSnippet(item.title, q), kind: "section", block: -1, renderIdx: -1,
+          hiddenSlide: !!slides[0]?.hidden, collapsedLane: !!lane.collapsed });
+    }
+  }
+  return rows;
+}
+// Split text into [{ t, hit }] at each case-insensitive occurrence of q (already
+// lower-case + trimmed). indexOf only, never a RegExp from the query.
+// Non-overlapping, left to right, at most maxHits hits. toLowerCase() can change
+// the length of a string (for example U+0130): then lower-case offsets do not
+// map to the original, so that string gets no highlight (the match still
+// counts). A hit that would cut a surrogate pair is not highlighted.
+function splitHighlight(text, q, maxHits = 50) {
+  const s = typeof text === "string" ? text : "";
+  if (!q || typeof q !== "string" || !s) return [{ t: s, hit: false }];
+  const lower = s.toLowerCase();
+  if (lower.length !== s.length) return [{ t: s, hit: false }];
+  const hi = (i) => { const c = s.charCodeAt(i); return c >= 0xD800 && c <= 0xDBFF; };
+  const lo = (i) => { const c = s.charCodeAt(i); return c >= 0xDC00 && c <= 0xDFFF; };
+  const out = [];
+  let pos = 0, from = 0, n = 0;
+  while (n < maxHits) {
+    const at = lower.indexOf(q, from);
+    if (at < 0) break;
+    const end = at + q.length;
+    if ((at > 0 && lo(at) && hi(at - 1)) || (end < s.length && lo(end) && hi(end - 1))) { from = at + 1; continue; }
+    if (at > pos) out.push({ t: s.slice(pos, at), hit: false });
+    out.push({ t: s.slice(at, end), hit: true });
+    pos = from = end; n++;
+  }
+  if (pos < s.length || !out.length) out.push({ t: s.slice(pos), hit: false });
+  return out;
+}
+// Highlighted text: React text children + a <span> with a static, code-authored
+// style (no deck value in any style). Min 13 px for the hit.
+function HighlightText({ text, q }) {
+  return <>{splitHighlight(text, q).map((p, i) => p.hit
+    ? <span key={i} data-testid="search-hit" style={{ background: T.amber + "55", color: "inherit", borderRadius: 2, fontSize: "max(13px, 1em)" }}>{p.t}</span>
+    : <React.Fragment key={i}>{p.t}</React.Fragment>)}</>;
+}
+// Keyboard selection over a flat result list. Up/Down stop at the ends (no wrap)
+// and act only when there are results (else the caret moves as usual). The
+// selection resets to the first result when resetKey (the query) changes.
+function useSearchNav(count, resetKey, { onOpen, onEscape }) {
+  const [sel, setSel] = useState(0);
+  useEffect(() => { setSel(0); }, [resetKey]);
+  const selRef = useRef(null); // DOM node of the selected row
+  useEffect(() => { selRef.current?.scrollIntoView?.({ block: "nearest" }); }, [sel, resetKey]);
+  const cur = Math.min(sel, Math.max(0, count - 1));
+  const onKey = (e) => { // from the input's onKeyDown; true when handled
+    if ((e.key === "ArrowDown" || e.key === "ArrowUp") && count > 0) {
+      e.preventDefault();
+      setSel(e.key === "ArrowDown" ? Math.min(count - 1, cur + 1) : Math.max(0, cur - 1));
+      return true;
+    }
+    if (e.key === "Enter") { e.preventDefault(); if (count > 0) onOpen(cur); return true; }
+    if (e.key === "Escape") { e.preventDefault(); onEscape(); return true; }
+    return false;
+  };
+  return { sel: cur, setSel, onKey, selRef };
+}
+// One search / TOC result row (PresenterTOC; the editor search reuses it).
+// selected = keyboard selection (accent outline, aria-selected); active = the
+// current slide (accent tint + left bar). The two looks differ on purpose.
+// size "present" keeps the Present panel sizes; "editor" uses 13 px text.
+function SearchResultRow({ title, snippet, kind, hiddenBlock, hiddenSlide, q, selected, active, dim, muted, num, onClick, rowRef, testid, size = "present" }) {
+  const ed = size === "editor";
+  const badge = (label, color, id) => <span data-testid={id} style={{ fontFamily: FONT.mono, fontSize: ed ? 13 : 8, fontWeight: 700, color, border: `1px solid ${color}60`, borderRadius: 3, padding: "0 3px", marginRight: 5, letterSpacing: "0.04em" }}>{label}</span>;
+  return (
+    <div
+      ref={rowRef}
+      data-testid={testid}
+      data-search-row={q ? "1" : undefined}
+      role={q ? "option" : undefined}
+      aria-selected={q ? !!selected : undefined}
+      onClick={onClick}
+      style={{
+        padding: "6px 16px 6px 24px", cursor: "pointer",
+        display: "flex", alignItems: "baseline", gap: 10,
+        background: active ? `${T.accent}18` : "transparent",
+        borderLeft: active ? `3px solid ${T.accent}` : "3px solid transparent",
+        outline: selected ? `2px solid ${T.accent}` : "none", outlineOffset: -2,
+        transition: "background 0.15s", opacity: dim && !active ? 0.6 : 1,
+      }}
+      onMouseEnter={(e) => { if (!active) e.currentTarget.style.background = T.isDark ? "rgba(255,255,255,0.04)" : "rgba(0,0,0,0.04)"; }}
+      onMouseLeave={(e) => { if (!active) e.currentTarget.style.background = "transparent"; }}
+    >
+      <span style={{ fontFamily: FONT.mono, fontSize: ed ? 13 : 9, color: active ? T.accent : T.textDim, minWidth: 14, textAlign: "right", flexShrink: 0 }}>{num}</span>
+      <span style={{ display: "flex", flexDirection: "column", minWidth: 0, gap: 2 }}>
+        <span style={{
+          fontFamily: FONT.display, fontSize: 13, fontWeight: active ? 600 : 400,
+          color: active ? T.text : muted ? T.textMuted : T.textDim,
+          lineHeight: 1.4, overflow: "hidden", textOverflow: "ellipsis",
+          display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical",
+        }}>{hiddenSlide && badge("HIDDEN", T.amber, "search-hidden-slide")}<HighlightText text={title} q={q} /></span>
+        {snippet && <span data-testid="toc-snippet" style={{ fontFamily: FONT.body, fontSize: ed ? 13 : 11, color: T.textDim, lineHeight: 1.35, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {hiddenBlock && badge("HIDDEN BLOCK", T.amber, "toc-hidden-block")}
+          {kind === "notes" && badge("NOTES", T.textMuted, "search-notes-badge")}
+          {kind === "section" && badge("SECTION", T.textMuted, "search-section-badge")}
+          <HighlightText text={snippet} q={q} />
+        </span>}
+      </span>
+    </div>
+  );
 }
 // "Module · slide title" for a detour's return point (Present index → raw slide).
 function detourReturnTitle(lanes, ret) {
@@ -8798,48 +8968,36 @@ function PresenterTOC({ slides, slideIndex, onJump, lanes, currentConceptId, dis
     setOpen(false);
   };
 
-  // Enter in the search box jumps to the first slide that matches (CR: theme jump).
-  const jumpFirstMatch = () => {
-    for (const g of grouped) {
-      const first = g.slides.find((s) => s.visible);
-      if (first) { handleJump(g.id, first.slideIdx); return; }
-    }
-    for (const g of detourGroups) { handleJump(g.id, g.slides[0].slideIdx, true); return; }
-  };
+  // Search results in one keyboard order: the presentation's own matches, then
+  // the detour matches (hidden slides / collapsed lanes). Enter opens the
+  // selected one (the first by default, CR: theme jump); a detour row starts the
+  // detour as a click does.
+  const q = search.toLowerCase().trim();
+  const flat = q ? [
+    ...grouped.flatMap((g) => g.slides.filter((s) => s.visible).map((s) => ({ g, s, detour: false }))),
+    ...detourGroups.flatMap((g) => g.slides.map((s) => ({ g, s, detour: true }))),
+  ] : [];
+  const nav = useSearchNav(flat.length, q, {
+    onOpen: (i) => handleJump(flat[i].g.id, flat[i].s.slideIdx, flat[i].detour),
+    onEscape: () => { if (search) setSearch(""); else { setOpen(false); setPinned(false); } },
+  });
+  const selItem = flat[nav.sel];
 
-  const renderRow = (group, { title, slideIdx, visible, snippet, hiddenBlock }, detour) => {
+  const renderRow = (group, s, detour) => {
+    const { title, slideIdx, visible, snippet, hiddenBlock } = s;
     if (!visible) return null;
     const active = group.isCurrent && slideIdx === slideIndex - currentOffset;
+    const selected = !!selItem && selItem.g === group && selItem.s === s;
     return (
-      <div
+      <SearchResultRow
         key={slideIdx}
-        ref={active ? activeRef : null}
-        data-testid={detour ? "toc-detour-row" : undefined}
+        rowRef={(el) => { if (active) activeRef.current = el; if (selected) nav.selRef.current = el; }}
+        testid={detour ? "toc-detour-row" : undefined}
         onClick={() => handleJump(group.id, slideIdx, detour)}
-        style={{
-          padding: "6px 16px 6px 24px", cursor: "pointer",
-          display: "flex", alignItems: "baseline", gap: 10,
-          background: active ? `${T.accent}18` : "transparent",
-          borderLeft: active ? `3px solid ${T.accent}` : "3px solid transparent",
-          transition: "background 0.15s", opacity: detour && !active ? 0.6 : 1,
-        }}
-        onMouseEnter={(e) => { if (!active) e.currentTarget.style.background = T.isDark ? "rgba(255,255,255,0.04)" : "rgba(0,0,0,0.04)"; }}
-        onMouseLeave={(e) => { if (!active) e.currentTarget.style.background = "transparent"; }}
-      >
-        <span style={{ fontFamily: FONT.mono, fontSize: 9, color: active ? T.accent : T.textDim, minWidth: 14, textAlign: "right", flexShrink: 0 }}>{detour ? "🙈" : slideIdx + 1}</span>
-        <span style={{ display: "flex", flexDirection: "column", minWidth: 0, gap: 2 }}>
-          <span style={{
-            fontFamily: FONT.display, fontSize: 13, fontWeight: active ? 600 : 400,
-            color: active ? T.text : group.isCurrent ? T.textMuted : T.textDim,
-            lineHeight: 1.4, overflow: "hidden", textOverflow: "ellipsis",
-            display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical",
-          }}>{title}</span>
-          {snippet && <span data-testid="toc-snippet" style={{ fontFamily: FONT.body, fontSize: 11, color: T.textDim, lineHeight: 1.35, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-            {hiddenBlock && <span data-testid="toc-hidden-block" style={{ fontFamily: FONT.mono, fontSize: 8, fontWeight: 700, color: T.amber, border: `1px solid ${T.amber}60`, borderRadius: 3, padding: "0 3px", marginRight: 5, letterSpacing: "0.04em" }}>HIDDEN BLOCK</span>}
-            {snippet}
-          </span>}
-        </span>
-      </div>
+        title={title} snippet={snippet} hiddenBlock={hiddenBlock} q={q}
+        selected={selected} active={active} dim={detour} muted={group.isCurrent}
+        num={detour ? "🙈" : slideIdx + 1}
+      />
     );
   };
 
@@ -8879,8 +9037,7 @@ function PresenterTOC({ slides, slideIndex, onJump, lanes, currentConceptId, dis
               // Ctrl/Cmd+E must still bubble to the global toggle so it closes the pane.
               if ((e.ctrlKey || e.metaKey) && (e.key === "e" || e.key === "E")) return;
               e.stopPropagation();
-              if (e.key === "Enter") { e.preventDefault(); jumpFirstMatch(); }
-              if (e.key === "Escape") { if (search) setSearch(""); else { setOpen(false); setPinned(false); } }
+              nav.onKey(e);
             }}
             placeholder="Search slides… (Enter jumps)"
             style={{
@@ -8890,9 +9047,13 @@ function PresenterTOC({ slides, slideIndex, onJump, lanes, currentConceptId, dis
             }}
           />
         </div>
+        {q && <div data-testid="search-count" style={{ display: "flex", justifyContent: "space-between", padding: "0 14px 6px", fontFamily: FONT.mono, fontSize: 13, color: T.textDim }}>
+          <span data-testid="search-count-pos">{flat.length ? nav.sel + 1 : 0} / {flat.length}</span>
+          <span data-testid="search-count-total">{flat.length} {flat.length === 1 ? "slide" : "slides"}</span>
+        </div>}
 
         {/* Grouped slide list */}
-        <div data-scroll-container style={{ flex: 1, overflowY: "auto", padding: "4px 0" }}>
+        <div data-scroll-container role={q ? "listbox" : undefined} aria-label={q ? "Search results" : undefined} style={{ flex: 1, overflowY: "auto", padding: "4px 0" }}>
           {grouped.map((group) => (
             <div key={group.id}>
               {/* Module header */}
@@ -8925,7 +9086,7 @@ function PresenterTOC({ slides, slideIndex, onJump, lanes, currentConceptId, dis
             </div>
           )}
           {grouped.length === 0 && detourGroups.length === 0 && search && (
-            <div style={{ padding: "20px 16px", fontFamily: FONT.body, fontSize: 13, color: T.textDim, textAlign: "center" }}>No matches</div>
+            <div data-testid="search-no-matches" style={{ padding: "20px 16px", fontFamily: FONT.body, fontSize: 13, color: T.textDim, textAlign: "center" }}>No matches</div>
           )}
         </div>
 
@@ -20901,6 +21062,272 @@ uiSuite("present-detour-search", [
       await _wait(200);
       if (_$("header")) throw new Error("Esc on a detour left Present");
     } finally { await _exitFullscreen(); if (past != null) await _mrdUndoTo(past); }
+  }},
+], { setup: _selectFirstModule });
+
+// v13.81 shared search engine (pure): matchSlide / searchDeck / splitHighlight.
+const _seEq = (got, want, what) => { const g = JSON.stringify(got), w = JSON.stringify(want); if (g !== w) throw new Error(`${what}: got ${g}, want ${w}`); };
+const _seLoneSurrogate = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
+const _seH = (text) => ({ type: "heading", text });
+const _seT = (text, extra) => ({ type: "text", text, ...(extra || {}) });
+const _sePick = (m) => m && { kind: m.kind, area: m.area, block: m.block, hiddenBlock: m.hiddenBlock };
+uiSuite("search-engine", [
+  { name: "SE1: title, visible block, hidden block, no match, case and whitespace", fn: async () => {
+    const s = { blocks: [_seH("Alpha Tools"), _seT("find me here"), _seT("secret word", { hidden: true }), _seT("dup hidden", { hidden: true }), _seT("dup shown")] };
+    const t = matchSlide(s, 0, "tool", null);
+    _seEq([t.title, t.snippet, t.kind, t.block], ["Alpha Tools", null, "title", -1], "title match");
+    _seEq(_sePick(matchSlide(s, 0, "find me", null)), { kind: "block", area: "blocks", block: 1, hiddenBlock: false }, "visible block");
+    _seEq(_sePick(matchSlide(s, 0, "secret", null)), { kind: "hidden-block", area: "blocks", block: 2, hiddenBlock: true }, "hidden block");
+    _seEq(_sePick(matchSlide(s, 0, "dup", null)), { kind: "block", area: "blocks", block: 4, hiddenBlock: false }, "visible text before hidden text");
+    if (matchSlide(s, 0, "absent", null) !== null) throw new Error("no-match is not null");
+    if (!matchSlide(s, 0, "find me", null).snippet.includes("find me")) throw new Error("snippet misses the hit");
+    const lanes = [{ id: "l", items: [{ id: "a", title: "A", order: 1, slides: [s] }] }];
+    _seEq(searchDeck(lanes, "  FIND ME  ", null).map((r) => [r.key, r.kind, r.renderIdx]), [["a:0", "block", 1]], "upper case + spaces");
+    _seEq(searchDeck(lanes, "   ", null), [], "blank query");
+    _seEq(searchDeck(null, "x", null), [], "no lanes");
+    const st = { title: "Plain slide title zqx", blocks: [_seT("x")] };
+    _seEq([matchSlide(st, 0, "zqx", null).block, searchDeck([{ id: "l", items: [{ id: "b", title: "B", slides: [st] }] }], "zqx", null)[0].renderIdx], [-1, -1], "slide.title string: no block");
+  }},
+  { name: "SE2: special characters and emoji match literally and never throw", fn: async () => {
+    for (const q of ["(", "[", "*", "\\", "<", ">", "&", "\"", "a(b", "[x]", "<b>", "&amp;", "🚀", "$&", "$1"]) {
+      const s = { blocks: [_seH("H"), _seT(`pre ${q} post`)] };
+      const m = matchSlide(s, 0, q.toLowerCase(), null);
+      if (!m || m.kind !== "block") throw new Error(`no literal match for ${JSON.stringify(q)}`);
+      if (!m.snippet.includes(q)) throw new Error(`snippet lost ${JSON.stringify(q)}`);
+      if (matchSlide({ blocks: [_seH("H"), _seT("plain text")] }, 0, q.toLowerCase(), null) !== null) throw new Error(`false match for ${JSON.stringify(q)}`);
+      const parts = splitHighlight(`pre ${q} post`, q.toLowerCase());
+      _seEq(parts.filter((p) => p.hit).map((p) => p.t), [q], `highlight of ${JSON.stringify(q)}`);
+    }
+    for (const q of [".", ".*", "a|b", "^", "$"]) if (matchSlide({ blocks: [_seH("H"), _seT("abc")] }, 0, q, null) !== null) throw new Error(`regex semantics for ${q}`);
+    const a = matchSlide({ blocks: [_seH("H"), _seT("🚀".repeat(20) + "a" + "needle" + "b" + "🚀".repeat(30))] }, 0, "needle", null);
+    if (_seLoneSurrogate.test(a.snippet)) throw new Error("snippet cuts a surrogate pair: " + JSON.stringify(a.snippet));
+  }},
+  { name: "SE3: column text (L / R) is found with the canvas render index; nested text gives the top-level block", fn: async () => {
+    const cols = { layout: "cols", blocks: [_seH("Cols")], L: [_seT("left one"), _seT("left two")], R: [_seT("right one")] };
+    _seEq(_sePick(matchSlide(cols, 0, "left two", null)), { kind: "block", area: "L", block: 1, hiddenBlock: false }, "L match");
+    _seEq(_sePick(matchSlide(cols, 0, "right one", null)), { kind: "block", area: "R", block: 0, hiddenBlock: false }, "R match");
+    if (!matchPresentSlide(cols, 0, "right one")) throw new Error("Present does not find column text");
+    const lanes = [{ id: "l", items: [{ id: "c", title: "C", slides: [cols, { blocks: [_seH("N"), _seT("x")], L: [_seT("stray left")] }] }] }];
+    _seEq(searchDeck(lanes, "left two", null).map((r) => r.renderIdx), [2], "L render index");
+    _seEq(searchDeck(lanes, "right one", null).map((r) => r.renderIdx), [3], "R render index");
+    _seEq(searchDeck(lanes, "stray left", null).map((r) => r.renderIdx), [-1], "L on a non-cols slide: no index");
+    _seEq([searchRenderIndex(cols, "X", 0), searchRenderIndex(cols, "L", -1), searchRenderIndex(cols, "blocks", "1"), searchRenderIndex(null, "R", 0)], [-1, -1, -1, -1], "inexact mapping");
+    const nested = { blocks: [_seH("N"), { type: "grid", items: [{ title: "t", body: [{ text: "deep nested word" }] }] }] };
+    _seEq(_sePick(matchSlide(nested, 0, "nested word", null)), { kind: "block", area: "blocks", block: 1, hiddenBlock: false }, "nested");
+  }},
+  { name: "SE4: notes and section names only with their option; empty section gives no row; tree order", fn: async () => {
+    const s = { blocks: [_seH("Has notes")], notes: "speaker zqxnote here" };
+    if (matchSlide(s, 0, "zqxnote", null) !== null || matchPresentSlide(s, 0, "zqxnote") !== null) throw new Error("notes found without the option");
+    _seEq(_sePick(matchSlide(s, 0, "zqxnote", { notes: true })), { kind: "notes", area: null, block: -1, hiddenBlock: false }, "notes on");
+    const lanes = [
+      { id: "l1", items: [
+        { id: "b", title: "Second zqxsec", order: 2, slides: [{ blocks: [_seH("B0")], hidden: true }] },
+        { id: "a", title: "First zqxsec", order: 1, slides: [{ blocks: [_seH("A0")] }, s] },
+        { id: "e", title: "Empty zqxsec", order: 3, slides: [] },
+      ] },
+      { id: "l2", collapsed: true, items: [{ id: "c", title: "Other", order: 1, slides: [{ blocks: [_seH("zqxsec in C")] }] }] },
+    ];
+    _seEq(searchDeck(lanes, "zqxsec", null).map((r) => r.key), ["c:0"], "sections off");
+    _seEq(searchDeck(lanes, "zqxsec", { sections: true }).map((r) => [r.key, r.kind, r.hiddenSlide, r.collapsedLane]),
+      [["a:0", "section", false, false], ["b:0", "section", true, false], ["c:0", "title", false, true]], "sections on, tree order");
+    _seEq(searchDeck(lanes, "zqxnote", null), [], "deck notes off");
+    _seEq(searchDeck(lanes, "zqxnote", { notes: true }).map((r) => [r.key, r.kind, r.renderIdx]), [["a:1", "notes", -1]], "deck notes on");
+  }},
+  { name: "SE5: deep nesting, prototype keys, data: strings and skip keys never match", fn: async () => {
+    let deep = { text: "zqxdeep" }; for (let i = 0; i < 20; i++) deep = { child: deep };
+    const shallow = { type: "card", body: { inner: { text: "zqxshallow" } } };
+    const s = { blocks: [_seH("H"), deep, shallow] };
+    if (matchSlide(s, 0, "zqxdeep", null) !== null) throw new Error("text past the depth cap matched");
+    if (!matchSlide(s, 0, "zqxshallow", null)) throw new Error("text inside the depth cap not found");
+    const parsed = JSON.parse('{"blocks":[{"type":"heading","text":"H"},{"type":"text","text":"x","__proto__":{"t":"zqxproto"},"constructor":"zqxctor","prototype":"zqxproto2"}]}');
+    for (const q of ["zqxproto", "zqxctor", "zqxproto2"]) if (matchSlide(parsed, 0, q, null) !== null) throw new Error(`prototype key matched: ${q}`);
+    if (({}).t !== undefined) throw new Error("Object.prototype was changed");
+    const inh = Object.assign(Object.create({ text: "zqxinherited" }), { type: "text" });
+    if (matchSlide({ blocks: [_seH("H"), inh] }, 0, "zqxinherited", null) !== null) throw new Error("inherited key matched");
+    const media = { blocks: [_seH("H"), { type: "image", src: "zqxsrc", alt: "data:zqxdata", color: "zqxcolor", href: "zqxhref", style: { color: "zqxstyle" }, comments: [{ text: "zqxcomment" }] }] };
+    for (const q of ["zqxsrc", "zqxdata", "zqxcolor", "zqxhref", "zqxstyle", "zqxcomment"]) if (matchSlide(media, 0, q, null) !== null) throw new Error(`skip key matched: ${q}`);
+  }},
+  { name: "SE6: splitHighlight keeps the text and case; length change (U+0130) and surrogate cuts give no highlight", fn: async () => {
+    const chk = (text, q, want, what) => {
+      const parts = splitHighlight(text, q);
+      _seEq(parts.map((p) => (p.hit ? "[" + p.t + "]" : p.t)).join(""), want, what);
+      if (parts.map((p) => p.t).join("") !== (typeof text === "string" ? text : "")) throw new Error(`${what}: text changed`);
+      if (parts.some((p) => _seLoneSurrogate.test(p.t))) throw new Error(`${what}: a part cuts a surrogate pair`);
+    };
+    chk("abc", "x", "abc", "no hit");
+    chk("Hello World", "world", "Hello [World]", "one hit, case kept");
+    chk("aXbXc", "x", "a[X]b[X]c", "many");
+    chk("abab", "ab", "[ab][ab]", "adjacent, start and end");
+    chk("aaa", "aa", "[aa]a", "non-overlapping");
+    chk("", "x", "", "empty text");
+    chk(null, "x", "", "non-string text");
+    chk("abc", "", "abc", "empty query");
+    chk("İstanbul İzmir", "stanbul", "İstanbul İzmir", "U+0130 length change: no highlight");
+    if (!matchSlide({ blocks: [_seH("H"), _seT("İstanbul trip")] }, 0, "stanbul", null)) throw new Error("U+0130 text: the match must still count");
+    chk("😀😁", "\uDE00", "😀😁", "lone low surrogate query");
+    chk("x😀y", "😀", "x[😀]y", "emoji hit");
+    const many = splitHighlight("a".repeat(1000), "a");
+    if (many.filter((p) => p.hit).length !== 50 || many.map((p) => p.t).join("") !== "a".repeat(1000)) throw new Error("maxHits cap");
+  }},
+  { name: "SE7: a 100 000-char string is searched; the snippet stays short; under 50 ms", fn: async () => {
+    const long = "lorem ipsum ".repeat(8400) + "zqxneedle tail";
+    const s = { blocks: [_seH("H"), _seT(long)] };
+    const t0 = performance.now();
+    const m = matchSlide(s, 0, "zqxneedle", null);
+    const parts = splitHighlight(m.snippet, "zqxneedle");
+    const ms = performance.now() - t0;
+    if (!m || !m.snippet.includes("zqxneedle")) throw new Error("needle not found");
+    if (m.snippet.length > 24 + 9 + 36 + 2) throw new Error("snippet too long: " + m.snippet.length);
+    if (parts.filter((p) => p.hit).length !== 1) throw new Error("snippet highlight");
+    if (ms > 50) throw new Error(`long string took ${ms.toFixed(1)} ms`);
+  }},
+  { name: "SE8: 500-slide deck: one search under 50 ms", fn: async () => {
+    const lanes = [];
+    for (let l = 0; l < 5; l++) {
+      const items = [];
+      for (let it = 0; it < 10; it++) {
+        const slides = [];
+        for (let k = 0; k < 10; k++) {
+          const n = (l * 10 + it) * 10 + k;
+          slides.push({ layout: k % 3 === 0 ? "cols" : undefined, blocks: [_seH(`Slide ${n} heading`), _seT(`Body text of slide ${n} with several words in it`), { type: "bullets", items: [`point one ${n}`, `point two ${n}`, { text: `point three ${n}` }] }],
+            L: k % 3 === 0 ? [_seT(`left col ${n}`)] : undefined, R: k % 3 === 0 ? [_seT(`right col ${n}`)] : undefined, notes: `notes ${n}` });
+        }
+        if (l === 4 && it === 9) slides[9].blocks.push(_seT("zqxlastone"));
+        items.push({ id: `i${l}-${it}`, title: `Section ${l}-${it}`, order: it, slides });
+      }
+      lanes.push({ id: `l${l}`, items });
+    }
+    searchDeck(lanes, "warm", { notes: true, sections: true });
+    let worst = 0, rows = null, rare = null;
+    for (const q of ["point", "zqxlastone", "no such text at all"]) {
+      const t0 = performance.now();
+      const r = searchDeck(lanes, q, { notes: true, sections: true });
+      worst = Math.max(worst, performance.now() - t0);
+      if (q === "point") rows = r; if (q === "zqxlastone") rare = r;
+    }
+    if (rows.length !== 500) throw new Error("expected 500 rows for a common word, got " + rows.length);
+    _seEq(rare.map((r) => r.key), ["i4-9:9"], "rare word");
+    if (worst > 50) throw new Error(`500-slide search took ${worst.toFixed(1)} ms (bound 50 ms)`);
+  }},
+]);
+
+// v13.81 Present search keyboard model: first result selected, Up/Down stop at
+// the ends, Enter opens the selected row (detour rows too), count line, the
+// selected row looks different from the current-slide row, Esc clears then closes.
+const _psnInput = () => _$("input[placeholder^='Search slides']");
+const _psnRows = () => _$$("[data-search-row='1']").filter((r) => _hfeTocPanel()?.contains(r));
+const _psnSelIdx = () => _psnRows().findIndex((r) => r.getAttribute("aria-selected") === "true");
+const _psnCount = () => { const a = _$("[data-testid='search-count-pos']"), b = _$("[data-testid='search-count-total']"); return a && b ? `${a.textContent}|${b.textContent}` : null; };
+// Give the first two slides of the first module a known word, then return to slide 1.
+const _psnPrepare = async () => {
+  const past = _hooks().getHistoryCounts().past;
+  const s0 = _pdSel();
+  if (!s0) throw new Error("no module selected");
+  _hooks().injectBlocks([_seH("PSN one"), _seT("alpha zqxnav first")]);
+  await _wait(120);
+  document.activeElement?.blur?.();
+  _key("ArrowRight");
+  await _waitFor(() => { const s = _pdSel(); return s && s.itemId === s0.itemId && s.slideIdx === s0.slideIdx + 1; }, 1500)
+    .catch(() => { throw new Error("the first module needs 2 or more slides"); });
+  _hooks().injectBlocks([_seH("PSN two"), _seT("beta ZQXNAV second")]);
+  await _wait(120);
+  document.activeElement?.blur?.();
+  _key("ArrowLeft");
+  await _waitFor(() => _pdSame(_pdSel(), s0), 1500);
+  return { past, s0 };
+};
+const _psnOpen = async (word) => {
+  _key("e", { ctrlKey: true });
+  await _waitFor(_hfeTocOpen, 2000);
+  await _wait(150);
+  _type(_psnInput(), word);
+  await _wait(120);
+};
+uiSuite("present-search-nav", [
+  { name: "PSN1: first result selected; Down/Up move and stop at the ends; count line; selected differs from current; highlight", fn: async () => {
+    let p = null;
+    try {
+      p = await _psnPrepare();
+      await _pdEnterPresent();
+      await _psnOpen("zqxnav");
+      await _waitFor(() => _psnRows().length === 2, 1500).catch(() => { throw new Error("expected 2 result rows, got " + _psnRows().length); });
+      if (_psnSelIdx() !== 0) throw new Error("the first result is not selected");
+      _seEq(_psnCount(), "1 / 2|2 slides", "count line");
+      const cnt = _$("[data-testid='search-count']");
+      if (parseFloat(getComputedStyle(cnt).fontSize) < 13) throw new Error("count line under 13 px");
+      _key("ArrowUp"); await _wait(60);
+      if (_psnSelIdx() !== 0) throw new Error("ArrowUp at the top moved the selection");
+      _key("ArrowDown"); await _wait(60);
+      if (_psnSelIdx() !== 1) throw new Error("ArrowDown did not select the second result");
+      _seEq(_psnCount(), "2 / 2|2 slides", "count after ArrowDown");
+      _key("ArrowDown"); await _wait(60);
+      if (_psnSelIdx() !== 1) throw new Error("ArrowDown at the end moved the selection");
+      const [cur, sel] = _psnRows();
+      if (cur.style.borderLeft.indexOf("3px solid") < 0 || /transparent/.test(cur.style.borderLeft)) throw new Error("current-slide row lost its left bar");
+      if (cur.style.outlineStyle && cur.style.outlineStyle !== "none") throw new Error("the current (not selected) row has the selection outline");
+      if (!/solid/.test(sel.style.outline || "") || !/transparent/.test(sel.style.borderLeft)) throw new Error("the selected row does not look different from the current row");
+      const hits = sel.querySelectorAll("[data-testid='search-hit']");
+      if (!hits.length || [...hits].some((h) => h.textContent.toLowerCase() !== "zqxnav")) throw new Error("highlight text does not equal the query");
+      if (hits[0].textContent !== "ZQXNAV") throw new Error("highlight does not keep the case");
+      if ([...hits].some((h) => parseFloat(getComputedStyle(h).fontSize) < 13)) throw new Error("highlight under 13 px");
+      _key("ArrowUp"); await _wait(60);
+      if (_psnSelIdx() !== 0) throw new Error("ArrowUp did not move back");
+      _key("ArrowDown"); await _wait(60);
+      _key("Enter");
+      await _waitFor(() => !_hfeTocOpen(), 1500).catch(() => { throw new Error("Enter did not close the panel"); });
+      await _waitFor(() => { const s = _pdSel(); return s && s.itemId === p.s0.itemId && s.slideIdx === p.s0.slideIdx + 1; }, 1500)
+        .catch(() => { throw new Error("Enter did not open the selected (second) result"); });
+      if (_$("header")) throw new Error("Enter left Present");
+    } finally { await _exitFullscreen(); if (p) await _mrdUndoTo(p.past); }
+  }},
+  { name: "PSN2: no matches; Enter does nothing; Esc clears, then closes; Present stays", fn: async () => {
+    try {
+      await _pdEnterPresent();
+      const before = _pdSel();
+      await _psnOpen("zqxnomatch000");
+      await _waitFor(() => _$("[data-testid='search-no-matches']"), 1500).catch(() => { throw new Error("no 'No matches' state"); });
+      _seEq(_psnCount(), "0 / 0|0 slides", "count line with no match");
+      _key("ArrowDown"); _key("Enter"); await _wait(150);
+      if (!_hfeTocOpen() || !_pdSame(_pdSel(), before)) throw new Error("Enter with no result changed something");
+      _key("Escape"); await _wait(120);
+      if (_psnInput().value !== "" || _$("[data-testid='search-count']")) throw new Error("Esc did not clear the query and the count line");
+      if (!_hfeTocOpen()) throw new Error("the first Esc closed the panel");
+      _key("Escape");
+      await _waitFor(() => !_hfeTocOpen(), 1500).catch(() => { throw new Error("the second Esc did not close the panel"); });
+      if (_$("header")) throw new Error("Esc left Present");
+    } finally { await _exitFullscreen(); }
+  }},
+  { name: "PSN3: detour rows come after the normal rows in the same order; Enter on one starts the detour", fn: async () => {
+    let past = null;
+    try {
+      past = await _pdPrepare();
+      _hooks().injectBlocks([_seH("PSN visible"), _seT("visible zqxdetour text")]);
+      await _wait(120);
+      await _pdEnterPresent();
+      await _psnOpen("zqxdetour");
+      await _waitFor(() => _psnRows().length === 2, 1500).catch(() => { throw new Error("expected 1 normal + 1 detour row, got " + _psnRows().length); });
+      const rows = _psnRows();
+      if (rows[0].getAttribute("data-testid") === "toc-detour-row" || rows[1].getAttribute("data-testid") !== "toc-detour-row") throw new Error("detour row is not after the normal row");
+      _key("ArrowDown"); await _wait(60);
+      if (_psnSelIdx() !== 1) throw new Error("ArrowDown did not reach the detour row");
+      _key("Enter");
+      await _waitFor(() => _pdOnSlide("PDBACKUP"), 1500).catch(() => { throw new Error("Enter on the detour row did not show the hidden slide"); });
+      if (_slideCounterEl()) throw new Error("the detour slide shows a slide number");
+    } finally { await _exitFullscreen(); if (past != null) await _mrdUndoTo(past); }
+  }},
+  { name: "PSN4: the selected row scrolls into view", fn: async () => {
+    try {
+      await _pdEnterPresent();
+      await _psnOpen("e");
+      const n = _psnRows().length;
+      if (!n) throw new Error("no results for a one-letter query");
+      for (let i = 0; i < Math.min(n - 1, 40); i++) { _key("ArrowDown"); await _wait(25); }
+      await _wait(150);
+      const sel = _psnRows()[_psnSelIdx()];
+      const box = _hfeTocPanel().querySelector("[data-scroll-container]").getBoundingClientRect(), r = sel.getBoundingClientRect();
+      if (r.top < box.top - 1 || r.bottom > box.bottom + 1) throw new Error(`selected row is out of view (row ${r.top}-${r.bottom}, list ${box.top}-${box.bottom})`);
+      if (_psnSelIdx() !== Math.min(n - 1, 40)) throw new Error("selection index wrong");
+    } finally { await _exitFullscreen(); }
   }},
 ], { setup: _selectFirstModule });
 
