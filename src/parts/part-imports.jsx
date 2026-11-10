@@ -140,7 +140,7 @@ const velaClipboardReadSlides = async () => {
 
 const VELA_VERSION = "13.80";
 const VELA_CHANGELOG = [
-  { v: "13.80", d: ["Session end time: set it from the toolbar or the Presenter View.", "Presenter View: clock, time left and pace guidance (ahead / on pace / behind).", "Present: thin pace bar on the slide edge (T hides it)."] },
+  { v: "13.80", d: ["Session end time: set it from the toolbar or the Presenter View.", "Presenter View: clock, time left and pace guidance (ahead / on pace / behind).", "Present: thin pace bar on the slide edge (T hides it).", "Present: optional clock on the slide (C key)"] },
   { v: "13.79", d: ["Present: Ctrl+E search also matches slide text, with a snippet.", "Present: while typing, search also lists hidden slides and slides in collapsed lanes (a detour).", "Present: after a detour, arrows, wheel or Esc return to the slide you left.", "Present: a detour slide shows no slide number; Presenter view shows where you will return."] },
   { v: "13.78", d: ["Images: up to 10 per slide; overflow goes to a new slide.", "Images: drag image files from your computer onto a slide.", "Images: drag tiles to reorder.", "Story mode: present a slide's images one by one.", "Export: expand story slides to one page per image (PDF/PPTX).", "Text: Ctrl+U underline is saved and shows everywhere (++text++).", "Images: dropped files use the same ordered, safe queue as pasted images.", "Story mode: grid tiles keep a one-line title row, so tiles align.", "Vector PDF: text after bold/italic/underline/link keeps its space and letter spacing.", "Drop: images dropped outside a slide show a hint; a deck file dropped with images still loads.", "Slide toolbar stays on one row; labels change to icons when space is short."] },
   { v: "13.77", d: ["Two-column slides: edits to a column block (link, text, hide, delete) are saved; before, they were lost.", "Link boxes accept a bare domain (example.com) or an email address; before, these were saved as an empty link.", "Desktop: outside edits to decks up to 50 MB now reload live (was 5 MB).", "Present: Esc exits fullscreen, also inside Claude.ai artifacts.", "Esc closes the gallery, presenter view, image zoom or an open dialog first.", "Present toolbar: removed the duplicate gallery icon; presenter view uses a notes icon.", "Image zoom fills the window again (it was limited to the scaled slide).", "Zoom: arrow keys step through the images on the slide; past the first or last image they close the zoom.", "Present toolbar stays faint until you point at it.", "Editor: Ctrl+E toggles the TOC (as in present mode); [ also works with AltGr keyboards."] },
@@ -2758,6 +2758,19 @@ function resolveSessionTimes(startHHMM, endHHMM, base, now) {
 }
 // Dialog base date: the start date of the stored LIVE session, else today.
 const sessionDialogBase = (live, now) => (live && typeof live.start === "number" && Number.isFinite(live.start) ? live.start : now);
+// Dialog Set: null | { keep, session }. When the fields still name the stored
+// LIVE session (to the minute, before the day shift), keep it as it is
+// (keep: true, no state change), so a session in overtime does not move to
+// tomorrow on a Set with no change. Else resolveSessionTimes with `now`.
+function resolveSessionDialogSet(startHHMM, endHHMM, base, now, live) {
+  const r = resolveSessionTimes(startHHMM, endHHMM, base);
+  if (!r) return null;
+  const ses = sanitizeSession(live);
+  const toMin = (ms) => Math.floor(ms / 60000) * 60000;
+  if (ses && r.start === toMin(ses.start) && r.end === toMin(ses.end)) return { keep: true, session: ses };
+  const s = resolveSessionTimes(startHHMM, endHHMM, base, now);
+  return s ? { keep: false, session: s } : null;
+}
 const S = {
   btn: (o = {}) => ({ padding: "3px 8px", fontSize: 10, fontFamily: FONT.mono, fontWeight: 700, background: "transparent", border: `1px solid ${T.border}`, borderRadius: 3, color: T.textDim, cursor: "pointer", ...o }),
   primaryBtn: (o = {}) => ({ padding: "4px 10px", fontSize: 10, fontFamily: FONT.mono, fontWeight: 700, background: T.accent, color: "#fff", border: "none", borderRadius: 3, cursor: "pointer", ...o }),

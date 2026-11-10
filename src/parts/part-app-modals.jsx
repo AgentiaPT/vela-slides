@@ -630,7 +630,8 @@ function SessionEndDialog({ session, stored, lanes, onSet, onClear, onClose }) {
   // Set needs a valid End AND a valid Minutes field (1..1440): an invalid
   // Minutes value (0, 1441) leaves End unchanged, so End alone is not enough.
   const canSet = !!resolved && parseMin(minutes) != null;
-  const set = () => { const r = resolveSessionTimes(start, end, base, openNow); if (r && parseMin(minutes) != null) onSet(r); };
+  // Fields unchanged from the live session: keep it (no day shift, no state change).
+  const set = () => { const r = resolveSessionDialogSet(start, end, base, openNow, live); if (!r || parseMin(minutes) == null) return; if (r.keep) onClose(); else onSet(r.session); };
   const needMin = Math.round(sessionEstimates(presentSequence(lanes)).total / 60);
   const lenMin = resolved ? Math.round((resolved.end - resolved.start) / 60000) : null;
   useEffect(() => {
@@ -716,6 +717,8 @@ function ShortcutHelp({ onClose }) {
       ["F5", "Enter fullscreen (blocks reload)"],
       ["Esc", "Exit fullscreen"],
       ["Ctrl+E", "Toggle slides TOC / search (fullscreen)"],
+      ["C", "Clock on slide (fullscreen)"],
+      ["T", "Pace bar (fullscreen, with a session end)"],
       ["D", "Toggle dark / light theme"],
       ["+ / −", "Scale font up / down"],
       ["0", "Reset font scale"],

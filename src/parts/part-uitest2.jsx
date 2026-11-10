@@ -5644,6 +5644,42 @@ uiSuite("session-review-fixes", [
       if (_sesSig(hooks) !== before) throw new Error(`wheel in the right column changed the slide: ${before} -> ${_sesSig(hooks)}`);
     } finally { if (col) col.style.maxHeight = ""; await _sesUiLeave(); }
   }},
+  { name: "SR6: dialog Set with no change keeps a live session in overtime; a changed time keeps the day-shift rule", fn: async () => {
+    const at = (d, h, m) => new Date(2026, 5, d, h, m).getTime();
+    const live = { start: at(10, 9, 0), end: at(10, 10, 0) };
+    const now = at(10, 10, 2); // 2 min over
+    const base = sessionDialogBase(live, now);
+    _ssEq(resolveSessionDialogSet("09:00", "10:00", base, now, live), { keep: true, session: live }, "no change");
+    _ssEq(resolveSessionDialogSet("09:00", "10:12", base, now, live), { keep: false, session: { start: live.start, end: at(10, 10, 12) } }, "End = now + 10 min is today");
+    _ssEq(resolveSessionDialogSet("09:00", "09:30", base, now, live), { keep: false, session: { start: at(11, 9, 0), end: at(11, 9, 30) } }, "changed to a past End moves to tomorrow");
+    _ssEq(resolveSessionDialogSet("09:00", "10:00", sessionDialogBase(null, now), now, null), { keep: false, session: { start: at(11, 9, 0), end: at(11, 10, 0) } }, "no live session: a past session moves to tomorrow");
+    const sec = { start: live.start + 15000, end: live.end + 42000 }; // compared to the minute; kept with its seconds
+    _ssEq(resolveSessionDialogSet("09:00", "10:00", sessionDialogBase(sec, now), now, sec), { keep: true, session: sec }, "live session with seconds");
+    _ssEq(resolveSessionDialogSet("9:00", "10:00", base, now, live), null, "invalid field");
+    _ssEq(resolveSessionDialogSet("09:00", "10:00", base, now, { start: "x", end: 1 }), { keep: false, session: { start: at(11, 9, 0), end: at(11, 10, 0) } }, "invalid live session is ignored");
+  }},
+  { name: "SR7: session over by 2 min: Set with no change keeps it; End = now + 10 min is today", fn: async () => {
+    const hooks = _sesUiNeedHooks();
+    try {
+      const t = Date.now();
+      const ses = { start: t - 32 * 60000, end: t - 2 * 60000 };
+      hooks.setSessionForTest(ses);
+      await _editorSetup();
+      await _sesTbOpen();
+      _click("[data-testid='session-set']");
+      await _waitFor(() => !_$("[data-testid='session-dialog']"), 1500);
+      _ssEq(hooks.getSessionForTest(), ses, "stored session after Set with no change");
+      await _sesTbOpen();
+      _sesUiSet(_$("[data-testid='session-end-input']"), fmtClock(Date.now() + 10 * 60000));
+      await _wait(80);
+      _click("[data-testid='session-set']");
+      await _waitFor(() => !_$("[data-testid='session-dialog']"), 1500);
+      const s = hooks.getSessionForTest();
+      const left = s ? s.end - Date.now() : NaN;
+      if (!(left > 8 * 60000 && left < 11 * 60000)) throw new Error("End is not today at now + 10 min: " + JSON.stringify(s));
+      if (s.start !== Math.floor(ses.start / 60000) * 60000) throw new Error("Start changed: " + JSON.stringify(s));
+    } finally { await _sesUiLeave(); }
+  }},
 ]);
 
 uiSuite("session-panel-verdict", [
@@ -5836,6 +5872,142 @@ uiSuite("session-bar-geometry", [
     const live = computeSessionPace({ est: [60, 60, 60] }, 0, 0, { start: _SS_T0, end: _SS_T0 + 300000 }, _SS_T0 + 1000);
     const lg = sessionBarGeom(live);
     if (lg.key !== live.paceKey || lg.you !== Math.round(live.youFrac * 10000) / 100) throw new Error("geometry does not follow computeSessionPace");
+  }},
+]);
+
+// ── Present clock chip (v13.80, C key). Each test restores: chip off,
+// storage key removed, session null, Present left.
+const _clkChip = () => _$("[data-testid='present-clock-chip']");
+const _clkBtn = () => _$("[data-testid='present-clock-toggle']");
+const _clkKey = async (opts) => { document.activeElement?.blur(); await _wait(50); _key("c", opts); await _wait(150); };
+const _clkStored = () => { try { return localStorage.getItem(VELA_PRESENT_CLOCK_KEY); } catch { return "no storage"; } };
+const _clkNowOk = (txt) => [Date.now() - 2000, Date.now()].map((t) => fmtClock(t)).includes(txt);
+const _clkLeave = async () => {
+  if (!_sesUiRoot()) await _sesUiPresent().catch(() => {});
+  if (_$("[data-testid='presenter-view']")) { _click("[data-testid='presenter-toggle']"); await _waitFor(() => !_$("[data-testid='presenter-view']"), 1500).catch(() => {}); }
+  if (_$text("GALLERY")) { document.activeElement?.blur(); _key("g"); await _waitFor(() => !_$text("GALLERY"), 1500).catch(() => {}); }
+  if (_clkBtn()?.getAttribute("aria-pressed") === "true") { _click(_clkBtn()); await _waitFor(() => !_clkChip(), 1000).catch(() => {}); }
+  try { localStorage.removeItem(VELA_PRESENT_CLOCK_KEY); } catch {}
+  await _sesUiLeave();
+};
+const _clkOn = async () => { await _clkKey(); return _waitFor(() => _clkChip(), 1500); };
+
+uiSuite("session-clock-chip", [
+  { name: "CK1: off by default; C shows and hides it; HH:MM only without a session; 15 px, no clicks, inside Present", fn: async () => {
+    const hooks = _sesUiNeedHooks();
+    try {
+      hooks.setSessionForTest(null);
+      try { localStorage.removeItem(VELA_PRESENT_CLOCK_KEY); } catch {}
+      await _sesUiPresent();
+      await _wait(200);
+      if (_clkChip()) throw new Error("chip shown by default");
+      const chip = await _clkOn();
+      if (!_sesUiRoot().contains(chip)) throw new Error("chip is not inside the Present root");
+      if (!/^\d\d:\d\d$/.test(chip.textContent) || !_clkNowOk(chip.textContent)) throw new Error("chip text is not the clock: " + chip.textContent);
+      if (_$("[data-testid='present-clock-left']")) throw new Error("time-left part shown without a session");
+      const cs = getComputedStyle(chip);
+      if (parseFloat(cs.fontSize) < 13) throw new Error("chip font below 13 px");
+      if (cs.pointerEvents !== "none") throw new Error("chip takes pointer events");
+      if (_clkStored() !== "1") throw new Error("choice not stored: " + _clkStored());
+      await _clkKey();
+      await _waitFor(() => !_clkChip(), 1500).catch(() => { throw new Error("C did not hide the chip"); });
+      if (_clkStored() !== null) throw new Error("storage key not removed: " + _clkStored());
+      await _exitFullscreen();
+      if (_clkChip()) throw new Error("chip in the editor");
+    } finally { await _clkLeave(); }
+  }},
+  { name: "CK2: Ctrl+C, Cmd+C, Shift+C, Alt+C and C typed in an input do not toggle", fn: async () => {
+    const hooks = _sesUiNeedHooks();
+    let inp = null;
+    try {
+      hooks.setSessionForTest(null);
+      await _sesUiPresent();
+      for (const o of [{ ctrlKey: true }, { metaKey: true }, { shiftKey: true }, { altKey: true }]) {
+        await _clkKey(o);
+        if (_clkChip()) throw new Error("a modified C toggled the chip: " + JSON.stringify(o));
+      }
+      inp = document.createElement("input");
+      _sesUiRoot().appendChild(inp);
+      inp.focus(); await _wait(50);
+      _key("c"); await _wait(150);
+      if (_clkChip()) throw new Error("C typed in an input toggled the chip");
+      inp.remove(); inp = null;
+      await _clkOn();
+    } finally { if (inp) inp.remove(); await _clkLeave(); }
+  }},
+  { name: "CK3: live session: running (time left + colour key), before start, over; stale session -> clock only", fn: async () => {
+    const hooks = _sesUiNeedHooks();
+    try {
+      const t = Date.now();
+      hooks.setSessionForTest({ start: t - 20 * 60000, end: t + 6 * 60000 });
+      await _sesUiPresent();
+      await _clkOn();
+      let left = await _waitFor(() => _$("[data-testid='present-clock-left']"), 1500);
+      if (!/^\d+:\d\d left$/.test(left.textContent)) throw new Error("running text: " + left.textContent);
+      if (_clkChip().dataset.timeKey !== "amber" || getComputedStyle(left).color !== _sesRgb(SESSION_PACE_COLORS.amber)) throw new Error("running colour: " + _clkChip().dataset.timeKey);
+      if (!_clkNowOk(_$("[data-testid='present-clock-time']").textContent)) throw new Error("clock part: " + _$("[data-testid='present-clock-time']").textContent);
+      hooks.setSessionForTest({ start: Date.now() + 5 * 60000, end: Date.now() + 35 * 60000 });
+      left = await _waitFor(() => /^starts in \d+:\d\d$/.test(_$("[data-testid='present-clock-left']")?.textContent || "") && _$("[data-testid='present-clock-left']"), 2000).catch(() => { throw new Error("before text: " + _$("[data-testid='present-clock-left']")?.textContent); });
+      if (_clkChip().dataset.timeKey !== "white") throw new Error("before colour: " + _clkChip().dataset.timeKey);
+      hooks.setSessionForTest({ start: Date.now() - 32 * 60000, end: Date.now() - 2 * 60000 });
+      left = await _waitFor(() => /^\+2:\d\d over$/.test(_$("[data-testid='present-clock-left']")?.textContent || "") && _$("[data-testid='present-clock-left']"), 2000).catch(() => { throw new Error("over text: " + _$("[data-testid='present-clock-left']")?.textContent); });
+      if (_clkChip().dataset.timeKey !== "red" || getComputedStyle(left).color !== _sesRgb(SESSION_PACE_COLORS.red)) throw new Error("over colour: " + _clkChip().dataset.timeKey);
+      hooks.setSessionForTest({ start: Date.now() - 270 * 60000, end: Date.now() - 240 * 60000 });
+      await _waitFor(() => !_$("[data-testid='present-clock-left']") && _clkChip(), 2000).catch(() => { throw new Error("stale session still shows the time-left part"); });
+      if (!/^\d\d:\d\d$/.test(_clkChip().textContent)) throw new Error("stale text: " + _clkChip().textContent);
+    } finally { await _clkLeave(); }
+  }},
+  { name: "CK4: hidden under the Presenter View and the gallery; back when they close", fn: async () => {
+    const hooks = _sesUiNeedHooks();
+    try {
+      hooks.setSessionForTest({ start: Date.now() - 10 * 60000, end: Date.now() + 20 * 60000 });
+      await _sesUiPresent();
+      await _clkOn();
+      await _sesUiOpenPresenter();
+      if (_clkChip()) throw new Error("chip shown with the Presenter View open");
+      _key("s");
+      await _waitFor(() => !_$("[data-testid='presenter-view']") && _clkChip(), 1500).catch(() => { throw new Error("chip not back after the Presenter View"); });
+      document.activeElement?.blur(); await _wait(50);
+      _key("g");
+      await _waitFor(() => _$text("GALLERY"), 5000);
+      if (_clkChip()) throw new Error("chip shown with the gallery open");
+      _key("g");
+      await _waitFor(() => !_$text("GALLERY") && _clkChip(), 2000).catch(() => { throw new Error("chip not back after the gallery"); });
+    } finally { await _clkLeave(); }
+  }},
+  { name: "CK5: hover button toggles the chip and shows the state in aria-pressed; the choice stays when Present is entered again", fn: async () => {
+    const hooks = _sesUiNeedHooks();
+    try {
+      hooks.setSessionForTest(null);
+      await _sesUiPresent();
+      const b = await _waitFor(() => _clkBtn(), 1500);
+      if (b.tagName !== "BUTTON" || b.title !== "Clock on slide (C)" || b.getAttribute("aria-pressed") !== "false") throw new Error("button: " + b.tagName + " | " + b.title + " | " + b.getAttribute("aria-pressed"));
+      _click(b);
+      await _waitFor(() => _clkChip() && _clkBtn().getAttribute("aria-pressed") === "true", 1500).catch(() => { throw new Error("button did not show the chip"); });
+      await _exitFullscreen();
+      await _sesUiPresent();
+      await _waitFor(() => _clkChip(), 1500).catch(() => { throw new Error("choice lost after entering Present again"); });
+      if (_clkStored() !== "1") throw new Error("stored value: " + _clkStored());
+      _click(_clkBtn());
+      await _waitFor(() => !_clkChip() && _clkBtn().getAttribute("aria-pressed") === "false", 1500).catch(() => { throw new Error("button did not hide the chip"); });
+    } finally { await _clkLeave(); }
+  }},
+  { name: "CK6: storage that throws: C still toggles the chip and nothing throws", fn: async () => {
+    const hooks = _sesUiNeedHooks();
+    const P = Storage.prototype, set0 = P.setItem, rm0 = P.removeItem;
+    const errs = [];
+    const onErr = (e) => errs.push(String(e.message || e));
+    window.addEventListener("error", onErr);
+    try {
+      hooks.setSessionForTest(null);
+      await _sesUiPresent();
+      P.setItem = function () { throw new Error("blocked"); };
+      P.removeItem = function () { throw new Error("blocked"); };
+      await _clkOn();
+      await _clkKey();
+      await _waitFor(() => !_clkChip(), 1500).catch(() => { throw new Error("C did not hide the chip with blocked storage"); });
+      if (errs.length) throw new Error("errors: " + errs.join(" | "));
+    } finally { P.setItem = set0; P.removeItem = rm0; window.removeEventListener("error", onErr); await _clkLeave(); }
   }},
 ]);
 

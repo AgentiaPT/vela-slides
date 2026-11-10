@@ -140,7 +140,7 @@ const velaClipboardReadSlides = async () => {
 
 const VELA_VERSION = "13.80";
 const VELA_CHANGELOG = [
-  { v: "13.80", d: ["Session end time: set it from the toolbar or the Presenter View.", "Presenter View: clock, time left and pace guidance (ahead / on pace / behind).", "Present: thin pace bar on the slide edge (T hides it)."] },
+  { v: "13.80", d: ["Session end time: set it from the toolbar or the Presenter View.", "Presenter View: clock, time left and pace guidance (ahead / on pace / behind).", "Present: thin pace bar on the slide edge (T hides it).", "Present: optional clock on the slide (C key)"] },
   { v: "13.79", d: ["Present: Ctrl+E search also matches slide text, with a snippet.", "Present: while typing, search also lists hidden slides and slides in collapsed lanes (a detour).", "Present: after a detour, arrows, wheel or Esc return to the slide you left.", "Present: a detour slide shows no slide number; Presenter view shows where you will return."] },
   { v: "13.78", d: ["Images: up to 10 per slide; overflow goes to a new slide.", "Images: drag image files from your computer onto a slide.", "Images: drag tiles to reorder.", "Story mode: present a slide's images one by one.", "Export: expand story slides to one page per image (PDF/PPTX).", "Text: Ctrl+U underline is saved and shows everywhere (++text++).", "Images: dropped files use the same ordered, safe queue as pasted images.", "Story mode: grid tiles keep a one-line title row, so tiles align.", "Vector PDF: text after bold/italic/underline/link keeps its space and letter spacing.", "Drop: images dropped outside a slide show a hint; a deck file dropped with images still loads.", "Slide toolbar stays on one row; labels change to icons when space is short."] },
   { v: "13.77", d: ["Two-column slides: edits to a column block (link, text, hide, delete) are saved; before, they were lost.", "Link boxes accept a bare domain (example.com) or an email address; before, these were saved as an empty link.", "Desktop: outside edits to decks up to 50 MB now reload live (was 5 MB).", "Present: Esc exits fullscreen, also inside Claude.ai artifacts.", "Esc closes the gallery, presenter view, image zoom or an open dialog first.", "Present toolbar: removed the duplicate gallery icon; presenter view uses a notes icon.", "Image zoom fills the window again (it was limited to the scaled slide).", "Zoom: arrow keys step through the images on the slide; past the first or last image they close the zoom.", "Present toolbar stays faint until you point at it.", "Editor: Ctrl+E toggles the TOC (as in present mode); [ also works with AltGr keyboards."] },
@@ -2758,6 +2758,19 @@ function resolveSessionTimes(startHHMM, endHHMM, base, now) {
 }
 // Dialog base date: the start date of the stored LIVE session, else today.
 const sessionDialogBase = (live, now) => (live && typeof live.start === "number" && Number.isFinite(live.start) ? live.start : now);
+// Dialog Set: null | { keep, session }. When the fields still name the stored
+// LIVE session (to the minute, before the day shift), keep it as it is
+// (keep: true, no state change), so a session in overtime does not move to
+// tomorrow on a Set with no change. Else resolveSessionTimes with `now`.
+function resolveSessionDialogSet(startHHMM, endHHMM, base, now, live) {
+  const r = resolveSessionTimes(startHHMM, endHHMM, base);
+  if (!r) return null;
+  const ses = sanitizeSession(live);
+  const toMin = (ms) => Math.floor(ms / 60000) * 60000;
+  if (ses && r.start === toMin(ses.start) && r.end === toMin(ses.end)) return { keep: true, session: ses };
+  const s = resolveSessionTimes(startHHMM, endHHMM, base, now);
+  return s ? { keep: false, session: s } : null;
+}
 const S = {
   btn: (o = {}) => ({ padding: "3px 8px", fontSize: 10, fontFamily: FONT.mono, fontWeight: 700, background: "transparent", border: `1px solid ${T.border}`, borderRadius: 3, color: T.textDim, cursor: "pointer", ...o }),
   primaryBtn: (o = {}) => ({ padding: "4px 10px", fontSize: 10, fontFamily: FONT.mono, fontWeight: 700, background: T.accent, color: "#fff", border: "none", borderRadius: 3, cursor: "pointer", ...o }),
@@ -9865,6 +9878,9 @@ function useToolbarCompact(ref, key) {
 // Present edge bar (v13.80): the T-key hide choice. Memory only, for the page
 // session; module-level so it survives SlidePanel remounts. Never stored.
 const VELA_SESSION_BAR = { hidden: false };
+// Present clock chip (v13.80): the C-key show choice, kept on this device only
+// (not in the deck). Stored as "1" or absent; a read compares with "1" only.
+const VELA_PRESENT_CLOCK_KEY = "vela-present-clock";
 
 function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, branding, guidelines, isMobile, fontScale, actionsRef, onRibbonUpdate }) {
   const deckEpochRef = useRef(state._deckEpoch);
@@ -10210,6 +10226,14 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
   const sessionDialogOpenRef = useRef(false);
   sessionDialogOpenRef.current = sessionDialogOpen;
   const [sessionBarHidden, setSessionBarHidden] = useState(() => VELA_SESSION_BAR.hidden);
+  // Clock chip on/off. Storage can throw (sandboxed artifact): read and write
+  // in try/catch, and the app works without storage (default off).
+  const [clockOn, setClockOn] = useState(() => { try { return localStorage.getItem(VELA_PRESENT_CLOCK_KEY) === "1"; } catch { return false; } });
+  const toggleClock = () => setClockOn((v) => {
+    const on = !v;
+    try { if (on) localStorage.setItem(VELA_PRESENT_CLOCK_KEY, "1"); else localStorage.removeItem(VELA_PRESENT_CLOCK_KEY); } catch {}
+    return on;
+  });
   const paceItemId = detour ? detour.ret.id : concept.id;
   const sessionSeq = useMemo(() => { const seq = presentSequence(lanes, paceItemId); return { seq, est: sessionEstimates(seq) }; }, [lanes, paceItemId]);
   const paceRawIdx = (() => {
@@ -10835,6 +10859,14 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
           e.preventDefault(); setSessionBarHidden((v) => { VELA_SESSION_BAR.hidden = !v; return !v; }); return;
         }
       }
+      // C → show/hide the clock chip (Present only). No modifiers, so Ctrl/Cmd+C
+      // (slide copy) keeps working; not in a text field; not while a dialog is open.
+      if (fullscreen && (e.key === "c" || e.key === "C") && !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey && VELA_OPEN_CHROME.modals.size === 0 && !sessionDialogOpenRef.current) {
+        const ae = document.activeElement;
+        if (!(ae && (["INPUT", "TEXTAREA", "SELECT"].includes(ae.tagName) || ae.isContentEditable))) {
+          e.preventDefault(); toggleClock(); return;
+        }
+      }
       // S → presenter view toggle (Present mode only)
       if (fullscreen && e.key === "s" && !e.metaKey && !e.ctrlKey && !e.shiftKey && !["INPUT", "TEXTAREA"].includes(document.activeElement?.tagName)) {
         e.preventDefault(); setPresenterView((v) => !v);
@@ -11356,6 +11388,22 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
             <div data-testid="present-session-you" style={{ position: "absolute", bottom: 0, height: 12, width: 4, boxSizing: "border-box", left: `${g.you}%`, transform: `translateX(-${g.you}%)`, background: "#fff", border: "1px solid rgba(0,0,0,0.75)", pointerEvents: "none" }} />
           </div>;
         })()}
+        {/* Clock chip (v13.80, C key): bottom-left twin of the slide-number
+            chip. Static colours only; the text is built from numbers by
+            fmtClock / fmtCountdown (no deck string). With branding on, it sits
+            above the 28 px (virtual) footer strip: in fill mode that strip is
+            at most max(28/960 vw, 28/540 vh) tall. branding.enabled is used as a
+            boolean only; no branding value reaches the chip. */}
+        {clockOn && !showPresenterView && !showGallery && (() => {
+          const branded = !!branding?.enabled && !presSlides[slideIndex]?._virtual;
+          const p = sessionPace;
+          const tk = p ? (Object.prototype.hasOwnProperty.call(SESSION_PACE_COLORS, p.timeLeftKey) ? p.timeLeftKey : "white") : null;
+          const rest = !p ? "" : p.over ? `+${fmtCountdown(p.timeLeftSec)} over` : p.before ? `starts in ${fmtCountdown((sessionLive.start - nowMs) / 1000)}` : `${fmtCountdown(p.timeLeftSec)} left`;
+          return <div data-testid="present-clock-chip" data-time-key={tk || undefined} aria-hidden="true" style={{ position: "absolute", left: 24, bottom: branded ? `calc(max(${(2800 / VIRTUAL_W).toFixed(4)}vw, ${(2800 / VIRTUAL_H).toFixed(4)}vh) + 10px)` : 24, zIndex: 15, pointerEvents: "none", fontFamily: FONT.mono, fontSize: 15, fontWeight: 600, letterSpacing: "0.04em", lineHeight: 1.3, whiteSpace: "nowrap", color: "#e2e8f0", background: "rgba(0,0,0,0.4)", padding: "4px 12px", borderRadius: 20, opacity: 0.85 }}>
+            <span data-testid="present-clock-time">{fmtClock(nowMs)}</span>
+            {p && <><span style={{ color: "#94a3b8" }}>{" · "}</span><span data-testid="present-clock-left" style={{ color: SESSION_PACE_COLORS[tk] }}>{rest}</span></>}
+          </div>;
+        })()}
         {!isMobile && <PresenterTOC slides={presSlides} slideIndex={slideIndex} onJump={(i) => dispatch({ type: "SET_SLIDE_INDEX", index: i })} lanes={lanes} currentConceptId={concept.id} dispatch={dispatch} onDetour={onDetour} />}
                 {fontScale !== 1 && <div style={{ position: "absolute", top: 12, right: 16, fontFamily: FONT.mono, fontSize: 13, fontWeight: 700, color: T.accent, background: T.bgPanel + "e0", padding: "3px 10px", borderRadius: 4, border: `1px solid ${T.accent}40`, zIndex: 20, letterSpacing: "0.05em", pointerEvents: "none" }}>FONT {Math.round(fontScale * 100)}%</div>}
         {improving && <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, padding: "10px 20px", background: "rgba(0,0,0,0.82)", backdropFilter: "blur(6px)", display: "flex", alignItems: "center", gap: 12, zIndex: 20 }}>
@@ -11376,16 +11424,19 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
         {!isMobile && <div data-testid="student-toggle" className="slide-nav-btn" onClick={() => dispatch({ type: "SET_VERA_MODE", mode: isStudent ? "editor" : "student" })} title={isStudent ? "Exit student mode" : "Student mode — Vera teaches"} style={{ position: "absolute", top: 16, right: 52, padding: 8, background: isStudent ? T.accent + "30" : undefined, borderRadius: 6 }}><span style={{ fontSize: 16, color: "#fff" }}>🎓</span></div>}
         {/* Gallery is reached through the view switch (fs-view-switch), so it has no separate icon here. */}
         {!isMobile && <div data-testid="presenter-toggle" className="slide-nav-btn" onClick={() => setPresenterView((v) => !v)} title={showPresenterView ? "Exit presenter view (S)" : "Presenter view — notes, next slide, timer (S)"} style={{ position: "absolute", top: 16, right: 88, padding: 8, background: showPresenterView ? T.accent + "30" : undefined, borderRadius: 6 }}><span style={{ fontSize: 16, color: "#fff" }}>{"\u{1F5D2}\uFE0F"}</span></div>}
+        {/* Clock chip toggle (C). A real button; mousedown keeps focus on the
+            Present root, so Space / Enter still go to slide navigation. */}
+        {!isMobile && <button type="button" data-testid="present-clock-toggle" className="slide-nav-btn" aria-pressed={clockOn} aria-label="Clock on slide (C)" title="Clock on slide (C)" onMouseDown={(e) => e.preventDefault()} onClick={toggleClock} style={{ position: "absolute", top: 16, right: 124, padding: 8, border: "none", borderRadius: 6, display: "flex", background: clockOn ? T.accent + "30" : undefined }}>{getIcon("Clock", { size: 18, color: "#fff" })}</button>}
         {/* Present Edit toggle (Shift+E): restore inline click-to-edit while
             presenting. Uses the Lucide pencil (SVG), NOT the ✏ emoji, so the
             CR-03 "no edit chrome" test still passes when edit mode is off.
             Hidden in student mode, where editing is disabled by design. */}
-        {!isMobile && !isStudent && <div data-testid="present-edit-toggle" className="slide-nav-btn" onClick={() => setPresentEdit((v) => !v)} title={presentEdit ? "Editing on — click text/icons to edit (Shift+E)" : "Edit mode — click text/icons to edit while presenting (Shift+E)"} style={{ position: "absolute", top: 16, right: 124, padding: 8, background: presentEdit ? T.accent + "30" : undefined, borderRadius: 6 }}>{getIcon("edit", { size: 18, color: "#fff" })}</div>}
+        {!isMobile && !isStudent && <div data-testid="present-edit-toggle" className="slide-nav-btn" onClick={() => setPresentEdit((v) => !v)} title={presentEdit ? "Editing on — click text/icons to edit (Shift+E)" : "Edit mode — click text/icons to edit while presenting (Shift+E)"} style={{ position: "absolute", top: 16, right: 160, padding: 8, background: presentEdit ? T.accent + "30" : undefined, borderRadius: 6 }}>{getIcon("edit", { size: 18, color: "#fff" })}</div>}
         {/* CR13: the same view switch as the top bar, left of the icon row. */}
-        {!isMobile && <ViewSwitch testid="fs-view-switch" mode={viewMode} onSet={setView} compact onDark style={{ position: "absolute", top: 16, right: VELA_LOCAL_MODE ? 164 : 200 }} />}
+        {!isMobile && <ViewSwitch testid="fs-view-switch" mode={viewMode} onSet={setView} compact onDark style={{ position: "absolute", top: 16, right: VELA_LOCAL_MODE ? 200 : 236 }} />}
         {/* Browser fullscreen toggle removed — Vela fullscreen (F key / minimize button) is sufficient */}
         {!isMobile && !VELA_LOCAL_MODE && <>
-          <div className="slide-nav-btn" onClick={() => setShowCinemaTip((v) => !v)} title="Cinema mode — fullscreen in browser" style={{ position: "absolute", top: 16, right: 160, padding: 8 }}><VelaIcon size={18} /></div>
+          <div className="slide-nav-btn" onClick={() => setShowCinemaTip((v) => !v)} title="Cinema mode — fullscreen in browser" style={{ position: "absolute", top: 16, right: 196, padding: 8 }}><VelaIcon size={18} /></div>
         </>}
         </div>
         {!isMobile && !VELA_LOCAL_MODE && showCinemaTip && <CinemaTip onClose={() => setShowCinemaTip(false)} />}
@@ -21575,6 +21626,42 @@ uiSuite("session-review-fixes", [
       if (_sesSig(hooks) !== before) throw new Error(`wheel in the right column changed the slide: ${before} -> ${_sesSig(hooks)}`);
     } finally { if (col) col.style.maxHeight = ""; await _sesUiLeave(); }
   }},
+  { name: "SR6: dialog Set with no change keeps a live session in overtime; a changed time keeps the day-shift rule", fn: async () => {
+    const at = (d, h, m) => new Date(2026, 5, d, h, m).getTime();
+    const live = { start: at(10, 9, 0), end: at(10, 10, 0) };
+    const now = at(10, 10, 2); // 2 min over
+    const base = sessionDialogBase(live, now);
+    _ssEq(resolveSessionDialogSet("09:00", "10:00", base, now, live), { keep: true, session: live }, "no change");
+    _ssEq(resolveSessionDialogSet("09:00", "10:12", base, now, live), { keep: false, session: { start: live.start, end: at(10, 10, 12) } }, "End = now + 10 min is today");
+    _ssEq(resolveSessionDialogSet("09:00", "09:30", base, now, live), { keep: false, session: { start: at(11, 9, 0), end: at(11, 9, 30) } }, "changed to a past End moves to tomorrow");
+    _ssEq(resolveSessionDialogSet("09:00", "10:00", sessionDialogBase(null, now), now, null), { keep: false, session: { start: at(11, 9, 0), end: at(11, 10, 0) } }, "no live session: a past session moves to tomorrow");
+    const sec = { start: live.start + 15000, end: live.end + 42000 }; // compared to the minute; kept with its seconds
+    _ssEq(resolveSessionDialogSet("09:00", "10:00", sessionDialogBase(sec, now), now, sec), { keep: true, session: sec }, "live session with seconds");
+    _ssEq(resolveSessionDialogSet("9:00", "10:00", base, now, live), null, "invalid field");
+    _ssEq(resolveSessionDialogSet("09:00", "10:00", base, now, { start: "x", end: 1 }), { keep: false, session: { start: at(11, 9, 0), end: at(11, 10, 0) } }, "invalid live session is ignored");
+  }},
+  { name: "SR7: session over by 2 min: Set with no change keeps it; End = now + 10 min is today", fn: async () => {
+    const hooks = _sesUiNeedHooks();
+    try {
+      const t = Date.now();
+      const ses = { start: t - 32 * 60000, end: t - 2 * 60000 };
+      hooks.setSessionForTest(ses);
+      await _editorSetup();
+      await _sesTbOpen();
+      _click("[data-testid='session-set']");
+      await _waitFor(() => !_$("[data-testid='session-dialog']"), 1500);
+      _ssEq(hooks.getSessionForTest(), ses, "stored session after Set with no change");
+      await _sesTbOpen();
+      _sesUiSet(_$("[data-testid='session-end-input']"), fmtClock(Date.now() + 10 * 60000));
+      await _wait(80);
+      _click("[data-testid='session-set']");
+      await _waitFor(() => !_$("[data-testid='session-dialog']"), 1500);
+      const s = hooks.getSessionForTest();
+      const left = s ? s.end - Date.now() : NaN;
+      if (!(left > 8 * 60000 && left < 11 * 60000)) throw new Error("End is not today at now + 10 min: " + JSON.stringify(s));
+      if (s.start !== Math.floor(ses.start / 60000) * 60000) throw new Error("Start changed: " + JSON.stringify(s));
+    } finally { await _sesUiLeave(); }
+  }},
 ]);
 
 uiSuite("session-panel-verdict", [
@@ -21767,6 +21854,142 @@ uiSuite("session-bar-geometry", [
     const live = computeSessionPace({ est: [60, 60, 60] }, 0, 0, { start: _SS_T0, end: _SS_T0 + 300000 }, _SS_T0 + 1000);
     const lg = sessionBarGeom(live);
     if (lg.key !== live.paceKey || lg.you !== Math.round(live.youFrac * 10000) / 100) throw new Error("geometry does not follow computeSessionPace");
+  }},
+]);
+
+// ── Present clock chip (v13.80, C key). Each test restores: chip off,
+// storage key removed, session null, Present left.
+const _clkChip = () => _$("[data-testid='present-clock-chip']");
+const _clkBtn = () => _$("[data-testid='present-clock-toggle']");
+const _clkKey = async (opts) => { document.activeElement?.blur(); await _wait(50); _key("c", opts); await _wait(150); };
+const _clkStored = () => { try { return localStorage.getItem(VELA_PRESENT_CLOCK_KEY); } catch { return "no storage"; } };
+const _clkNowOk = (txt) => [Date.now() - 2000, Date.now()].map((t) => fmtClock(t)).includes(txt);
+const _clkLeave = async () => {
+  if (!_sesUiRoot()) await _sesUiPresent().catch(() => {});
+  if (_$("[data-testid='presenter-view']")) { _click("[data-testid='presenter-toggle']"); await _waitFor(() => !_$("[data-testid='presenter-view']"), 1500).catch(() => {}); }
+  if (_$text("GALLERY")) { document.activeElement?.blur(); _key("g"); await _waitFor(() => !_$text("GALLERY"), 1500).catch(() => {}); }
+  if (_clkBtn()?.getAttribute("aria-pressed") === "true") { _click(_clkBtn()); await _waitFor(() => !_clkChip(), 1000).catch(() => {}); }
+  try { localStorage.removeItem(VELA_PRESENT_CLOCK_KEY); } catch {}
+  await _sesUiLeave();
+};
+const _clkOn = async () => { await _clkKey(); return _waitFor(() => _clkChip(), 1500); };
+
+uiSuite("session-clock-chip", [
+  { name: "CK1: off by default; C shows and hides it; HH:MM only without a session; 15 px, no clicks, inside Present", fn: async () => {
+    const hooks = _sesUiNeedHooks();
+    try {
+      hooks.setSessionForTest(null);
+      try { localStorage.removeItem(VELA_PRESENT_CLOCK_KEY); } catch {}
+      await _sesUiPresent();
+      await _wait(200);
+      if (_clkChip()) throw new Error("chip shown by default");
+      const chip = await _clkOn();
+      if (!_sesUiRoot().contains(chip)) throw new Error("chip is not inside the Present root");
+      if (!/^\d\d:\d\d$/.test(chip.textContent) || !_clkNowOk(chip.textContent)) throw new Error("chip text is not the clock: " + chip.textContent);
+      if (_$("[data-testid='present-clock-left']")) throw new Error("time-left part shown without a session");
+      const cs = getComputedStyle(chip);
+      if (parseFloat(cs.fontSize) < 13) throw new Error("chip font below 13 px");
+      if (cs.pointerEvents !== "none") throw new Error("chip takes pointer events");
+      if (_clkStored() !== "1") throw new Error("choice not stored: " + _clkStored());
+      await _clkKey();
+      await _waitFor(() => !_clkChip(), 1500).catch(() => { throw new Error("C did not hide the chip"); });
+      if (_clkStored() !== null) throw new Error("storage key not removed: " + _clkStored());
+      await _exitFullscreen();
+      if (_clkChip()) throw new Error("chip in the editor");
+    } finally { await _clkLeave(); }
+  }},
+  { name: "CK2: Ctrl+C, Cmd+C, Shift+C, Alt+C and C typed in an input do not toggle", fn: async () => {
+    const hooks = _sesUiNeedHooks();
+    let inp = null;
+    try {
+      hooks.setSessionForTest(null);
+      await _sesUiPresent();
+      for (const o of [{ ctrlKey: true }, { metaKey: true }, { shiftKey: true }, { altKey: true }]) {
+        await _clkKey(o);
+        if (_clkChip()) throw new Error("a modified C toggled the chip: " + JSON.stringify(o));
+      }
+      inp = document.createElement("input");
+      _sesUiRoot().appendChild(inp);
+      inp.focus(); await _wait(50);
+      _key("c"); await _wait(150);
+      if (_clkChip()) throw new Error("C typed in an input toggled the chip");
+      inp.remove(); inp = null;
+      await _clkOn();
+    } finally { if (inp) inp.remove(); await _clkLeave(); }
+  }},
+  { name: "CK3: live session: running (time left + colour key), before start, over; stale session -> clock only", fn: async () => {
+    const hooks = _sesUiNeedHooks();
+    try {
+      const t = Date.now();
+      hooks.setSessionForTest({ start: t - 20 * 60000, end: t + 6 * 60000 });
+      await _sesUiPresent();
+      await _clkOn();
+      let left = await _waitFor(() => _$("[data-testid='present-clock-left']"), 1500);
+      if (!/^\d+:\d\d left$/.test(left.textContent)) throw new Error("running text: " + left.textContent);
+      if (_clkChip().dataset.timeKey !== "amber" || getComputedStyle(left).color !== _sesRgb(SESSION_PACE_COLORS.amber)) throw new Error("running colour: " + _clkChip().dataset.timeKey);
+      if (!_clkNowOk(_$("[data-testid='present-clock-time']").textContent)) throw new Error("clock part: " + _$("[data-testid='present-clock-time']").textContent);
+      hooks.setSessionForTest({ start: Date.now() + 5 * 60000, end: Date.now() + 35 * 60000 });
+      left = await _waitFor(() => /^starts in \d+:\d\d$/.test(_$("[data-testid='present-clock-left']")?.textContent || "") && _$("[data-testid='present-clock-left']"), 2000).catch(() => { throw new Error("before text: " + _$("[data-testid='present-clock-left']")?.textContent); });
+      if (_clkChip().dataset.timeKey !== "white") throw new Error("before colour: " + _clkChip().dataset.timeKey);
+      hooks.setSessionForTest({ start: Date.now() - 32 * 60000, end: Date.now() - 2 * 60000 });
+      left = await _waitFor(() => /^\+2:\d\d over$/.test(_$("[data-testid='present-clock-left']")?.textContent || "") && _$("[data-testid='present-clock-left']"), 2000).catch(() => { throw new Error("over text: " + _$("[data-testid='present-clock-left']")?.textContent); });
+      if (_clkChip().dataset.timeKey !== "red" || getComputedStyle(left).color !== _sesRgb(SESSION_PACE_COLORS.red)) throw new Error("over colour: " + _clkChip().dataset.timeKey);
+      hooks.setSessionForTest({ start: Date.now() - 270 * 60000, end: Date.now() - 240 * 60000 });
+      await _waitFor(() => !_$("[data-testid='present-clock-left']") && _clkChip(), 2000).catch(() => { throw new Error("stale session still shows the time-left part"); });
+      if (!/^\d\d:\d\d$/.test(_clkChip().textContent)) throw new Error("stale text: " + _clkChip().textContent);
+    } finally { await _clkLeave(); }
+  }},
+  { name: "CK4: hidden under the Presenter View and the gallery; back when they close", fn: async () => {
+    const hooks = _sesUiNeedHooks();
+    try {
+      hooks.setSessionForTest({ start: Date.now() - 10 * 60000, end: Date.now() + 20 * 60000 });
+      await _sesUiPresent();
+      await _clkOn();
+      await _sesUiOpenPresenter();
+      if (_clkChip()) throw new Error("chip shown with the Presenter View open");
+      _key("s");
+      await _waitFor(() => !_$("[data-testid='presenter-view']") && _clkChip(), 1500).catch(() => { throw new Error("chip not back after the Presenter View"); });
+      document.activeElement?.blur(); await _wait(50);
+      _key("g");
+      await _waitFor(() => _$text("GALLERY"), 5000);
+      if (_clkChip()) throw new Error("chip shown with the gallery open");
+      _key("g");
+      await _waitFor(() => !_$text("GALLERY") && _clkChip(), 2000).catch(() => { throw new Error("chip not back after the gallery"); });
+    } finally { await _clkLeave(); }
+  }},
+  { name: "CK5: hover button toggles the chip and shows the state in aria-pressed; the choice stays when Present is entered again", fn: async () => {
+    const hooks = _sesUiNeedHooks();
+    try {
+      hooks.setSessionForTest(null);
+      await _sesUiPresent();
+      const b = await _waitFor(() => _clkBtn(), 1500);
+      if (b.tagName !== "BUTTON" || b.title !== "Clock on slide (C)" || b.getAttribute("aria-pressed") !== "false") throw new Error("button: " + b.tagName + " | " + b.title + " | " + b.getAttribute("aria-pressed"));
+      _click(b);
+      await _waitFor(() => _clkChip() && _clkBtn().getAttribute("aria-pressed") === "true", 1500).catch(() => { throw new Error("button did not show the chip"); });
+      await _exitFullscreen();
+      await _sesUiPresent();
+      await _waitFor(() => _clkChip(), 1500).catch(() => { throw new Error("choice lost after entering Present again"); });
+      if (_clkStored() !== "1") throw new Error("stored value: " + _clkStored());
+      _click(_clkBtn());
+      await _waitFor(() => !_clkChip() && _clkBtn().getAttribute("aria-pressed") === "false", 1500).catch(() => { throw new Error("button did not hide the chip"); });
+    } finally { await _clkLeave(); }
+  }},
+  { name: "CK6: storage that throws: C still toggles the chip and nothing throws", fn: async () => {
+    const hooks = _sesUiNeedHooks();
+    const P = Storage.prototype, set0 = P.setItem, rm0 = P.removeItem;
+    const errs = [];
+    const onErr = (e) => errs.push(String(e.message || e));
+    window.addEventListener("error", onErr);
+    try {
+      hooks.setSessionForTest(null);
+      await _sesUiPresent();
+      P.setItem = function () { throw new Error("blocked"); };
+      P.removeItem = function () { throw new Error("blocked"); };
+      await _clkOn();
+      await _clkKey();
+      await _waitFor(() => !_clkChip(), 1500).catch(() => { throw new Error("C did not hide the chip with blocked storage"); });
+      if (errs.length) throw new Error("errors: " + errs.join(" | "));
+    } finally { P.setItem = set0; P.removeItem = rm0; window.removeEventListener("error", onErr); await _clkLeave(); }
   }},
 ]);
 
@@ -29302,7 +29525,8 @@ function SessionEndDialog({ session, stored, lanes, onSet, onClear, onClose }) {
   // Set needs a valid End AND a valid Minutes field (1..1440): an invalid
   // Minutes value (0, 1441) leaves End unchanged, so End alone is not enough.
   const canSet = !!resolved && parseMin(minutes) != null;
-  const set = () => { const r = resolveSessionTimes(start, end, base, openNow); if (r && parseMin(minutes) != null) onSet(r); };
+  // Fields unchanged from the live session: keep it (no day shift, no state change).
+  const set = () => { const r = resolveSessionDialogSet(start, end, base, openNow, live); if (!r || parseMin(minutes) == null) return; if (r.keep) onClose(); else onSet(r.session); };
   const needMin = Math.round(sessionEstimates(presentSequence(lanes)).total / 60);
   const lenMin = resolved ? Math.round((resolved.end - resolved.start) / 60000) : null;
   useEffect(() => {
@@ -29388,6 +29612,8 @@ function ShortcutHelp({ onClose }) {
       ["F5", "Enter fullscreen (blocks reload)"],
       ["Esc", "Exit fullscreen"],
       ["Ctrl+E", "Toggle slides TOC / search (fullscreen)"],
+      ["C", "Clock on slide (fullscreen)"],
+      ["T", "Pace bar (fullscreen, with a session end)"],
       ["D", "Toggle dark / light theme"],
       ["+ / −", "Scale font up / down"],
       ["0", "Reset font scale"],

@@ -88,6 +88,9 @@ function useToolbarCompact(ref, key) {
 // Present edge bar (v13.80): the T-key hide choice. Memory only, for the page
 // session; module-level so it survives SlidePanel remounts. Never stored.
 const VELA_SESSION_BAR = { hidden: false };
+// Present clock chip (v13.80): the C-key show choice, kept on this device only
+// (not in the deck). Stored as "1" or absent; a read compares with "1" only.
+const VELA_PRESENT_CLOCK_KEY = "vela-present-clock";
 
 function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, branding, guidelines, isMobile, fontScale, actionsRef, onRibbonUpdate }) {
   const deckEpochRef = useRef(state._deckEpoch);
@@ -433,6 +436,14 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
   const sessionDialogOpenRef = useRef(false);
   sessionDialogOpenRef.current = sessionDialogOpen;
   const [sessionBarHidden, setSessionBarHidden] = useState(() => VELA_SESSION_BAR.hidden);
+  // Clock chip on/off. Storage can throw (sandboxed artifact): read and write
+  // in try/catch, and the app works without storage (default off).
+  const [clockOn, setClockOn] = useState(() => { try { return localStorage.getItem(VELA_PRESENT_CLOCK_KEY) === "1"; } catch { return false; } });
+  const toggleClock = () => setClockOn((v) => {
+    const on = !v;
+    try { if (on) localStorage.setItem(VELA_PRESENT_CLOCK_KEY, "1"); else localStorage.removeItem(VELA_PRESENT_CLOCK_KEY); } catch {}
+    return on;
+  });
   const paceItemId = detour ? detour.ret.id : concept.id;
   const sessionSeq = useMemo(() => { const seq = presentSequence(lanes, paceItemId); return { seq, est: sessionEstimates(seq) }; }, [lanes, paceItemId]);
   const paceRawIdx = (() => {
@@ -1058,6 +1069,14 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
           e.preventDefault(); setSessionBarHidden((v) => { VELA_SESSION_BAR.hidden = !v; return !v; }); return;
         }
       }
+      // C → show/hide the clock chip (Present only). No modifiers, so Ctrl/Cmd+C
+      // (slide copy) keeps working; not in a text field; not while a dialog is open.
+      if (fullscreen && (e.key === "c" || e.key === "C") && !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey && VELA_OPEN_CHROME.modals.size === 0 && !sessionDialogOpenRef.current) {
+        const ae = document.activeElement;
+        if (!(ae && (["INPUT", "TEXTAREA", "SELECT"].includes(ae.tagName) || ae.isContentEditable))) {
+          e.preventDefault(); toggleClock(); return;
+        }
+      }
       // S → presenter view toggle (Present mode only)
       if (fullscreen && e.key === "s" && !e.metaKey && !e.ctrlKey && !e.shiftKey && !["INPUT", "TEXTAREA"].includes(document.activeElement?.tagName)) {
         e.preventDefault(); setPresenterView((v) => !v);
@@ -1579,6 +1598,22 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
             <div data-testid="present-session-you" style={{ position: "absolute", bottom: 0, height: 12, width: 4, boxSizing: "border-box", left: `${g.you}%`, transform: `translateX(-${g.you}%)`, background: "#fff", border: "1px solid rgba(0,0,0,0.75)", pointerEvents: "none" }} />
           </div>;
         })()}
+        {/* Clock chip (v13.80, C key): bottom-left twin of the slide-number
+            chip. Static colours only; the text is built from numbers by
+            fmtClock / fmtCountdown (no deck string). With branding on, it sits
+            above the 28 px (virtual) footer strip: in fill mode that strip is
+            at most max(28/960 vw, 28/540 vh) tall. branding.enabled is used as a
+            boolean only; no branding value reaches the chip. */}
+        {clockOn && !showPresenterView && !showGallery && (() => {
+          const branded = !!branding?.enabled && !presSlides[slideIndex]?._virtual;
+          const p = sessionPace;
+          const tk = p ? (Object.prototype.hasOwnProperty.call(SESSION_PACE_COLORS, p.timeLeftKey) ? p.timeLeftKey : "white") : null;
+          const rest = !p ? "" : p.over ? `+${fmtCountdown(p.timeLeftSec)} over` : p.before ? `starts in ${fmtCountdown((sessionLive.start - nowMs) / 1000)}` : `${fmtCountdown(p.timeLeftSec)} left`;
+          return <div data-testid="present-clock-chip" data-time-key={tk || undefined} aria-hidden="true" style={{ position: "absolute", left: 24, bottom: branded ? `calc(max(${(2800 / VIRTUAL_W).toFixed(4)}vw, ${(2800 / VIRTUAL_H).toFixed(4)}vh) + 10px)` : 24, zIndex: 15, pointerEvents: "none", fontFamily: FONT.mono, fontSize: 15, fontWeight: 600, letterSpacing: "0.04em", lineHeight: 1.3, whiteSpace: "nowrap", color: "#e2e8f0", background: "rgba(0,0,0,0.4)", padding: "4px 12px", borderRadius: 20, opacity: 0.85 }}>
+            <span data-testid="present-clock-time">{fmtClock(nowMs)}</span>
+            {p && <><span style={{ color: "#94a3b8" }}>{" · "}</span><span data-testid="present-clock-left" style={{ color: SESSION_PACE_COLORS[tk] }}>{rest}</span></>}
+          </div>;
+        })()}
         {!isMobile && <PresenterTOC slides={presSlides} slideIndex={slideIndex} onJump={(i) => dispatch({ type: "SET_SLIDE_INDEX", index: i })} lanes={lanes} currentConceptId={concept.id} dispatch={dispatch} onDetour={onDetour} />}
                 {fontScale !== 1 && <div style={{ position: "absolute", top: 12, right: 16, fontFamily: FONT.mono, fontSize: 13, fontWeight: 700, color: T.accent, background: T.bgPanel + "e0", padding: "3px 10px", borderRadius: 4, border: `1px solid ${T.accent}40`, zIndex: 20, letterSpacing: "0.05em", pointerEvents: "none" }}>FONT {Math.round(fontScale * 100)}%</div>}
         {improving && <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, padding: "10px 20px", background: "rgba(0,0,0,0.82)", backdropFilter: "blur(6px)", display: "flex", alignItems: "center", gap: 12, zIndex: 20 }}>
@@ -1599,16 +1634,19 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
         {!isMobile && <div data-testid="student-toggle" className="slide-nav-btn" onClick={() => dispatch({ type: "SET_VERA_MODE", mode: isStudent ? "editor" : "student" })} title={isStudent ? "Exit student mode" : "Student mode — Vera teaches"} style={{ position: "absolute", top: 16, right: 52, padding: 8, background: isStudent ? T.accent + "30" : undefined, borderRadius: 6 }}><span style={{ fontSize: 16, color: "#fff" }}>🎓</span></div>}
         {/* Gallery is reached through the view switch (fs-view-switch), so it has no separate icon here. */}
         {!isMobile && <div data-testid="presenter-toggle" className="slide-nav-btn" onClick={() => setPresenterView((v) => !v)} title={showPresenterView ? "Exit presenter view (S)" : "Presenter view — notes, next slide, timer (S)"} style={{ position: "absolute", top: 16, right: 88, padding: 8, background: showPresenterView ? T.accent + "30" : undefined, borderRadius: 6 }}><span style={{ fontSize: 16, color: "#fff" }}>{"\u{1F5D2}\uFE0F"}</span></div>}
+        {/* Clock chip toggle (C). A real button; mousedown keeps focus on the
+            Present root, so Space / Enter still go to slide navigation. */}
+        {!isMobile && <button type="button" data-testid="present-clock-toggle" className="slide-nav-btn" aria-pressed={clockOn} aria-label="Clock on slide (C)" title="Clock on slide (C)" onMouseDown={(e) => e.preventDefault()} onClick={toggleClock} style={{ position: "absolute", top: 16, right: 124, padding: 8, border: "none", borderRadius: 6, display: "flex", background: clockOn ? T.accent + "30" : undefined }}>{getIcon("Clock", { size: 18, color: "#fff" })}</button>}
         {/* Present Edit toggle (Shift+E): restore inline click-to-edit while
             presenting. Uses the Lucide pencil (SVG), NOT the ✏ emoji, so the
             CR-03 "no edit chrome" test still passes when edit mode is off.
             Hidden in student mode, where editing is disabled by design. */}
-        {!isMobile && !isStudent && <div data-testid="present-edit-toggle" className="slide-nav-btn" onClick={() => setPresentEdit((v) => !v)} title={presentEdit ? "Editing on — click text/icons to edit (Shift+E)" : "Edit mode — click text/icons to edit while presenting (Shift+E)"} style={{ position: "absolute", top: 16, right: 124, padding: 8, background: presentEdit ? T.accent + "30" : undefined, borderRadius: 6 }}>{getIcon("edit", { size: 18, color: "#fff" })}</div>}
+        {!isMobile && !isStudent && <div data-testid="present-edit-toggle" className="slide-nav-btn" onClick={() => setPresentEdit((v) => !v)} title={presentEdit ? "Editing on — click text/icons to edit (Shift+E)" : "Edit mode — click text/icons to edit while presenting (Shift+E)"} style={{ position: "absolute", top: 16, right: 160, padding: 8, background: presentEdit ? T.accent + "30" : undefined, borderRadius: 6 }}>{getIcon("edit", { size: 18, color: "#fff" })}</div>}
         {/* CR13: the same view switch as the top bar, left of the icon row. */}
-        {!isMobile && <ViewSwitch testid="fs-view-switch" mode={viewMode} onSet={setView} compact onDark style={{ position: "absolute", top: 16, right: VELA_LOCAL_MODE ? 164 : 200 }} />}
+        {!isMobile && <ViewSwitch testid="fs-view-switch" mode={viewMode} onSet={setView} compact onDark style={{ position: "absolute", top: 16, right: VELA_LOCAL_MODE ? 200 : 236 }} />}
         {/* Browser fullscreen toggle removed — Vela fullscreen (F key / minimize button) is sufficient */}
         {!isMobile && !VELA_LOCAL_MODE && <>
-          <div className="slide-nav-btn" onClick={() => setShowCinemaTip((v) => !v)} title="Cinema mode — fullscreen in browser" style={{ position: "absolute", top: 16, right: 160, padding: 8 }}><VelaIcon size={18} /></div>
+          <div className="slide-nav-btn" onClick={() => setShowCinemaTip((v) => !v)} title="Cinema mode — fullscreen in browser" style={{ position: "absolute", top: 16, right: 196, padding: 8 }}><VelaIcon size={18} /></div>
         </>}
         </div>
         {!isMobile && !VELA_LOCAL_MODE && showCinemaTip && <CinemaTip onClose={() => setShowCinemaTip(false)} />}
