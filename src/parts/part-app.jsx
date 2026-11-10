@@ -635,6 +635,10 @@ export default function App() {
   const [tocWidth, setTocWidth] = useState(() => { try { const v = parseInt(localStorage.getItem("vela-toc-width")); return v >= 160 && v <= 600 ? v : 270; } catch { return 270; } });
   const tocDragRef = useRef(null);
   const prevSelectedRef = useRef(null);
+  // Editor search focus request (Ctrl+E or "/"): EditorSearch reads the ref when
+  // it mounts (list opened) or when the tick changes (list already open).
+  const searchFocusReq = useRef(false);
+  const [searchFocusTick, setSearchFocusTick] = useState(0);
 
   // Auto-switch tabs on select/deselect
   useEffect(() => {
@@ -644,20 +648,32 @@ export default function App() {
     prevSelectedRef.current = state.selectedId;
   }, [state.selectedId, isMobile]);
 
-  // TOC toggle shortcuts: [ (not while typing) and Ctrl/Cmd+E (editor only —
-  // in fullscreen, PresenterTOC owns Ctrl+E). AltGr arrives as Ctrl+Alt, and
-  // PT/ES/DE layouts need AltGr for "[", so Ctrl+Alt+[ still counts as "[".
+  // TOC shortcuts: [ (not while typing) toggles the list. Ctrl/Cmd+E and "/"
+  // (editor only — in fullscreen, PresenterTOC owns Ctrl+E) open the list if it
+  // is collapsed and focus the search field; Ctrl+E in the field collapses the
+  // list (EditorSearch handles it there, the event does not reach this handler).
+  // AltGr arrives as Ctrl+Alt, and PT/ES/DE layouts need AltGr for "[", so
+  // Ctrl+Alt+[ still counts as "[".
+  const hasSections = state.lanes.some((l) => l.items.length > 0);
   useEffect(() => {
     if (isMobile) return;
     const h = (e) => {
       const typing = ["INPUT","TEXTAREA","SELECT"].includes(e.target.tagName) || e.target.isContentEditable;
       const bracket = e.key === "[" && !e.metaKey && (!e.ctrlKey || e.altKey) && !typing;
       const ctrlE = (e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && (e.key === "e" || e.key === "E") && !state.fullscreen && !typing;
-      if (bracket || ctrlE) { e.preventDefault(); setTocCollapsed((c) => !c); }
+      const slash = e.key === "/" && !e.ctrlKey && !e.metaKey && !e.altKey && !state.fullscreen && !typing && hasSections;
+      if (bracket) { e.preventDefault(); setTocCollapsed((c) => !c); return; }
+      if (ctrlE || slash) {
+        e.preventDefault();
+        if (!hasSections) return; // no list, no field
+        searchFocusReq.current = true;
+        setTocCollapsed(false);
+        setSearchFocusTick((t) => t + 1);
+      }
     };
     window.addEventListener("keydown", h);
     return () => window.removeEventListener("keydown", h);
-  }, [isMobile, state.fullscreen]);
+  }, [isMobile, state.fullscreen, hasSections]);
 
   // Theme toggle shortcut: D
   useEffect(() => {
@@ -1022,6 +1038,18 @@ export default function App() {
   let selectedConcept = null;
   for (const l of state.lanes) { const f = l.items.find((i) => i.id === state.selectedId); if (f) { selectedConcept = f; break; } }
   const total = state.lanes.reduce((s, l) => s + l.items.length, 0);
+  // Open an editor search result: select its section and slide; unfold the
+  // section if it is folded, so the slide row shows when the query is cleared.
+  // All three actions are in NO_HISTORY: no undo step, no deck change. The
+  // matched block's render index goes to SlidePanel (flashBlock), which may
+  // outline that block; -1 = title / notes / section match, no block.
+  const openSearchResult = (row) => {
+    if (Array.isArray(state.collapsedSections) && state.collapsedSections.includes(row.sectionId))
+      dispatch({ type: "SET_SECTION_COLLAPSED", id: row.sectionId, collapsed: false });
+    if (row.sectionId !== state.selectedId) dispatch({ type: "SELECT", id: row.sectionId, slideIndex: row.slideIdx });
+    else dispatch({ type: "SET_SLIDE_INDEX", index: row.slideIdx });
+    if (row.renderIdx >= 0) slideActionsRef.current?.flashBlock?.(row.sectionId, row.slideIdx, row.renderIdx);
+  };
   // Presentation totals exclude hidden slides; "…All" variants include them (for the stats dialog).
   const deckTime = state.lanes.reduce((s, l) => s + l.items.reduce((a, i) => a + sumVisibleDurations(i.slides), 0), 0);
   const deckTimeAll = state.lanes.reduce((s, l) => s + l.items.reduce((a, i) => a + sumDurations(i.slides), 0), 0);
@@ -1260,7 +1288,9 @@ export default function App() {
               </div>
             </div>
           )}
-          {total > 0 && <ModuleList lanes={state.lanes} selectedId={state.selectedId} slideIndex={state.slideIndex} selectedSlideIndices={state.selectedSlideIndices} collapsedSections={state.collapsedSections} dispatch={dispatch} maxModuleTime={maxModuleTime} guidelines={state.guidelines} reviewMode={state.reviewMode} deckEpoch={state._deckEpoch} />}
+          {total > 0 && <EditorSearch lanes={state.lanes} selectedId={state.selectedId} slideIndex={state.slideIndex} fullscreen={state.fullscreen} isMobile={isMobile} focusReq={searchFocusReq} focusTick={searchFocusTick} onCollapse={() => setTocCollapsed(true)} onOpenResult={openSearchResult}>
+            <ModuleList lanes={state.lanes} selectedId={state.selectedId} slideIndex={state.slideIndex} selectedSlideIndices={state.selectedSlideIndices} collapsedSections={state.collapsedSections} dispatch={dispatch} maxModuleTime={maxModuleTime} guidelines={state.guidelines} reviewMode={state.reviewMode} deckEpoch={state._deckEpoch} />
+          </EditorSearch>}
         </div>}
 
         {/* TOC toggle */}

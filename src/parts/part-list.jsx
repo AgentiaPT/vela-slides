@@ -757,7 +757,7 @@ function ConceptRow({ item, selected, laneId, dispatch, maxTime, globalMaxSlideD
         <span onClick={(e) => { e.stopPropagation(); onToggleCollapse(e.ctrlKey || e.metaKey); }} aria-label={`${collapsed ? "Expand" : "Collapse"} section ${item.title}`} title="Click to collapse this section · Ctrl/Cmd-click to collapse or expand all" style={{ fontSize: 10, color: T.textDim, transition: "transform .15s", transform: collapsed ? "rotate(-90deg)" : "rotate(0)", cursor: "pointer", flexShrink: 0, width: 12, textAlign: "center" }}>▼</span>
         <div className="imp-dot" onClick={(e) => { e.stopPropagation(); const cycle = { must: "should", should: "nice", nice: "must" }; dispatch({ type: "SET_IMPORTANCE", id: item.id, importance: cycle[item.importance || "should"] }); }} style={{ background: IMP[item.importance || "should"].dot, cursor: "pointer" }} title={`Priority: ${IMP[item.importance || "should"].label} (click to cycle)`} />
         {editing ? <input autoFocus value={title} onChange={(e) => setTitle(e.target.value)} onFocus={(e) => e.target.select()} placeholder="Section name" onKeyDown={(e) => { if (e.key === "Enter") commitRename(); if (e.key === "Escape") setEditing(false); }} onBlur={commitRename} onClick={(e) => e.stopPropagation()} style={S.input({ padding: "2px 6px", border: `1px solid ${T.borderLight}` })} />
-          : <span onDoubleClick={startRename} style={{ flex: 1, fontSize: 14, fontFamily: FONT.body, color: T.text, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.title}</span>}
+          : <span data-testid="toc-section-title" onDoubleClick={startRename} style={{ flex: 1, fontSize: 14, fontFamily: FONT.body, color: T.text, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.title}</span>}
         {showMarker && <span data-testid="toc-collapsed-marker" title={`Current slide ${markerK} of ${item.slides.length} (section collapsed)`} style={{ fontSize: 9, fontFamily: FONT.mono, fontWeight: 700, color: T.accent, background: T.accent + "1f", borderRadius: 8, padding: "0 5px", minWidth: 14, textAlign: "center", flexShrink: 0, lineHeight: "16px" }}>{markerK} / {item.slides.length}</span>}
         {reviewMode && openCommentCount > 0 && <span style={{ fontSize: 9, fontFamily: FONT.mono, fontWeight: 700, color: "#fff", background: T.amber, borderRadius: 8, padding: "0 4px", minWidth: 14, textAlign: "center", flexShrink: 0, lineHeight: "16px" }}>{openCommentCount}</span>}
         {reviewMode && <span onClick={(e) => { e.stopPropagation(); setNotesOpen(!notesOpen); }} title={notesOpen ? "Hide comments" : "Show comments"} style={{ fontSize: 10, cursor: "pointer", flexShrink: 0, opacity: (openCommentCount > 0 || hasNotes) ? 1 : 0.3, color: (openCommentCount > 0 || hasNotes) ? T.accent : T.textDim, lineHeight: 1 }}>💬</span>}
@@ -804,6 +804,147 @@ function ConceptRow({ item, selected, laneId, dispatch, maxTime, globalMaxSlideD
           empty-section bug). It renders just the add row when there are no slides. */}
       {!collapsed && <SlideListWithAdder item={item} selected={selected} slideIndex={slideIndex} selectedSlideIndices={selectedSlideIndices} lanes={lanes} dispatch={dispatch} guidelines={guidelines} globalMaxSlideDur={globalMaxSlideDur} slideOffset={slideOffset || 0} slideTimeOffset={slideTimeOffset || 0} laneId={laneId} treeNav={treeNav} deckEpoch={deckEpoch} />}
     </div>
+  );
+}
+
+// ━━━ Editor search ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Search field at the top of the editor slide list (Ctrl+E or "/"). While a
+// query is typed, result rows show in place of the tree. The tree (children)
+// stays mounted with display:none, so ModuleList keeps its state. Shared engine
+// (searchDeck / useSearchNav / SearchResultRow) in part-slides.jsx. Deck text is
+// rendered only as React text (HighlightText); no deck value reaches a style,
+// URL or attribute. Not rendered in Present: the list panel stays mounted under
+// the Present overlay, and the Present field is found by its placeholder.
+function EditorSearch({ lanes, selectedId, slideIndex, fullscreen, isMobile, focusReq, focusTick, onCollapse, onOpenResult, children }) {
+  const [query, setQuery] = useState("");
+  const q = query.toLowerCase().trim();
+  const rows = useMemo(() => searchDeck(lanes, q, { notes: true, sections: true }), [lanes, q]);
+  const boxRef = useRef(null);
+  const inputRef = useRef(null);
+  const treeRef = useRef(null);
+  const savedTop = useRef(0);   // tree scroll position when the query started
+  const opened = useRef(false); // a result was opened during this query
+  const scroller = () => boxRef.current?.parentElement || null;
+  const open = (i) => {
+    const r = rows[i];
+    if (!r) return;
+    opened.current = true;
+    onOpenResult(r);
+  };
+  const nav = useSearchNav(rows.length, q, {
+    onOpen: open,
+    onEscape: () => { if (query) setQuery(""); else inputRef.current?.blur(); },
+  });
+  // App asks for focus (Ctrl+E or "/"): on mount after the list opens, or on a tick.
+  useEffect(() => {
+    if (!focusReq?.current || !inputRef.current) return;
+    focusReq.current = false;
+    inputRef.current.focus();
+    inputRef.current.select();
+  }, [focusTick, fullscreen]);
+  // Rows that scroll into view must not end under the sticky field.
+  useEffect(() => {
+    const box = boxRef.current, sc = scroller();
+    if (!box || !sc || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(() => { sc.style.scrollPaddingTop = box.offsetHeight + "px"; });
+    ro.observe(box);
+    return () => { ro.disconnect(); sc.style.scrollPaddingTop = ""; };
+  }, [fullscreen]);
+  // Query starts: results from the top. Query cleared: show the opened slide row
+  // (its scroll effect ran while the tree was hidden), else the old position.
+  const hasQ = !!q;
+  const hadQ = useRef(false);
+  useEffect(() => {
+    if (hasQ === hadQ.current) return;
+    hadQ.current = hasQ;
+    const sc = scroller();
+    if (hasQ) { if (sc) sc.scrollTop = 0; return; }
+    const wasOpened = opened.current;
+    opened.current = false;
+    requestAnimationFrame(() => {
+      const t = treeRef.current;
+      const row = wasOpened && t && (t.querySelector("[data-testid='toc-slide-row'][aria-selected='true']") || t.querySelector(".concept-row.selected"));
+      if (row) row.scrollIntoView({ block: "nearest" });
+      else if (sc) sc.scrollTop = savedTop.current;
+    });
+  }, [hasQ]);
+  const onChange = (e) => {
+    const v = e.target.value;
+    if (!q && v.trim()) { const sc = scroller(); savedTop.current = sc ? sc.scrollTop : 0; }
+    setQuery(v);
+  };
+  const onKeyDown = (e) => {
+    // Ctrl/Cmd+E in the field: collapse the list (third state of the toggle).
+    // Without a selected section the list cannot collapse: leave the field only.
+    if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && (e.key === "e" || e.key === "E")) {
+      e.preventDefault(); e.stopPropagation();
+      inputRef.current?.blur();
+      if (selectedId) onCollapse();
+      return;
+    }
+    // Every other key stays in the field: no editor shortcut (slide delete,
+    // copy/paste, undo, arrows, f, e, n, g ...) may fire while the user types.
+    e.stopPropagation();
+    if (e.nativeEvent?.isComposing) return; // IME: Enter confirms the text
+    nav.onKey(e);
+  };
+  const clear = () => { setQuery(""); inputRef.current?.focus(); };
+  // One tree shape in every state, so children (ModuleList) never remount.
+  const show = !!q && !fullscreen;
+  let prevSection = null;
+  // The list panel has 8px top padding. marginTop -8 puts the field at the panel
+  // top edge; top -8 keeps it there when it sticks (sticky offsets count from
+  // inside that padding). With top 0 the stuck field moved down 8px and covered
+  // the first row. The opaque T.bg hides the rows that scroll under it.
+  return (
+    <>
+      {!fullscreen && <div ref={boxRef} data-testid="editor-search" style={{ position: "sticky", top: -8, zIndex: 3, background: T.bg, marginTop: -8, padding: "8px 10px 6px" }}>
+        <div style={{ position: "relative" }}>
+          <Search size={13} color={T.textDim} style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", pointerEvents: "none" }} />
+          <input
+            ref={inputRef}
+            data-testid="editor-search-input"
+            value={query}
+            onChange={onChange}
+            onKeyDown={onKeyDown}
+            placeholder={isMobile ? "Search slides…" : "Search slides… (Ctrl+E)"}
+            aria-label="Search slides"
+            aria-controls={q ? "editor-search-results" : undefined}
+            style={{
+              width: "100%", padding: "6px 30px 6px 30px", fontSize: 13, fontFamily: FONT.body,
+              background: T.bgInput, border: `1px solid ${T.border}`,
+              borderRadius: 6, color: T.text, outline: "none", boxSizing: "border-box",
+            }}
+          />
+          {query && <button data-testid="editor-search-clear" aria-label="Clear search" onMouseDown={(e) => e.preventDefault()} onClick={clear}
+            style={{ position: "absolute", right: 4, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", color: T.textDim, fontSize: 13, lineHeight: 1, padding: "4px 6px" }}>✕</button>}
+        </div>
+        {q && <div data-testid="editor-search-count" style={{ display: "flex", justifyContent: "space-between", padding: "6px 4px 0", fontFamily: FONT.mono, fontSize: 13, color: T.textDim }}>
+          <span data-testid="editor-search-count-pos">{rows.length ? nav.sel + 1 : 0} / {rows.length}</span>
+          <span data-testid="editor-search-count-total">{rows.length} {rows.length === 1 ? "slide" : "slides"}</span>
+        </div>}
+      </div>}
+      <div ref={treeRef} style={{ display: show ? "none" : undefined }}>{children}</div>
+      {show && <div id="editor-search-results" role="listbox" aria-label="Search results" data-testid="editor-search-results" onMouseDown={(e) => e.preventDefault()}>
+        {rows.map((r, i) => {
+          const head = r.sectionId !== prevSection;
+          prevSection = r.sectionId;
+          const selected = i === nav.sel;
+          return <React.Fragment key={r.key}>
+            {head && <div data-testid="editor-search-section" style={{ padding: "8px 16px 2px", fontFamily: FONT.mono, fontSize: 13, fontWeight: 700, letterSpacing: "0.04em", textTransform: "uppercase", color: r.sectionId === selectedId ? T.accent : T.textDim, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}><HighlightText text={r.sectionTitle} q={q} /></div>}
+            <SearchResultRow
+              rowRef={(el) => { if (selected) nav.selRef.current = el; }}
+              testid="editor-search-row"
+              onClick={() => { nav.setSel(i); open(i); inputRef.current?.focus(); }}
+              title={r.title} snippet={r.snippet} kind={r.kind} hiddenBlock={r.kind === "hidden-block"} hiddenSlide={r.hiddenSlide} q={q}
+              selected={selected} active={r.sectionId === selectedId && r.slideIdx === slideIndex} muted
+              num={r.slideIdx + 1} size="editor"
+            />
+          </React.Fragment>;
+        })}
+        {!rows.length && <div data-testid="editor-search-no-matches" style={{ padding: "20px 16px", fontFamily: FONT.body, fontSize: 13, color: T.textDim, textAlign: "center" }}>No matches</div>}
+      </div>}
+    </>
   );
 }
 

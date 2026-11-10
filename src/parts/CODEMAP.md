@@ -97,6 +97,7 @@ that symbol in the named part for the line. No line numbers here — they rot.
 - Add Menu (blank / AI / section): AddMenu
 - Slide List with AI Adder: SlideListWithAdder
 - Concept Row: ConceptRow
+- Editor search: EditorSearch
 - Module List (flat — no lane headers): ModuleList
 
 ### part-chat.jsx
@@ -135,7 +136,7 @@ that symbol in the named part for the line. No line numbers here — they rot.
 - Bug-hunt round 1 fixes: image paste and placement: _h1Heavy _h1CellWidths _h1Imgs _h1Paste _h1Heading
 - WP7: Ctrl+U underline is saved as ++text++ and shows underlined: _ulSaved _ulOpenEditor
 - WP5: story images, image file drop, tile reorder: _wp5Sel _wp5Key _wp5Deck _wp5Fs _wp5Cur _wp5ImgSrcs _wp5Imgs _wp5Inject _wp5UndoTo _wp5Enter _wp5Exit _wp5Layer _wp5CurThumb _wp5ZoomedAt _wp5Grid _wp5Step _wp5OnSlide _wp5Toast _wp5Drop _wp5Aspect _wp5NoBlob
-- WP5b: story steps by wheel and swipe, Preview, phone layout, large images: _wp5bFsEl _wp5bWheel _wp5bState _wp5bWheelStep _wp5bTouch _wp5bSwipe _wp5bSwipeStep _wp5bHold _wp5bPhone _wp5bInside _wp5bOverlap _wp5bBox _wp5bBig _wp5bLayerImg _tbEl _tbButtons _tbOneRow _tbAtWidth _pdSel _pdOnSlide _pdSame _pdPrepare _pdEnterPresent _pdJump _seEq _seLoneSurrogate _seH _seT _sePick _psnInput _psnRows _psnSelIdx _psnCount _psnPrepare _psnOpen
+- WP5b: story steps by wheel and swipe, Preview, phone layout, large images: _wp5bFsEl _wp5bWheel _wp5bState _wp5bWheelStep _wp5bTouch _wp5bSwipe _wp5bSwipeStep _wp5bHold _wp5bPhone _wp5bInside _wp5bOverlap _wp5bBox _wp5bBig _wp5bLayerImg _tbEl _tbButtons _tbOneRow _tbAtWidth _pdSel _pdOnSlide _pdSame _pdPrepare _pdEnterPresent _pdJump _seEq _seLoneSurrogate _seH _seT _sePick _psnInput _psnRows _psnSelIdx _psnCount _psnPrepare _psnOpen _esInput _esRows _esSelIdx _esCount _esTreeShown _esFocused _esPast _esType _esPress _esClear _esShowToc _esStart _esEnd
 - Session end (v13.80): sanitizer, pace math, deck ingress: _SS_T0 _ssEq _ssNoNaN _ssSeq _ssSes
 - Session end: Present-side UI (v13.80, P2): _sesUiRoot _sesUiPresent _sesUiLeave _sesUiSet _sesUiOpenPresenter _sesUiNeedHooks
 - Session end: editor toolbar, dialog, live ingress, bar geometry (v13.80, P3): _sesTbBtn _sesTbIs _sesTbDesc _sesTbOpen _sesSecs _sesShape _sesRgb _sesImport
@@ -281,7 +282,7 @@ keyboard ternaries) or are currently unused — check before assuming a UI exist
 - SET_ITEM_NOTES: (no direct dispatch site)
 - SET_LOADING: part-chat.jsx
 - SET_REVIEW_MODE: part-app-modals.jsx part-app.jsx part-demo.jsx part-slidepanel.jsx
-- SET_SECTION_COLLAPSED: part-demo.jsx part-list.jsx
+- SET_SECTION_COLLAPSED: part-app.jsx part-demo.jsx part-list.jsx
 - SET_SESSION: part-app.jsx part-slidepanel.jsx
 - SET_SLIDES: (no direct dispatch site)
 - SET_SLIDE_INDEX: part-app.jsx part-chat.jsx part-list.jsx part-slidepanel.jsx part-slides.jsx
@@ -346,9 +347,9 @@ add_lane add_item batch_add_items remove_item remove_lane rename_item rename_lan
 - part-uitest.jsx: 616-line unbannered stretch after line 1230
 - part-uitest2.jsx: 448-line unbannered stretch after line 2
 - part-uitest2.jsx: 593-line unbannered stretch after line 1457
-- part-uitest2.jsx: 837-line unbannered stretch after line 2323
-- part-uitest2.jsx: 376-line unbannered stretch after line 4088
-- part-uitest2.jsx: 727-line unbannered stretch after line 4464
+- part-uitest2.jsx: 853-line unbannered stretch after line 2323
+- part-uitest2.jsx: 376-line unbannered stretch after line 4104
+- part-uitest2.jsx: 1004-line unbannered stretch after line 4480
 - part-demo.jsx: 407-line unbannered stretch after line 510
 - part-demo.jsx: 373-line unbannered stretch after line 917
 - part-pdf.jsx: 414-line unbannered stretch after line 582
@@ -356,4 +357,4 @@ add_lane add_item batch_add_items remove_item remove_lane rename_item rename_lan
 - part-pdf-vector.jsx: 490-line unbannered stretch after line 459
 - part-pdf-vector.jsx: 551-line unbannered stretch after line 1214
 - part-pptx.jsx: no level-1 banners (1191 lines)
-- part-app.jsx: 356-line unbannered stretch after line 1033
+- part-app.jsx: 358-line unbannered stretch after line 1061

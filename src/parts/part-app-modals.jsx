@@ -709,7 +709,11 @@ function ShortcutHelp({ onClose }) {
       ["Space", "Next slide (same as →)"],
       ["↑ ↓", "Previous / next module"],
       ["", "Auto-crosses lane boundaries"],
-      ["[ / Ctrl+E", "Toggle navigator panel"],
+      ["[", "Toggle navigator panel"],
+      ["Ctrl+E", "Search slides (again: hide navigator)"],
+      ["/", "Search slides"],
+      ["↑ ↓ Enter", "Move through / open search results"],
+      ["Esc", "Clear search, then leave the field"],
       ["G", "Toggle gallery view"],
     ]},
     { title: "Presentation", items: [

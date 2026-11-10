@@ -12680,7 +12680,7 @@ function ConceptRow({ item, selected, laneId, dispatch, maxTime, globalMaxSlideD
         <span onClick={(e) => { e.stopPropagation(); onToggleCollapse(e.ctrlKey || e.metaKey); }} aria-label={`${collapsed ? "Expand" : "Collapse"} section ${item.title}`} title="Click to collapse this section · Ctrl/Cmd-click to collapse or expand all" style={{ fontSize: 10, color: T.textDim, transition: "transform .15s", transform: collapsed ? "rotate(-90deg)" : "rotate(0)", cursor: "pointer", flexShrink: 0, width: 12, textAlign: "center" }}>▼</span>
         <div className="imp-dot" onClick={(e) => { e.stopPropagation(); const cycle = { must: "should", should: "nice", nice: "must" }; dispatch({ type: "SET_IMPORTANCE", id: item.id, importance: cycle[item.importance || "should"] }); }} style={{ background: IMP[item.importance || "should"].dot, cursor: "pointer" }} title={`Priority: ${IMP[item.importance || "should"].label} (click to cycle)`} />
         {editing ? <input autoFocus value={title} onChange={(e) => setTitle(e.target.value)} onFocus={(e) => e.target.select()} placeholder="Section name" onKeyDown={(e) => { if (e.key === "Enter") commitRename(); if (e.key === "Escape") setEditing(false); }} onBlur={commitRename} onClick={(e) => e.stopPropagation()} style={S.input({ padding: "2px 6px", border: `1px solid ${T.borderLight}` })} />
-          : <span onDoubleClick={startRename} style={{ flex: 1, fontSize: 14, fontFamily: FONT.body, color: T.text, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.title}</span>}
+          : <span data-testid="toc-section-title" onDoubleClick={startRename} style={{ flex: 1, fontSize: 14, fontFamily: FONT.body, color: T.text, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.title}</span>}
         {showMarker && <span data-testid="toc-collapsed-marker" title={`Current slide ${markerK} of ${item.slides.length} (section collapsed)`} style={{ fontSize: 9, fontFamily: FONT.mono, fontWeight: 700, color: T.accent, background: T.accent + "1f", borderRadius: 8, padding: "0 5px", minWidth: 14, textAlign: "center", flexShrink: 0, lineHeight: "16px" }}>{markerK} / {item.slides.length}</span>}
         {reviewMode && openCommentCount > 0 && <span style={{ fontSize: 9, fontFamily: FONT.mono, fontWeight: 700, color: "#fff", background: T.amber, borderRadius: 8, padding: "0 4px", minWidth: 14, textAlign: "center", flexShrink: 0, lineHeight: "16px" }}>{openCommentCount}</span>}
         {reviewMode && <span onClick={(e) => { e.stopPropagation(); setNotesOpen(!notesOpen); }} title={notesOpen ? "Hide comments" : "Show comments"} style={{ fontSize: 10, cursor: "pointer", flexShrink: 0, opacity: (openCommentCount > 0 || hasNotes) ? 1 : 0.3, color: (openCommentCount > 0 || hasNotes) ? T.accent : T.textDim, lineHeight: 1 }}>💬</span>}
@@ -12727,6 +12727,147 @@ function ConceptRow({ item, selected, laneId, dispatch, maxTime, globalMaxSlideD
           empty-section bug). It renders just the add row when there are no slides. */}
       {!collapsed && <SlideListWithAdder item={item} selected={selected} slideIndex={slideIndex} selectedSlideIndices={selectedSlideIndices} lanes={lanes} dispatch={dispatch} guidelines={guidelines} globalMaxSlideDur={globalMaxSlideDur} slideOffset={slideOffset || 0} slideTimeOffset={slideTimeOffset || 0} laneId={laneId} treeNav={treeNav} deckEpoch={deckEpoch} />}
     </div>
+  );
+}
+
+// ━━━ Editor search ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Search field at the top of the editor slide list (Ctrl+E or "/"). While a
+// query is typed, result rows show in place of the tree. The tree (children)
+// stays mounted with display:none, so ModuleList keeps its state. Shared engine
+// (searchDeck / useSearchNav / SearchResultRow) in part-slides.jsx. Deck text is
+// rendered only as React text (HighlightText); no deck value reaches a style,
+// URL or attribute. Not rendered in Present: the list panel stays mounted under
+// the Present overlay, and the Present field is found by its placeholder.
+function EditorSearch({ lanes, selectedId, slideIndex, fullscreen, isMobile, focusReq, focusTick, onCollapse, onOpenResult, children }) {
+  const [query, setQuery] = useState("");
+  const q = query.toLowerCase().trim();
+  const rows = useMemo(() => searchDeck(lanes, q, { notes: true, sections: true }), [lanes, q]);
+  const boxRef = useRef(null);
+  const inputRef = useRef(null);
+  const treeRef = useRef(null);
+  const savedTop = useRef(0);   // tree scroll position when the query started
+  const opened = useRef(false); // a result was opened during this query
+  const scroller = () => boxRef.current?.parentElement || null;
+  const open = (i) => {
+    const r = rows[i];
+    if (!r) return;
+    opened.current = true;
+    onOpenResult(r);
+  };
+  const nav = useSearchNav(rows.length, q, {
+    onOpen: open,
+    onEscape: () => { if (query) setQuery(""); else inputRef.current?.blur(); },
+  });
+  // App asks for focus (Ctrl+E or "/"): on mount after the list opens, or on a tick.
+  useEffect(() => {
+    if (!focusReq?.current || !inputRef.current) return;
+    focusReq.current = false;
+    inputRef.current.focus();
+    inputRef.current.select();
+  }, [focusTick, fullscreen]);
+  // Rows that scroll into view must not end under the sticky field.
+  useEffect(() => {
+    const box = boxRef.current, sc = scroller();
+    if (!box || !sc || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(() => { sc.style.scrollPaddingTop = box.offsetHeight + "px"; });
+    ro.observe(box);
+    return () => { ro.disconnect(); sc.style.scrollPaddingTop = ""; };
+  }, [fullscreen]);
+  // Query starts: results from the top. Query cleared: show the opened slide row
+  // (its scroll effect ran while the tree was hidden), else the old position.
+  const hasQ = !!q;
+  const hadQ = useRef(false);
+  useEffect(() => {
+    if (hasQ === hadQ.current) return;
+    hadQ.current = hasQ;
+    const sc = scroller();
+    if (hasQ) { if (sc) sc.scrollTop = 0; return; }
+    const wasOpened = opened.current;
+    opened.current = false;
+    requestAnimationFrame(() => {
+      const t = treeRef.current;
+      const row = wasOpened && t && (t.querySelector("[data-testid='toc-slide-row'][aria-selected='true']") || t.querySelector(".concept-row.selected"));
+      if (row) row.scrollIntoView({ block: "nearest" });
+      else if (sc) sc.scrollTop = savedTop.current;
+    });
+  }, [hasQ]);
+  const onChange = (e) => {
+    const v = e.target.value;
+    if (!q && v.trim()) { const sc = scroller(); savedTop.current = sc ? sc.scrollTop : 0; }
+    setQuery(v);
+  };
+  const onKeyDown = (e) => {
+    // Ctrl/Cmd+E in the field: collapse the list (third state of the toggle).
+    // Without a selected section the list cannot collapse: leave the field only.
+    if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && (e.key === "e" || e.key === "E")) {
+      e.preventDefault(); e.stopPropagation();
+      inputRef.current?.blur();
+      if (selectedId) onCollapse();
+      return;
+    }
+    // Every other key stays in the field: no editor shortcut (slide delete,
+    // copy/paste, undo, arrows, f, e, n, g ...) may fire while the user types.
+    e.stopPropagation();
+    if (e.nativeEvent?.isComposing) return; // IME: Enter confirms the text
+    nav.onKey(e);
+  };
+  const clear = () => { setQuery(""); inputRef.current?.focus(); };
+  // One tree shape in every state, so children (ModuleList) never remount.
+  const show = !!q && !fullscreen;
+  let prevSection = null;
+  // The list panel has 8px top padding. marginTop -8 puts the field at the panel
+  // top edge; top -8 keeps it there when it sticks (sticky offsets count from
+  // inside that padding). With top 0 the stuck field moved down 8px and covered
+  // the first row. The opaque T.bg hides the rows that scroll under it.
+  return (
+    <>
+      {!fullscreen && <div ref={boxRef} data-testid="editor-search" style={{ position: "sticky", top: -8, zIndex: 3, background: T.bg, marginTop: -8, padding: "8px 10px 6px" }}>
+        <div style={{ position: "relative" }}>
+          <Search size={13} color={T.textDim} style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", pointerEvents: "none" }} />
+          <input
+            ref={inputRef}
+            data-testid="editor-search-input"
+            value={query}
+            onChange={onChange}
+            onKeyDown={onKeyDown}
+            placeholder={isMobile ? "Search slides…" : "Search slides… (Ctrl+E)"}
+            aria-label="Search slides"
+            aria-controls={q ? "editor-search-results" : undefined}
+            style={{
+              width: "100%", padding: "6px 30px 6px 30px", fontSize: 13, fontFamily: FONT.body,
+              background: T.bgInput, border: `1px solid ${T.border}`,
+              borderRadius: 6, color: T.text, outline: "none", boxSizing: "border-box",
+            }}
+          />
+          {query && <button data-testid="editor-search-clear" aria-label="Clear search" onMouseDown={(e) => e.preventDefault()} onClick={clear}
+            style={{ position: "absolute", right: 4, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", color: T.textDim, fontSize: 13, lineHeight: 1, padding: "4px 6px" }}>✕</button>}
+        </div>
+        {q && <div data-testid="editor-search-count" style={{ display: "flex", justifyContent: "space-between", padding: "6px 4px 0", fontFamily: FONT.mono, fontSize: 13, color: T.textDim }}>
+          <span data-testid="editor-search-count-pos">{rows.length ? nav.sel + 1 : 0} / {rows.length}</span>
+          <span data-testid="editor-search-count-total">{rows.length} {rows.length === 1 ? "slide" : "slides"}</span>
+        </div>}
+      </div>}
+      <div ref={treeRef} style={{ display: show ? "none" : undefined }}>{children}</div>
+      {show && <div id="editor-search-results" role="listbox" aria-label="Search results" data-testid="editor-search-results" onMouseDown={(e) => e.preventDefault()}>
+        {rows.map((r, i) => {
+          const head = r.sectionId !== prevSection;
+          prevSection = r.sectionId;
+          const selected = i === nav.sel;
+          return <React.Fragment key={r.key}>
+            {head && <div data-testid="editor-search-section" style={{ padding: "8px 16px 2px", fontFamily: FONT.mono, fontSize: 13, fontWeight: 700, letterSpacing: "0.04em", textTransform: "uppercase", color: r.sectionId === selectedId ? T.accent : T.textDim, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}><HighlightText text={r.sectionTitle} q={q} /></div>}
+            <SearchResultRow
+              rowRef={(el) => { if (selected) nav.selRef.current = el; }}
+              testid="editor-search-row"
+              onClick={() => { nav.setSel(i); open(i); inputRef.current?.focus(); }}
+              title={r.title} snippet={r.snippet} kind={r.kind} hiddenBlock={r.kind === "hidden-block"} hiddenSlide={r.hiddenSlide} q={q}
+              selected={selected} active={r.sectionId === selectedId && r.slideIdx === slideIndex} muted
+              num={r.slideIdx + 1} size="editor"
+            />
+          </React.Fragment>;
+        })}
+        {!rows.length && <div data-testid="editor-search-no-matches" style={{ padding: "20px 16px", fontFamily: FONT.body, fontSize: 13, color: T.textDim, textAlign: "center" }}>No matches</div>}
+      </div>}
+    </>
   );
 }
 
@@ -18695,11 +18836,22 @@ uiSuite("Link box input normalization", [
 ]);
 
 uiSuite("Editor TOC toggle keys", [
-  { name: "Ctrl+E and AltGr+[ toggle the TOC in the editor", fn: async () => {
+  { name: "Ctrl+E focuses the search field, again hides the TOC, again shows it; AltGr+[ toggles the TOC", fn: async () => {
     try { document.activeElement?.blur?.(); } catch {}
     const tocShown = () => _$$(".concept-row").length > 0;
+    const inField = () => !!document.activeElement && document.activeElement === _$("[data-testid='editor-search-input']");
     if (!tocShown()) throw new Error("TOC not shown at start");
-    for (const [key, opts, label] of [["e", { ctrlKey: true }, "Ctrl+E"], ["[", { ctrlKey: true, altKey: true }, "AltGr+["]]) {
+    // v13.81: Ctrl+E with focus outside the field focuses it (TOC stays); in the
+    // field it hides the TOC; with the TOC hidden it shows it and focuses the field.
+    _key("e", { ctrlKey: true });
+    await _waitFor(inField, 2000).catch(() => { throw new Error("Ctrl+E did not focus the search field"); });
+    if (!tocShown()) throw new Error("Ctrl+E with focus outside the field hid the TOC");
+    _key("e", { ctrlKey: true });
+    await _waitFor(() => !tocShown(), 2000).catch(() => { throw new Error("Ctrl+E in the field did not hide the TOC"); });
+    _key("e", { ctrlKey: true });
+    await _waitFor(() => tocShown() && inField(), 2000).catch(() => { throw new Error("Ctrl+E did not show the TOC and focus the field"); });
+    document.activeElement?.blur?.();
+    for (const [key, opts, label] of [["[", { ctrlKey: true, altKey: true }, "AltGr+["]]) {
       _key(key, opts);
       await _waitFor(() => !tocShown(), 2000).catch(() => { throw new Error(label + " did not hide the TOC"); });
       _key(key, opts);
@@ -19230,7 +19382,12 @@ uiSuite("tideline-CR26 edit every block text", [
 // section. The pane is made short here so it overflows with any deck.
 async function _tidelineTocDrag(fn) {
   const tree = await _waitFor(() => document.querySelector('[data-testid="toc-tree"]'), 3000);
-  const pane = tree.parentElement; const old = pane.style.maxHeight;
+  // The pane is the list panel that scrolls. Since v13.81 the tree sits in an
+  // EditorSearch wrapper, so it is not always the direct parent of the tree.
+  let pane = tree.parentElement;
+  while (pane && !/(auto|scroll)/.test(getComputedStyle(pane).overflowY)) pane = pane.parentElement;
+  if (!pane) throw new Error("no TOC scroll pane");
+  const old = pane.style.maxHeight;
   pane.style.maxHeight = Math.max(90, Math.min(220, Math.floor(tree.offsetHeight / 2))) + "px";
   try {
     await _wait(60);
@@ -21353,6 +21510,283 @@ uiSuite("present-search-nav", [
       if (r.top < box.top - 1 || r.bottom > box.bottom + 1) throw new Error(`selected row is out of view (row ${r.top}-${r.bottom}, list ${box.top}-${box.bottom})`);
       if (_psnSelIdx() !== Math.min(n - 1, 40)) throw new Error("selection index wrong");
     } finally { await _exitFullscreen(); }
+  }},
+], { setup: _selectFirstModule });
+
+// v13.81 editor search: field at the top of the slide list; rows replace the
+// tree while a query is typed; Ctrl+E / "/" keys; opening keeps query + focus.
+const _esInput = () => _$("[data-testid='editor-search-input']");
+const _esRows = () => _$$("[data-testid='editor-search-row']");
+const _esSelIdx = () => _esRows().findIndex((r) => r.getAttribute("aria-selected") === "true");
+const _esCount = () => { const a = _$("[data-testid='editor-search-count-pos']"), b = _$("[data-testid='editor-search-count-total']"); return a && b ? `${a.textContent}|${b.textContent}` : null; };
+const _esTreeShown = () => { const t = _$("[data-testid='toc-tree']"); return !!t && t.offsetParent !== null; };
+const _esFocused = () => !!_esInput() && document.activeElement === _esInput();
+const _esPast = () => _hooks().getHistoryCounts().past;
+const _esType = async (word) => { _type(_esInput(), word); await _wait(120); };
+const _esPress = (key, opts) => { const ev = new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true, ...(opts || {}) }); (document.activeElement || document.body).dispatchEvent(ev); return ev; };
+const _esClear = async () => { const i = _esInput(); if (i && i.value) { _type(i, ""); await _wait(80); } document.activeElement?.blur?.(); };
+const _esShowToc = async () => { if (_$("[data-testid='toc-tree']")) return; document.activeElement?.blur?.(); _key("["); await _waitFor(() => _$("[data-testid='toc-tree']"), 1500).catch(() => {}); };
+const _esStart = async () => { await _exitFullscreen(); await _esShowToc(); await _esClear(); await _selectFirstModule(); };
+const _esEnd = async (past) => { await _exitFullscreen(); await _esShowToc(); await _esClear(); if (past != null) await _mrdUndoTo(past); await _selectFirstModule(); };
+uiSuite("editor-search", [
+  { name: "ES1: field renders at the top of the editor list, not in Present", fn: async () => {
+    try {
+      await _esStart();
+      const i = _esInput();
+      if (!i) throw new Error("no editor search field");
+      if (i.placeholder !== "Search slides… (Ctrl+E)") throw new Error("placeholder: " + i.placeholder);
+      if (parseFloat(getComputedStyle(i).fontSize) < 13) throw new Error("field text under 13 px");
+      // The whole sticky box (not only the input) must end above the first row,
+      // and a point at the top of that row must hit the row, not the field.
+      const tree = _$("[data-testid='toc-tree']"), box = _$("[data-testid='editor-search']");
+      const sc = box.parentElement;
+      sc.scrollTop = 0; await _wait(60);
+      if (box.getBoundingClientRect().bottom > tree.getBoundingClientRect().top + 1) throw new Error("the field covers the tree");
+      const fr = tree.querySelector(".concept-row").getBoundingClientRect();
+      if (!tree.querySelector(".concept-row").contains(document.elementFromPoint(fr.left + 40, fr.top + 2))) throw new Error("the field covers the first section row");
+      if (getComputedStyle(box).backgroundColor.replace(/\s/g, "").match(/rgba\(.*,0(\.\d+)?\)$/)) throw new Error("the field background is not opaque");
+      if (!_esTreeShown() || _esRows().length) throw new Error("idle field must show the tree and no rows");
+      await _pdEnterPresent();
+      if (_esInput()) throw new Error("the editor field renders in Present");
+      if (_$$("input[placeholder^='Search slides']").length > 1) throw new Error("two search fields in Present");
+    } finally { await _esEnd(null); }
+  }},
+  { name: "ES2: typing shows rows with highlight, count, section header; no matches; clear button", fn: async () => {
+    let p = null;
+    try {
+      await _esStart();
+      p = await _psnPrepare();
+      await _esType("zqxnav");
+      await _waitFor(() => _esRows().length === 2, 1500).catch(() => { throw new Error("expected 2 rows, got " + _esRows().length); });
+      if (_esTreeShown()) throw new Error("the tree shows while a query is typed");
+      if (!_$("[data-testid='toc-tree']")) throw new Error("the tree unmounted while a query is typed");
+      _seEq(_esCount(), "1 / 2|2 slides", "count line");
+      if (_esSelIdx() !== 0) throw new Error("the first row is not selected");
+      if (!_$("[data-testid='editor-search-section']")) throw new Error("no section header");
+      const hits = _$$("[data-testid='editor-search-results'] [data-testid='search-hit']");
+      if (!hits.length || hits.some((h) => h.textContent.toLowerCase() !== "zqxnav")) throw new Error("highlight text does not equal the query");
+      if (!hits.some((h) => h.textContent === "ZQXNAV")) throw new Error("highlight does not keep the case");
+      const box = _$("[data-testid='editor-search']");
+      for (const el of [box, _$("[data-testid='editor-search-results']")]) for (const n of [el, ...el.querySelectorAll("*")]) {
+        if ([...n.childNodes].some((c) => c.nodeType === 3 && c.nodeValue.trim()) && parseFloat(getComputedStyle(n).fontSize) < 13) throw new Error(`text under 13 px: "${n.textContent.slice(0, 30)}"`);
+      }
+      await _esType("zqxnomatch000");
+      await _waitFor(() => _$("[data-testid='editor-search-no-matches']"), 1500).catch(() => { throw new Error("no 'No matches' state"); });
+      _seEq(_esCount(), "0 / 0|0 slides", "count with no match");
+      _click(_$("[data-testid='editor-search-clear']"));
+      await _waitFor(() => _esInput().value === "" && _esTreeShown(), 1500).catch(() => { throw new Error("clear button did not clear and show the tree"); });
+      if (!_esFocused()) throw new Error("clear button did not keep focus in the field");
+    } finally { await _esEnd(p && p.past); }
+  }},
+  { name: "ES3: Up/Down stop at the ends; Enter opens and keeps query + focus + rows; no undo step; Esc clears then blurs", fn: async () => {
+    let p = null;
+    try {
+      await _esStart();
+      p = await _psnPrepare();
+      const mark = _esPast();
+      await _esType("zqxnav");
+      await _waitFor(() => _esRows().length === 2, 1500);
+      _key("ArrowUp"); await _wait(60);
+      if (_esSelIdx() !== 0) throw new Error("ArrowUp at the top moved the selection");
+      _key("ArrowDown"); await _wait(60);
+      _key("ArrowDown"); await _wait(60);
+      if (_esSelIdx() !== 1) throw new Error("ArrowDown did not stop at the last row");
+      _key("Enter");
+      await _waitFor(() => { const s = _pdSel(); return s && s.itemId === p.s0.itemId && s.slideIdx === p.s0.slideIdx + 1; }, 1500).catch(() => { throw new Error("Enter did not open the second row"); });
+      await _wait(150);
+      if (!_esFocused()) throw new Error("focus left the field after Enter");
+      if (_esInput().value !== "zqxnav" || _esRows().length !== 2 || _esSelIdx() !== 1) throw new Error("query, rows or selection changed after Enter");
+      _key("ArrowUp"); await _wait(60);
+      _key("Enter");
+      await _waitFor(() => _pdSame(_pdSel(), p.s0), 1500).catch(() => { throw new Error("Enter did not open the first row"); });
+      if (_esPast() !== mark) throw new Error(`search/open made an undo step (${mark} -> ${_esPast()})`);
+      _key("ArrowDown"); await _wait(60); _key("Enter"); await _wait(150);
+      _key("Escape");
+      await _waitFor(() => _esInput().value === "" && _esTreeShown(), 1500).catch(() => { throw new Error("Esc did not clear the query"); });
+      if (!_esFocused()) throw new Error("the first Esc left the field");
+      await _wait(250);
+      const row = _$("[data-testid='toc-tree'] [data-testid='toc-slide-row'][aria-selected='true']");
+      if (!row) throw new Error("no active slide row after Esc");
+      const sc = _$("[data-testid='editor-search']").parentElement.getBoundingClientRect(), fb = _$("[data-testid='editor-search']").getBoundingClientRect(), r = row.getBoundingClientRect();
+      if (r.top < fb.bottom - 1 || r.bottom > sc.bottom + 1) throw new Error(`opened slide row not in view (row ${r.top}-${r.bottom}, view ${fb.bottom}-${sc.bottom})`);
+      _key("Escape"); await _wait(100);
+      if (_esFocused()) throw new Error("the second Esc did not leave the field");
+      if (!_esTreeShown()) throw new Error("the second Esc closed the list");
+    } finally { await _esEnd(p && p.past); }
+  }},
+  { name: "ES4: a click on a row opens it and returns focus to the field", fn: async () => {
+    let p = null;
+    try {
+      await _esStart();
+      p = await _psnPrepare();
+      await _esType("zqxnav");
+      await _waitFor(() => _esRows().length === 2, 1500);
+      _click(_esRows()[1]);
+      await _waitFor(() => { const s = _pdSel(); return s && s.itemId === p.s0.itemId && s.slideIdx === p.s0.slideIdx + 1; }, 1500).catch(() => { throw new Error("click did not open the row"); });
+      await _wait(100);
+      if (!_esFocused() || _esInput().value !== "zqxnav" || _esSelIdx() !== 1) throw new Error("click did not keep focus, query and selection");
+    } finally { await _esEnd(p && p.past); }
+  }},
+  { name: "ES5: a hidden slide is a normal row with the HIDDEN mark and opens", fn: async () => {
+    let past = null;
+    try {
+      await _esStart();
+      past = await _pdPrepare();
+      const s0 = _pdSel();
+      await _esType("zqxdetour");
+      await _waitFor(() => _esRows().length === 1, 1500).catch(() => { throw new Error("hidden slide not listed"); });
+      const row = _esRows()[0];
+      if (!row.querySelector("[data-testid='search-hidden-slide']")) throw new Error("no HIDDEN mark");
+      if (!row.querySelector("[data-testid='toc-hidden-block']")) throw new Error("no HIDDEN BLOCK tag");
+      _key("Enter");
+      await _waitFor(() => { const s = _pdSel(); return s && s.itemId === s0.itemId && s.slideIdx === s0.slideIdx + 1; }, 1500).catch(() => { throw new Error("Enter did not open the hidden slide"); });
+      await _waitFor(() => _pdOnSlide("PDBACKUP"), 1500).catch(() => { throw new Error("the hidden slide is not on screen"); });
+    } finally { await _esEnd(past); }
+  }},
+  { name: "ES6: a notes-only match shows the NOTES snippet and opens", fn: async () => {
+    let past = null;
+    try {
+      await _esStart();
+      past = _esPast();
+      const s0 = _pdSel();
+      _hooks().injectBlocks([_seH("ES notes slide")], { notes: "speaker hint zqxnotes here" });
+      await _wait(150);
+      _key("ArrowRight"); await _wait(150); document.activeElement?.blur?.();
+      await _esType("zqxnotes");
+      await _waitFor(() => _esRows().length === 1, 1500).catch(() => { throw new Error("notes match not listed"); });
+      const row = _esRows()[0];
+      if (!row.querySelector("[data-testid='search-notes-badge']")) throw new Error("no NOTES badge");
+      if (!/zqxnotes/.test(row.querySelector("[data-testid='toc-snippet']")?.textContent || "")) throw new Error("snippet does not show the notes text");
+      _key("Enter");
+      await _waitFor(() => _pdSame(_pdSel(), s0), 1500).catch(() => { throw new Error("Enter did not open the notes match"); });
+    } finally { await _esEnd(past); }
+  }},
+  { name: "ES7: a section-name match shows a SECTION row; a folded section unfolds on open", fn: async () => {
+    let past = null;
+    try {
+      await _esStart();
+      past = _esPast();
+      const head = _$(".concept-row");
+      head.querySelector("[data-testid='toc-section-title']").dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+      const inp = await _waitFor(() => _$("input[placeholder='Section name']"), 1500);
+      _type(inp, "Zqxsect area");
+      inp.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+      await _waitFor(() => !_$("input[placeholder='Section name']"), 1500);
+      const caret = _$(".concept-row [aria-label^='Collapse section']");
+      _click(caret);
+      await _waitFor(() => _$(".concept-row [aria-label^='Expand section']"), 1500).catch(() => { throw new Error("could not fold the section"); });
+      await _esType("zqxsect");
+      await _waitFor(() => _esRows().length === 1, 1500).catch(() => { throw new Error("section match not listed, rows " + _esRows().length); });
+      if (!_esRows()[0].querySelector("[data-testid='search-section-badge']")) throw new Error("no SECTION badge");
+      if (!_$("[data-testid='editor-search-section'] [data-testid='search-hit']")) throw new Error("section header has no highlight");
+      _key("Enter"); await _wait(150);
+      _key("Escape");
+      await _waitFor(() => _esTreeShown() && _$(".concept-row [aria-label^='Collapse section']"), 1500).catch(() => { throw new Error("the folded section did not unfold on open"); });
+      if (!_$("[data-testid='toc-tree'] [data-testid='toc-slide-row'][aria-selected='true']")) throw new Error("no active slide row after open");
+    } finally {
+      await _esClear();
+      const folded = _$(".concept-row [aria-label^='Expand section']");
+      if (folded) { _click(folded); await _wait(80); }
+      await _esEnd(past);
+    }
+  }},
+  { name: "ES8: a slide in a collapsed lane is a normal row and opens", fn: async () => {
+    let p = null, lane = false;
+    try {
+      await _esStart();
+      p = await _psnPrepare();
+      lane = _hooks().toggleSelectedLaneForTest(); await _wait(120);
+      await _esType("zqxnav");
+      await _waitFor(() => _esRows().length === 2, 1500).catch(() => { throw new Error("collapsed-lane slides not listed"); });
+      _key("ArrowDown"); await _wait(60); _key("Enter");
+      await _waitFor(() => { const s = _pdSel(); return s && s.itemId === p.s0.itemId && s.slideIdx === p.s0.slideIdx + 1; }, 1500).catch(() => { throw new Error("Enter did not open the collapsed-lane slide"); });
+    } finally { if (lane) { _hooks().toggleSelectedLaneForTest(); await _wait(80); } await _esEnd(p && p.past); }
+  }},
+  { name: "ES9: Ctrl+E state machine and the / key", fn: async () => {
+    try {
+      await _esStart();
+      _key("[");
+      await _waitFor(() => !_esInput(), 1500).catch(() => { throw new Error("[ did not collapse the list"); });
+      let ev = _esPress("e", { ctrlKey: true });
+      await _waitFor(() => _esTreeShown() && _esFocused(), 1500).catch(() => { throw new Error("Ctrl+E (collapsed) did not open and focus"); });
+      if (!ev.defaultPrevented) throw new Error("Ctrl+E not prevented");
+      _esPress("e", { ctrlKey: true });
+      await _waitFor(() => !_esInput(), 1500).catch(() => { throw new Error("Ctrl+E in the field did not collapse"); });
+      _esPress("e", { metaKey: true });
+      await _waitFor(() => _esFocused(), 1500).catch(() => { throw new Error("Cmd+E (collapsed) did not open and focus"); });
+      _type(_esInput(), "abc"); await _wait(60);
+      document.activeElement?.blur?.();
+      _esPress("e", { ctrlKey: true });
+      await _waitFor(_esFocused, 1500).catch(() => { throw new Error("Ctrl+E (open, not focused) did not focus"); });
+      if (!_esTreeShown() && !_esRows().length && !_$("[data-testid='editor-search-no-matches']")) throw new Error("list closed");
+      const i = _esInput();
+      if (i.selectionStart !== 0 || i.selectionEnd !== i.value.length) throw new Error("Ctrl+E did not select the field text");
+      await _esClear();
+      ev = _esPress("/");
+      await _waitFor(_esFocused, 1500).catch(() => { throw new Error("/ did not focus the field"); });
+      if (!ev.defaultPrevented) throw new Error("/ not prevented (it would be typed)");
+      ev = _esPress("/");
+      if (ev.defaultPrevented) throw new Error("/ typed in the field was prevented");
+      document.activeElement?.blur?.();
+      _key("[");
+      await _waitFor(() => !_esInput(), 1500);
+      _esPress("/");
+      await _waitFor(() => _esTreeShown() && _esFocused(), 1500).catch(() => { throw new Error("/ (collapsed) did not open and focus"); });
+    } finally { await _esEnd(null); }
+  }},
+  { name: "ES10: / and Ctrl+E do nothing while typing in another field", fn: async () => {
+    const els = [document.createElement("input"), document.createElement("textarea"), document.createElement("div")];
+    els[2].contentEditable = "true";
+    try {
+      await _esStart();
+      for (const el of els) {
+        document.body.appendChild(el); el.focus();
+        const a = _esPress("/"), b = _esPress("e", { ctrlKey: true });
+        await _wait(120);
+        if (_esFocused() || a.defaultPrevented || b.defaultPrevented) throw new Error(`a key acted while typing in ${el.tagName}`);
+        if (!_esTreeShown()) throw new Error(`Ctrl+E in ${el.tagName} collapsed the list`);
+        el.remove();
+      }
+    } finally { els.forEach((el) => el.remove()); await _esEnd(null); }
+  }},
+  { name: "ES11: editor shortcuts do not fire while the field has focus", fn: async () => {
+    let p = null;
+    const darkKey = () => T.bg;
+    try {
+      await _esStart();
+      p = await _psnPrepare();
+      const mark = _esPast(), fut = _hooks().getHistoryCounts().future, sel = _pdSel(), bg = darkKey();
+      for (const q of ["", "zqxnomatch000"]) {
+        await _esType(q); _esInput().focus();
+        for (const [k, o] of [["Delete"], ["Backspace"], ["ArrowDown"], ["ArrowRight"], ["ArrowLeft"], ["z", { ctrlKey: true }], ["y", { ctrlKey: true }], ["c", { ctrlKey: true }], ["v", { ctrlKey: true }], ["f"], ["e"], ["n"], ["g"], ["s"], ["d"], ["r"], ["?"], ["["], [" "], ["F5"]]) {
+          _esPress(k, o); await _wait(40);
+        }
+        await _wait(200);
+        if (!_esFocused()) throw new Error("focus left the field");
+        if (!_pdSame(_pdSel(), sel)) throw new Error("the selected slide changed");
+        if (_esPast() !== mark || _hooks().getHistoryCounts().future !== fut) throw new Error("the history changed (undo/redo or a deck edit fired)");
+        if (!_$("header")) throw new Error("Present started");
+        if (darkKey() !== bg) throw new Error("the theme changed");
+        if (!_$("[data-testid='toc-tree']")) throw new Error("the list collapsed");
+        if ((document.body.textContent || "").includes("Toggle navigator panel")) throw new Error("the shortcut help opened");
+      }
+      // Probe check: the same key event sent outside the field does move the
+      // slide, so a shortcut that fires in the field would be seen above.
+      document.activeElement?.blur?.();
+      _esPress("ArrowRight");
+      await _waitFor(() => !_pdSame(_pdSel(), sel), 1500).catch(() => { throw new Error("probe check: ArrowRight outside the field did not move the slide"); });
+    } finally { await _esEnd(p && p.past); }
+  }},
+  { name: "ES12: special characters and a 2000-character query do not throw", fn: async () => {
+    try {
+      await _esStart();
+      for (const q of ["( [ * \\ < > & \"", ".*+?^${}|", "🙈", "<img src=x onerror=alert(1)>", "a".repeat(2000), "İ"]) {
+        await _esType(q);
+        if (!_esCount()) throw new Error("no count line for " + q.slice(0, 20));
+        if (_$("[data-testid='editor-search'] img, [data-testid='editor-search-results'] img")) throw new Error("query became markup");
+      }
+      const t0 = performance.now(); await _esType("e".repeat(2000)); if (performance.now() - t0 > 1000) throw new Error("2000-char query too slow");
+    } finally { await _esEnd(null); }
   }},
 ], { setup: _selectFirstModule });
 
@@ -30174,7 +30608,11 @@ function ShortcutHelp({ onClose }) {
       ["Space", "Next slide (same as →)"],
       ["↑ ↓", "Previous / next module"],
       ["", "Auto-crosses lane boundaries"],
-      ["[ / Ctrl+E", "Toggle navigator panel"],
+      ["[", "Toggle navigator panel"],
+      ["Ctrl+E", "Search slides (again: hide navigator)"],
+      ["/", "Search slides"],
+      ["↑ ↓ Enter", "Move through / open search results"],
+      ["Esc", "Clear search, then leave the field"],
       ["G", "Toggle gallery view"],
     ]},
     { title: "Presentation", items: [
@@ -31339,6 +31777,10 @@ export default function App() {
   const [tocWidth, setTocWidth] = useState(() => { try { const v = parseInt(localStorage.getItem("vela-toc-width")); return v >= 160 && v <= 600 ? v : 270; } catch { return 270; } });
   const tocDragRef = useRef(null);
   const prevSelectedRef = useRef(null);
+  // Editor search focus request (Ctrl+E or "/"): EditorSearch reads the ref when
+  // it mounts (list opened) or when the tick changes (list already open).
+  const searchFocusReq = useRef(false);
+  const [searchFocusTick, setSearchFocusTick] = useState(0);
 
   // Auto-switch tabs on select/deselect
   useEffect(() => {
@@ -31348,20 +31790,32 @@ export default function App() {
     prevSelectedRef.current = state.selectedId;
   }, [state.selectedId, isMobile]);
 
-  // TOC toggle shortcuts: [ (not while typing) and Ctrl/Cmd+E (editor only —
-  // in fullscreen, PresenterTOC owns Ctrl+E). AltGr arrives as Ctrl+Alt, and
-  // PT/ES/DE layouts need AltGr for "[", so Ctrl+Alt+[ still counts as "[".
+  // TOC shortcuts: [ (not while typing) toggles the list. Ctrl/Cmd+E and "/"
+  // (editor only — in fullscreen, PresenterTOC owns Ctrl+E) open the list if it
+  // is collapsed and focus the search field; Ctrl+E in the field collapses the
+  // list (EditorSearch handles it there, the event does not reach this handler).
+  // AltGr arrives as Ctrl+Alt, and PT/ES/DE layouts need AltGr for "[", so
+  // Ctrl+Alt+[ still counts as "[".
+  const hasSections = state.lanes.some((l) => l.items.length > 0);
   useEffect(() => {
     if (isMobile) return;
     const h = (e) => {
       const typing = ["INPUT","TEXTAREA","SELECT"].includes(e.target.tagName) || e.target.isContentEditable;
       const bracket = e.key === "[" && !e.metaKey && (!e.ctrlKey || e.altKey) && !typing;
       const ctrlE = (e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && (e.key === "e" || e.key === "E") && !state.fullscreen && !typing;
-      if (bracket || ctrlE) { e.preventDefault(); setTocCollapsed((c) => !c); }
+      const slash = e.key === "/" && !e.ctrlKey && !e.metaKey && !e.altKey && !state.fullscreen && !typing && hasSections;
+      if (bracket) { e.preventDefault(); setTocCollapsed((c) => !c); return; }
+      if (ctrlE || slash) {
+        e.preventDefault();
+        if (!hasSections) return; // no list, no field
+        searchFocusReq.current = true;
+        setTocCollapsed(false);
+        setSearchFocusTick((t) => t + 1);
+      }
     };
     window.addEventListener("keydown", h);
     return () => window.removeEventListener("keydown", h);
-  }, [isMobile, state.fullscreen]);
+  }, [isMobile, state.fullscreen, hasSections]);
 
   // Theme toggle shortcut: D
   useEffect(() => {
@@ -31726,6 +32180,18 @@ export default function App() {
   let selectedConcept = null;
   for (const l of state.lanes) { const f = l.items.find((i) => i.id === state.selectedId); if (f) { selectedConcept = f; break; } }
   const total = state.lanes.reduce((s, l) => s + l.items.length, 0);
+  // Open an editor search result: select its section and slide; unfold the
+  // section if it is folded, so the slide row shows when the query is cleared.
+  // All three actions are in NO_HISTORY: no undo step, no deck change. The
+  // matched block's render index goes to SlidePanel (flashBlock), which may
+  // outline that block; -1 = title / notes / section match, no block.
+  const openSearchResult = (row) => {
+    if (Array.isArray(state.collapsedSections) && state.collapsedSections.includes(row.sectionId))
+      dispatch({ type: "SET_SECTION_COLLAPSED", id: row.sectionId, collapsed: false });
+    if (row.sectionId !== state.selectedId) dispatch({ type: "SELECT", id: row.sectionId, slideIndex: row.slideIdx });
+    else dispatch({ type: "SET_SLIDE_INDEX", index: row.slideIdx });
+    if (row.renderIdx >= 0) slideActionsRef.current?.flashBlock?.(row.sectionId, row.slideIdx, row.renderIdx);
+  };
   // Presentation totals exclude hidden slides; "…All" variants include them (for the stats dialog).
   const deckTime = state.lanes.reduce((s, l) => s + l.items.reduce((a, i) => a + sumVisibleDurations(i.slides), 0), 0);
   const deckTimeAll = state.lanes.reduce((s, l) => s + l.items.reduce((a, i) => a + sumDurations(i.slides), 0), 0);
@@ -31964,7 +32430,9 @@ export default function App() {
               </div>
             </div>
           )}
-          {total > 0 && <ModuleList lanes={state.lanes} selectedId={state.selectedId} slideIndex={state.slideIndex} selectedSlideIndices={state.selectedSlideIndices} collapsedSections={state.collapsedSections} dispatch={dispatch} maxModuleTime={maxModuleTime} guidelines={state.guidelines} reviewMode={state.reviewMode} deckEpoch={state._deckEpoch} />}
+          {total > 0 && <EditorSearch lanes={state.lanes} selectedId={state.selectedId} slideIndex={state.slideIndex} fullscreen={state.fullscreen} isMobile={isMobile} focusReq={searchFocusReq} focusTick={searchFocusTick} onCollapse={() => setTocCollapsed(true)} onOpenResult={openSearchResult}>
+            <ModuleList lanes={state.lanes} selectedId={state.selectedId} slideIndex={state.slideIndex} selectedSlideIndices={state.selectedSlideIndices} collapsedSections={state.collapsedSections} dispatch={dispatch} maxModuleTime={maxModuleTime} guidelines={state.guidelines} reviewMode={state.reviewMode} deckEpoch={state._deckEpoch} />
+          </EditorSearch>}
         </div>}
 
         {/* TOC toggle */}
