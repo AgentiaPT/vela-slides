@@ -39,7 +39,7 @@ that symbol in the named part for the line. No line numbers here — they rot.
 - Block Helpers: stg COL_TOOLBAR_PAD patchItemAt removeItemAt setItemLink itemLinkOf addItemAt moveItemAt _noPin reorderCtl itemReorder blankItemFor PLACEHOLDER_FIELDS cloneGridCell clonePoint newItemFor
 - Add-Item Affordance — "+ add" button shown only in edit mode: AddItem ItemText IconBubble
 - Link Badge — one placement rule for every link badge (CR17): linkBadgeTextEnd LinkBadge
-- Narrow (portrait) layout: SlideNarrowContext NARROW_SIZE_PX NARROW_SIZE_ORDER NARROW_LIGHT_TYPES NARROW_WIDE_TYPES narrowTextW narrowPadPx narrowTextLoad narrowTplCols narrowGap narrowGridCols narrowTableCols narrowMaxWidth NARROW_VIEWS narrowBlockView ItemHoverContext itemChromeBtn reorderArrowBtn placeItemCluster ItemChrome
+- Narrow (portrait) layout: SlideNarrowContext NARROW_SIZE_PX NARROW_SIZE_ORDER NARROW_LIGHT_TYPES NARROW_WIDE_TYPES narrowStr narrowPx narrowTextW narrowPadPx narrowTextLoad narrowTplCols narrowGap narrowGridCols NARROW_TABLE_MAX_COLS narrowTableCols narrowMaxWidth NARROW_VIEWS narrowBlockView ItemHoverContext itemChromeBtn reorderArrowBtn placeItemCluster ItemChrome
 - Icon Row Item (per-item link + delete): IconRowItem
 - Bullet Item (per-item link + delete): BulletItem
 - Grid Cell Block (with per-block link editing): GridCellBlock
@@ -54,7 +54,7 @@ that symbol in the named part for the line. No line numbers here — they rot.
 
 ### part-canvas.jsx
 - Story zoom layer (story images in Present): STORY_RAIL_W STORY_THUMB_H storyPrefersReducedMotion storyContainBox StoryZoomLayer
-- Inline Comment Card (review mode): InlineCommentCard NARROW_PAD_X SlideContent
+- Inline Comment Card (review mode): InlineCommentCard NARROW_PAD_X NARROW_PHONE_MAX_W SlideContent
 
 ### part-reducer.jsx
 - Reducer: init _activeDeckEpoch velaPrepareDeckReplacement velaSyncDeckEpoch velaDeckEpochIsCurrent nextDeckEpoch NO_HISTORY MAX_HISTORY innerReducer
@@ -143,7 +143,7 @@ that symbol in the named part for the line. No line numbers here — they rot.
 - Session end: editor toolbar, dialog, live ingress, bar geometry (v13.80, P3): _sesTbBtn _sesTbIs _sesTbDesc _sesTbOpen _sesSecs _sesShape _sesRgb _sesImport
 - Session end: review fixes (v13.80): _sesSig _sesWheel _sesSwipe
 - Present clock chip (v13.80, C key). Each test restores: chip off,: _clkChip _clkBtn _clkKey _clkStored _clkNowOk _clkLeave _clkOn
-- Narrow (portrait) layout: _nrwContent _nrwGrid _nrwTracks _nrwByText _nrwAllInside _nrwCard _nrwOnSlide _nrwPhonePresent
+- Narrow (portrait) layout: _nrwContent _nrwGrid _nrwTracks _nrwByText _nrwAllInside _nrwCard _nrwOnSlide _nrwEnter _nrwPhonePresent _nrwPhoneEditor
 - UI TEST RUNNER COMPONENT: computeDeckFingerprint DEMO_DECK_FP_TITLE VelaUITestRunner
 
 ### part-demo.jsx
@@ -342,11 +342,11 @@ add_lane add_item batch_add_items remove_item remove_lane rename_item rename_lan
 ## Navigability debt (WARN — candidates for banners or splits)
 
 - part-imports.jsx: 929-line unbannered stretch after line 520
-- part-blocks.jsx: 826-line unbannered stretch after line 1406
-- part-canvas.jsx: 662-line unbannered stretch after line 153
-- part-canvas.jsx: 355-line unbannered stretch after line 828
+- part-blocks.jsx: 828-line unbannered stretch after line 1422
+- part-canvas.jsx: 688-line unbannered stretch after line 153
+- part-canvas.jsx: 358-line unbannered stretch after line 856
 - part-slides.jsx: 548-line unbannered stretch after line 396
-- part-slidepanel.jsx: 502-line unbannered stretch after line 1516
+- part-slidepanel.jsx: 503-line unbannered stretch after line 1522
 - part-uitest.jsx: 616-line unbannered stretch after line 1230
 - part-uitest2.jsx: 448-line unbannered stretch after line 2
 - part-uitest2.jsx: 593-line unbannered stretch after line 1457

@@ -7041,13 +7041,43 @@ const _nrwOnSlide = async (blocks, extra, mark, body) => {
   }
 };
 // Enter Present in the phone box; body(content element, canvas box).
-const _nrwPhonePresent = (body) => _wp5bPhone(async (root) => {
+// The phone box of _wp5bPhone holds Present only while the browser itself is
+// not in fullscreen: a real browser fullscreen fills the screen and ignores
+// the box. A headless browser can grant that request to the first test of a
+// run. Then leave browser fullscreen (the app leaves Present with it) and
+// enter Present again: the second request has no user gesture and is refused.
+const _nrwEnter = async () => {
   await _wp5Enter();
+  if (!document.fullscreenElement) return;
+  await document.exitFullscreen().catch(() => {});
+  await _waitFor(() => !document.fullscreenElement && !_wp5Fs(), 2500).catch(() => {});
+  await _wp5Exit().catch(() => {});
+  await _wp5Enter();
+  if (document.fullscreenElement) throw new Error("the browser is in fullscreen, so the phone box cannot hold Present");
+};
+const _nrwPhonePresent = (body) => _wp5bPhone(async (root) => {
+  await _nrwEnter();
   await _wait(700); await _mrdFrame(); // entrance animations end
   const c = _nrwContent();
   if (!c) throw new Error("no slide content in phone Present");
-  await body(c, root.getBoundingClientRect());
+  // The canvas box is the slide itself: the phone box also holds the Present bar.
+  await body(c, c.getBoundingClientRect());
   await _wp5Exit();
+});
+// The phone box of _wp5bPhone narrows Present only (the editor row keeps the
+// window width). Give the editor row the phone width, wait for the portrait
+// canvas, run body(viewport), then restore.
+const _nrwPhoneEditor = (body) => _wp5bPhone(async () => {
+  const row = _$("[data-testid='editor-main-row']"); if (!row) throw new Error("no editor row");
+  const css = row.getAttribute("style");
+  try {
+    row.style.width = "390px"; row.style.maxWidth = "390px"; row.style.flex = "1 1 auto";
+    const vp = await _waitFor(() => { const v = _mrdViewport(); return v && v.offsetHeight > v.offsetWidth * 1.2 && v.querySelector("[data-vela-narrow]") ? v : null; }, 2500)
+      .catch(() => { const v = _mrdViewport(); throw new Error(`phone editor canvas is ${v ? `${v.offsetWidth}x${v.offsetHeight}` : "missing"}, expected a portrait canvas`); });
+    await body(vp);
+  } finally {
+    if (css == null) row.removeAttribute("style"); else row.setAttribute("style", css);
+  }
 });
 
 uiSuite("narrow-layout", [
@@ -7057,7 +7087,7 @@ uiSuite("narrow-layout", [
       await _nrwPhonePresent(async (c, R) => {
         const g = _nrwGrid(c);
         if (!g) throw new Error("no grid on the slide");
-        if (_nrwTracks(g) !== 2) throw new Error(`grid has ${_nrwTracks(g)} column(s) on a phone, expected 2`);
+        if (_nrwTracks(g) !== 2) throw new Error(`grid has ${_nrwTracks(g)} column(s) on a phone, expected 2 (canvas ${c.parentElement.offsetWidth}x${c.parentElement.offsetHeight}, narrow ${c.hasAttribute("data-vela-narrow")}, phone box ${Math.round(R.width)}x${Math.round(R.height)}, window ${window.innerWidth}x${window.innerHeight}, contents ${_$$("[data-vela-slide-content]").length})`);
         _nrwAllInside(c, R);
       });
       const b = (_wp5Cur().blocks || []).find((x) => x.type === "grid");
@@ -7155,7 +7185,7 @@ uiSuite("narrow-layout", [
   { name: "phone Present: the bar under the slide steps the slides and exits; no control floats over the slide", fn: async () => {
     await _nrwOnSlide([{ type: "heading", text: "NRW bar" }], null, "NRW bar", async () => {
       await _wp5bPhone(async (root) => {
-        await _wp5Enter(); await _wait(300); await _mrdFrame();
+        await _nrwEnter(); await _wait(300); await _mrdFrame();
         const R = root.getBoundingClientRect();
         const bar = _$("[data-testid='present-nav-bar']");
         if (!bar) throw new Error("no Present bar in the phone layout");
@@ -7183,21 +7213,67 @@ uiSuite("narrow-layout", [
       if (!_$$(".slide-nav-btn").some((b) => b.getBoundingClientRect().width > 0)) throw new Error("wide Present lost its floating controls");
     });
   }},
-  { name: "phone Present: a table header word stays whole; a flow loop label is vertical", fn: async () => {
-    const table = { type: "table", headers: ["Metric", "Before", "Improvement"], rows: [["Latency", "120 ms", "3x"], ["NRW-table", "2.1%", "7x"]] };
+  { name: "phone Present: a long table header stays whole in one line; a flow loop label is vertical", fn: async () => {
+    // 5 columns: with equal columns the long header does not fit its column.
+    const table = { type: "table", headers: ["Id", "Q1", "Q2", "Q3", "Improvement"], rows: [["a", "1", "2", "3", "3x"], ["b", "4", "5", "6", "7x"]] };
     const flow = { type: "flow", direction: "vertical", loop: true, loopLabel: "NRW loop label", items: [{ label: "One", icon: "Circle" }, { label: "Two", icon: "Circle" }, { label: "Three", icon: "Circle" }] };
-    await _nrwOnSlide([table, flow], null, "NRW-table", async () => {
+    await _nrwOnSlide([{ type: "heading", text: "NRW-table", size: "md" }, table, flow], null, "NRW-table", async () => {
       await _nrwPhonePresent(async (c, R) => {
         _nrwAllInside(c, R);
         const h = _nrwByText(c, "Improvement");
         if (!h) throw new Error("table header not found");
-        const one = parseFloat(getComputedStyle(h).lineHeight) || parseFloat(getComputedStyle(h).fontSize) * 1.5;
-        if (h.getBoundingClientRect().height > one * 1.6 + 18) throw new Error("the header word 'Improvement' is split over lines");
+        const cs = getComputedStyle(h), hr = h.getBoundingClientRect(), k = hr.width / h.offsetWidth;
+        const oneLine = (parseFloat(cs.fontSize) * 1.35 + parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom) + 2) * k;
+        if (hr.height > oneLine) throw new Error(`the header 'Improvement' is ${Math.round(hr.height)} px high, one line is ${Math.round(oneLine)} px: the word is split`);
+        if (h.scrollWidth > h.clientWidth + 1) throw new Error("the header 'Improvement' is wider than its column");
+        const short = _nrwByText(c, "Q1").getBoundingClientRect();
+        if (hr.width < short.width * 1.5) throw new Error(`the long header column (${Math.round(hr.width)} px) is not wider than a short column (${Math.round(short.width)} px)`);
         const lbl = _$$("text", c).find((t) => (t.textContent || "").includes("NRW loop label"));
         if (!lbl) throw new Error("loop label not found");
         const lr = lbl.getBoundingClientRect();
         if (lr.height <= lr.width) throw new Error(`loop label box is ${Math.round(lr.width)}x${Math.round(lr.height)}, expected a vertical label`);
       });
+    });
+  }},
+  { name: "phone Present: the bar steps over a hidden slide in the two directions", fn: async () => {
+    await _nrwOnSlide([{ type: "heading", text: "NRW hidden" }], { hidden: true }, "NRW hidden", async () => {
+      const k1 = _wp5Key();
+      document.activeElement?.blur?.(); _key("ArrowRight");
+      await _waitFor(() => _wp5Key() && _wp5Key() !== k1, 2500).catch(() => { throw new Error("could not move to the third slide"); });
+      await _wp5bPhone(async () => {
+        await _nrwEnter(); await _wait(300); await _mrdFrame();
+        const s0 = _wp5Sel().slideIdx;
+        _click("[data-testid='present-nav-prev']");
+        await _waitFor(() => _wp5Sel().slideIdx === s0 - 2, 2500).catch(() => { throw new Error(`Previous did not step over the hidden slide (index ${_wp5Sel().slideIdx}, start ${s0})`); });
+        if ((_nrwContent()?.textContent || "").includes("NRW hidden")) throw new Error("the hidden slide is on screen in Present");
+        _click("[data-testid='present-nav-next']");
+        await _waitFor(() => _wp5Sel().slideIdx === s0, 2500).catch(() => { throw new Error(`Next did not step over the hidden slide (index ${_wp5Sel().slideIdx}, start ${s0})`); });
+        await _wp5Exit();
+      });
+    });
+  }},
+  { name: "phone editor: an edit on the portrait canvas changes the text only, not the layout fields", fn: async () => {
+    const grid = { type: "grid", cols: 4, gap: 16, style: { alignItems: "stretch" }, items: [_nrwCard("NRW Scope", "only the project"), _nrwCard("Deps", "audit first"), _nrwCard("Secrets", "out of reach"), _nrwCard("Costly", "a human step")] };
+    const flow = { type: "flow", items: ["Step A", "Step B", "Step C", "Step D", "Step E"].map((label) => ({ label, icon: "Circle" })) };
+    const head = { type: "heading", text: "NRW head", size: "4xl", maxWidth: "60%" };
+    // Layout fields the narrow view replaces at render time. None can change in the deck.
+    const layout = (bl) => JSON.stringify((bl || []).map((b) => ({ t: b.type, cols: b.cols, gap: b.gap, style: b.style, direction: b.direction, size: b.size, maxWidth: b.maxWidth, align: b.align, h: b.h,
+      cells: (b.items || []).map((c) => (c && c.blocks ? c.blocks.map((x) => ({ align: x.align, size: x.size, maxWidth: x.maxWidth })) : null)) })));
+    await _nrwOnSlide([head, grid, flow], null, "NRW head", async () => {
+      const before = layout(_wp5Cur().blocks);
+      await _nrwPhoneEditor(async (vp) => {
+        if (_nrwTracks(_nrwGrid(vp)) !== 2) throw new Error("the phone editor grid is not the narrow 2-up view");
+        await _tlEdit("NRW Scope", "NRW Scope 2");
+        await _tlEdit("Step A", "Step A2");
+        await _tlEdit("NRW head", "NRW head 2");
+      });
+      const bl = _wp5Cur().blocks || [];
+      const g = bl.find((b) => b.type === "grid"), f = bl.find((b) => b.type === "flow"), h = bl.find((b) => b.type === "heading");
+      if (g?.items?.[0]?.blocks?.[0]?.text !== "NRW Scope 2") throw new Error("the grid cell edit was not saved");
+      if (f?.items?.[0]?.label !== "Step A2") throw new Error("the flow label edit was not saved");
+      if (h?.text !== "NRW head 2") throw new Error("the heading edit was not saved");
+      const after = layout(bl);
+      if (after !== before) throw new Error(`an edit on the portrait canvas changed layout fields: ${after} (before: ${before})`);
     });
   }},
 ]);

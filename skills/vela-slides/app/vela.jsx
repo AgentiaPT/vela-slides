@@ -140,7 +140,7 @@ const velaClipboardReadSlides = async () => {
 
 const VELA_VERSION = "13.82";
 const VELA_CHANGELOG = [
-  { v: "13.82", d: ["Phone (portrait): slides use a one-column layout that fills the screen; text stays near real size.", "Phone: side-by-side columns, split images and grids stack; short cards stay two per row.", "Phone: flows and timelines run top to bottom; stat rows and tables fit the width.", "Phone: images take the full width and shrink before text does; a slide does not run off the screen.", "Phone: a portrait first image keeps the lead position in an image group.", "Phone: story mode shows each image at full width, with the index row under it.", "Phone Present: a bar under the slide has previous, next, slide count and exit; nothing covers the slide.", "Phone editor: the slide tab shows the portrait layout, not a small 16:9 box.", "Wide (desktop) view: no layout change."] },
+  { v: "13.82", d: ["Phone (portrait): slides use a one-column layout that fills the screen; text stays near real size.", "Phone: side-by-side columns, split images and grids stack; short cards stay two per row.", "Phone: flows and timelines run top to bottom; stat rows and tables fit the width.", "Phone: images take the full width and shrink before text does; a slide does not run off the screen.", "Phone: a portrait first image keeps the lead position in an image group.", "Phone: story mode shows each image at full width, with the index row under it.", "Phone Present: a bar under the slide has previous, next, slide count and exit; nothing covers the slide.", "Phone editor: the slide tab shows the portrait layout, not a small 16:9 box.", "Hardening: malformed table or size values cannot stall or break a slide (fail-closed type checks; tests added).", "Wide (desktop) view: no layout change."] },
   { v: "13.81", d: ["Editor: search in the slide list (Ctrl+E or /), same engine as Present", "Search: ↑↓ + Enter, highlighted matches, match count; finds text in column layouts, notes and section names (editor)", "Editor: short outline on the matched block when a result opens"] },
   { v: "13.80", d: ["Session end time: set it from the toolbar or the Presenter View.", "Presenter View: clock, time left and pace guidance (ahead / on pace / behind).", "Present: thin pace bar on the slide edge (T hides it).", "Present: optional clock on the slide (C key)."] },
   { v: "13.79", d: ["Present: Ctrl+E search also matches slide text, with a snippet.", "Present: while typing, search also lists hidden slides and slides in collapsed lanes (a detour).", "Present: after a detour, arrows, wheel or Esc return to the slide you left.", "Present: a detour slide shows no slide number; Presenter view shows where you will return."] },
@@ -1662,10 +1662,15 @@ function sanitizeBlock(block, depth = 0) {
     }
   }
   if (clean.type === "table") {
+    // Fail closed: a headers / rows value that is not an array is dropped. The
+    // renderer takes its column count from these, so a raw object here would
+    // carry a deck-chosen `length` past the caps below.
     if (Array.isArray(clean.headers)) clean.headers = clean.headers.slice(0, 10).map((h) => sanitizeString(String(h), 200));
+    else delete clean.headers;
     if (Array.isArray(clean.rows)) clean.rows = clean.rows.slice(0, 30).map((row) =>
       Array.isArray(row) ? row.slice(0, 10).map((cell) => sanitizeString(String(cell), 500)) : []
     );
+    else delete clean.rows;
   }
   if (clean.type === "svg") {
     // DOM-based sanitization (same pipeline as study-notes/chat diagrams). The previous
@@ -4159,11 +4164,17 @@ const NARROW_SIZE_ORDER = ["xs", "sm", "md", "lg", "xl", "2xl", "3xl", "4xl"];
 const NARROW_LIGHT_TYPES = new Set(["heading", "text", "badge", "metric", "icon", "spacer", "divider"]);
 // Blocks that take the full width of a narrow grid cell (a centered cell shrinks them to their content).
 const NARROW_WIDE_TYPES = new Set(["funnel", "cycle", "comparison", "table", "progress", "matrix", "checklist", "timeline", "steps", "flow", "code", "number-row", "callout", "grid", "svg"]);
+// Deck values are read type-first here. A text is a string (or a finite number);
+// a size name is a string that is an own key of the size table. Any other shape
+// (an object, an array) counts as empty / the fallback, and is never coerced:
+// coercion of a deck object can throw, and a throw in render loses the slide.
+function narrowStr(v) { return typeof v === "string" ? v : typeof v === "number" && Number.isFinite(v) ? String(v) : ""; }
+function narrowPx(v, fallback) { return typeof v === "string" && Object.prototype.hasOwnProperty.call(NARROW_SIZE_PX, v) ? NARROW_SIZE_PX[v] : NARROW_SIZE_PX[fallback]; }
 // Estimated width (px) of one line of `text` at font size `px`.
-function narrowTextW(text, px) { return String(text || "").replace(/\*\*|\+\+|~~/g, "").length * px * 0.54; }
+function narrowTextW(text, px) { return narrowStr(text).replace(/\*\*|\+\+|~~/g, "").length * px * 0.54; }
 function narrowPadPx(v) {
   if (typeof v === "number") return v;
-  const m = String(v || "").trim().split(/\s+/).map((x) => parseFloat(x) || 0);
+  const m = narrowStr(v).trim().split(/\s+/).map((x) => parseFloat(x) || 0);
   return m.length >= 2 ? m[1] : (m[0] || 0);
 }
 // Estimated lines the texts of `blocks` need in a column `w` px wide: [most lines of one text, widest word].
@@ -4171,13 +4182,13 @@ function narrowTextLoad(blocks, w) {
   let lines = 0, word = 0;
   for (const b of blocks || []) {
     if (!b || typeof b !== "object") continue;
-    const strs = b.type === "metric" ? [[b.value, NARROW_SIZE_PX[b.size || "4xl"]], [b.label, NARROW_SIZE_PX.xs * 1.1]]
+    const strs = b.type === "metric" ? [[b.value, narrowPx(b.size, "4xl")], [b.label, NARROW_SIZE_PX.xs * 1.1]]
       : b.type === "icon" ? [[b.label, NARROW_SIZE_PX.xs]]
-      : [[b.text, (NARROW_SIZE_PX[b.size || (b.type === "heading" ? "2xl" : b.type === "badge" ? "xs" : "md")] || 16.8) * (b.type === "badge" ? 1.25 : 1)]];
+      : [[b.text, narrowPx(b.size, b.type === "heading" ? "2xl" : b.type === "badge" ? "xs" : "md") * (b.type === "badge" ? 1.25 : 1)]];
     for (const [t, px] of strs) {
       if (!t) continue;
-      for (const ln of String(t).split("\n")) lines = Math.max(lines, Math.ceil(narrowTextW(ln, px) / Math.max(40, w)));
-      for (const wd of String(t).split(/[\s/]+/)) word = Math.max(word, narrowTextW(wd, px));
+      for (const ln of narrowStr(t).split("\n")) lines = Math.max(lines, Math.ceil(narrowTextW(ln, px) / Math.max(40, w)));
+      for (const wd of narrowStr(t).split(/[\s/]+/)) word = Math.max(word, narrowTextW(wd, px));
     }
   }
   return [lines, word];
@@ -4195,7 +4206,8 @@ function narrowTplCols(style) {
   if (m) return Number(m[1]);
   return t.includes("(") ? 0 : t.split(/\s+/).length;
 }
-const narrowGap = (g, max) => Math.min(Number.isFinite(g) && g >= 0 ? g : 24, max);
+// (The renderer reads a gap of 0 as "not set", so 0 is the default here too.)
+const narrowGap = (g, max) => Math.min(Number.isFinite(g) && g > 0 ? g : 24, max);
 function narrowGridCols(block, colW) {
   const items = Array.isArray(block.items) ? block.items.filter((c) => c && typeof c === "object") : [];
   const cols = Math.max(1, narrowTplCols(block.style) || (Number.isFinite(block.cols) ? block.cols : 2));
@@ -4214,7 +4226,8 @@ function narrowGridCols(block, colW) {
       return lines <= (n === 2 ? 4 : 1) && word <= w;
     });
   };
-  if (cols >= 3 && items.length >= 3 && fits(3)) return 3;
+  // 3-up, but not when one cell stays alone in the last row (4 or 7 cells).
+  if (cols >= 3 && items.length >= 3 && items.length % 3 !== 1 && fits(3)) return 3;
   // Three cards: one per row. Two and one gives cards of unequal width.
   if (items.length === 3) return 1;
   return fits(2) ? 2 : 1;
@@ -4222,12 +4235,17 @@ function narrowGridCols(block, colW) {
 // Grid template for a table in a narrow column: one weight per column, from
 // its longest word (a header is wide uppercase mono) and its text length.
 // Built from numbers only.
+// The column count is clamped to the ingress cap (10): the loop bound must not
+// be a deck value. headers / rows that are not arrays count as empty.
+const NARROW_TABLE_MAX_COLS = 10;
 function narrowTableCols(headers, rows, cols) {
+  const hs = Array.isArray(headers) ? headers : [], rs = Array.isArray(rows) ? rows.slice(0, 30) : [];
+  const n = Math.min(NARROW_TABLE_MAX_COLS, Math.max(1, Number.isInteger(cols) ? cols : 1));
   const w = [];
-  for (let j = 0; j < cols; j++) {
-    const cells = (rows || []).map((r) => String((r || [])[j] ?? ""));
-    const word = (t) => Math.max(0, ...String(t ?? "").split(/\s+/).map((x) => x.length));
-    const longest = Math.max(word((headers || [])[j]) * 1.3, ...cells.map(word));
+  for (let j = 0; j < n; j++) {
+    const cells = rs.map((r) => narrowStr(Array.isArray(r) ? r[j] : ""));
+    const word = (t) => Math.max(0, ...narrowStr(t).split(/\s+/).map((x) => x.length));
+    const longest = Math.max(word(hs[j]) * 1.3, ...cells.map(word));
     const avg = cells.length ? cells.reduce((t, c) => t + c.length, 0) / cells.length : 0;
     w.push(Math.round(Math.min(26, Math.max(4, longest, avg * 0.55)) * 10) / 10);
   }
@@ -4253,9 +4271,9 @@ const NARROW_VIEWS = {
   flow: (block, colW) => {
     if (block.direction === "vertical") return block;
     const items = Array.isArray(block.items) ? block.items : [], n = items.length || 1;
-    const px = NARROW_SIZE_PX[block.labelSize || "sm"] || 15.2;
+    const px = narrowPx(block.labelSize, "sm");
     const itemW = (colW - (n - 1) * (block.type === "flow" ? 30 : 0)) / n;
-    const tight = items.some((it) => it && (narrowTextW(it.label || it.title, px) > itemW * 2 || String(it.label || it.title || "").split(/\s+/).some((w) => narrowTextW(w, px) > itemW) || narrowTextW(it.sublabel || it.text, 13.6) > itemW * 3));
+    const tight = items.some((it) => it && (narrowTextW(it.label || it.title, px) > itemW * 2 || narrowStr(it.label || it.title).split(/\s+/).some((w) => narrowTextW(w, px) > itemW) || narrowTextW(it.sublabel || it.text, 13.6) > itemW * 3));
     return n > 3 || tight ? { ...block, direction: "vertical" } : block;
   },
   timeline: (block, colW) => NARROW_VIEWS["flow"](block, colW),
@@ -4263,14 +4281,17 @@ const NARROW_VIEWS = {
   heading: (block, colW) => {
     // Step the size down until the widest word fits the column.
     let size = block.size || "2xl";
-    const words = String(block.text || "").split(/\s+/), room = colW - (block.icon ? 44 : 0);
+    const words = narrowStr(block.text).split(/\s+/), room = colW - (block.icon ? 44 : 0);
     while (NARROW_SIZE_ORDER.indexOf(size) > 2 && words.some((w) => narrowTextW(w, NARROW_SIZE_PX[size] * 1.08) > room)) size = NARROW_SIZE_ORDER[NARROW_SIZE_ORDER.indexOf(size) - 1];
     return size === (block.size || "2xl") && block.maxWidth == null ? block : { ...block, size, maxWidth: undefined };
   },
   text: (block, colW) => block.maxWidth == null ? block : { ...block, maxWidth: undefined },
   svg: (block, colW) => ({ ...block, maxWidth: "100%" }),
   image: (block, colW) => block.maxWidth == null ? block : { ...block, maxWidth: narrowMaxWidth(block.maxWidth) },
-  spacer: (block, colW) => ({ ...block, h: Math.min(28, Math.round((block.h || 24) * 0.75)) }),
+  spacer: (block, colW) => {
+    const h = typeof block.h === "number" ? block.h : typeof block.h === "string" ? parseFloat(block.h) : NaN;
+    return { ...block, h: Math.min(28, Math.round((Number.isFinite(h) && h > 0 ? h : 24) * 0.75)) };
+  },
   "number-row": (block, colW) => {
     // Step the value size down until the widest value fits its column.
     const items = Array.isArray(block.items) ? block.items : [], n = items.length || 1;
@@ -4982,9 +5003,11 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
     }
 
     case "table": {
-      const headers = block.headers || [];
-      const rows = block.rows || [];
-      const cols = headers.length || (rows[0] || []).length || 1;
+      // Arrays only, and at most 10 columns (the ingress caps), also for a block
+      // that reached the renderer on a path with no sanitizer.
+      const headers = Array.isArray(block.headers) ? block.headers : [];
+      const rows = Array.isArray(block.rows) ? block.rows : [];
+      const cols = Math.min(10, headers.length || (Array.isArray(rows[0]) ? rows[0].length : 0) || 1);
       const hdrBg = cssColor(block.headerBg) || `${st.accent}20`;
       const hdrColor = block.headerColor || (block.headerBg ? "#fff" : st.accent);
       const cellColor = block.cellColor || st.muted;
@@ -5712,7 +5735,11 @@ function InlineCommentCard({ comment, itemId, slideIndex, dispatch }) {
 }
 
 // Narrow (portrait) canvas padding, in virtual px.
-const NARROW_PAD_X = 22, NARROW_PAD_TOP = 30;
+// Top: 30 on a phone (the Present controls are in a bar under the slide). A
+// narrow canvas wider than a phone canvas (a tablet, a portrait window) keeps
+// the floating Present controls, so its top padding clears them.
+const NARROW_PAD_X = 22, NARROW_PAD_TOP = 30, NARROW_PAD_TOP_WIDE = 66;
+const NARROW_PHONE_MAX_W = Math.round(MOBILE_BP / 0.92);
 function SlideContent({ slide, index, total, branding, editable, onEdit, presenting, onBlockEdit, blockEditing, fontScale = 1, reviewMode, itemId, dispatch: externalDispatch, displayIndex, displayTotal, hideSlideNumber, story, storyAnimate, onStoryJump, onStoryZoomOut, presentSurface, flashBlock = -1, narrowW = 0 }) {
   const st = { text: slide.color || T.text, muted: slide.mutedColor || T.textMuted, textDim: T.textDim, accent: slide.accent || T.accent, border: T.border, codeBg: T.codeBg };
   // Hidden elements (CR: hide any element). In presentation they are removed
@@ -5812,6 +5839,8 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
   // Narrow only: a last uniform shrink (no reflow) when widening the column
   // cannot make the content fit, e.g. a tall diagram that grows with the width.
   const [fitShrink, setFitShrink] = useState(1);
+  // Narrow: tight height cap (px) of each image grid of this render, by grid key.
+  const tightMaxRef = useRef({});
   const [fitJustify, setFitJustify] = useState(requestedJustify);
   const [splitImgMaxH, setSplitImgMaxH] = useState(null); // px cap so a side image conforms to the content column's height
   const [colsImageFit, setColsImageFit] = useState(null);
@@ -6227,6 +6256,7 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
       };
       const ih = rowSplit ? contentH : stackH();
       let finalScale = ih > availH && ih > 0 ? Math.max(availH / ih, SCALE_FLOOR) : 1;
+      let heightScale = 1; // narrow: the scale from the height search, before the width pass
       if (narrow && finalScale < 1) {
         // A scaled column is wider, so its text wraps less and it gets shorter
         // than availH / ih predicts. Search for the largest scale that fits.
@@ -6241,10 +6271,18 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
       if (narrow) {
         // A block wider than the column (a long word, a wide table) scales the
         // slide down until it fits the width.
+        // If a pass does not reduce the excess, the content grows with the
+        // column (a negative margin, a width above 100%): keep the scale from
+        // before the loop, because a smaller slide gains nothing.
+        heightScale = finalScale;
+        const widthStart = finalScale;
+        let lastOver = Infinity;
         for (let pass = 0; pass < 3; pass++) {
           applyGeometry(inner, finalScale);
           const over = flowOver();
           if (!(over > 1.004) || finalScale <= SCALE_FLOOR) break;
+          if (over >= lastOver - 0.002) { finalScale = widthStart; break; }
+          lastOver = over;
           finalScale = Math.max(SCALE_FLOOR, finalScale / over);
         }
       }
@@ -6258,14 +6296,25 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
         // Content that grows with the column width (a pinned image, a tall
         // diagram) can still be too tall. Shrink it as one piece, so a narrow
         // slide never runs off the canvas.
-        const tall = stackH() * finalScale;
-        if (tall > availH + 0.5) finalShrink = Math.max(SCALE_FLOOR, availH / tall);
+        let tall = stackH() * finalScale;
+        if (tall > availH + 0.5 && finalScale < 1 && finalScale === heightScale) {
+          // The wider column did not make it fit, so the content grows with the
+          // width. A wider column then only makes the text smaller. Keep the
+          // column at its real width if that gives the larger final size.
+          applyGeometry(inner, 1);
+          const tallAt1 = stackH();
+          if (tallAt1 > 0 && availH / tallAt1 >= finalScale * availH / tall) { finalScale = 1; tall = tallAt1; }
+          else applyGeometry(inner, finalScale);
+        }
+        // One floor for the two factors together (scale x shrink).
+        if (tall > availH + 0.5) finalShrink = Math.min(1, Math.max(SCALE_FLOOR / finalScale, availH / tall));
         applyGeometry(inner, finalScale, finalShrink);
       }
       const boxes = {};
       inner.querySelectorAll("[data-image-grid-key]").forEach((g) => { boxes[g.getAttribute("data-image-grid-key")] = [g.clientWidth, g.clientHeight]; });
       setGridBoxes((prev) => JSON.stringify(prev) === JSON.stringify(boxes) ? prev : boxes);
-      narrowGrids.forEach((g) => { g.style.maxHeight = g.getAttribute("data-tight-max") || "100%"; });
+      // The cap comes from the render's own numbers (tightMaxRef), not from a DOM attribute.
+      narrowGrids.forEach((g) => { const t = tightMaxRef.current[g.getAttribute("data-image-grid-key")]; g.style.maxHeight = Number.isFinite(t) ? `${t}px` : "100%"; });
       applyGeometry(inner, finalScale, finalShrink);
       setFitShrink(finalShrink);
       let splitCap = null;
@@ -6362,10 +6411,12 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
   const rawPad = typeof slide.padding === "number" ? `${slide.padding}px` : slide.padding || "36px 48px";
   const isSoloImage = blocks.length === 1 && blocks[0].type === "image";
   const padParts = String(rawPad).split(/\s+/).map((v) => Math.max(parseInt(v) || 24, 24));
+  const narrowPadTop = narrowW > NARROW_PHONE_MAX_W ? NARROW_PAD_TOP_WIDE : NARROW_PAD_TOP;
   // Narrow: small side and top padding (the phone Present controls are in a bar
   // under the slide, so nothing floats over it); the bottom clears the footer.
-  const pad = isSoloImage ? "0px" : narrow
-    ? `${NARROW_PAD_TOP}px ${NARROW_PAD_X}px ${Math.max(44, Math.min(56, padParts[2] ?? padParts[0]))}px`
+  // (Narrow cols: one header image with column blocks under it is not a full-bleed solo slide.)
+  const pad = isSoloImage && !(narrow && allBlocks.length > 1) ? "0px" : narrow
+    ? `${narrowPadTop}px ${NARROW_PAD_X}px ${Math.max(44, Math.min(56, padParts[2] ?? padParts[0]))}px`
     : padParts.map((v) => v + "px").join(" ");
 
   // Render a single block with all editable chrome (hover, edit popup, link, etc.)
@@ -6493,6 +6544,8 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
     // re-clamp at the sink for any slide object that reached here unsanitized.
     const gap = slide.gap || 12;
     const gridKey = String(idxs[0]);
+    // Narrow cols: the columns are in the stack too, so one header image is not a solo slide.
+    const soloGrid = isSoloImage && allBlocks.length === 1;
     const box = alignWithinColumn ? null : gridBoxes[gridKey];
     // CR23: the packing comes from imageGridPlan() — the same function the paste
     // layout chooser uses — so what paste predicts is what renders. Each cell is
@@ -6505,7 +6558,7 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
     const drag = tileDrag && tileDrag.key === gridKey && tileDrag.idxs.length === runLen && tileDrag.idxs.every((v, q) => v === idxs[q]) ? tileDrag : null;
     const seq = drag ? drag.order.map((p) => idxs[p]) : idxs;
     // The drop writes slide.blocks, so a run from a column (narrow) has no drag.
-    const canReorder = !!(editable && onEdit && !presenting && !presentSurface && runLen >= 2 && !isSoloImage && idxs.every((bi) => bi < blocks.length));
+    const canReorder = !!(editable && onEdit && !presenting && !presentSurface && runLen >= 2 && !soloGrid && idxs.every((bi) => bi < blocks.length));
     // A story-active grid gives every cell one uniform caption row (_storyRow),
     // so tiles with and without a caption align. Other grids: no flag, unchanged.
     const storyRow = storyActive && runLen >= 2 && idxs.some((bi) => storyNumOf.has(bi));
@@ -6527,6 +6580,7 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
       rowW = need;
       tightH = Math.ceil(need.reduce((t, v) => t + v, 0) + gapsH);
     }
+    tightMaxRef.current[gridKey] = tightH;
     const hwSum = rowW.reduce((t, v) => t + v, 0) || 1;
     const len = (pct, px) => `calc(${pct * 100}% + ${px}px)`;
     const cellPos = [];
@@ -6558,12 +6612,12 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
     // requests alignment. The default path still fills all available height.
     const gridHeight = alignWithinColumn ? Math.min(splitImgMaxH || rows * 140, rows * 140) : null;
     return (
-      <div key={`__imgrid-${idxs[0]}`} data-testid="image-grid" data-image-grid={region} data-image-count={runLen} data-image-grid-key={gridKey} data-image-cols={plan.cols} data-image-rows={rows} data-tight-max={tightH != null ? `${tightH}px` : undefined}
+      <div key={`__imgrid-${idxs[0]}`} data-testid="image-grid" data-image-grid={region} data-image-count={runLen} data-image-grid-key={gridKey} data-image-cols={plan.cols} data-image-rows={rows}
         style={{ position: "relative", flex: gridHeight == null ? "1 1 0" : "0 0 auto", height: gridHeight == null ? undefined : gridHeight, maxHeight: tightH != null ? tightH : "100%", minHeight: minGridH, minWidth: 0, width: "100%" }}>
         {idxs.map((bi, p) => {
           const k = drag ? drag.order.indexOf(p) : p;
           // A solo image fills the slide: keep its _solo flag, so it is not click-to-zoom.
-          const rendered = renderBlockWithComments({ ...allBlocks[bi], _gridCell: true, ...(storyRow ? { _storyRow: true } : {}), ...(isSoloImage ? { _solo: true } : {}), ...(isSoloImage && allBlocks[bi].rounded == null ? { rounded: 0 } : {}) }, bi);
+          const rendered = renderBlockWithComments({ ...allBlocks[bi], _gridCell: true, ...(storyRow ? { _storyRow: true } : {}), ...(soloGrid ? { _solo: true } : {}), ...(soloGrid && allBlocks[bi].rounded == null ? { rounded: 0 } : {}) }, bi);
           const [blockEl, ...rest] = rendered;
           // Make the block wrapper fill its cell height so the image (height:100%)
           // and objectFit:contain letterbox uniformly across mixed aspect ratios.
@@ -6707,7 +6761,7 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
             </SlideNarrowContext.Provider>
           </ItemHoverContext.Provider>
         </div>
-        {storyActive && story && <StoryZoomLayer key={story.key} items={storyList} story={story} animate={!!storyAnimate} onJump={onStoryJump} onZoomOut={onStoryZoomOut} hostRef={outerRef} pad={narrow ? `${NARROW_PAD_TOP}px 6px 44px` : pad} narrow={narrow} accent={cssColor(slide.accent) || T.accent} />}
+        {storyActive && story && <StoryZoomLayer key={story.key} items={storyList} story={story} animate={!!storyAnimate} onJump={onStoryJump} onZoomOut={onStoryZoomOut} hostRef={outerRef} pad={narrow ? `${narrowPadTop}px 6px 44px` : pad} narrow={narrow} accent={cssColor(slide.accent) || T.accent} />}
         {/* Slide-level comments (no blockIndex) — top-right */}
         {reviewMode && externalDispatch && (() => {
           const unanchored = slideComments.filter((c) => c.blockIndex == null);
@@ -11017,8 +11071,13 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
   const swipeBlocked = (e) => sessionDialogOpenRef.current || !!e?.target?.closest?.("[data-vela-modal]");
   // goNext / goPrev: one step forward / back (story image, slide, then module).
   // A swipe and the phone Present bar use the same two functions.
+  // In Present both go through the arrow-key handler: it is the one place that
+  // knows hidden slides, title cards, empty modules and the detour return. (The
+  // index steps below are the editor path, which must reach hidden slides.)
+  const presentStep = (dir) => { window.dispatchEvent(new KeyboardEvent("keydown", { key: dir > 0 ? "ArrowRight" : "ArrowLeft", bubbles: true, cancelable: true })); };
   const goNext = useCallback((e) => {
       if (swipeBlocked(e)) return;
+      if (fullscreen) { presentStep(1); return; }
       if (storyStepRef.current(1)) return;
       const navSlides = fullscreen ? presSlides : slides;
       if (navSlides.length > 0 && slideIndex < navSlides.length - 1) {
@@ -11037,6 +11096,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
     }, [slideIndex, slides.length, presSlides.length, fullscreen, dispatch, concept.id, flatModules, showNavToast]);
   const goPrev = useCallback((e) => {
       if (swipeBlocked(e)) return;
+      if (fullscreen) { presentStep(-1); return; }
       if (storyStepRef.current(-1)) return;
       if (slideIndex > 0) {
         storyEnterBack();
@@ -12046,14 +12106,15 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
           the slide, in thumb reach. Nothing floats over the slide, and a step
           does not need a swipe across slide content (links, zoom, story tiles). */}
       {isMobile && !showGallery && (() => {
-        const virtual = !!presSlides[slideIndex]?._virtual;
+        const virtual = !!presSlides[slideIndex]?._virtual || !!detourRef.current;
         const at = globalSlideIndex - presOffset, total = Math.max(1, globalSlideTotal);
+        const noPrev = !virtual && at <= 0 && !(presOffset && slideIndex > 0);
         const btn = (dim) => ({ border: "none", background: "transparent", color: "#e2e8f0", opacity: dim ? 0.3 : 0.9, display: "flex", alignItems: "center", justifyContent: "center", padding: 0, cursor: "pointer", touchAction: "manipulation", WebkitTapHighlightColor: "transparent" });
         const keep = (e) => e.preventDefault(); // focus stays on the slide (keyboard)
         return <nav data-testid="present-nav-bar" aria-label="Slide navigation" style={{ flexShrink: 0, position: "relative", display: "flex", alignItems: "stretch", height: 46, boxSizing: "content-box", paddingBottom: "env(safe-area-inset-bottom, 0px)", background: "#0a0f1a", borderTop: "1px solid rgba(255,255,255,0.08)", userSelect: "none", WebkitUserSelect: "none" }}>
           <div aria-hidden="true" style={{ position: "absolute", top: -1, left: 0, height: 2, width: `${Math.min(100, Math.max(0, (at + 1) / total * 100))}%`, background: T.accent, opacity: virtual ? 0 : 0.85 }} />
           <button type="button" data-testid="present-nav-exit" aria-label="Exit Present" title="Exit Present" onMouseDown={keep} onClick={() => dispatch({ type: "SET_FULLSCREEN", value: false })} style={{ ...btn(false), width: 52, opacity: 0.6 }}><Minimize2 size={18} /></button>
-          <button type="button" data-testid="present-nav-prev" aria-label="Previous" title="Previous" onMouseDown={keep} onClick={() => goPrev()} style={{ ...btn(!virtual && at <= 0), flex: 1 }}><ChevronLeft size={24} /></button>
+          <button type="button" data-testid="present-nav-prev" aria-label="Previous" title="Previous" onMouseDown={keep} onClick={() => goPrev()} style={{ ...btn(noPrev), flex: 1 }}><ChevronLeft size={24} /></button>
           <div data-testid="present-nav-count" aria-live="off" style={{ minWidth: 84, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: FONT.mono, fontSize: 13, fontWeight: 600, color: "#94a3b8", fontVariantNumeric: "tabular-nums", letterSpacing: "0.04em" }}>{virtual ? "\u00b7" : `${at + 1} / ${total}`}</div>
           <button type="button" data-testid="present-nav-next" aria-label="Next" title="Next" onMouseDown={keep} onClick={() => goNext()} style={{ ...btn(!virtual && at + 1 >= total), flex: 1 }}><ChevronRight size={24} /></button>
         </nav>;
@@ -23771,13 +23832,43 @@ const _nrwOnSlide = async (blocks, extra, mark, body) => {
   }
 };
 // Enter Present in the phone box; body(content element, canvas box).
-const _nrwPhonePresent = (body) => _wp5bPhone(async (root) => {
+// The phone box of _wp5bPhone holds Present only while the browser itself is
+// not in fullscreen: a real browser fullscreen fills the screen and ignores
+// the box. A headless browser can grant that request to the first test of a
+// run. Then leave browser fullscreen (the app leaves Present with it) and
+// enter Present again: the second request has no user gesture and is refused.
+const _nrwEnter = async () => {
   await _wp5Enter();
+  if (!document.fullscreenElement) return;
+  await document.exitFullscreen().catch(() => {});
+  await _waitFor(() => !document.fullscreenElement && !_wp5Fs(), 2500).catch(() => {});
+  await _wp5Exit().catch(() => {});
+  await _wp5Enter();
+  if (document.fullscreenElement) throw new Error("the browser is in fullscreen, so the phone box cannot hold Present");
+};
+const _nrwPhonePresent = (body) => _wp5bPhone(async (root) => {
+  await _nrwEnter();
   await _wait(700); await _mrdFrame(); // entrance animations end
   const c = _nrwContent();
   if (!c) throw new Error("no slide content in phone Present");
-  await body(c, root.getBoundingClientRect());
+  // The canvas box is the slide itself: the phone box also holds the Present bar.
+  await body(c, c.getBoundingClientRect());
   await _wp5Exit();
+});
+// The phone box of _wp5bPhone narrows Present only (the editor row keeps the
+// window width). Give the editor row the phone width, wait for the portrait
+// canvas, run body(viewport), then restore.
+const _nrwPhoneEditor = (body) => _wp5bPhone(async () => {
+  const row = _$("[data-testid='editor-main-row']"); if (!row) throw new Error("no editor row");
+  const css = row.getAttribute("style");
+  try {
+    row.style.width = "390px"; row.style.maxWidth = "390px"; row.style.flex = "1 1 auto";
+    const vp = await _waitFor(() => { const v = _mrdViewport(); return v && v.offsetHeight > v.offsetWidth * 1.2 && v.querySelector("[data-vela-narrow]") ? v : null; }, 2500)
+      .catch(() => { const v = _mrdViewport(); throw new Error(`phone editor canvas is ${v ? `${v.offsetWidth}x${v.offsetHeight}` : "missing"}, expected a portrait canvas`); });
+    await body(vp);
+  } finally {
+    if (css == null) row.removeAttribute("style"); else row.setAttribute("style", css);
+  }
 });
 
 uiSuite("narrow-layout", [
@@ -23787,7 +23878,7 @@ uiSuite("narrow-layout", [
       await _nrwPhonePresent(async (c, R) => {
         const g = _nrwGrid(c);
         if (!g) throw new Error("no grid on the slide");
-        if (_nrwTracks(g) !== 2) throw new Error(`grid has ${_nrwTracks(g)} column(s) on a phone, expected 2`);
+        if (_nrwTracks(g) !== 2) throw new Error(`grid has ${_nrwTracks(g)} column(s) on a phone, expected 2 (canvas ${c.parentElement.offsetWidth}x${c.parentElement.offsetHeight}, narrow ${c.hasAttribute("data-vela-narrow")}, phone box ${Math.round(R.width)}x${Math.round(R.height)}, window ${window.innerWidth}x${window.innerHeight}, contents ${_$$("[data-vela-slide-content]").length})`);
         _nrwAllInside(c, R);
       });
       const b = (_wp5Cur().blocks || []).find((x) => x.type === "grid");
@@ -23885,7 +23976,7 @@ uiSuite("narrow-layout", [
   { name: "phone Present: the bar under the slide steps the slides and exits; no control floats over the slide", fn: async () => {
     await _nrwOnSlide([{ type: "heading", text: "NRW bar" }], null, "NRW bar", async () => {
       await _wp5bPhone(async (root) => {
-        await _wp5Enter(); await _wait(300); await _mrdFrame();
+        await _nrwEnter(); await _wait(300); await _mrdFrame();
         const R = root.getBoundingClientRect();
         const bar = _$("[data-testid='present-nav-bar']");
         if (!bar) throw new Error("no Present bar in the phone layout");
@@ -23913,21 +24004,67 @@ uiSuite("narrow-layout", [
       if (!_$$(".slide-nav-btn").some((b) => b.getBoundingClientRect().width > 0)) throw new Error("wide Present lost its floating controls");
     });
   }},
-  { name: "phone Present: a table header word stays whole; a flow loop label is vertical", fn: async () => {
-    const table = { type: "table", headers: ["Metric", "Before", "Improvement"], rows: [["Latency", "120 ms", "3x"], ["NRW-table", "2.1%", "7x"]] };
+  { name: "phone Present: a long table header stays whole in one line; a flow loop label is vertical", fn: async () => {
+    // 5 columns: with equal columns the long header does not fit its column.
+    const table = { type: "table", headers: ["Id", "Q1", "Q2", "Q3", "Improvement"], rows: [["a", "1", "2", "3", "3x"], ["b", "4", "5", "6", "7x"]] };
     const flow = { type: "flow", direction: "vertical", loop: true, loopLabel: "NRW loop label", items: [{ label: "One", icon: "Circle" }, { label: "Two", icon: "Circle" }, { label: "Three", icon: "Circle" }] };
-    await _nrwOnSlide([table, flow], null, "NRW-table", async () => {
+    await _nrwOnSlide([{ type: "heading", text: "NRW-table", size: "md" }, table, flow], null, "NRW-table", async () => {
       await _nrwPhonePresent(async (c, R) => {
         _nrwAllInside(c, R);
         const h = _nrwByText(c, "Improvement");
         if (!h) throw new Error("table header not found");
-        const one = parseFloat(getComputedStyle(h).lineHeight) || parseFloat(getComputedStyle(h).fontSize) * 1.5;
-        if (h.getBoundingClientRect().height > one * 1.6 + 18) throw new Error("the header word 'Improvement' is split over lines");
+        const cs = getComputedStyle(h), hr = h.getBoundingClientRect(), k = hr.width / h.offsetWidth;
+        const oneLine = (parseFloat(cs.fontSize) * 1.35 + parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom) + 2) * k;
+        if (hr.height > oneLine) throw new Error(`the header 'Improvement' is ${Math.round(hr.height)} px high, one line is ${Math.round(oneLine)} px: the word is split`);
+        if (h.scrollWidth > h.clientWidth + 1) throw new Error("the header 'Improvement' is wider than its column");
+        const short = _nrwByText(c, "Q1").getBoundingClientRect();
+        if (hr.width < short.width * 1.5) throw new Error(`the long header column (${Math.round(hr.width)} px) is not wider than a short column (${Math.round(short.width)} px)`);
         const lbl = _$$("text", c).find((t) => (t.textContent || "").includes("NRW loop label"));
         if (!lbl) throw new Error("loop label not found");
         const lr = lbl.getBoundingClientRect();
         if (lr.height <= lr.width) throw new Error(`loop label box is ${Math.round(lr.width)}x${Math.round(lr.height)}, expected a vertical label`);
       });
+    });
+  }},
+  { name: "phone Present: the bar steps over a hidden slide in the two directions", fn: async () => {
+    await _nrwOnSlide([{ type: "heading", text: "NRW hidden" }], { hidden: true }, "NRW hidden", async () => {
+      const k1 = _wp5Key();
+      document.activeElement?.blur?.(); _key("ArrowRight");
+      await _waitFor(() => _wp5Key() && _wp5Key() !== k1, 2500).catch(() => { throw new Error("could not move to the third slide"); });
+      await _wp5bPhone(async () => {
+        await _nrwEnter(); await _wait(300); await _mrdFrame();
+        const s0 = _wp5Sel().slideIdx;
+        _click("[data-testid='present-nav-prev']");
+        await _waitFor(() => _wp5Sel().slideIdx === s0 - 2, 2500).catch(() => { throw new Error(`Previous did not step over the hidden slide (index ${_wp5Sel().slideIdx}, start ${s0})`); });
+        if ((_nrwContent()?.textContent || "").includes("NRW hidden")) throw new Error("the hidden slide is on screen in Present");
+        _click("[data-testid='present-nav-next']");
+        await _waitFor(() => _wp5Sel().slideIdx === s0, 2500).catch(() => { throw new Error(`Next did not step over the hidden slide (index ${_wp5Sel().slideIdx}, start ${s0})`); });
+        await _wp5Exit();
+      });
+    });
+  }},
+  { name: "phone editor: an edit on the portrait canvas changes the text only, not the layout fields", fn: async () => {
+    const grid = { type: "grid", cols: 4, gap: 16, style: { alignItems: "stretch" }, items: [_nrwCard("NRW Scope", "only the project"), _nrwCard("Deps", "audit first"), _nrwCard("Secrets", "out of reach"), _nrwCard("Costly", "a human step")] };
+    const flow = { type: "flow", items: ["Step A", "Step B", "Step C", "Step D", "Step E"].map((label) => ({ label, icon: "Circle" })) };
+    const head = { type: "heading", text: "NRW head", size: "4xl", maxWidth: "60%" };
+    // Layout fields the narrow view replaces at render time. None can change in the deck.
+    const layout = (bl) => JSON.stringify((bl || []).map((b) => ({ t: b.type, cols: b.cols, gap: b.gap, style: b.style, direction: b.direction, size: b.size, maxWidth: b.maxWidth, align: b.align, h: b.h,
+      cells: (b.items || []).map((c) => (c && c.blocks ? c.blocks.map((x) => ({ align: x.align, size: x.size, maxWidth: x.maxWidth })) : null)) })));
+    await _nrwOnSlide([head, grid, flow], null, "NRW head", async () => {
+      const before = layout(_wp5Cur().blocks);
+      await _nrwPhoneEditor(async (vp) => {
+        if (_nrwTracks(_nrwGrid(vp)) !== 2) throw new Error("the phone editor grid is not the narrow 2-up view");
+        await _tlEdit("NRW Scope", "NRW Scope 2");
+        await _tlEdit("Step A", "Step A2");
+        await _tlEdit("NRW head", "NRW head 2");
+      });
+      const bl = _wp5Cur().blocks || [];
+      const g = bl.find((b) => b.type === "grid"), f = bl.find((b) => b.type === "flow"), h = bl.find((b) => b.type === "heading");
+      if (g?.items?.[0]?.blocks?.[0]?.text !== "NRW Scope 2") throw new Error("the grid cell edit was not saved");
+      if (f?.items?.[0]?.label !== "Step A2") throw new Error("the flow label edit was not saved");
+      if (h?.text !== "NRW head 2") throw new Error("the heading edit was not saved");
+      const after = layout(bl);
+      if (after !== before) throw new Error(`an edit on the portrait canvas changed layout fields: ${after} (before: ${before})`);
     });
   }},
 ]);

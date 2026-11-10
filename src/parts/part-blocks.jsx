@@ -901,11 +901,17 @@ const NARROW_SIZE_ORDER = ["xs", "sm", "md", "lg", "xl", "2xl", "3xl", "4xl"];
 const NARROW_LIGHT_TYPES = new Set(["heading", "text", "badge", "metric", "icon", "spacer", "divider"]);
 // Blocks that take the full width of a narrow grid cell (a centered cell shrinks them to their content).
 const NARROW_WIDE_TYPES = new Set(["funnel", "cycle", "comparison", "table", "progress", "matrix", "checklist", "timeline", "steps", "flow", "code", "number-row", "callout", "grid", "svg"]);
+// Deck values are read type-first here. A text is a string (or a finite number);
+// a size name is a string that is an own key of the size table. Any other shape
+// (an object, an array) counts as empty / the fallback, and is never coerced:
+// coercion of a deck object can throw, and a throw in render loses the slide.
+function narrowStr(v) { return typeof v === "string" ? v : typeof v === "number" && Number.isFinite(v) ? String(v) : ""; }
+function narrowPx(v, fallback) { return typeof v === "string" && Object.prototype.hasOwnProperty.call(NARROW_SIZE_PX, v) ? NARROW_SIZE_PX[v] : NARROW_SIZE_PX[fallback]; }
 // Estimated width (px) of one line of `text` at font size `px`.
-function narrowTextW(text, px) { return String(text || "").replace(/\*\*|\+\+|~~/g, "").length * px * 0.54; }
+function narrowTextW(text, px) { return narrowStr(text).replace(/\*\*|\+\+|~~/g, "").length * px * 0.54; }
 function narrowPadPx(v) {
   if (typeof v === "number") return v;
-  const m = String(v || "").trim().split(/\s+/).map((x) => parseFloat(x) || 0);
+  const m = narrowStr(v).trim().split(/\s+/).map((x) => parseFloat(x) || 0);
   return m.length >= 2 ? m[1] : (m[0] || 0);
 }
 // Estimated lines the texts of `blocks` need in a column `w` px wide: [most lines of one text, widest word].
@@ -913,13 +919,13 @@ function narrowTextLoad(blocks, w) {
   let lines = 0, word = 0;
   for (const b of blocks || []) {
     if (!b || typeof b !== "object") continue;
-    const strs = b.type === "metric" ? [[b.value, NARROW_SIZE_PX[b.size || "4xl"]], [b.label, NARROW_SIZE_PX.xs * 1.1]]
+    const strs = b.type === "metric" ? [[b.value, narrowPx(b.size, "4xl")], [b.label, NARROW_SIZE_PX.xs * 1.1]]
       : b.type === "icon" ? [[b.label, NARROW_SIZE_PX.xs]]
-      : [[b.text, (NARROW_SIZE_PX[b.size || (b.type === "heading" ? "2xl" : b.type === "badge" ? "xs" : "md")] || 16.8) * (b.type === "badge" ? 1.25 : 1)]];
+      : [[b.text, narrowPx(b.size, b.type === "heading" ? "2xl" : b.type === "badge" ? "xs" : "md") * (b.type === "badge" ? 1.25 : 1)]];
     for (const [t, px] of strs) {
       if (!t) continue;
-      for (const ln of String(t).split("\n")) lines = Math.max(lines, Math.ceil(narrowTextW(ln, px) / Math.max(40, w)));
-      for (const wd of String(t).split(/[\s/]+/)) word = Math.max(word, narrowTextW(wd, px));
+      for (const ln of narrowStr(t).split("\n")) lines = Math.max(lines, Math.ceil(narrowTextW(ln, px) / Math.max(40, w)));
+      for (const wd of narrowStr(t).split(/[\s/]+/)) word = Math.max(word, narrowTextW(wd, px));
     }
   }
   return [lines, word];
@@ -937,7 +943,8 @@ function narrowTplCols(style) {
   if (m) return Number(m[1]);
   return t.includes("(") ? 0 : t.split(/\s+/).length;
 }
-const narrowGap = (g, max) => Math.min(Number.isFinite(g) && g >= 0 ? g : 24, max);
+// (The renderer reads a gap of 0 as "not set", so 0 is the default here too.)
+const narrowGap = (g, max) => Math.min(Number.isFinite(g) && g > 0 ? g : 24, max);
 function narrowGridCols(block, colW) {
   const items = Array.isArray(block.items) ? block.items.filter((c) => c && typeof c === "object") : [];
   const cols = Math.max(1, narrowTplCols(block.style) || (Number.isFinite(block.cols) ? block.cols : 2));
@@ -956,7 +963,8 @@ function narrowGridCols(block, colW) {
       return lines <= (n === 2 ? 4 : 1) && word <= w;
     });
   };
-  if (cols >= 3 && items.length >= 3 && fits(3)) return 3;
+  // 3-up, but not when one cell stays alone in the last row (4 or 7 cells).
+  if (cols >= 3 && items.length >= 3 && items.length % 3 !== 1 && fits(3)) return 3;
   // Three cards: one per row. Two and one gives cards of unequal width.
   if (items.length === 3) return 1;
   return fits(2) ? 2 : 1;
@@ -964,12 +972,17 @@ function narrowGridCols(block, colW) {
 // Grid template for a table in a narrow column: one weight per column, from
 // its longest word (a header is wide uppercase mono) and its text length.
 // Built from numbers only.
+// The column count is clamped to the ingress cap (10): the loop bound must not
+// be a deck value. headers / rows that are not arrays count as empty.
+const NARROW_TABLE_MAX_COLS = 10;
 function narrowTableCols(headers, rows, cols) {
+  const hs = Array.isArray(headers) ? headers : [], rs = Array.isArray(rows) ? rows.slice(0, 30) : [];
+  const n = Math.min(NARROW_TABLE_MAX_COLS, Math.max(1, Number.isInteger(cols) ? cols : 1));
   const w = [];
-  for (let j = 0; j < cols; j++) {
-    const cells = (rows || []).map((r) => String((r || [])[j] ?? ""));
-    const word = (t) => Math.max(0, ...String(t ?? "").split(/\s+/).map((x) => x.length));
-    const longest = Math.max(word((headers || [])[j]) * 1.3, ...cells.map(word));
+  for (let j = 0; j < n; j++) {
+    const cells = rs.map((r) => narrowStr(Array.isArray(r) ? r[j] : ""));
+    const word = (t) => Math.max(0, ...narrowStr(t).split(/\s+/).map((x) => x.length));
+    const longest = Math.max(word(hs[j]) * 1.3, ...cells.map(word));
     const avg = cells.length ? cells.reduce((t, c) => t + c.length, 0) / cells.length : 0;
     w.push(Math.round(Math.min(26, Math.max(4, longest, avg * 0.55)) * 10) / 10);
   }
@@ -995,9 +1008,9 @@ const NARROW_VIEWS = {
   flow: (block, colW) => {
     if (block.direction === "vertical") return block;
     const items = Array.isArray(block.items) ? block.items : [], n = items.length || 1;
-    const px = NARROW_SIZE_PX[block.labelSize || "sm"] || 15.2;
+    const px = narrowPx(block.labelSize, "sm");
     const itemW = (colW - (n - 1) * (block.type === "flow" ? 30 : 0)) / n;
-    const tight = items.some((it) => it && (narrowTextW(it.label || it.title, px) > itemW * 2 || String(it.label || it.title || "").split(/\s+/).some((w) => narrowTextW(w, px) > itemW) || narrowTextW(it.sublabel || it.text, 13.6) > itemW * 3));
+    const tight = items.some((it) => it && (narrowTextW(it.label || it.title, px) > itemW * 2 || narrowStr(it.label || it.title).split(/\s+/).some((w) => narrowTextW(w, px) > itemW) || narrowTextW(it.sublabel || it.text, 13.6) > itemW * 3));
     return n > 3 || tight ? { ...block, direction: "vertical" } : block;
   },
   timeline: (block, colW) => NARROW_VIEWS["flow"](block, colW),
@@ -1005,14 +1018,17 @@ const NARROW_VIEWS = {
   heading: (block, colW) => {
     // Step the size down until the widest word fits the column.
     let size = block.size || "2xl";
-    const words = String(block.text || "").split(/\s+/), room = colW - (block.icon ? 44 : 0);
+    const words = narrowStr(block.text).split(/\s+/), room = colW - (block.icon ? 44 : 0);
     while (NARROW_SIZE_ORDER.indexOf(size) > 2 && words.some((w) => narrowTextW(w, NARROW_SIZE_PX[size] * 1.08) > room)) size = NARROW_SIZE_ORDER[NARROW_SIZE_ORDER.indexOf(size) - 1];
     return size === (block.size || "2xl") && block.maxWidth == null ? block : { ...block, size, maxWidth: undefined };
   },
   text: (block, colW) => block.maxWidth == null ? block : { ...block, maxWidth: undefined },
   svg: (block, colW) => ({ ...block, maxWidth: "100%" }),
   image: (block, colW) => block.maxWidth == null ? block : { ...block, maxWidth: narrowMaxWidth(block.maxWidth) },
-  spacer: (block, colW) => ({ ...block, h: Math.min(28, Math.round((block.h || 24) * 0.75)) }),
+  spacer: (block, colW) => {
+    const h = typeof block.h === "number" ? block.h : typeof block.h === "string" ? parseFloat(block.h) : NaN;
+    return { ...block, h: Math.min(28, Math.round((Number.isFinite(h) && h > 0 ? h : 24) * 0.75)) };
+  },
   "number-row": (block, colW) => {
     // Step the value size down until the widest value fits its column.
     const items = Array.isArray(block.items) ? block.items : [], n = items.length || 1;
@@ -1724,9 +1740,11 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
     }
 
     case "table": {
-      const headers = block.headers || [];
-      const rows = block.rows || [];
-      const cols = headers.length || (rows[0] || []).length || 1;
+      // Arrays only, and at most 10 columns (the ingress caps), also for a block
+      // that reached the renderer on a path with no sanitizer.
+      const headers = Array.isArray(block.headers) ? block.headers : [];
+      const rows = Array.isArray(block.rows) ? block.rows : [];
+      const cols = Math.min(10, headers.length || (Array.isArray(rows[0]) ? rows[0].length : 0) || 1);
       const hdrBg = cssColor(block.headerBg) || `${st.accent}20`;
       const hdrColor = block.headerColor || (block.headerBg ? "#fff" : st.accent);
       const cellColor = block.cellColor || st.muted;

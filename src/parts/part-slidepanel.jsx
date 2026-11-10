@@ -690,8 +690,13 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
   const swipeBlocked = (e) => sessionDialogOpenRef.current || !!e?.target?.closest?.("[data-vela-modal]");
   // goNext / goPrev: one step forward / back (story image, slide, then module).
   // A swipe and the phone Present bar use the same two functions.
+  // In Present both go through the arrow-key handler: it is the one place that
+  // knows hidden slides, title cards, empty modules and the detour return. (The
+  // index steps below are the editor path, which must reach hidden slides.)
+  const presentStep = (dir) => { window.dispatchEvent(new KeyboardEvent("keydown", { key: dir > 0 ? "ArrowRight" : "ArrowLeft", bubbles: true, cancelable: true })); };
   const goNext = useCallback((e) => {
       if (swipeBlocked(e)) return;
+      if (fullscreen) { presentStep(1); return; }
       if (storyStepRef.current(1)) return;
       const navSlides = fullscreen ? presSlides : slides;
       if (navSlides.length > 0 && slideIndex < navSlides.length - 1) {
@@ -710,6 +715,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
     }, [slideIndex, slides.length, presSlides.length, fullscreen, dispatch, concept.id, flatModules, showNavToast]);
   const goPrev = useCallback((e) => {
       if (swipeBlocked(e)) return;
+      if (fullscreen) { presentStep(-1); return; }
       if (storyStepRef.current(-1)) return;
       if (slideIndex > 0) {
         storyEnterBack();
@@ -1719,14 +1725,15 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
           the slide, in thumb reach. Nothing floats over the slide, and a step
           does not need a swipe across slide content (links, zoom, story tiles). */}
       {isMobile && !showGallery && (() => {
-        const virtual = !!presSlides[slideIndex]?._virtual;
+        const virtual = !!presSlides[slideIndex]?._virtual || !!detourRef.current;
         const at = globalSlideIndex - presOffset, total = Math.max(1, globalSlideTotal);
+        const noPrev = !virtual && at <= 0 && !(presOffset && slideIndex > 0);
         const btn = (dim) => ({ border: "none", background: "transparent", color: "#e2e8f0", opacity: dim ? 0.3 : 0.9, display: "flex", alignItems: "center", justifyContent: "center", padding: 0, cursor: "pointer", touchAction: "manipulation", WebkitTapHighlightColor: "transparent" });
         const keep = (e) => e.preventDefault(); // focus stays on the slide (keyboard)
         return <nav data-testid="present-nav-bar" aria-label="Slide navigation" style={{ flexShrink: 0, position: "relative", display: "flex", alignItems: "stretch", height: 46, boxSizing: "content-box", paddingBottom: "env(safe-area-inset-bottom, 0px)", background: "#0a0f1a", borderTop: "1px solid rgba(255,255,255,0.08)", userSelect: "none", WebkitUserSelect: "none" }}>
           <div aria-hidden="true" style={{ position: "absolute", top: -1, left: 0, height: 2, width: `${Math.min(100, Math.max(0, (at + 1) / total * 100))}%`, background: T.accent, opacity: virtual ? 0 : 0.85 }} />
           <button type="button" data-testid="present-nav-exit" aria-label="Exit Present" title="Exit Present" onMouseDown={keep} onClick={() => dispatch({ type: "SET_FULLSCREEN", value: false })} style={{ ...btn(false), width: 52, opacity: 0.6 }}><Minimize2 size={18} /></button>
-          <button type="button" data-testid="present-nav-prev" aria-label="Previous" title="Previous" onMouseDown={keep} onClick={() => goPrev()} style={{ ...btn(!virtual && at <= 0), flex: 1 }}><ChevronLeft size={24} /></button>
+          <button type="button" data-testid="present-nav-prev" aria-label="Previous" title="Previous" onMouseDown={keep} onClick={() => goPrev()} style={{ ...btn(noPrev), flex: 1 }}><ChevronLeft size={24} /></button>
           <div data-testid="present-nav-count" aria-live="off" style={{ minWidth: 84, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: FONT.mono, fontSize: 13, fontWeight: 600, color: "#94a3b8", fontVariantNumeric: "tabular-nums", letterSpacing: "0.04em" }}>{virtual ? "\u00b7" : `${at + 1} / ${total}`}</div>
           <button type="button" data-testid="present-nav-next" aria-label="Next" title="Next" onMouseDown={keep} onClick={() => goNext()} style={{ ...btn(!virtual && at + 1 >= total), flex: 1 }}><ChevronRight size={24} /></button>
         </nav>;

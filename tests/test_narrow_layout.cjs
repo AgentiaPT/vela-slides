@@ -20,11 +20,11 @@ const a = src.indexOf("// ── Narrow (portrait) layout ──");
 const b = src.indexOf("const ItemHoverContext = React.createContext(null);");
 if (a < 0 || b < 0 || b <= a) { console.error("FATAL: slice markers not found"); process.exit(1); }
 const body = "var React = { createContext: function (v) { return { _default: v }; } };\n" + src.slice(a, b) +
-  "\n;return { SlideNarrowContext, narrowBlockView, narrowGridCols, narrowMaxWidth, narrowTableCols, NARROW_WIDE_TYPES };";
+  "\n;return { SlideNarrowContext, narrowBlockView, narrowGridCols, narrowMaxWidth, narrowTableCols, narrowStr, narrowPx, NARROW_WIDE_TYPES };";
 let API;
 // eslint-disable-next-line no-new-func
 try { API = Function(body)(); } catch (e) { console.error("FATAL: sandbox eval failed:", (e && e.stack) || e); process.exit(1); }
-const { SlideNarrowContext, narrowBlockView, narrowGridCols, narrowMaxWidth, narrowTableCols, NARROW_WIDE_TYPES } = API;
+const { SlideNarrowContext, narrowBlockView, narrowGridCols, narrowMaxWidth, narrowTableCols, narrowStr, narrowPx, NARROW_WIDE_TYPES } = API;
 
 let pass = 0, fail = 0;
 const ok = (n) => { pass++; console.log("  ✅ " + n); };
@@ -55,6 +55,11 @@ eq("image-only cells → 2-up", narrowGridCols({ type: "grid", cols: 4, items: [
 eq("a code cell → 1-up", narrowGridCols({ type: "grid", cols: 2, items: [card("A", "b"), { blocks: [{ type: "code", text: "x = 1" }] }] }, W), 1);
 eq("a row-direction cell → 1-up", narrowGridCols({ type: "grid", cols: 2, items: [card("A", "b", { direction: "row" }), card("C", "d")] }, W), 1);
 eq("3 one-line metrics → 3-up", narrowGridCols({ type: "grid", cols: 3, items: [1, 2, 3].map((i) => ({ blocks: [{ type: "metric", value: `${i}0%`, label: "up", size: "2xl" }] })) }, W), 3);
+const metricCells = (n) => Array.from({ length: n }, (_, i) => ({ blocks: [{ type: "metric", value: `${i}0%`, label: "up", size: "2xl" }] }));
+eq("4 one-line metrics → 2-up (3-up leaves one cell alone)", narrowGridCols({ type: "grid", cols: 4, items: metricCells(4) }, W), 2);
+eq("6 one-line metrics → 3-up", narrowGridCols({ type: "grid", cols: 3, items: metricCells(6) }, W), 3);
+eq("7 one-line metrics → 2-up (3-up leaves one cell alone)", narrowGridCols({ type: "grid", cols: 4, items: metricCells(7) }, W), 2);
+eq("a metric with an unknown size does not give NaN", narrowGridCols({ type: "grid", cols: 2, items: [{ blocks: [{ type: "metric", value: "5", size: "huge" }] }, { blocks: [{ type: "metric", value: "6", size: "huge" }] }] }, W), 2);
 eq("columns come from style.gridTemplateColumns when set", narrowGridCols({ type: "grid", style: { gridTemplateColumns: "1fr 2.2fr" }, items: [card("A", "b"), card("C", "d")] }, W), 2);
 eq("one cell → 1", narrowGridCols({ type: "grid", cols: 3, items: [card("A", "b")] }, W), 1);
 eq("no items → 1", narrowGridCols({ type: "grid", cols: 3 }, W), 1);
@@ -95,6 +100,9 @@ eq("heading maxWidth is dropped", narrowBlockView({ type: "heading", text: "Titl
 eq("text maxWidth is dropped", narrowBlockView({ type: "text", text: "Body", maxWidth: 520 }, W).maxWidth, undefined);
 eq("svg takes the column width", narrowBlockView({ type: "svg", markup: "<svg/>", maxWidth: "72%" }, W).maxWidth, "100%");
 eq("spacer shrinks and is capped", [narrowBlockView({ type: "spacer", h: 16 }, W).h, narrowBlockView({ type: "spacer", h: 120 }, W).h], [12, 28]);
+eq("spacer with a string or missing height gives a number", [narrowBlockView({ type: "spacer", h: "120px" }, W).h, narrowBlockView({ type: "spacer", h: "8px" }, W).h, narrowBlockView({ type: "spacer" }, W).h, narrowBlockView({ type: "spacer", h: {} }, W).h], [28, 6, 18, 18]);
+// The renderer reads a gap of 0 as "not set" (24 px), so the view must not pass 0 on.
+eq("a grid gap of 0 gives the default gap, as the renderer does", narrowBlockView({ type: "grid", cols: 2, gap: 0, items: [card("A", "b"), card("C", "d")] }, W).gap, 12);
 eq("number-row: long values step down", narrowBlockView({ type: "number-row", items: [{ value: "$480K" }, { value: "185K" }, { value: "22%" }] }, W).size, "2xl");
 eq("icon-row with text → 1 column", narrowBlockView({ type: "icon-row", cols: 3, items: [{ title: "A", text: "long" }] }, W).cols, 1);
 {
@@ -136,6 +144,26 @@ console.log("\n── table columns ──");
   assert("weights are clamped to 4..26", odd.match(/[\d.]+(?=fr)/g).every((v) => +v >= 4 && +v <= 26), odd);
   eq("no rows and no headers → the minimum weight", narrowTableCols([], [], 2), "minmax(0, 4fr) minmax(0, 4fr)");
 }
+console.log("\n── deck values are read type-first (no coercion, no deck-sized loop) ──");
+{
+  // A value that cannot be turned into a string must count as empty, not throw:
+  // a throw in render replaces the full slide with an error.
+  const odd = { toString: 1 }, oddArr = [odd];
+  eq("narrowStr: string and finite number only", [narrowStr("a"), narrowStr(12), narrowStr(NaN), narrowStr(null), narrowStr(odd), narrowStr(["a"]), narrowStr(true)], ["a", "12", "", "", "", "", ""]);
+  eq("narrowPx: own size names only", [narrowPx("lg", "md"), narrowPx("huge", "md"), narrowPx(odd, "md"), narrowPx("__proto__", "md"), narrowPx("constructor", "md"), narrowPx(undefined, "sm")], [19.2, 16.8, 16.8, 16.8, 16.8, 15.2]);
+  const run = (name, fn) => { try { fn(); ok(name); } catch (e) { bad(name, "threw: " + (e && e.message)); } };
+  run("grid with an odd size on a light cell block does not throw", () => narrowBlockView({ type: "grid", cols: 2, items: [{ blocks: [{ type: "spacer", h: 10, size: odd }] }, { blocks: [{ type: "text", text: "b", size: odd }] }, { blocks: [{ type: "metric", value: odd, label: odd, size: odd }] }] }, W));
+  run("timeline / flow with an odd labelSize and labels does not throw", () => { narrowBlockView({ type: "timeline", labelSize: odd, items: [{ title: odd, text: odd }, { title: "b" }] }, W); narrowBlockView({ type: "flow", labelSize: odd, items: [{ label: odd, sublabel: odd }, { label: oddArr }] }, W); });
+  run("heading / number-row / image / spacer with odd values do not throw", () => { narrowBlockView({ type: "heading", text: odd, size: odd, maxWidth: odd }, W); narrowBlockView({ type: "number-row", size: odd, items: [{ value: odd }] }, W); narrowBlockView({ type: "image", maxWidth: odd }, W); narrowBlockView({ type: "spacer", h: odd }, W); });
+  run("grid with odd padding / gap / style values does not throw", () => narrowBlockView({ type: "grid", cols: 2, gap: odd, style: { gridTemplateColumns: odd, padding: odd }, items: [{ padding: odd, style: { padding: odd }, blocks: [{ type: "heading", text: "A" }] }, card("C", "d")] }, W));
+  // The table column loop is bounded by a constant, not by a deck value.
+  const t0 = Date.now();
+  const big = narrowTableCols({ length: 5e7 }, { length: 5e7 }, 5e7);
+  assert("table: a huge column count gives at most 10 columns, at once", big.split(" minmax").length === 10 && Date.now() - t0 < 200, `${big.split(" minmax").length} columns in ${Date.now() - t0} ms`);
+  eq("table: a count that is not a positive integer gives one column", [narrowTableCols([], [], NaN), narrowTableCols([], [], -3), narrowTableCols([], [], 2.5), narrowTableCols([], [], "4")], Array(4).fill("minmax(0, 4fr)"));
+  run("table: headers / rows / cells of odd shapes do not throw", () => narrowTableCols(odd, [odd, [odd, oddArr, 5], "x"], 3));
+}
+
 console.log("\n── wide blocks in a cell ──");
 assert("a table / funnel / checklist takes the full cell", ["table", "funnel", "checklist", "progress", "code"].every((t) => NARROW_WIDE_TYPES.has(t)));
 assert("headings, texts, bullets and images keep their own width", ["heading", "text", "bullets", "image", "badge"].every((t) => !NARROW_WIDE_TYPES.has(t)));
