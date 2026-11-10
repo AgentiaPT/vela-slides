@@ -5,7 +5,7 @@
 // ModuleList local useState (CR2) so the TOC disclosure keys and the collapsed-header
 // current-slide marker can read/act on it.
 // aiWork (CR5): ephemeral UI signal (which slide Vera is actively editing) — never persisted.
-const init = { deckTitle: "Untitled", guidelines: "", lanes: [], selectedId: null, slideIndex: 0, selectedSlideIndices: [], collapsedSections: [], fullscreen: VELA_PRESENTATION_MODE, fontScale: 1, chatOpen: false, reviewMode: false, commentsPanelOpen: false, chatMessages: [{ role: "assistant", content: "Welcome aboard Vela. Paste your agenda or tell me where we're sailing. ⛵🖖", ts: now() }], chatLoading: false, lastDebug: "", branding: { ...defaultBranding }, veraMode: "editor", teacherHistory: {}, teacherLoading: false, aiWork: null, _deckEpoch: 0 };
+const init = { deckTitle: "Untitled", guidelines: "", lanes: [], selectedId: null, slideIndex: 0, selectedSlideIndices: [], collapsedSections: [], fullscreen: VELA_PRESENTATION_MODE, fontScale: 1, chatOpen: false, reviewMode: false, commentsPanelOpen: false, chatMessages: [{ role: "assistant", content: "Welcome aboard Vela. Paste your agenda or tell me where we're sailing. ⛵🖖", ts: now() }], chatLoading: false, lastDebug: "", branding: { ...defaultBranding }, session: null, veraMode: "editor", teacherHistory: {}, teacherLoading: false, aiWork: null, _deckEpoch: 0 };
 let _activeDeckEpoch = init._deckEpoch;
 const velaPrepareDeckReplacement = () => { _activeDeckEpoch += 1; };
 const velaSyncDeckEpoch = (epoch) => {
@@ -376,6 +376,16 @@ function innerReducer(state, a) {
       return { ...state, branding: b };
     }
     case "SET_GUIDELINES": return { ...state, guidelines: a.guidelines };
+    // Session end (deck-level, persisted). Re-sanitized here: third door into the
+    // field. null clears. An invalid non-null payload is a no-op (fail closed, and
+    // returning `state` adds no history step); so does an unchanged value.
+    case "SET_SESSION": {
+      const s = a.session == null ? null : sanitizeSession(a.session);
+      if (a.session != null && !s) return state;
+      const cur = state.session;
+      if ((cur == null && s == null) || (cur && s && cur.start === s.start && cur.end === s.end)) return state;
+      return { ...state, session: s };
+    }
     case "RESET": return { ...init, chatOpen: state.chatOpen, _deckEpoch: nextDeckEpoch(state) };
     case "SET_TITLE": return { ...state, deckTitle: a.title };
     default: return state;

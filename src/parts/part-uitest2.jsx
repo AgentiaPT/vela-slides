@@ -2527,11 +2527,22 @@ uiSuite("Link box input normalization", [
 ]);
 
 uiSuite("Editor TOC toggle keys", [
-  { name: "Ctrl+E and AltGr+[ toggle the TOC in the editor", fn: async () => {
+  { name: "Ctrl+E focuses the search field, again hides the TOC, again shows it; AltGr+[ toggles the TOC", fn: async () => {
     try { document.activeElement?.blur?.(); } catch {}
     const tocShown = () => _$$(".concept-row").length > 0;
+    const inField = () => !!document.activeElement && document.activeElement === _$("[data-testid='editor-search-input']");
     if (!tocShown()) throw new Error("TOC not shown at start");
-    for (const [key, opts, label] of [["e", { ctrlKey: true }, "Ctrl+E"], ["[", { ctrlKey: true, altKey: true }, "AltGr+["]]) {
+    // v13.81: Ctrl+E with focus outside the field focuses it (TOC stays); in the
+    // field it hides the TOC; with the TOC hidden it shows it and focuses the field.
+    _key("e", { ctrlKey: true });
+    await _waitFor(inField, 2000).catch(() => { throw new Error("Ctrl+E did not focus the search field"); });
+    if (!tocShown()) throw new Error("Ctrl+E with focus outside the field hid the TOC");
+    _key("e", { ctrlKey: true });
+    await _waitFor(() => !tocShown(), 2000).catch(() => { throw new Error("Ctrl+E in the field did not hide the TOC"); });
+    _key("e", { ctrlKey: true });
+    await _waitFor(() => tocShown() && inField(), 2000).catch(() => { throw new Error("Ctrl+E did not show the TOC and focus the field"); });
+    document.activeElement?.blur?.();
+    for (const [key, opts, label] of [["[", { ctrlKey: true, altKey: true }, "AltGr+["]]) {
       _key(key, opts);
       await _waitFor(() => !tocShown(), 2000).catch(() => { throw new Error(label + " did not hide the TOC"); });
       _key(key, opts);
@@ -3062,7 +3073,12 @@ uiSuite("tideline-CR26 edit every block text", [
 // section. The pane is made short here so it overflows with any deck.
 async function _tidelineTocDrag(fn) {
   const tree = await _waitFor(() => document.querySelector('[data-testid="toc-tree"]'), 3000);
-  const pane = tree.parentElement; const old = pane.style.maxHeight;
+  // The pane is the list panel that scrolls. Since v13.81 the tree sits in an
+  // EditorSearch wrapper, so it is not always the direct parent of the tree.
+  let pane = tree.parentElement;
+  while (pane && !/(auto|scroll)/.test(getComputedStyle(pane).overflowY)) pane = pane.parentElement;
+  if (!pane) throw new Error("no TOC scroll pane");
+  const old = pane.style.maxHeight;
   pane.style.maxHeight = Math.max(90, Math.min(220, Math.floor(tree.offsetHeight / 2))) + "px";
   try {
     await _wait(60);
@@ -4845,6 +4861,2144 @@ uiSuite("toolbar-auto-compact", [
       const pad = getComputedStyle(_tbButtons()[0]).paddingLeft;
       if (pad !== "6px") throw new Error(`icon buttons do not use compact padding at 360 px (padding-left ${pad})`);
     });
+  }},
+]);
+
+// v13.79 Present detour: while typing, Ctrl+E search lists hidden slides (and
+// matches hidden-block text); a jump shows the hidden slide with no slide
+// number; arrows or Esc return to the slide that was left; Present stays.
+const _pdSel = () => _hooks().getSelection();
+const _pdOnSlide = (t) => _$$("[data-block-type]").some((el) => (el.textContent || "").includes(t));
+const _pdSame = (a, b) => !!a && !!b && a.itemId === b.itemId && a.slideIdx === b.slideIdx;
+// Make the slide after the first one hidden, with a hidden block that holds the
+// search word, then go back to the first slide. Returns the history mark.
+const _pdPrepare = async () => {
+  const past = _hooks().getHistoryCounts().past;
+  const s0 = _pdSel();
+  if (!s0) throw new Error("no module selected");
+  document.activeElement?.blur?.();
+  _key("ArrowRight");
+  await _waitFor(() => { const s = _pdSel(); return s && s.itemId === s0.itemId && s.slideIdx === s0.slideIdx + 1; }, 1500)
+    .catch(() => { throw new Error("the first module needs 2 or more slides"); });
+  _hooks().injectBlocks([{ type: "heading", text: "PDBACKUP heading" }, { type: "text", text: "secret zqxdetour token", hidden: true }], { hidden: true });
+  await _wait(150);
+  document.activeElement?.blur?.();
+  _key("ArrowLeft");
+  await _waitFor(() => _pdSame(_pdSel(), s0), 1500);
+  return past;
+};
+const _pdEnterPresent = async () => { document.activeElement?.blur?.(); _key("f"); await _waitFor(() => !_$("header"), 2000); await _wait(150); };
+// Open the Present TOC, type the word, and jump to the detour row.
+const _pdJump = async (checkEmpty) => {
+  _key("e", { ctrlKey: true });
+  await _waitFor(_hfeTocOpen, 2000);
+  await _wait(150);
+  if (checkEmpty && _$("[data-testid='toc-detour-section']")) throw new Error("hidden slides are listed with an empty search");
+  _type(_$("input[placeholder^='Search slides']"), "zqxdetour");
+  const row = await _waitFor(() => _$("[data-testid='toc-detour-row']"), 1500).catch(() => { throw new Error("search did not list the hidden slide"); });
+  if (checkEmpty && !row.querySelector("[data-testid='toc-hidden-block']")) throw new Error("a hidden-block match has no HIDDEN BLOCK tag");
+  _click(row);
+  await _waitFor(() => _pdOnSlide("PDBACKUP"), 1500).catch(() => { throw new Error("the jump did not show the hidden slide"); });
+  await _wait(400); // the hidden-slide auto-skip must not move off a detour
+  if (!_pdOnSlide("PDBACKUP")) throw new Error("Present moved off the detour slide by itself");
+  document.activeElement?.blur?.();
+};
+uiSuite("present-detour-search", [
+  { name: "D1: hidden slide found only while typing; jump shows it with no number; Presenter view shows the detour; an arrow returns", fn: async () => {
+    let past = null;
+    try {
+      past = await _pdPrepare();
+      await _pdEnterPresent();
+      const before = _pdSel();
+      await _pdJump(true);
+      if (_slideCounterEl()) throw new Error("the detour slide shows a slide number");
+      _key("s");
+      await _waitFor(() => _$("[data-testid='presenter-detour']"), 1500).catch(() => { throw new Error("Presenter view shows no detour cue"); });
+      _key("s");
+      await _waitFor(() => !_$("[data-testid='presenter-view']"), 1500);
+      document.activeElement?.blur?.();
+      _key("ArrowRight");
+      await _waitFor(() => _pdSame(_pdSel(), before), 1500).catch(() => { throw new Error("ArrowRight did not return to the slide the detour left"); });
+      if (_pdOnSlide("PDBACKUP")) throw new Error("the hidden slide is still on screen after the return");
+      if (_$("header")) throw new Error("the return left Present");
+    } finally { await _exitFullscreen(); if (past != null) await _mrdUndoTo(past); }
+  }},
+  { name: "D2: Esc on a detour returns to the slide that was left and keeps Present", fn: async () => {
+    let past = null;
+    try {
+      past = await _pdPrepare();
+      await _pdEnterPresent();
+      const before = _pdSel();
+      await _pdJump(false);
+      _key("Escape");
+      await _waitFor(() => _pdSame(_pdSel(), before), 1500).catch(() => { throw new Error("Esc did not return to the slide the detour left"); });
+      await _wait(200);
+      if (_$("header")) throw new Error("Esc on a detour left Present");
+    } finally { await _exitFullscreen(); if (past != null) await _mrdUndoTo(past); }
+  }},
+], { setup: _selectFirstModule });
+
+// v13.81 shared search engine (pure): matchSlide / searchDeck / splitHighlight.
+const _seEq = (got, want, what) => { const g = JSON.stringify(got), w = JSON.stringify(want); if (g !== w) throw new Error(`${what}: got ${g}, want ${w}`); };
+const _seLoneSurrogate = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
+const _seH = (text) => ({ type: "heading", text });
+const _seT = (text, extra) => ({ type: "text", text, ...(extra || {}) });
+const _sePick = (m) => m && { kind: m.kind, area: m.area, block: m.block, hiddenBlock: m.hiddenBlock };
+uiSuite("search-engine", [
+  { name: "SE1: title, visible block, hidden block, no match, case and whitespace", fn: async () => {
+    const s = { blocks: [_seH("Alpha Tools"), _seT("find me here"), _seT("secret word", { hidden: true }), _seT("dup hidden", { hidden: true }), _seT("dup shown")] };
+    const t = matchSlide(s, 0, "tool", null);
+    _seEq([t.title, t.snippet, t.kind, t.block], ["Alpha Tools", null, "title", -1], "title match");
+    _seEq(_sePick(matchSlide(s, 0, "find me", null)), { kind: "block", area: "blocks", block: 1, hiddenBlock: false }, "visible block");
+    _seEq(_sePick(matchSlide(s, 0, "secret", null)), { kind: "hidden-block", area: "blocks", block: 2, hiddenBlock: true }, "hidden block");
+    _seEq(_sePick(matchSlide(s, 0, "dup", null)), { kind: "block", area: "blocks", block: 4, hiddenBlock: false }, "visible text before hidden text");
+    if (matchSlide(s, 0, "absent", null) !== null) throw new Error("no-match is not null");
+    if (!matchSlide(s, 0, "find me", null).snippet.includes("find me")) throw new Error("snippet misses the hit");
+    const lanes = [{ id: "l", items: [{ id: "a", title: "A", order: 1, slides: [s] }] }];
+    _seEq(searchDeck(lanes, "  FIND ME  ", null).map((r) => [r.key, r.kind, r.renderIdx]), [["a:0", "block", 1]], "upper case + spaces");
+    _seEq(searchDeck(lanes, "   ", null), [], "blank query");
+    _seEq(searchDeck(null, "x", null), [], "no lanes");
+    const st = { title: "Plain slide title zqx", blocks: [_seT("x")] };
+    _seEq([matchSlide(st, 0, "zqx", null).block, searchDeck([{ id: "l", items: [{ id: "b", title: "B", slides: [st] }] }], "zqx", null)[0].renderIdx], [-1, -1], "slide.title string: no block");
+  }},
+  { name: "SE2: special characters and emoji match literally and never throw", fn: async () => {
+    for (const q of ["(", "[", "*", "\\", "<", ">", "&", "\"", "a(b", "[x]", "<b>", "&amp;", "🚀", "$&", "$1"]) {
+      const s = { blocks: [_seH("H"), _seT(`pre ${q} post`)] };
+      const m = matchSlide(s, 0, q.toLowerCase(), null);
+      if (!m || m.kind !== "block") throw new Error(`no literal match for ${JSON.stringify(q)}`);
+      if (!m.snippet.includes(q)) throw new Error(`snippet lost ${JSON.stringify(q)}`);
+      if (matchSlide({ blocks: [_seH("H"), _seT("plain text")] }, 0, q.toLowerCase(), null) !== null) throw new Error(`false match for ${JSON.stringify(q)}`);
+      const parts = splitHighlight(`pre ${q} post`, q.toLowerCase());
+      _seEq(parts.filter((p) => p.hit).map((p) => p.t), [q], `highlight of ${JSON.stringify(q)}`);
+    }
+    for (const q of [".", ".*", "a|b", "^", "$"]) if (matchSlide({ blocks: [_seH("H"), _seT("abc")] }, 0, q, null) !== null) throw new Error(`regex semantics for ${q}`);
+    const a = matchSlide({ blocks: [_seH("H"), _seT("🚀".repeat(20) + "a" + "needle" + "b" + "🚀".repeat(30))] }, 0, "needle", null);
+    if (_seLoneSurrogate.test(a.snippet)) throw new Error("snippet cuts a surrogate pair: " + JSON.stringify(a.snippet));
+  }},
+  { name: "SE3: column text (L / R) is found with the canvas render index; nested text gives the top-level block", fn: async () => {
+    const cols = { layout: "cols", blocks: [_seH("Cols")], L: [_seT("left one"), _seT("left two")], R: [_seT("right one")] };
+    _seEq(_sePick(matchSlide(cols, 0, "left two", null)), { kind: "block", area: "L", block: 1, hiddenBlock: false }, "L match");
+    _seEq(_sePick(matchSlide(cols, 0, "right one", null)), { kind: "block", area: "R", block: 0, hiddenBlock: false }, "R match");
+    if (!matchPresentSlide(cols, 0, "right one")) throw new Error("Present does not find column text");
+    const lanes = [{ id: "l", items: [{ id: "c", title: "C", slides: [cols, { blocks: [_seH("N"), _seT("x")], L: [_seT("stray left")] }] }] }];
+    _seEq(searchDeck(lanes, "left two", null).map((r) => r.renderIdx), [2], "L render index");
+    _seEq(searchDeck(lanes, "right one", null).map((r) => r.renderIdx), [3], "R render index");
+    _seEq(searchDeck(lanes, "stray left", null).map((r) => r.renderIdx), [-1], "L on a non-cols slide: no index");
+    _seEq([searchRenderIndex(cols, "X", 0), searchRenderIndex(cols, "L", -1), searchRenderIndex(cols, "blocks", "1"), searchRenderIndex(null, "R", 0)], [-1, -1, -1, -1], "inexact mapping");
+    const nested = { blocks: [_seH("N"), { type: "grid", items: [{ title: "t", body: [{ text: "deep nested word" }] }] }] };
+    _seEq(_sePick(matchSlide(nested, 0, "nested word", null)), { kind: "block", area: "blocks", block: 1, hiddenBlock: false }, "nested");
+  }},
+  { name: "SE4: notes and section names only with their option; empty section gives no row; tree order", fn: async () => {
+    const s = { blocks: [_seH("Has notes")], notes: "speaker zqxnote here" };
+    if (matchSlide(s, 0, "zqxnote", null) !== null || matchPresentSlide(s, 0, "zqxnote") !== null) throw new Error("notes found without the option");
+    _seEq(_sePick(matchSlide(s, 0, "zqxnote", { notes: true })), { kind: "notes", area: null, block: -1, hiddenBlock: false }, "notes on");
+    const lanes = [
+      { id: "l1", items: [
+        { id: "b", title: "Second zqxsec", order: 2, slides: [{ blocks: [_seH("B0")], hidden: true }] },
+        { id: "a", title: "First zqxsec", order: 1, slides: [{ blocks: [_seH("A0")] }, s] },
+        { id: "e", title: "Empty zqxsec", order: 3, slides: [] },
+      ] },
+      { id: "l2", collapsed: true, items: [{ id: "c", title: "Other", order: 1, slides: [{ blocks: [_seH("zqxsec in C")] }] }] },
+    ];
+    _seEq(searchDeck(lanes, "zqxsec", null).map((r) => r.key), ["c:0"], "sections off");
+    _seEq(searchDeck(lanes, "zqxsec", { sections: true }).map((r) => [r.key, r.kind, r.hiddenSlide, r.collapsedLane]),
+      [["a:0", "section", false, false], ["b:0", "section", true, false], ["c:0", "title", false, true]], "sections on, tree order");
+    _seEq(searchDeck(lanes, "zqxnote", null), [], "deck notes off");
+    _seEq(searchDeck(lanes, "zqxnote", { notes: true }).map((r) => [r.key, r.kind, r.renderIdx]), [["a:1", "notes", -1]], "deck notes on");
+  }},
+  { name: "SE5: deep nesting, prototype keys, data: strings and skip keys never match", fn: async () => {
+    let deep = { text: "zqxdeep" }; for (let i = 0; i < 20; i++) deep = { child: deep };
+    const shallow = { type: "card", body: { inner: { text: "zqxshallow" } } };
+    const s = { blocks: [_seH("H"), deep, shallow] };
+    if (matchSlide(s, 0, "zqxdeep", null) !== null) throw new Error("text past the depth cap matched");
+    if (!matchSlide(s, 0, "zqxshallow", null)) throw new Error("text inside the depth cap not found");
+    const parsed = JSON.parse('{"blocks":[{"type":"heading","text":"H"},{"type":"text","text":"x","__proto__":{"t":"zqxproto"},"constructor":"zqxctor","prototype":"zqxproto2"}]}');
+    for (const q of ["zqxproto", "zqxctor", "zqxproto2"]) if (matchSlide(parsed, 0, q, null) !== null) throw new Error(`prototype key matched: ${q}`);
+    if (({}).t !== undefined) throw new Error("Object.prototype was changed");
+    const inh = Object.assign(Object.create({ text: "zqxinherited" }), { type: "text" });
+    if (matchSlide({ blocks: [_seH("H"), inh] }, 0, "zqxinherited", null) !== null) throw new Error("inherited key matched");
+    const media = { blocks: [_seH("H"), { type: "image", src: "zqxsrc", alt: "data:zqxdata", color: "zqxcolor", href: "zqxhref", style: { color: "zqxstyle" }, comments: [{ text: "zqxcomment" }] }] };
+    for (const q of ["zqxsrc", "zqxdata", "zqxcolor", "zqxhref", "zqxstyle", "zqxcomment"]) if (matchSlide(media, 0, q, null) !== null) throw new Error(`skip key matched: ${q}`);
+  }},
+  { name: "SE6: splitHighlight keeps the text and case; length change (U+0130) and surrogate cuts give no highlight", fn: async () => {
+    const chk = (text, q, want, what) => {
+      const parts = splitHighlight(text, q);
+      _seEq(parts.map((p) => (p.hit ? "[" + p.t + "]" : p.t)).join(""), want, what);
+      if (parts.map((p) => p.t).join("") !== (typeof text === "string" ? text : "")) throw new Error(`${what}: text changed`);
+      if (parts.some((p) => _seLoneSurrogate.test(p.t))) throw new Error(`${what}: a part cuts a surrogate pair`);
+    };
+    chk("abc", "x", "abc", "no hit");
+    chk("Hello World", "world", "Hello [World]", "one hit, case kept");
+    chk("aXbXc", "x", "a[X]b[X]c", "many");
+    chk("abab", "ab", "[ab][ab]", "adjacent, start and end");
+    chk("aaa", "aa", "[aa]a", "non-overlapping");
+    chk("", "x", "", "empty text");
+    chk(null, "x", "", "non-string text");
+    chk("abc", "", "abc", "empty query");
+    chk("İstanbul İzmir", "stanbul", "İstanbul İzmir", "U+0130 length change: no highlight");
+    if (!matchSlide({ blocks: [_seH("H"), _seT("İstanbul trip")] }, 0, "stanbul", null)) throw new Error("U+0130 text: the match must still count");
+    chk("😀😁", "\uDE00", "😀😁", "lone low surrogate query");
+    chk("x😀y", "😀", "x[😀]y", "emoji hit");
+    const many = splitHighlight("a".repeat(1000), "a");
+    if (many.filter((p) => p.hit).length !== 50 || many.map((p) => p.t).join("") !== "a".repeat(1000)) throw new Error("maxHits cap");
+  }},
+  { name: "SE7: a 100 000-char string is searched; the snippet stays short; under 50 ms", fn: async () => {
+    const long = "lorem ipsum ".repeat(8400) + "zqxneedle tail";
+    const s = { blocks: [_seH("H"), _seT(long)] };
+    const t0 = performance.now();
+    const m = matchSlide(s, 0, "zqxneedle", null);
+    const parts = splitHighlight(m.snippet, "zqxneedle");
+    const ms = performance.now() - t0;
+    if (!m || !m.snippet.includes("zqxneedle")) throw new Error("needle not found");
+    if (m.snippet.length > 24 + 9 + 36 + 2) throw new Error("snippet too long: " + m.snippet.length);
+    if (parts.filter((p) => p.hit).length !== 1) throw new Error("snippet highlight");
+    if (ms > 50) throw new Error(`long string took ${ms.toFixed(1)} ms`);
+  }},
+  { name: "SE8: 500-slide deck: one search under 50 ms", fn: async () => {
+    const lanes = [];
+    for (let l = 0; l < 5; l++) {
+      const items = [];
+      for (let it = 0; it < 10; it++) {
+        const slides = [];
+        for (let k = 0; k < 10; k++) {
+          const n = (l * 10 + it) * 10 + k;
+          slides.push({ layout: k % 3 === 0 ? "cols" : undefined, blocks: [_seH(`Slide ${n} heading`), _seT(`Body text of slide ${n} with several words in it`), { type: "bullets", items: [`point one ${n}`, `point two ${n}`, { text: `point three ${n}` }] }],
+            L: k % 3 === 0 ? [_seT(`left col ${n}`)] : undefined, R: k % 3 === 0 ? [_seT(`right col ${n}`)] : undefined, notes: `notes ${n}` });
+        }
+        if (l === 4 && it === 9) slides[9].blocks.push(_seT("zqxlastone"));
+        items.push({ id: `i${l}-${it}`, title: `Section ${l}-${it}`, order: it, slides });
+      }
+      lanes.push({ id: `l${l}`, items });
+    }
+    searchDeck(lanes, "warm", { notes: true, sections: true });
+    let worst = 0, rows = null, rare = null;
+    for (const q of ["point", "zqxlastone", "no such text at all"]) {
+      const t0 = performance.now();
+      const r = searchDeck(lanes, q, { notes: true, sections: true });
+      worst = Math.max(worst, performance.now() - t0);
+      if (q === "point") rows = r; if (q === "zqxlastone") rare = r;
+    }
+    if (rows.length !== 500) throw new Error("expected 500 rows for a common word, got " + rows.length);
+    _seEq(rare.map((r) => r.key), ["i4-9:9"], "rare word");
+    if (worst > 50) throw new Error(`500-slide search took ${worst.toFixed(1)} ms (bound 50 ms)`);
+  }},
+  // Review fix F1: search reads prose only. Every key of the block and slide
+  // allowlists has a class (prose = searched, else skipped), so a new field
+  // fails here until it gets one.
+  { name: "SE9: every SAFE_BLOCK_KEYS / SAFE_SLIDE_KEYS key is classified as prose or skipped, and the walk obeys it", fn: async () => {
+    const both = [...SEARCH_PROSE_KEYS].filter((k) => PRESENT_SEARCH_SKIP.has(k));
+    if (both.length) throw new Error("keys in both the prose set and the skip set: " + both.join(", "));
+    const nb = [...SAFE_BLOCK_KEYS].filter((k) => !SEARCH_PROSE_KEYS.has(k) && !PRESENT_SEARCH_SKIP.has(k));
+    if (nb.length) throw new Error("unclassified block keys (add each to SEARCH_PROSE_KEYS or PRESENT_SEARCH_SKIP): " + nb.join(", "));
+    const ns = [...SAFE_SLIDE_KEYS].filter((k) => SEARCH_SLIDE_KEYS.prose.has(k) === SEARCH_SLIDE_KEYS.skip.has(k));
+    if (ns.length) throw new Error("slide keys with no class or two classes (SEARCH_SLIDE_KEYS): " + ns.join(", "));
+    for (const k of SAFE_BLOCK_KEYS) {
+      const m = matchSlide({ blocks: [_seH("H"), { type: "text", [k]: "zqxkeyval" }] }, 0, "zqxkeyval", null);
+      if (PRESENT_SEARCH_SKIP.has(k) ? m !== null : !m) throw new Error(`block key ${k}: ${m ? "matched" : "not found"}`);
+    }
+  }},
+  { name: "SE10: SVG markup, colour and icon values never match; prose of every block type is found", fn: async () => {
+    const svg = { blocks: [_seH("Logo"), { type: "svg", markup: "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 48 48\"><path d=\"M0 0\" stroke=\"#fff\"/></svg>", caption: "zqxcap" }] };
+    for (const q of ["viewbox", "path", "stroke", "svg", "xmlns", "www.w3.org", "48 48"]) if (matchSlide(svg, 0, q, null) !== null) throw new Error(`SVG markup matched: ${q}`);
+    if (!matchSlide(svg, 0, "zqxcap", null)) throw new Error("SVG caption not found");
+    const paint = { blocks: [_seH("C"), { type: "callout", text: "note", border: "#818cf850", borderColor: "#818cf8", bg: "#818cf820", iconColor: "#818cf8", titleSize: "zqxsize" }] };
+    for (const q of ["#818cf8", "818cf8", "zqxsize"]) if (matchSlide(paint, 0, q, null) !== null) throw new Error(`style value matched: ${q}`);
+    const nested = { blocks: [_seH("N"), { type: "flow", items: [{ icon: "zqxicon", color: "#123abc", iconBg: "#123abc", label: "go" }] }, { type: "icon", name: "zqxname", label: "lbl" }] };
+    for (const q of ["zqxicon", "#123abc", "zqxname"]) if (matchSlide(nested, 0, q, null) !== null) throw new Error(`non-prose value matched: ${q}`);
+    const w = "zqxprose";
+    const cases = [
+      ["heading", { text: w }], ["text", { text: w }], ["bullets", { items: ["a", { text: w, icon: "Zap" }] }], ["image", { caption: w }],
+      ["code", { text: w }], ["grid", { cols: 2, items: [{ blocks: [{ type: "text", text: w }] }] }], ["callout", { title: w }],
+      ["metric", { value: w }], ["quote", { author: w }], ["badge", { text: w }], ["icon", { name: "Zap", label: w }],
+      ["icon-row", { items: [{ icon: "Zap", title: w }] }], ["flow", { items: [{ label: "x", sublabel: w }], gateLabel: "g" }],
+      ["table", { headers: ["h"], rows: [["a", w]] }], ["progress", { items: [{ label: w, value: 50 }] }], ["steps", { items: [{ title: w }] }],
+      ["tag-group", { items: [{ text: w }] }], ["timeline", { items: [{ date: w }] }], ["svg", { markup: "<svg viewBox=\"0 0 1 1\"/>", caption: w }],
+      ["comparison", { items: [{ title: "a", items: [w] }, { title: "b", items: [] }] }], ["funnel", { items: [{ label: "x", drop: w }] }],
+      ["cycle", { centerSub: w }], ["number-row", { items: [{ value: w }] }], ["matrix", { quadrants: [{ title: "q", items: [w] }] }],
+      ["checklist", { items: [{ text: w, status: "done" }] }],
+    ];
+    for (const [type, f] of cases) {
+      const m = matchSlide({ blocks: [_seH("H"), { type, ...f }] }, 0, w, null);
+      if (!m || m.kind !== "block" || m.block !== 1) throw new Error(`prose of a ${type} block not found`);
+    }
+  }},
+  // Review fix F2: toLowerCase can change the length (U+0130 -> 2 units), so
+  // an offset in the lower-case text is not an offset in the original.
+  { name: "SE11: the snippet keeps the match when lower case changes the length, before or after the hit; no throw, no cut pair", fn: async () => {
+    const snip = (t, q) => matchSlide({ blocks: [_seH("H"), _seT(t)] }, 0, q, null).snippet;
+    const a = snip("İ".repeat(60) + " qqz " + "x".repeat(60), "qqz");
+    if (!a.includes("qqz")) throw new Error("length change before the hit: " + JSON.stringify(a));
+    const b = snip("x".repeat(60) + " qqz " + "İ".repeat(60), "qqz");
+    if (!b.includes("qqz")) throw new Error("length change after the hit: " + JSON.stringify(b));
+    const c = snip("a".repeat(50) + "İ".repeat(10) + "İQQZ" + "b".repeat(50), "i̇qqz");
+    if (!c.includes("İQQZ")) throw new Error("hit that holds the long char: " + JSON.stringify(c));
+    const d = snip("🚀İ".repeat(30) + "qqz" + "İ🚀".repeat(30), "qqz");
+    if (!d.includes("qqz") || _seLoneSurrogate.test(d)) throw new Error("emoji + long char: " + JSON.stringify(d));
+    let seed = 7; const rnd = (n) => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed % n; };
+    const parts = ["İ", "🚀", "a", "B", " ", "ß", "Σ", "ǅ", "x"];
+    for (let i = 0; i < 300; i++) {
+      let t = ""; const n = 1 + rnd(120); for (let j = 0; j < n; j++) t += parts[rnd(parts.length)];
+      const cps = Array.from(t), s = rnd(cps.length), q = cps.slice(s, s + 1 + rnd(4)).join("").toLowerCase().trim();
+      if (!q || !t.replace(/\s+/g, " ").toLowerCase().includes(q)) continue; // only inputs that match (as matchSlide checks first)
+      const out = searchSnippet(t, q);
+      if (!out.toLowerCase().includes(q)) throw new Error(`snippet lost ${JSON.stringify(q)} in ${JSON.stringify(t)}: ${JSON.stringify(out)}`);
+      if (_seLoneSurrogate.test(out)) throw new Error("cut surrogate pair: " + JSON.stringify(out));
+    }
+  }},
+]);
+
+// v13.81 Present search keyboard model: first result selected, Up/Down stop at
+// the ends, Enter opens the selected row (detour rows too), count line, the
+// selected row looks different from the current-slide row, Esc clears then closes.
+const _psnInput = () => _$("input[placeholder^='Search slides']");
+const _psnRows = () => _$$("[data-search-row='1']").filter((r) => _hfeTocPanel()?.contains(r));
+const _psnSelIdx = () => _psnRows().findIndex((r) => r.getAttribute("aria-selected") === "true");
+const _psnCount = () => { const a = _$("[data-testid='search-count-pos']"), b = _$("[data-testid='search-count-total']"); return a && b ? `${a.textContent}|${b.textContent}` : null; };
+// Give the first two slides of the first module a known word, then return to slide 1.
+const _psnPrepare = async () => {
+  const past = _hooks().getHistoryCounts().past;
+  const s0 = _pdSel();
+  if (!s0) throw new Error("no module selected");
+  _hooks().injectBlocks([_seH("PSN one"), _seT("alpha zqxnav first")]);
+  await _wait(120);
+  document.activeElement?.blur?.();
+  _key("ArrowRight");
+  await _waitFor(() => { const s = _pdSel(); return s && s.itemId === s0.itemId && s.slideIdx === s0.slideIdx + 1; }, 1500)
+    .catch(() => { throw new Error("the first module needs 2 or more slides"); });
+  _hooks().injectBlocks([_seH("PSN two"), _seT("beta ZQXNAV second")]);
+  await _wait(120);
+  document.activeElement?.blur?.();
+  _key("ArrowLeft");
+  await _waitFor(() => _pdSame(_pdSel(), s0), 1500);
+  return { past, s0 };
+};
+const _psnOpen = async (word) => {
+  _key("e", { ctrlKey: true });
+  await _waitFor(_hfeTocOpen, 2000);
+  await _wait(150);
+  _type(_psnInput(), word);
+  await _wait(120);
+};
+uiSuite("present-search-nav", [
+  { name: "PSN1: first result selected; Down/Up move and stop at the ends; count line; selected differs from current; highlight", fn: async () => {
+    let p = null;
+    try {
+      p = await _psnPrepare();
+      await _pdEnterPresent();
+      await _psnOpen("zqxnav");
+      await _waitFor(() => _psnRows().length === 2, 1500).catch(() => { throw new Error("expected 2 result rows, got " + _psnRows().length); });
+      if (_psnSelIdx() !== 0) throw new Error("the first result is not selected");
+      _seEq(_psnCount(), "1 / 2|2 slides", "count line");
+      const cnt = _$("[data-testid='search-count']");
+      if (parseFloat(getComputedStyle(cnt).fontSize) < 13) throw new Error("count line under 13 px");
+      _key("ArrowUp"); await _wait(60);
+      if (_psnSelIdx() !== 0) throw new Error("ArrowUp at the top moved the selection");
+      _key("ArrowDown"); await _wait(60);
+      if (_psnSelIdx() !== 1) throw new Error("ArrowDown did not select the second result");
+      _seEq(_psnCount(), "2 / 2|2 slides", "count after ArrowDown");
+      _key("ArrowDown"); await _wait(60);
+      if (_psnSelIdx() !== 1) throw new Error("ArrowDown at the end moved the selection");
+      const [cur, sel] = _psnRows();
+      if (cur.style.borderLeft.indexOf("3px solid") < 0 || /transparent/.test(cur.style.borderLeft)) throw new Error("current-slide row lost its left bar");
+      if (cur.style.outlineStyle && cur.style.outlineStyle !== "none") throw new Error("the current (not selected) row has the selection outline");
+      if (!/solid/.test(sel.style.outline || "") || !/transparent/.test(sel.style.borderLeft)) throw new Error("the selected row does not look different from the current row");
+      const hits = sel.querySelectorAll("[data-testid='search-hit']");
+      if (!hits.length || [...hits].some((h) => h.textContent.toLowerCase() !== "zqxnav")) throw new Error("highlight text does not equal the query");
+      if (hits[0].textContent !== "ZQXNAV") throw new Error("highlight does not keep the case");
+      if ([...hits].some((h) => parseFloat(getComputedStyle(h).fontSize) < 13)) throw new Error("highlight under 13 px");
+      _key("ArrowUp"); await _wait(60);
+      if (_psnSelIdx() !== 0) throw new Error("ArrowUp did not move back");
+      _key("ArrowDown"); await _wait(60);
+      _key("Enter");
+      await _waitFor(() => !_hfeTocOpen(), 1500).catch(() => { throw new Error("Enter did not close the panel"); });
+      await _waitFor(() => { const s = _pdSel(); return s && s.itemId === p.s0.itemId && s.slideIdx === p.s0.slideIdx + 1; }, 1500)
+        .catch(() => { throw new Error("Enter did not open the selected (second) result"); });
+      if (_$("header")) throw new Error("Enter left Present");
+    } finally { await _exitFullscreen(); if (p) await _mrdUndoTo(p.past); }
+  }},
+  { name: "PSN2: no matches; Enter does nothing; Esc clears, then closes; Present stays", fn: async () => {
+    try {
+      await _pdEnterPresent();
+      const before = _pdSel();
+      await _psnOpen("zqxnomatch000");
+      await _waitFor(() => _$("[data-testid='search-no-matches']"), 1500).catch(() => { throw new Error("no 'No matches' state"); });
+      _seEq(_psnCount(), "0 / 0|0 slides", "count line with no match");
+      _key("ArrowDown"); _key("Enter"); await _wait(150);
+      if (!_hfeTocOpen() || !_pdSame(_pdSel(), before)) throw new Error("Enter with no result changed something");
+      _key("Escape"); await _wait(120);
+      if (_psnInput().value !== "" || _$("[data-testid='search-count']")) throw new Error("Esc did not clear the query and the count line");
+      if (!_hfeTocOpen()) throw new Error("the first Esc closed the panel");
+      _key("Escape");
+      await _waitFor(() => !_hfeTocOpen(), 1500).catch(() => { throw new Error("the second Esc did not close the panel"); });
+      if (_$("header")) throw new Error("Esc left Present");
+    } finally { await _exitFullscreen(); }
+  }},
+  { name: "PSN3: detour rows come after the normal rows in the same order; Enter on one starts the detour", fn: async () => {
+    let past = null;
+    try {
+      past = await _pdPrepare();
+      _hooks().injectBlocks([_seH("PSN visible"), _seT("visible zqxdetour text")]);
+      await _wait(120);
+      await _pdEnterPresent();
+      await _psnOpen("zqxdetour");
+      await _waitFor(() => _psnRows().length === 2, 1500).catch(() => { throw new Error("expected 1 normal + 1 detour row, got " + _psnRows().length); });
+      const rows = _psnRows();
+      if (rows[0].getAttribute("data-testid") === "toc-detour-row" || rows[1].getAttribute("data-testid") !== "toc-detour-row") throw new Error("detour row is not after the normal row");
+      _key("ArrowDown"); await _wait(60);
+      if (_psnSelIdx() !== 1) throw new Error("ArrowDown did not reach the detour row");
+      _key("Enter");
+      await _waitFor(() => _pdOnSlide("PDBACKUP"), 1500).catch(() => { throw new Error("Enter on the detour row did not show the hidden slide"); });
+      if (_slideCounterEl()) throw new Error("the detour slide shows a slide number");
+    } finally { await _exitFullscreen(); if (past != null) await _mrdUndoTo(past); }
+  }},
+  { name: "PSN4: the selected row scrolls into view", fn: async () => {
+    try {
+      await _pdEnterPresent();
+      await _psnOpen("e");
+      const n = _psnRows().length;
+      if (!n) throw new Error("no results for a one-letter query");
+      for (let i = 0; i < Math.min(n - 1, 40); i++) { _key("ArrowDown"); await _wait(25); }
+      await _wait(150);
+      const sel = _psnRows()[_psnSelIdx()];
+      const box = _hfeTocPanel().querySelector("[data-scroll-container]").getBoundingClientRect(), r = sel.getBoundingClientRect();
+      if (r.top < box.top - 1 || r.bottom > box.bottom + 1) throw new Error(`selected row is out of view (row ${r.top}-${r.bottom}, list ${box.top}-${box.bottom})`);
+      if (_psnSelIdx() !== Math.min(n - 1, 40)) throw new Error("selection index wrong");
+    } finally { await _exitFullscreen(); }
+  }},
+], { setup: _selectFirstModule });
+
+// v13.81 editor search: field at the top of the slide list; rows replace the
+// tree while a query is typed; Ctrl+E / "/" keys; opening keeps query + focus.
+const _esInput = () => _$("[data-testid='editor-search-input']");
+const _esRows = () => _$$("[data-testid='editor-search-row']");
+const _esSelIdx = () => _esRows().findIndex((r) => r.getAttribute("aria-selected") === "true");
+const _esCount = () => { const a = _$("[data-testid='editor-search-count-pos']"), b = _$("[data-testid='editor-search-count-total']"); return a && b ? `${a.textContent}|${b.textContent}` : null; };
+const _esTreeShown = () => { const t = _$("[data-testid='toc-tree']"); return !!t && t.offsetParent !== null; };
+const _esFocused = () => !!_esInput() && document.activeElement === _esInput();
+const _esPast = () => _hooks().getHistoryCounts().past;
+const _esType = async (word) => { _type(_esInput(), word); await _wait(120); };
+const _esPress = (key, opts) => { const ev = new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true, ...(opts || {}) }); (document.activeElement || document.body).dispatchEvent(ev); return ev; };
+const _esClear = async () => { const i = _esInput(); if (i && i.value) { _type(i, ""); await _wait(80); } document.activeElement?.blur?.(); };
+const _esShowToc = async () => { if (_$("[data-testid='toc-tree']")) return; document.activeElement?.blur?.(); _key("["); await _waitFor(() => _$("[data-testid='toc-tree']"), 1500).catch(() => {}); };
+const _esStart = async () => { await _exitFullscreen(); await _esShowToc(); await _esClear(); await _selectFirstModule(); };
+const _esEnd = async (past) => { await _exitFullscreen(); await _esShowToc(); await _esClear(); if (past != null) await _mrdUndoTo(past); await _selectFirstModule(); };
+uiSuite("editor-search", [
+  { name: "ES1: field renders at the top of the editor list, not in Present", fn: async () => {
+    try {
+      await _esStart();
+      const i = _esInput();
+      if (!i) throw new Error("no editor search field");
+      if (i.placeholder !== "Search slides… (Ctrl+E)") throw new Error("placeholder: " + i.placeholder);
+      if (parseFloat(getComputedStyle(i).fontSize) < 13) throw new Error("field text under 13 px");
+      // The whole sticky box (not only the input) must end above the first row,
+      // and a point at the top of that row must hit the row, not the field.
+      const tree = _$("[data-testid='toc-tree']"), box = _$("[data-testid='editor-search']");
+      const sc = box.parentElement;
+      sc.scrollTop = 0; await _wait(60);
+      if (box.getBoundingClientRect().bottom > tree.getBoundingClientRect().top + 1) throw new Error("the field covers the tree");
+      const fr = tree.querySelector(".concept-row").getBoundingClientRect();
+      if (!tree.querySelector(".concept-row").contains(document.elementFromPoint(fr.left + 40, fr.top + 2))) throw new Error("the field covers the first section row");
+      if (getComputedStyle(box).backgroundColor.replace(/\s/g, "").match(/rgba\(.*,0(\.\d+)?\)$/)) throw new Error("the field background is not opaque");
+      if (!_esTreeShown() || _esRows().length) throw new Error("idle field must show the tree and no rows");
+      await _pdEnterPresent();
+      if (_esInput()) throw new Error("the editor field renders in Present");
+      if (_$$("input[placeholder^='Search slides']").length > 1) throw new Error("two search fields in Present");
+    } finally { await _esEnd(null); }
+  }},
+  { name: "ES2: typing shows rows with highlight, count, section header; no matches; clear button", fn: async () => {
+    let p = null;
+    try {
+      await _esStart();
+      p = await _psnPrepare();
+      await _esType("zqxnav");
+      await _waitFor(() => _esRows().length === 2, 1500).catch(() => { throw new Error("expected 2 rows, got " + _esRows().length); });
+      if (_esTreeShown()) throw new Error("the tree shows while a query is typed");
+      if (!_$("[data-testid='toc-tree']")) throw new Error("the tree unmounted while a query is typed");
+      _seEq(_esCount(), "1 / 2|2 slides", "count line");
+      if (_esSelIdx() !== 0) throw new Error("the first row is not selected");
+      if (!_$("[data-testid='editor-search-section']")) throw new Error("no section header");
+      const hits = _$$("[data-testid='editor-search-results'] [data-testid='search-hit']");
+      if (!hits.length || hits.some((h) => h.textContent.toLowerCase() !== "zqxnav")) throw new Error("highlight text does not equal the query");
+      if (!hits.some((h) => h.textContent === "ZQXNAV")) throw new Error("highlight does not keep the case");
+      const box = _$("[data-testid='editor-search']");
+      for (const el of [box, _$("[data-testid='editor-search-results']")]) for (const n of [el, ...el.querySelectorAll("*")]) {
+        if ([...n.childNodes].some((c) => c.nodeType === 3 && c.nodeValue.trim()) && parseFloat(getComputedStyle(n).fontSize) < 13) throw new Error(`text under 13 px: "${n.textContent.slice(0, 30)}"`);
+      }
+      await _esType("zqxnomatch000");
+      await _waitFor(() => _$("[data-testid='editor-search-no-matches']"), 1500).catch(() => { throw new Error("no 'No matches' state"); });
+      _seEq(_esCount(), "0 / 0|0 slides", "count with no match");
+      _click(_$("[data-testid='editor-search-clear']"));
+      await _waitFor(() => _esInput().value === "" && _esTreeShown(), 1500).catch(() => { throw new Error("clear button did not clear and show the tree"); });
+      if (!_esFocused()) throw new Error("clear button did not keep focus in the field");
+    } finally { await _esEnd(p && p.past); }
+  }},
+  { name: "ES3: Up/Down stop at the ends; Enter opens and keeps query + focus + rows; no undo step; Esc clears then blurs", fn: async () => {
+    let p = null;
+    try {
+      await _esStart();
+      p = await _psnPrepare();
+      const mark = _esPast();
+      await _esType("zqxnav");
+      await _waitFor(() => _esRows().length === 2, 1500);
+      _key("ArrowUp"); await _wait(60);
+      if (_esSelIdx() !== 0) throw new Error("ArrowUp at the top moved the selection");
+      _key("ArrowDown"); await _wait(60);
+      _key("ArrowDown"); await _wait(60);
+      if (_esSelIdx() !== 1) throw new Error("ArrowDown did not stop at the last row");
+      _key("Enter");
+      await _waitFor(() => { const s = _pdSel(); return s && s.itemId === p.s0.itemId && s.slideIdx === p.s0.slideIdx + 1; }, 1500).catch(() => { throw new Error("Enter did not open the second row"); });
+      await _wait(150);
+      if (!_esFocused()) throw new Error("focus left the field after Enter");
+      if (_esInput().value !== "zqxnav" || _esRows().length !== 2 || _esSelIdx() !== 1) throw new Error("query, rows or selection changed after Enter");
+      _key("ArrowUp"); await _wait(60);
+      _key("Enter");
+      await _waitFor(() => _pdSame(_pdSel(), p.s0), 1500).catch(() => { throw new Error("Enter did not open the first row"); });
+      if (_esPast() !== mark) throw new Error(`search/open made an undo step (${mark} -> ${_esPast()})`);
+      _key("ArrowDown"); await _wait(60); _key("Enter"); await _wait(150);
+      _key("Escape");
+      await _waitFor(() => _esInput().value === "" && _esTreeShown(), 1500).catch(() => { throw new Error("Esc did not clear the query"); });
+      if (!_esFocused()) throw new Error("the first Esc left the field");
+      await _wait(250);
+      const row = _$("[data-testid='toc-tree'] [data-testid='toc-slide-row'][aria-selected='true']");
+      if (!row) throw new Error("no active slide row after Esc");
+      const sc = _$("[data-testid='editor-search']").parentElement.getBoundingClientRect(), fb = _$("[data-testid='editor-search']").getBoundingClientRect(), r = row.getBoundingClientRect();
+      if (r.top < fb.bottom - 1 || r.bottom > sc.bottom + 1) throw new Error(`opened slide row not in view (row ${r.top}-${r.bottom}, view ${fb.bottom}-${sc.bottom})`);
+      _key("Escape"); await _wait(100);
+      if (_esFocused()) throw new Error("the second Esc did not leave the field");
+      if (!_esTreeShown()) throw new Error("the second Esc closed the list");
+    } finally { await _esEnd(p && p.past); }
+  }},
+  { name: "ES4: a click on a row opens it and returns focus to the field", fn: async () => {
+    let p = null;
+    try {
+      await _esStart();
+      p = await _psnPrepare();
+      await _esType("zqxnav");
+      await _waitFor(() => _esRows().length === 2, 1500);
+      _click(_esRows()[1]);
+      await _waitFor(() => { const s = _pdSel(); return s && s.itemId === p.s0.itemId && s.slideIdx === p.s0.slideIdx + 1; }, 1500).catch(() => { throw new Error("click did not open the row"); });
+      await _wait(100);
+      if (!_esFocused() || _esInput().value !== "zqxnav" || _esSelIdx() !== 1) throw new Error("click did not keep focus, query and selection");
+    } finally { await _esEnd(p && p.past); }
+  }},
+  { name: "ES5: a hidden slide is a normal row with the HIDDEN mark and opens", fn: async () => {
+    let past = null;
+    try {
+      await _esStart();
+      past = await _pdPrepare();
+      const s0 = _pdSel();
+      await _esType("zqxdetour");
+      await _waitFor(() => _esRows().length === 1, 1500).catch(() => { throw new Error("hidden slide not listed"); });
+      const row = _esRows()[0];
+      if (!row.querySelector("[data-testid='search-hidden-slide']")) throw new Error("no HIDDEN mark");
+      if (!row.querySelector("[data-testid='toc-hidden-block']")) throw new Error("no HIDDEN BLOCK tag");
+      _key("Enter");
+      await _waitFor(() => { const s = _pdSel(); return s && s.itemId === s0.itemId && s.slideIdx === s0.slideIdx + 1; }, 1500).catch(() => { throw new Error("Enter did not open the hidden slide"); });
+      await _waitFor(() => _pdOnSlide("PDBACKUP"), 1500).catch(() => { throw new Error("the hidden slide is not on screen"); });
+    } finally { await _esEnd(past); }
+  }},
+  { name: "ES6: a notes-only match shows the NOTES snippet and opens", fn: async () => {
+    let past = null;
+    try {
+      await _esStart();
+      past = _esPast();
+      const s0 = _pdSel();
+      _hooks().injectBlocks([_seH("ES notes slide")], { notes: "speaker hint zqxnotes here" });
+      await _wait(150);
+      _key("ArrowRight"); await _wait(150); document.activeElement?.blur?.();
+      await _esType("zqxnotes");
+      await _waitFor(() => _esRows().length === 1, 1500).catch(() => { throw new Error("notes match not listed"); });
+      const row = _esRows()[0];
+      if (!row.querySelector("[data-testid='search-notes-badge']")) throw new Error("no NOTES badge");
+      if (!/zqxnotes/.test(row.querySelector("[data-testid='toc-snippet']")?.textContent || "")) throw new Error("snippet does not show the notes text");
+      _key("Enter");
+      await _waitFor(() => _pdSame(_pdSel(), s0), 1500).catch(() => { throw new Error("Enter did not open the notes match"); });
+    } finally { await _esEnd(past); }
+  }},
+  { name: "ES7: a section-name match shows a SECTION row; a folded section unfolds on open", fn: async () => {
+    let past = null;
+    try {
+      await _esStart();
+      past = _esPast();
+      const head = _$(".concept-row");
+      head.querySelector("[data-testid='toc-section-title']").dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+      const inp = await _waitFor(() => _$("input[placeholder='Section name']"), 1500);
+      _type(inp, "Zqxsect area");
+      inp.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+      await _waitFor(() => !_$("input[placeholder='Section name']"), 1500);
+      const caret = _$(".concept-row [aria-label^='Collapse section']");
+      _click(caret);
+      await _waitFor(() => _$(".concept-row [aria-label^='Expand section']"), 1500).catch(() => { throw new Error("could not fold the section"); });
+      await _esType("zqxsect");
+      await _waitFor(() => _esRows().length === 1, 1500).catch(() => { throw new Error("section match not listed, rows " + _esRows().length); });
+      if (!_esRows()[0].querySelector("[data-testid='search-section-badge']")) throw new Error("no SECTION badge");
+      if (!_$("[data-testid='editor-search-section'] [data-testid='search-hit']")) throw new Error("section header has no highlight");
+      _key("Enter"); await _wait(150);
+      _key("Escape");
+      await _waitFor(() => _esTreeShown() && _$(".concept-row [aria-label^='Collapse section']"), 1500).catch(() => { throw new Error("the folded section did not unfold on open"); });
+      if (!_$("[data-testid='toc-tree'] [data-testid='toc-slide-row'][aria-selected='true']")) throw new Error("no active slide row after open");
+    } finally {
+      await _esClear();
+      const folded = _$(".concept-row [aria-label^='Expand section']");
+      if (folded) { _click(folded); await _wait(80); }
+      await _esEnd(past);
+    }
+  }},
+  { name: "ES8: a slide in a collapsed lane is a normal row and opens", fn: async () => {
+    let p = null, lane = false;
+    try {
+      await _esStart();
+      p = await _psnPrepare();
+      lane = _hooks().toggleSelectedLaneForTest(); await _wait(120);
+      await _esType("zqxnav");
+      await _waitFor(() => _esRows().length === 2, 1500).catch(() => { throw new Error("collapsed-lane slides not listed"); });
+      _key("ArrowDown"); await _wait(60); _key("Enter");
+      await _waitFor(() => { const s = _pdSel(); return s && s.itemId === p.s0.itemId && s.slideIdx === p.s0.slideIdx + 1; }, 1500).catch(() => { throw new Error("Enter did not open the collapsed-lane slide"); });
+    } finally { if (lane) { _hooks().toggleSelectedLaneForTest(); await _wait(80); } await _esEnd(p && p.past); }
+  }},
+  { name: "ES9: Ctrl+E state machine and the / key", fn: async () => {
+    try {
+      await _esStart();
+      _key("[");
+      await _waitFor(() => !_esInput(), 1500).catch(() => { throw new Error("[ did not collapse the list"); });
+      let ev = _esPress("e", { ctrlKey: true });
+      await _waitFor(() => _esTreeShown() && _esFocused(), 1500).catch(() => { throw new Error("Ctrl+E (collapsed) did not open and focus"); });
+      if (!ev.defaultPrevented) throw new Error("Ctrl+E not prevented");
+      _esPress("e", { ctrlKey: true });
+      await _waitFor(() => !_esInput(), 1500).catch(() => { throw new Error("Ctrl+E in the field did not collapse"); });
+      _esPress("e", { metaKey: true });
+      await _waitFor(() => _esFocused(), 1500).catch(() => { throw new Error("Cmd+E (collapsed) did not open and focus"); });
+      _type(_esInput(), "abc"); await _wait(60);
+      document.activeElement?.blur?.();
+      _esPress("e", { ctrlKey: true });
+      await _waitFor(_esFocused, 1500).catch(() => { throw new Error("Ctrl+E (open, not focused) did not focus"); });
+      if (!_esTreeShown() && !_esRows().length && !_$("[data-testid='editor-search-no-matches']")) throw new Error("list closed");
+      const i = _esInput();
+      if (i.selectionStart !== 0 || i.selectionEnd !== i.value.length) throw new Error("Ctrl+E did not select the field text");
+      await _esClear();
+      ev = _esPress("/");
+      await _waitFor(_esFocused, 1500).catch(() => { throw new Error("/ did not focus the field"); });
+      if (!ev.defaultPrevented) throw new Error("/ not prevented (it would be typed)");
+      ev = _esPress("/");
+      if (ev.defaultPrevented) throw new Error("/ typed in the field was prevented");
+      document.activeElement?.blur?.();
+      _key("[");
+      await _waitFor(() => !_esInput(), 1500);
+      _esPress("/");
+      await _waitFor(() => _esTreeShown() && _esFocused(), 1500).catch(() => { throw new Error("/ (collapsed) did not open and focus"); });
+    } finally { await _esEnd(null); }
+  }},
+  { name: "ES10: / and Ctrl+E do nothing while typing in another field", fn: async () => {
+    const els = [document.createElement("input"), document.createElement("textarea"), document.createElement("div")];
+    els[2].contentEditable = "true";
+    try {
+      await _esStart();
+      for (const el of els) {
+        document.body.appendChild(el); el.focus();
+        const a = _esPress("/"), b = _esPress("e", { ctrlKey: true });
+        await _wait(120);
+        if (_esFocused() || a.defaultPrevented || b.defaultPrevented) throw new Error(`a key acted while typing in ${el.tagName}`);
+        if (!_esTreeShown()) throw new Error(`Ctrl+E in ${el.tagName} collapsed the list`);
+        el.remove();
+      }
+    } finally { els.forEach((el) => el.remove()); await _esEnd(null); }
+  }},
+  { name: "ES11: editor shortcuts do not fire while the field has focus", fn: async () => {
+    let p = null;
+    const darkKey = () => T.bg;
+    try {
+      await _esStart();
+      p = await _psnPrepare();
+      const mark = _esPast(), fut = _hooks().getHistoryCounts().future, sel = _pdSel(), bg = darkKey();
+      for (const q of ["", "zqxnomatch000"]) {
+        await _esType(q); _esInput().focus();
+        for (const [k, o] of [["Delete"], ["Backspace"], ["ArrowDown"], ["ArrowRight"], ["ArrowLeft"], ["z", { ctrlKey: true }], ["y", { ctrlKey: true }], ["c", { ctrlKey: true }], ["v", { ctrlKey: true }], ["f"], ["e"], ["n"], ["g"], ["s"], ["d"], ["r"], ["?"], ["["], [" "], ["F5"]]) {
+          _esPress(k, o); await _wait(40);
+        }
+        await _wait(200);
+        if (!_esFocused()) throw new Error("focus left the field");
+        if (!_pdSame(_pdSel(), sel)) throw new Error("the selected slide changed");
+        if (_esPast() !== mark || _hooks().getHistoryCounts().future !== fut) throw new Error("the history changed (undo/redo or a deck edit fired)");
+        if (!_$("header")) throw new Error("Present started");
+        if (darkKey() !== bg) throw new Error("the theme changed");
+        if (!_$("[data-testid='toc-tree']")) throw new Error("the list collapsed");
+        if ((document.body.textContent || "").includes("Toggle navigator panel")) throw new Error("the shortcut help opened");
+      }
+      // Probe check: the same key event sent outside the field does move the
+      // slide, so a shortcut that fires in the field would be seen above.
+      document.activeElement?.blur?.();
+      _esPress("ArrowRight");
+      await _waitFor(() => !_pdSame(_pdSel(), sel), 1500).catch(() => { throw new Error("probe check: ArrowRight outside the field did not move the slide"); });
+    } finally { await _esEnd(p && p.past); }
+  }},
+  { name: "ES12: special characters and a 2000-character query do not throw", fn: async () => {
+    try {
+      await _esStart();
+      for (const q of ["( [ * \\ < > & \"", ".*+?^${}|", "🙈", "<img src=x onerror=alert(1)>", "a".repeat(2000), "İ"]) {
+        await _esType(q);
+        if (!_esCount()) throw new Error("no count line for " + q.slice(0, 20));
+        if (_$("[data-testid='editor-search'] img, [data-testid='editor-search-results'] img")) throw new Error("query became markup");
+      }
+      const t0 = performance.now(); await _esType("e".repeat(2000)); if (performance.now() - t0 > 1000) throw new Error("2000-char query too slow");
+    } finally { await _esEnd(null); }
+  }},
+  // Review fix F5: the field sits under the modal backdrop, so a key must not
+  // move focus there (typed text would go into a hidden field).
+  { name: "ES13: / , Ctrl+E and [ do nothing while a modal dialog (Keyboard Shortcuts) is open", fn: async () => {
+    try {
+      await _esStart();
+      document.activeElement?.blur?.();
+      _esPress("?");
+      await _waitFor(() => _$("[data-vela-modal]"), 1500).catch(() => { throw new Error("Keyboard Shortcuts dialog did not open"); });
+      const focus0 = document.activeElement;
+      for (const [k, o] of [["/", null], ["e", { ctrlKey: true }], ["e", { metaKey: true }], ["[", null]]) {
+        const ev = _esPress(k, o);
+        await _wait(120);
+        if (_esFocused() || document.activeElement !== focus0) throw new Error(`${k} moved focus behind the modal`);
+        if (ev.defaultPrevented) throw new Error(`${k} acted behind the modal`);
+        if (!_esTreeShown()) throw new Error(`${k} collapsed the list behind the modal`);
+      }
+      _esPress("a"); _esPress("b"); await _wait(80);
+      if (_esInput().value !== "") throw new Error("typed text went into the search field");
+    } finally {
+      if (_$("[data-vela-modal]")) { _click("[data-vela-modal]"); await _waitFor(() => !_$("[data-vela-modal]"), 1500).catch(() => {}); }
+      await _esEnd(null);
+    }
+  }},
+], { setup: _selectFirstModule });
+
+// ── Editor search: amber outline on the matched block (flashBlock) ──
+const _esfFlashed = () => _$$("[data-search-flash='1']");
+// Slide 0 of the first module: heading + two text blocks; slide 1: a "cols"
+// slide with L / R column blocks. Returns { past, s0, s1 } (past = undo mark).
+const _esfPrep = async () => {
+  const past = _esPast();
+  _hooks().injectBlocks([_seH("ESF title zqxfltitle"), { type: "text", text: "plain first" }, { type: "text", text: "second zqxflblk" }]);
+  await _wait(150);
+  const s0 = _pdSel();
+  _key("ArrowRight"); await _wait(150);
+  _hooks().injectBlocks([_seH("ESF cols")], { layout: "cols", L: [{ type: "text", text: "left zqxflleft" }], R: [{ type: "text", text: "right first" }, { type: "text", text: "right zqxflright" }] });
+  await _wait(150);
+  const s1 = _pdSel();
+  if (!s0 || !s1 || s0.itemId !== s1.itemId || s0.slideIdx + 1 !== s1.slideIdx) throw new Error("prep: the first module needs 2+ slides");
+  document.activeElement?.blur?.();
+  return { past, s0, s1 };
+};
+const _esfOpen = async (q, want) => {
+  _type(_esInput(), q); await _wait(120);
+  await _waitFor(() => _esRows().length === 1, 1500).catch(() => { throw new Error(`no single row for ${q}`); });
+  _key("Enter");
+  await _waitFor(() => _pdSame(_pdSel(), want), 1500).catch(() => { throw new Error(`Enter did not open ${q}`); });
+};
+uiSuite("editor-search-flash", [
+  { name: "ESF1: Enter on a block match outlines that block; the outline goes within 2.5 s; no undo step, no deck change", fn: async () => {
+    let p = null;
+    try {
+      await _esStart();
+      p = await _esfPrep();
+      const mark = _esPast(), fut = _hooks().getHistoryCounts().future;
+      const epoch0 = _hooks().getDeckStateForTest().epoch;
+      _key("ArrowLeft"); await _wait(150);
+      const slide0 = JSON.stringify(_hooks().getCurrentSlideForTest());
+      _key("ArrowRight"); await _wait(150); document.activeElement?.blur?.();
+      await _esfOpen("zqxflblk", p.s0);
+      const f = await _waitFor(() => _esfFlashed().length === 1 && _esfFlashed()[0], 400).catch(() => { throw new Error("no outline within 400 ms"); });
+      if (!(f.textContent || "").includes("second zqxflblk")) throw new Error("outline on the wrong block: " + f.textContent);
+      if (f.getAttribute("data-block-type") !== "text") throw new Error("outline not on a top-level block wrapper");
+      const ov = f.querySelector("[data-testid='search-flash']");
+      if (!ov || getComputedStyle(ov).pointerEvents !== "none") throw new Error("outline overlay missing or blocks clicks");
+      await _waitFor(() => _esfFlashed().length === 0 && !_$("[data-testid='search-flash']"), 2500).catch(() => { throw new Error("outline still shown after 2.5 s"); });
+      if (_esPast() !== mark || _hooks().getHistoryCounts().future !== fut) throw new Error("the flash made an undo step");
+      if (JSON.stringify(_hooks().getCurrentSlideForTest()) !== slide0) throw new Error("the flash changed the slide");
+      if (_hooks().getDeckStateForTest().epoch !== epoch0) throw new Error("the flash changed the deck epoch");
+    } finally { await _esEnd(p && p.past); }
+  }},
+  { name: "ESF2: a title match gives no outline", fn: async () => {
+    let p = null;
+    try {
+      await _esStart();
+      p = await _esfPrep();
+      await _esfOpen("zqxfltitle", p.s0);
+      await _wait(400);
+      if (_esfFlashed().length || _$("[data-testid='search-flash']")) throw new Error("a title match outlined a block");
+    } finally { await _esEnd(p && p.past); }
+  }},
+  { name: "ESF3: a right-column match on a cols slide outlines that column block", fn: async () => {
+    let p = null;
+    try {
+      await _esStart();
+      p = await _esfPrep();
+      _key("ArrowLeft"); await _wait(150); document.activeElement?.blur?.();
+      await _esfOpen("zqxflright", p.s1);
+      const f = await _waitFor(() => _esfFlashed().length === 1 && _esfFlashed()[0], 400).catch(() => { throw new Error("no outline on the column block"); });
+      if (!(f.textContent || "").includes("right zqxflright")) throw new Error("outline on the wrong block: " + f.textContent);
+      if (!f.closest("[data-cols-side='right']")) throw new Error("outlined block is not in the right column");
+    } finally { await _esEnd(p && p.past); }
+  }},
+  { name: "ESF4: a second result within 1.5 s moves the outline; the old one clears", fn: async () => {
+    let p = null;
+    try {
+      await _esStart();
+      p = await _esfPrep();
+      await _esfOpen("zqxflblk", p.s0);
+      await _waitFor(() => _esfFlashed().length === 1, 400).catch(() => { throw new Error("no first outline"); });
+      await _esfOpen("zqxflleft", p.s1);
+      const f = await _waitFor(() => _esfFlashed().length === 1 && (_esfFlashed()[0].textContent || "").includes("left zqxflleft") && _esfFlashed()[0], 400).catch(() => { throw new Error("outline did not move: " + _esfFlashed().map((e) => e.textContent).join(" | ")); });
+      if (!f.closest("[data-cols-side='left']")) throw new Error("second outline not in the left column");
+      if (_$$("[data-testid='search-flash']").length !== 1) throw new Error("more than one outline");
+      await _waitFor(() => _esfFlashed().length === 0, 2500).catch(() => { throw new Error("second outline did not clear"); });
+    } finally { await _esEnd(p && p.past); }
+  }},
+  { name: "ESF5: entering Present clears the outline; it does not come back on exit", fn: async () => {
+    let p = null;
+    try {
+      await _esStart();
+      p = await _esfPrep();
+      await _esfOpen("zqxflblk", p.s0);
+      await _waitFor(() => _esfFlashed().length === 1, 400).catch(() => { throw new Error("no outline"); });
+      await _pdEnterPresent();
+      if (_esfFlashed().length || _$("[data-testid='search-flash']")) throw new Error("outline shown in Present");
+      await _exitFullscreen();
+      await _wait(100);
+      if (_esfFlashed().length || _$("[data-testid='search-flash']")) throw new Error("outline came back after Present");
+    } finally { await _esEnd(p && p.past); }
+  }},
+  // Review F6: split layouts render the image in its own column; the outline
+  // must still land on the text block that holds the match.
+  { name: "ESF6: a block match on an image-right and an image-left slide outlines that block", fn: async () => {
+    const past = _esPast();
+    const png = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+    try {
+      await _esStart();
+      const s0 = _pdSel();
+      for (const layout of ["image-right", "image-left"]) {
+        await _esClear();
+        _hooks().injectBlocks([_seH("Split head"), { type: "image", src: png }, { type: "text", text: "split zqxflsplit body" }], { layout });
+        await _wait(150); document.activeElement?.blur?.();
+        await _esfOpen("zqxflsplit", s0);
+        const f = await _waitFor(() => _esfFlashed().length === 1 && _esfFlashed()[0], 400).catch(() => { throw new Error(`${layout}: no outline`); });
+        if (!(f.textContent || "").includes("split zqxflsplit body")) throw new Error(`${layout}: outline on the wrong block: ` + f.textContent);
+        if (f.getAttribute("data-block-type") !== "text") throw new Error(`${layout}: outline not on the text block`);
+        await _waitFor(() => _esfFlashed().length === 0, 2500).catch(() => { throw new Error(`${layout}: outline still shown after 2.5 s`); });
+      }
+    } finally { await _esEnd(past); }
+  }},
+], { setup: _selectFirstModule });
+
+// ━━━ Session end (v13.80): sanitizer, pace math, deck ingress ━━━━━━━
+const _SS_T0 = 1700000000000;
+const _ssEq = (got, want, what) => { const g = JSON.stringify(got), w = JSON.stringify(want); if (g !== w) throw new Error(`${what}: got ${g}, want ${w}`); };
+const _ssNoNaN = (o, what) => { for (const [k, v] of Object.entries(o || {})) if (typeof v === "number" && !Number.isFinite(v)) throw new Error(`${what}: ${k} = ${v}`); };
+const _ssSeq = (durs) => durs.map((d, i) => ({ s: { duration: d }, num: i + 1, itemId: "m", rawIdx: i }));
+const _ssSes = (lenSec) => ({ start: _SS_T0, end: _SS_T0 + lenSec * 1000 });
+
+uiSuite("session-sanitizer", [
+  { name: "SS1: valid sessions are accepted as fresh 2-key objects; extra keys are dropped", fn: async () => {
+    _ssEq(sanitizeSession({ start: _SS_T0, end: _SS_T0 + 60000 }), { start: _SS_T0, end: _SS_T0 + 60000 }, "1 min");
+    _ssEq(sanitizeSession({ start: _SS_T0, end: _SS_T0 + 86400000 }), { start: _SS_T0, end: _SS_T0 + 86400000 }, "24 h");
+    const raw = { start: _SS_T0, end: _SS_T0 + 600000, x: 1, _private: true, style: "color:red" };
+    const out = sanitizeSession(raw);
+    _ssEq(Object.keys(out), ["start", "end"], "keys");
+    if (out === raw) throw new Error("result is the raw object, not a fresh one");
+    _ssEq(sanitizeSession({ start: SESSION_EPOCH_MIN, end: SESSION_EPOCH_MIN + 60000 }), { start: SESSION_EPOCH_MIN, end: SESSION_EPOCH_MIN + 60000 }, "epoch min");
+    _ssEq(sanitizeSession({ start: SESSION_EPOCH_MAX - 60000, end: SESSION_EPOCH_MAX }), { start: SESSION_EPOCH_MAX - 60000, end: SESSION_EPOCH_MAX }, "epoch max");
+  }},
+  { name: "SS2: every malformed value is rejected (null, never coerced)", fn: async () => {
+    const T = _SS_T0, E = T + 600000;
+    const bad = [
+      ["null", null], ["undefined", undefined], ["array", [T, E]], ["array with props", Object.assign([], { start: T, end: E })],
+      ["string", "x"], ["number", 5], ["true", true], ["function", Object.assign(() => 0, { start: T, end: E })], ["{}", {}],
+      ["missing end", { start: T }], ["missing start", { end: E }],
+      ["numeric string start", { start: String(T), end: E }], ["numeric string end", { start: T, end: String(E) }],
+      ["bool start", { start: true, end: E }], ["float start", { start: T + 0.5, end: E }], ["float end", { start: T, end: E + 0.5 }],
+      ["NaN", { start: NaN, end: E }], ["Infinity end", { start: T, end: Infinity }], ["-Infinity start", { start: -Infinity, end: E }],
+      ["1e300", { start: T, end: 1e300 }], ["negative", { start: -1, end: E }], ["unsafe integer", { start: T, end: 2 ** 53 }],
+      ["Number object", { start: new Number(T), end: E }], ["null start", { start: null, end: E }],
+      ["end == start", { start: T, end: T }], ["end < start", { start: E, end: T }],
+      ["length 59999", { start: T, end: T + 59999 }], ["length 86400001", { start: T, end: T + 86400001 }],
+      ["start before 2000", { start: SESSION_EPOCH_MIN - 1, end: SESSION_EPOCH_MIN + 60000 }],
+      ["end after 2100", { start: SESSION_EPOCH_MAX - 60000, end: SESSION_EPOCH_MAX + 1 }],
+      ["inherited start/end", Object.create({ start: T, end: E })],
+      ["inherited end only", Object.assign(Object.create({ end: E }), { start: T })],
+    ];
+    for (const [label, v] of bad) { const r = sanitizeSession(v); if (r !== null) throw new Error(`${label} accepted: ${JSON.stringify(r)}`); }
+  }},
+  { name: "SS3: getters are read once; the checked value is the stored value", fn: async () => {
+    let rs = 0, re = 0;
+    const g = {};
+    Object.defineProperty(g, "start", { enumerable: true, get: () => (++rs === 1 ? _SS_T0 : "x") });
+    Object.defineProperty(g, "end", { enumerable: true, get: () => (++re === 1 ? _SS_T0 + 60000 : 1e300) });
+    const out = sanitizeSession(g);
+    if (rs !== 1 || re !== 1) throw new Error(`getter reads: start ${rs}, end ${re}`);
+    _ssEq(out, { start: _SS_T0, end: _SS_T0 + 60000 }, "getter result");
+    let n = 0;
+    const h = {};
+    Object.defineProperty(h, "start", { get: () => (++n === 1 ? "1700000000000" : _SS_T0) });
+    Object.defineProperty(h, "end", { get: () => _SS_T0 + 60000 });
+    if (sanitizeSession(h) !== null) throw new Error("getter that first returns a string was accepted");
+  }},
+  { name: "SS4: liveSession treats a session as not set from end + 3 h + 1 ms", fn: async () => {
+    const s = _ssSes(600);
+    if (!liveSession(s, s.start - 86400000)) throw new Error("future session not live");
+    if (!liveSession(s, s.end + SESSION_STALE_MS)) throw new Error("end + 3 h not live");
+    if (liveSession(s, s.end + SESSION_STALE_MS + 1) !== null) throw new Error("end + 3 h + 1 ms still live");
+    if (liveSession({ start: "x", end: 1 }, s.start) !== null) throw new Error("invalid session live");
+    if (liveSession(s, NaN) !== null) throw new Error("NaN now gave a live session");
+  }},
+  { name: "SS5: SET_SESSION re-sanitizes; invalid and unchanged values return the same state", fn: async () => {
+    const st = { ...init, session: null };
+    const valid = { start: _SS_T0, end: _SS_T0 + 600000, evil: 1 };
+    const s1 = innerReducer(st, { type: "SET_SESSION", session: valid });
+    _ssEq(s1.session, { start: _SS_T0, end: _SS_T0 + 600000 }, "set");
+    if (innerReducer(s1, { type: "SET_SESSION", session: { start: "1", end: 2 } }) !== s1) throw new Error("invalid payload changed state");
+    if (innerReducer(s1, { type: "SET_SESSION", session: { start: _SS_T0, end: _SS_T0 + 600000 } }) !== s1) throw new Error("unchanged payload changed state");
+    if (innerReducer(st, { type: "SET_SESSION", session: null }) !== st) throw new Error("null on null changed state");
+    const s2 = innerReducer(s1, { type: "SET_SESSION", session: null });
+    if (s2.session !== null) throw new Error("null did not clear");
+  }},
+]);
+
+uiSuite("session-pace-math", [
+  { name: "SP1: verdict thresholds at delta 61 / 60 / -60 / -61 / -180 / -181", fn: async () => {
+    // est [60,60,60,820] = need 1000 s at idx 0, onSlide 0; a 2000 s session keeps
+    // every row inside the session (have = 1000 + delta > 0); now = end - have.
+    const est = sessionEstimates(_ssSeq([60, 60, 60, 820]));
+    const at = (delta) => { const ses = _ssSes(2000); const have = 1000 + delta; return computeSessionPace(est, 0, 0, ses, ses.end - have * 1000); };
+    const rows = [[61, "green", "1:01 ahead · you can slow down"], [60, "white", "on pace"], [0, "white", "on pace"], [-60, "white", "on pace"],
+      [-61, "amber", "1:01 behind · speed up"], [-180, "amber", "3:00 behind · speed up"], [-181, "red", "3:01 behind · speed up"]];
+    for (const [d, key, text] of rows) {
+      const p = at(d);
+      if (p.delta !== d) throw new Error(`delta ${d}: got ${p.delta}`);
+      if (p.paceKey !== key || p.verdict !== text) throw new Error(`delta ${d}: ${p.paceKey} "${p.verdict}"`);
+      _ssNoNaN(p, `delta ${d}`);
+    }
+  }},
+  { name: "SP2: before start, over, onSlideSec, fractions and shouldIdx", fn: async () => {
+    const est = sessionEstimates(_ssSeq([60, 60, 60]));
+    const ses = _ssSes(180);
+    const b = computeSessionPace(est, 0, 0, ses, ses.start - 60000);
+    if (!b.before || b.over || b.verdict !== "starts in 1:00" || b.timeLeftSec !== 180 || b.elapsedFrac !== 0 || b.delta !== 0) throw new Error(`before: ${JSON.stringify(b)}`);
+    const o = computeSessionPace(est, 2, 0, ses, ses.end + 10000);
+    if (!o.over || o.paceKey !== "red" || o.timeLeftKey !== "red" || o.verdict !== "+0:10 over · wrap up" || o.timeLeftSec !== 10 || o.elapsedFrac !== 1) throw new Error(`over: ${JSON.stringify(o)}`);
+    const m = computeSessionPace(est, 1, 30, ses, ses.start + 90000);
+    if (m.need !== 90 || m.have !== 90 || m.paceKey !== "white") throw new Error(`mid: ${JSON.stringify(m)}`);
+    const f = computeSessionPace(est, 0, 500, ses, ses.start);
+    if (f.need !== 120) throw new Error(`onSlideSec floor: need ${f.need}`);
+    if (computeSessionPace(est, 0, -50, ses, ses.start).need !== 180) throw new Error("negative onSlideSec changed need");
+    // shouldIdx: t = total - have; first k with cumulative est > t.
+    const sAt = (sec) => computeSessionPace(est, 0, 0, ses, ses.start + sec * 1000).shouldIdx;
+    _ssEq([sAt(0), sAt(59), sAt(60), sAt(119), sAt(120), sAt(180)], [0, 0, 1, 1, 2, 2], "shouldIdx");
+    _ssEq(computeSessionPace(est, 0, 0, ses, ses.end + 999999).shouldIdx, 2, "shouldIdx over");
+    const big = computeSessionPace(est, 0, 0, _ssSes(3600), _SS_T0);
+    if (big.shouldFrac !== 0 || big.youFrac !== 0) throw new Error(`fracs clamp low: ${big.shouldFrac} ${big.youFrac}`);
+    const late = computeSessionPace(est, 2, 0, ses, ses.end + 5000);
+    if (late.shouldFrac !== 1 || !(late.youFrac >= 0 && late.youFrac <= 1)) throw new Error(`fracs clamp high: ${late.shouldFrac} ${late.youFrac}`);
+    if (computeSessionPace(est, 0, 0, { start: "x", end: 1 }, _SS_T0) !== null) throw new Error("invalid session gave a pace");
+  }},
+  { name: "SP3: timeLeftKey: white, amber at 75 % elapsed, red at 5 min left", fn: async () => {
+    const est = sessionEstimates(_ssSeq([60]));
+    const ses = _ssSes(3600);
+    _ssEq(computeSessionPace(est, 0, 0, ses, ses.start + 60000).timeLeftKey, "white", "early");
+    _ssEq(computeSessionPace(est, 0, 0, ses, ses.start + 2700000).timeLeftKey, "amber", "75 %");
+    _ssEq(computeSessionPace(est, 0, 0, ses, ses.end - 300000).timeLeftKey, "red", "5 min left");
+    _ssEq(computeSessionPace(est, 0, 0, ses, ses.start - 1).timeLeftKey, "white", "before start");
+  }},
+  { name: "SP4: estimates: deck average for missing durations, fallback 60 s, bad durations count as missing", fn: async () => {
+    const a = sessionEstimates(_ssSeq([30, undefined, 90, "60", NaN, -5, Infinity, 0]));
+    _ssEq(a, { est: [30, 60, 90, 60, 60, 60, 60, 60], total: 480, estimated: 6 }, "average rule");
+    _ssEq(sessionEstimates(_ssSeq([undefined, null])), { est: [60, 60], total: 120, estimated: 2 }, "fallback 60");
+    _ssEq(sessionEstimates(_ssSeq([999999])), { est: [86400], total: 86400, estimated: 0 }, "cap");
+    _ssEq(sessionEstimates([]), { est: [], total: 0, estimated: 0 }, "empty");
+    _ssEq(sessionEstimates(null), { est: [], total: 0, estimated: 0 }, "null");
+    _ssEq(sessionEstimates([null, { s: null }]), { est: [60, 60], total: 120, estimated: 2 }, "broken entries");
+  }},
+  { name: "SP5: presentSequence numbering, hidden slides and the collapsed lane rule; sessionSeqIndex", fn: async () => {
+    const lanes = [
+      { title: "A", items: [{ id: "a1", slides: [{ duration: 10 }, { hidden: true }, { duration: 20 }] }] },
+      { title: "B", collapsed: true, items: [{ id: "b1", slides: [{}, {}] }, { id: "b2", slides: [{}] }] },
+      { title: "C", items: [{ id: "c1", slides: [{ hidden: true }] }, { id: "c2", slides: [{}] }] },
+    ];
+    const seq = presentSequence(lanes, "a1");
+    _ssEq(seq.map((e) => [e.num, e.itemId, e.rawIdx]), [[1, "a1", 0], [2, "a1", 2], [6, "c2", 0]], "collapsed lane skipped");
+    if (seq[0].s !== lanes[0].items[0].slides[0]) throw new Error("entry.s is not the slide");
+    const keep = presentSequence(lanes, "b2");
+    _ssEq(keep.map((e) => [e.num, e.itemId, e.rawIdx]), [[1, "a1", 0], [2, "a1", 2], [3, "b1", 0], [4, "b1", 1], [5, "b2", 0], [6, "c2", 0]], "lane of keepItemId kept");
+    _ssEq(sessionEstimates(seq).est, [10, 20, 15], "estimates read entry.s.duration");
+    _ssEq([sessionSeqIndex(seq, "a1", 0), sessionSeqIndex(seq, "a1", 1), sessionSeqIndex(seq, "a1", 2), sessionSeqIndex(seq, "a1", 9)], [0, 0, 1, 1], "largest rawIdx <= given");
+    _ssEq(sessionSeqIndex(seq, "a1", -1), 0, "title card -> first entry of item");
+    _ssEq(sessionSeqIndex(seq, "c2", -1), 2, "title card of later item");
+    _ssEq(sessionSeqIndex(seq, "c1", 0), 2, "item with no entry -> entries before it");
+    _ssEq(sessionSeqIndex(seq, "b1", 0), 2, "collapsed item -> entries before it");
+    _ssEq(sessionSeqIndex(seq, "zz", 0), 0, "unknown item");
+    _ssEq(sessionSeqIndex(seq, "a1", NaN), 0, "NaN rawIdx");
+    _ssEq(sessionSeqIndex([], "a1", 0), 0, "empty seq");
+    _ssEq(sessionSeqIndex(null, "a1", 0), 0, "null seq");
+    const tail = presentSequence([{ items: [{ id: "x", slides: [{}] }, { id: "y", slides: [{ hidden: true }] }] }], null);
+    _ssEq(sessionSeqIndex(tail, "y", 0), 0, "trailing item with no entry clamps to last index");
+    _ssEq(presentSequence(null, null).length, 0, "null lanes");
+    _ssEq(presentSequence([null, { items: null }, { items: [null, { id: "q", slides: [null, {}] }] }], null).map((e) => [e.num, e.rawIdx]), [[1, 1]], "broken lanes");
+  }},
+  { name: "SP6: no NaN / Infinity in any field for edge inputs", fn: async () => {
+    const e3 = sessionEstimates(_ssSeq([60, 60, 60]));
+    const ses = _ssSes(600);
+    const rows = [
+      ["empty seq", { est: [], total: 0 }, 0, 0, ses.start + 1000],
+      ["total 0", { est: [0, 0], total: 0 }, 1, 0, ses.start + 1000],
+      ["wrong total", { est: [60], total: NaN }, 0, 0, ses.start],
+      ["est junk", { est: [NaN, Infinity, -5, "9", 1e308] }, 0, 0, ses.start],
+      ["no estimates object", null, 0, 0, ses.start],
+      ["huge onSlideSec", e3, 0, 1e308, ses.start + 1000],
+      ["Infinity onSlideSec", e3, 0, Infinity, ses.start + 1000],
+      ["NaN onSlideSec", e3, 0, NaN, ses.start + 1000],
+      ["NaN idx", e3, NaN, 0, ses.start],
+      ["huge idx", e3, 1e20, 0, ses.start],
+      ["negative idx", e3, -7, 0, ses.start],
+      ["now far before", e3, 0, 0, -8.64e15],
+      ["now far after", e3, 0, 0, 8.64e15],
+      ["now 1e308", e3, 0, 0, 1e308],
+      ["now NaN", e3, 0, 0, NaN],
+      ["now Infinity", e3, 0, 0, Infinity],
+    ];
+    for (const [label, est, idx, on, now] of rows) {
+      const p = computeSessionPace(est, idx, on, ses, now);
+      if (!p) throw new Error(`${label}: null`);
+      _ssNoNaN(p, label);
+      if (!(p.shouldIdx >= 0 && p.shouldIdx <= Math.max(0, (est?.est?.length || 0) - 1))) throw new Error(`${label}: shouldIdx ${p.shouldIdx}`);
+      for (const k of ["shouldFrac", "youFrac", "elapsedFrac"]) if (!(p[k] >= 0 && p[k] <= 1)) throw new Error(`${label}: ${k} ${p[k]}`);
+      if (!SESSION_PACE_COLORS[p.paceKey] || !SESSION_PACE_COLORS[p.timeLeftKey]) throw new Error(`${label}: colour key`);
+      if (/NaN|Infinity|undefined/.test(p.verdict)) throw new Error(`${label}: verdict "${p.verdict}"`);
+    }
+  }},
+  { name: "SP7: fmtCountdown, fmtClock, resolveSessionTimes", fn: async () => {
+    _ssEq([fmtCountdown(0), fmtCountdown(59.9), fmtCountdown(61), fmtCountdown(3600), fmtCountdown(-5), fmtCountdown(NaN), fmtCountdown(Infinity), fmtCountdown("9")], ["0:00", "0:59", "1:01", "1:00:00", "0:00", "0:00", "0:00", "0:00"], "fmtCountdown");
+    if (!/^\d\d:\d\d$/.test(fmtClock(Date.now()))) throw new Error(`fmtClock: ${fmtClock(Date.now())}`);
+    _ssEq([fmtClock(NaN), fmtClock(8.64e15 + 1), fmtClock("x")], ["--:--", "--:--", "--:--"], "fmtClock invalid");
+    const now = new Date(2026, 5, 10, 8, 0).getTime();
+    const len = (r) => (r ? (r.end - r.start) / 60000 : null);
+    _ssEq(len(resolveSessionTimes("09:00", "10:00", now)), 60, "1 h");
+    _ssEq(len(resolveSessionTimes("23:30", "00:15", now)), 45, "next day");
+    _ssEq(len(resolveSessionTimes("09:00", "09:00", now)), 1440, "equal -> 24 h");
+    _ssEq(resolveSessionTimes("09:00", "10:00", now).start, new Date(2026, 5, 10, 9, 0).getTime(), "start on today");
+    for (const [a, b] of [["24:00", "10:00"], ["9:00", "10:00"], ["", "10:00"], ["09:00", null], [900, "10:00"], ["09:00 ", "10:00"]]) {
+      if (resolveSessionTimes(a, b, now) !== null) throw new Error(`accepted ${JSON.stringify([a, b])}`);
+    }
+    if (resolveSessionTimes("09:00", "10:00", NaN) !== null) throw new Error("NaN now accepted");
+  }},
+]);
+
+uiSuite("session-ingress", [
+  { name: "SI1: validateAndSanitizeDeck always returns a session key (value or null)", fn: async () => {
+    const lanes = () => [{ title: "L", items: [{ title: "I", slides: [{ blocks: [] }] }] }];
+    const none = validateAndSanitizeDeck({ lanes: lanes() });
+    if (!Object.prototype.hasOwnProperty.call(none, "session") || none.session !== null) throw new Error("deck without session: key missing or not null");
+    const ok = validateAndSanitizeDeck({ lanes: lanes(), session: { start: _SS_T0, end: _SS_T0 + 600000, x: 1 } });
+    _ssEq(ok.session, { start: _SS_T0, end: _SS_T0 + 600000 }, "valid session");
+    const bad = validateAndSanitizeDeck({ lanes: lanes(), session: { start: "1700000000000", end: _SS_T0 + 600000 } });
+    if (bad.session !== null) throw new Error("hostile session kept");
+  }},
+  { name: "SI2: storage-reload shape: hostile session is dropped; a deck without the key keeps its shape", fn: async () => {
+    const d1 = { lanes: [], session: { start: _SS_T0, end: "x" } };
+    resanitizeLoadedSession(d1);
+    if (d1.session !== null) throw new Error("hostile stored session kept");
+    const d2 = { lanes: [], session: { start: _SS_T0, end: _SS_T0 + 60000, __proto__x: 1 } };
+    resanitizeLoadedSession(d2);
+    _ssEq(d2.session, { start: _SS_T0, end: _SS_T0 + 60000 }, "valid stored session");
+    const d3 = { lanes: [] };
+    resanitizeLoadedSession(d3);
+    if ("session" in d3) throw new Error("key added to a deck without one");
+    for (const v of [null, undefined, "x", 5]) resanitizeLoadedSession(v);
+  }},
+  { name: "SI3: file/export payload carries session only when set", fn: async () => {
+    const base = { deckTitle: "D", lanes: [], branding: {}, guidelines: "" };
+    const p0 = localDeckPayload({ ...base, session: null, chatMessages: [] });
+    _ssEq(Object.keys(p0), ["deckTitle", "lanes", "branding", "guidelines"], "no session");
+    const p1 = localDeckPayload({ ...base, session: { start: _SS_T0, end: _SS_T0 + 60000 } });
+    _ssEq(p1.session, { start: _SS_T0, end: _SS_T0 + 60000 }, "session set");
+    _ssEq(Object.keys(extractSave({ ...init, session: { start: _SS_T0, end: _SS_T0 + 60000 } })).includes("session"), true, "extractSave keeps session");
+  }},
+  { name: "SI4: LOAD of a deck without session clears the session of the previous deck (live state)", fn: async () => {
+    const hooks = _hooks();
+    if (!hooks.setSessionForTest || !hooks.getSessionForTest || !hooks.restoreStartupDeck) throw new Error("session test hooks missing");
+    try {
+      hooks.setSessionForTest({ start: _SS_T0, end: _SS_T0 + 600000 });
+      await _waitFor(() => hooks.getSessionForTest() !== null, 1500).catch(() => { throw new Error("SET_SESSION did not reach state"); });
+      _ssEq(hooks.getDeckStateForTest().session, { start: _SS_T0, end: _SS_T0 + 600000 }, "getDeckStateForTest");
+      hooks.setSessionForTest({ start: _SS_T0, end: _SS_T0 });
+      await _wait(80);
+      _ssEq(hooks.getSessionForTest(), { start: _SS_T0, end: _SS_T0 + 600000 }, "invalid SET_SESSION changed state");
+      if (!hooks.restoreStartupDeck()) throw new Error("startup deck fixture missing");
+      await _waitFor(() => hooks.getSessionForTest() === null, 1500).catch(() => { throw new Error("LOAD kept the session of the previous deck"); });
+    } finally { hooks.setSessionForTest?.(null); }
+  }},
+]);
+
+// ── Session end: Present-side UI (v13.80, P2) ─────────────────────────
+// Present root = the fixed inset:0 zIndex 9999 element. Each test restores:
+// session null, dialog closed, presenter view closed, Present left.
+const _sesUiRoot = () => _$$("div").find((d) => d.style.position === "fixed" && d.style.inset === "0px" && d.style.zIndex === "9999");
+const _sesUiPresent = async () => {
+  await _editorSetup();
+  document.activeElement?.blur(); await _wait(100);
+  _key("f");
+  await _waitFor(() => !_$("header") && _sesUiRoot(), 2000);
+};
+const _sesUiLeave = async () => {
+  const hooks = _hooks();
+  if (_$("[data-testid='session-cancel']")) { _click("[data-testid='session-cancel']"); await _waitFor(() => !_$("[data-testid='session-dialog']"), 1500).catch(() => {}); }
+  if (_$("[data-testid='presenter-view']")) { _click("[data-testid='presenter-toggle']"); await _waitFor(() => !_$("[data-testid='presenter-view']"), 1500).catch(() => {}); }
+  // T again while Present is open: resets the mounted SlidePanel state, not
+  // only the module flag (SlidePanel is not remounted on Present exit).
+  if (VELA_SESSION_BAR.hidden && _sesUiRoot()) { document.activeElement?.blur(); await _wait(50); _key("t"); await _waitFor(() => !VELA_SESSION_BAR.hidden, 1000).catch(() => {}); }
+  hooks.setSessionForTest?.(null);
+  VELA_SESSION_BAR.hidden = false;
+  await _exitFullscreen();
+};
+const _sesUiSet = (el, value) => {
+  Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set.call(el, String(value));
+  el.dispatchEvent(new Event("input", { bubbles: true }));
+};
+const _sesUiOpenPresenter = async () => {
+  document.activeElement?.blur(); await _wait(80);
+  _key("s");
+  await _waitFor(() => _$("[data-testid='presenter-session-panel']"), 2000);
+};
+const _sesUiNeedHooks = () => {
+  const hooks = _hooks();
+  if (!hooks.setSessionForTest || !hooks.getSessionForTest) throw new Error("session test hooks missing");
+  return hooks;
+};
+
+uiSuite("session-presenter-panel", [
+  { name: "SP1: no session -> clock and Set session end button; dialog opens INSIDE the Present root", fn: async () => {
+    const hooks = _sesUiNeedHooks();
+    try {
+      hooks.setSessionForTest(null);
+      await _sesUiPresent();
+      await _sesUiOpenPresenter();
+      const clock = _$("[data-testid='presenter-clock']");
+      if (!clock || !/^\d\d:\d\d$/.test(clock.textContent.trim())) throw new Error("presenter-clock missing or not HH:MM: " + clock?.textContent);
+      if (_$("[data-testid='presenter-time-left']")) throw new Error("time left shown without a session");
+      const btn = _$("[data-testid='presenter-session-set']");
+      if (!btn || btn.tagName !== "BUTTON") throw new Error("presenter-session-set is not a button");
+      _click(btn);
+      const dlg = await _waitFor(() => _$("[data-testid='session-dialog']"), 1500);
+      if (!_sesUiRoot()?.contains(dlg)) throw new Error("session dialog is not inside the Present root");
+      await _waitFor(() => document.activeElement === _$("[data-testid='session-end-input']"), 1000).catch(() => { throw new Error("focus is not on the End input"); });
+      if (_$("[data-testid='session-clear']")) throw new Error("Clear shown without a stored session");
+      if (!_$("[data-testid='session-set']").disabled) throw new Error("Set enabled with an empty End");
+    } finally { await _sesUiLeave(); }
+  }},
+  { name: "SP2: chip 30 sets End = Start + 30; Set stores 30 min; panel shows every pace element", fn: async () => {
+    const hooks = _sesUiNeedHooks();
+    try {
+      hooks.setSessionForTest(null);
+      await _sesUiPresent();
+      await _sesUiOpenPresenter();
+      _click("[data-testid='presenter-session-set']");
+      await _waitFor(() => _$("[data-testid='session-dialog']"), 1500);
+      _click("[data-testid='session-chip-30']");
+      await _wait(80);
+      const st = _$("[data-testid='session-start-input']").value, en = _$("[data-testid='session-end-input']").value;
+      const t = Date.now();
+      const r = resolveSessionTimes(st, en, t, t);
+      if (!r || r.end - r.start !== 1800000) throw new Error(`chip 30 gave ${st} -> ${en}`);
+      if (_$("[data-testid='session-minutes-input']").value !== "30") throw new Error("minutes field not 30");
+      _click("[data-testid='session-set']");
+      await _waitFor(() => !_$("[data-testid='session-dialog']"), 1500);
+      const s = hooks.getSessionForTest();
+      if (!s || s.end - s.start !== 1800000) throw new Error("stored session is not 30 min: " + JSON.stringify(s));
+      if (!_$("[data-testid='presenter-view']")) throw new Error("Set closed the presenter view");
+      for (const id of ["presenter-clock", "presenter-time-left", "presenter-time-bar", "presenter-pace", "presenter-pace-track", "presenter-pace-you", "presenter-pace-should"]) {
+        await _waitFor(() => _$(`[data-testid='${id}']`), 1500).catch(() => { throw new Error(`${id} missing with a session`); });
+      }
+      if (_$("[data-testid='presenter-session-set']")) throw new Error("Set button still shown with a session");
+    } finally { await _sesUiLeave(); }
+  }},
+  { name: "SP3: verdict matches computeSessionPace (over and not-yet-started); colour follows the verdict", fn: async () => {
+    const hooks = _sesUiNeedHooks();
+    const cands = (ses) => [0, 1000, 2000].map((d) => computeSessionPace({ est: [60] }, 0, 0, ses, Date.now() - d).verdict);
+    try {
+      await _sesUiPresent();
+      await _sesUiOpenPresenter();
+      const over = { start: Date.now() - 40 * 60000, end: Date.now() - 10 * 60000 };
+      hooks.setSessionForTest(over);
+      const tl = await _waitFor(() => _$("[data-testid='presenter-time-left']"), 2000);
+      await _wait(50);
+      const v1 = _$("[data-testid='presenter-pace']").textContent;
+      if (!cands(over).includes(v1)) throw new Error(`over verdict "${v1}" not in ${JSON.stringify(cands(over))}`);
+      if (!tl.textContent.startsWith("+")) throw new Error("time left does not count up when over: " + tl.textContent);
+      const before = { start: Date.now() + 5 * 60000, end: Date.now() + 35 * 60000 };
+      hooks.setSessionForTest(before);
+      await _waitFor(() => /^starts in /.test(_$("[data-testid='presenter-pace']")?.textContent || ""), 2000);
+      const v2 = _$("[data-testid='presenter-pace']").textContent;
+      if (!cands(before).includes(v2)) throw new Error(`before verdict "${v2}" not in ${JSON.stringify(cands(before))}`);
+      const live = { start: Date.now() - 47 * 60000, end: Date.now() + 28 * 60000 };
+      hooks.setSessionForTest(live);
+      await _waitFor(() => !/^starts in /.test(_$("[data-testid='presenter-pace']")?.textContent || ""), 2000);
+      const pv = _$("[data-testid='presenter-pace']");
+      const t = pv.textContent;
+      const key = /ahead/.test(t) ? "green" : t === "on pace" ? "white" : /behind/.test(t) ? null : "x";
+      if (key === "x") throw new Error("unexpected live verdict: " + t);
+      const rgb = (hex) => `rgb(${parseInt(hex.slice(1, 3), 16)}, ${parseInt(hex.slice(3, 5), 16)}, ${parseInt(hex.slice(5, 7), 16)})`;
+      const ok = key ? [rgb(SESSION_PACE_COLORS[key])] : [rgb(SESSION_PACE_COLORS.amber), rgb(SESSION_PACE_COLORS.red)];
+      if (!ok.includes(getComputedStyle(pv).color)) throw new Error(`verdict colour ${getComputedStyle(pv).color} does not match "${t}"`);
+      if (!_$("[data-testid='presenter-pace-you']") || !_$("[data-testid='presenter-pace-should']")) throw new Error("pace ticks missing");
+      if (!/YOU · slide \d+/.test(_$("[data-testid='presenter-session-panel']").textContent) || !/SHOULD BE · slide \d+/.test(_$("[data-testid='presenter-session-panel']").textContent)) throw new Error("YOU / SHOULD BE labels missing");
+    } finally { await _sesUiLeave(); }
+  }},
+  { name: "SP4: keys in the dialog do not reach Present; Escape closes only the dialog", fn: async () => {
+    const hooks = _sesUiNeedHooks();
+    try {
+      hooks.setSessionForTest(null);
+      await _sesUiPresent();
+      _key("ArrowRight"); await _wait(300);
+      await _sesUiOpenPresenter();
+      _click("[data-testid='presenter-session-set']");
+      await _waitFor(() => _$("[data-testid='session-dialog']"), 1500);
+      const pos = _slidePos();
+      const chip = _$("[data-testid='session-chip-15']");
+      chip.focus();
+      for (const k of ["ArrowRight", "ArrowLeft", " ", "s", "t", "g", "e", "n"]) { _key(k); await _wait(60); }
+      if (!_$("[data-testid='session-dialog']")) throw new Error("a key typed on a dialog button closed the dialog");
+      if (!_$("[data-testid='presenter-view']")) throw new Error("a key typed in the dialog closed the presenter view");
+      if (_slidePos() !== pos) throw new Error(`slide moved while the dialog was open: ${pos} -> ${_slidePos()}`);
+      // Focus outside the dialog (Present root): the capture trap still holds keys.
+      _sesUiRoot().focus();
+      _key("ArrowRight"); await _wait(200);
+      if (_slidePos() !== pos) throw new Error("ArrowRight with focus outside the dialog moved the slide");
+      _$("[data-testid='session-end-input']").focus();
+      _key("Escape");
+      await _waitFor(() => !_$("[data-testid='session-dialog']"), 1500);
+      await _wait(150);
+      if (!_$("[data-testid='presenter-view']")) throw new Error("Escape in the dialog closed the presenter view");
+      if (_$("header")) throw new Error("Escape in the dialog left Present");
+      if (hooks.getSessionForTest() !== null) throw new Error("Escape changed the session");
+    } finally { await _sesUiLeave(); }
+  }},
+  { name: "SP5: invalid input keeps Set disabled and Enter inert; Enter sets a valid value", fn: async () => {
+    const hooks = _sesUiNeedHooks();
+    try {
+      hooks.setSessionForTest(null);
+      await _sesUiPresent();
+      await _sesUiOpenPresenter();
+      _click("[data-testid='presenter-session-set']");
+      await _waitFor(() => _$("[data-testid='session-dialog']"), 1500);
+      const min = _$("[data-testid='session-minutes-input']");
+      _sesUiSet(min, "0"); await _wait(60);
+      if (!_$("[data-testid='session-set']").disabled) throw new Error("Set enabled for 0 minutes");
+      _sesUiSet(min, "1441"); await _wait(60);
+      if (!_$("[data-testid='session-set']").disabled) throw new Error("Set enabled for 1441 minutes");
+      min.focus(); _key("Enter"); await _wait(150);
+      if (!_$("[data-testid='session-dialog']") || hooks.getSessionForTest() !== null) throw new Error("Enter acted on invalid input");
+      _sesUiSet(min, "45"); await _wait(60);
+      if (_$("[data-testid='session-set']").disabled) throw new Error("Set disabled for 45 minutes");
+      min.focus(); _key("Enter");
+      await _waitFor(() => !_$("[data-testid='session-dialog']"), 1500);
+      const s = hooks.getSessionForTest();
+      if (!s || s.end - s.start !== 45 * 60000) throw new Error("Enter did not store 45 min: " + JSON.stringify(s));
+    } finally { await _sesUiLeave(); }
+  }},
+  { name: "SP6: card opens the dialog with the stored times; Cancel keeps, Clear removes", fn: async () => {
+    const hooks = _sesUiNeedHooks();
+    try {
+      const ses = { start: Date.now() - 10 * 60000, end: Date.now() + 50 * 60000 };
+      hooks.setSessionForTest(ses);
+      await _sesUiPresent();
+      await _sesUiOpenPresenter();
+      const cardBtn = await _waitFor(() => _$("[data-testid='presenter-session-panel'] button[aria-label*='Edit session end']"), 1500);
+      _click(cardBtn);
+      await _waitFor(() => _$("[data-testid='session-dialog']"), 1500);
+      if (_$("[data-testid='session-start-input']").value !== fmtClock(ses.start) || _$("[data-testid='session-end-input']").value !== fmtClock(ses.end)) throw new Error("dialog does not show the stored times");
+      _click("[data-testid='session-chip-90']"); await _wait(60);
+      _click("[data-testid='session-cancel']");
+      await _waitFor(() => !_$("[data-testid='session-dialog']"), 1500);
+      _ssEq(hooks.getSessionForTest(), ses, "Cancel changed the session");
+      _click(_$("[data-testid='presenter-session-panel'] button"));
+      await _waitFor(() => _$("[data-testid='session-clear']"), 1500);
+      _click("[data-testid='session-clear']");
+      await _waitFor(() => hooks.getSessionForTest() === null, 1500).catch(() => { throw new Error("Clear did not remove the session"); });
+      await _waitFor(() => _$("[data-testid='presenter-session-set']"), 1500);
+    } finally { await _sesUiLeave(); }
+  }},
+  { name: "SP7: S and Escape of the presenter view are unchanged with a session", fn: async () => {
+    const hooks = _sesUiNeedHooks();
+    try {
+      hooks.setSessionForTest({ start: Date.now() - 60000, end: Date.now() + 30 * 60000 });
+      await _sesUiPresent();
+      await _sesUiOpenPresenter();
+      _key("s");
+      await _waitFor(() => !_$("[data-testid='presenter-view']"), 1500);
+      await _sesUiOpenPresenter();
+      _key("Escape");
+      await _waitFor(() => !_$("[data-testid='presenter-view']"), 1500);
+      await _wait(150);
+      if (_$("header")) throw new Error("first Esc left Present");
+    } finally { await _sesUiLeave(); }
+  }},
+]);
+
+uiSuite("session-edge-bar", [
+  { name: "EB1: live session -> bar shows, takes no clicks; T hides and shows; Shift+T / Ctrl+T do nothing", fn: async () => {
+    const hooks = _sesUiNeedHooks();
+    try {
+      hooks.setSessionForTest({ start: Date.now() - 10 * 60000, end: Date.now() + 20 * 60000 });
+      await _sesUiPresent();
+      const bar = await _waitFor(() => _$("[data-testid='present-session-bar']"), 2000);
+      if (!_sesUiRoot().contains(bar)) throw new Error("bar is not inside the Present root");
+      if (getComputedStyle(bar).pointerEvents !== "none") throw new Error("bar takes pointer events");
+      if (bar.getBoundingClientRect().height > 6) throw new Error("bar is too tall");
+      document.activeElement?.blur();
+      _key("t");
+      await _waitFor(() => !_$("[data-testid='present-session-bar']"), 1500).catch(() => { throw new Error("T did not hide the bar"); });
+      _key("T", { shiftKey: true }); await _wait(120);
+      _key("t", { ctrlKey: true }); await _wait(120);
+      if (_$("[data-testid='present-session-bar']")) throw new Error("a modified T changed the bar");
+      _key("t");
+      await _waitFor(() => _$("[data-testid='present-session-bar']"), 1500).catch(() => { throw new Error("T did not show the bar"); });
+    } finally { await _sesUiLeave(); }
+  }},
+  { name: "EB2: the hide choice is kept when Present is left and entered again", fn: async () => {
+    const hooks = _sesUiNeedHooks();
+    try {
+      hooks.setSessionForTest({ start: Date.now() - 10 * 60000, end: Date.now() + 20 * 60000 });
+      await _sesUiPresent();
+      await _waitFor(() => _$("[data-testid='present-session-bar']"), 2000);
+      document.activeElement?.blur(); _key("t");
+      await _waitFor(() => !_$("[data-testid='present-session-bar']"), 1500);
+      await _exitFullscreen();
+      await _sesUiPresent();
+      await _wait(300);
+      if (_$("[data-testid='present-session-bar']")) throw new Error("hide choice lost after re-entering Present");
+      document.activeElement?.blur(); _key("t");
+      await _waitFor(() => _$("[data-testid='present-session-bar']"), 1500);
+    } finally { await _sesUiLeave(); }
+  }},
+  { name: "EB3: no bar over the presenter view, without a session, for an expired session, or in the editor", fn: async () => {
+    const hooks = _sesUiNeedHooks();
+    try {
+      hooks.setSessionForTest({ start: Date.now() - 10 * 60000, end: Date.now() + 20 * 60000 });
+      await _sesUiPresent();
+      await _waitFor(() => _$("[data-testid='present-session-bar']"), 2000);
+      await _sesUiOpenPresenter();
+      if (_$("[data-testid='present-session-bar']")) throw new Error("bar shown with the presenter view open");
+      _key("s");
+      await _waitFor(() => !_$("[data-testid='presenter-view']"), 1500);
+      hooks.setSessionForTest(null);
+      await _waitFor(() => !_$("[data-testid='present-session-bar']"), 1500).catch(() => { throw new Error("bar shown without a session"); });
+      hooks.setSessionForTest({ start: Date.now() - 270 * 60000, end: Date.now() - 240 * 60000 });
+      await _wait(1300);
+      if (hooks.getSessionForTest() === null) throw new Error("stale session did not reach state");
+      if (_$("[data-testid='present-session-bar']")) throw new Error("bar shown for an expired session");
+      hooks.setSessionForTest({ start: Date.now() - 10 * 60000, end: Date.now() + 20 * 60000 });
+      await _waitFor(() => _$("[data-testid='present-session-bar']"), 2000);
+      await _exitFullscreen();
+      await _wait(200);
+      if (_$("[data-testid='present-session-bar']")) throw new Error("bar shown in the editor");
+    } finally { await _sesUiLeave(); }
+  }},
+]);
+
+// ── Session end: editor toolbar, dialog, live ingress, bar geometry (v13.80, P3)
+const _sesTbBtn = () => _$("[data-testid='session-end-btn']");
+// The icon-only button carries its state in data-live, title and aria-label.
+// end = null: "Set session end"; end = a number: the live session end.
+const _sesTbIs = (end) => {
+  const b = _sesTbBtn();
+  if (!b) return false;
+  const tip = end == null ? "Set session end" : `Session ends ${fmtClock(end)} — click to change`;
+  return b.dataset.live === (end == null ? "0" : "1") && b.title === tip && b.getAttribute("aria-label") === tip && b.textContent === "🕒";
+};
+const _sesTbDesc = () => { const b = _sesTbBtn(); return b ? `${b.dataset.live} | ${b.title} | ${b.textContent}` : "no button"; };
+const _sesTbOpen = async () => {
+  _click(_sesTbBtn());
+  return _waitFor(() => _$("[data-testid='session-dialog']"), 1500);
+};
+// "M:SS" / "H:MM:SS" groups in a string -> seconds; non-numeric rest -> "#".
+const _sesSecs = (t) => (String(t).match(/\d+(?::\d\d)+/g) || []).map((x) => x.split(":").reduce((a, b) => a * 60 + +b, 0));
+const _sesShape = (t) => String(t).replace(/\d+(?::\d\d)+/g, "#");
+const _sesRgb = (hex) => `rgb(${parseInt(hex.slice(1, 3), 16)}, ${parseInt(hex.slice(3, 5), 16)}, ${parseInt(hex.slice(5, 7), 16)})`;
+// Import a deck through the real Import button path (hidden file input -> loadDeckFile).
+const _sesImport = async (deck) => {
+  const input = _$("input[type='file'][accept='.json,.vela']");
+  if (!input) throw new Error("import file input missing");
+  const dt = new DataTransfer();
+  dt.items.add(new File([JSON.stringify(deck)], "session-test.vela", { type: "application/json" }));
+  input.files = dt.files;
+  input.dispatchEvent(new Event("change", { bubbles: true }));
+};
+
+uiSuite("session-editor-dialog", [
+  { name: "SD1: End typed directly updates Minutes and the summary; Set stores { start, end }", fn: async () => {
+    const hooks = _sesUiNeedHooks();
+    try {
+      hooks.setSessionForTest(null);
+      await _editorSetup();
+      const t0 = Date.now();
+      await _sesTbOpen();
+      _sesUiSet(_$("[data-testid='session-start-input']"), "09:00");
+      _sesUiSet(_$("[data-testid='session-end-input']"), "10:15");
+      await _wait(80);
+      if (_$("[data-testid='session-minutes-input']").value !== "75") throw new Error("minutes not 75: " + _$("[data-testid='session-minutes-input']").value);
+      if (!/^09:00 → 10:15 \(75 min\) · /.test(_$("[data-testid='session-summary']").textContent)) throw new Error("summary: " + _$("[data-testid='session-summary']").textContent);
+      if (_$("[data-testid='session-set']").disabled) throw new Error("Set disabled for a valid End");
+      _click("[data-testid='session-set']");
+      await _waitFor(() => !_$("[data-testid='session-dialog']"), 1500);
+      const t1 = Date.now(); // the dialog's `now` is in [t0, t1]: accept either side of a day roll
+      const wants = [t0, t1].map((t) => JSON.stringify(resolveSessionTimes("09:00", "10:15", sessionDialogBase(null, t), t)));
+      if (!wants.includes(JSON.stringify(hooks.getSessionForTest()))) throw new Error(`stored session ${JSON.stringify(hooks.getSessionForTest())}, want one of ${wants.join(" / ")}`);
+    } finally { await _sesUiLeave(); }
+  }},
+  { name: "SD2: End equal to Start is the next day (24 h) and is accepted", fn: async () => {
+    const hooks = _sesUiNeedHooks();
+    try {
+      hooks.setSessionForTest(null);
+      await _editorSetup();
+      const d0 = new Date(Date.now());
+      await _sesTbOpen();
+      _sesUiSet(_$("[data-testid='session-start-input']"), "14:20");
+      _sesUiSet(_$("[data-testid='session-end-input']"), "14:20");
+      await _wait(80);
+      // Same local-date arithmetic as the app: on a DST change day the wall-clock
+      // 24 h is 23 h or 25 h; 25 h is over the 24 h cap, so Set stays disabled.
+      const wallLen = new Date(d0.getFullYear(), d0.getMonth(), d0.getDate() + 1, 14, 20) - new Date(d0.getFullYear(), d0.getMonth(), d0.getDate(), 14, 20);
+      if (wallLen > 86400000) {
+        if (!_$("[data-testid='session-set']").disabled) throw new Error("Set enabled for a 25 h session (DST day)");
+        return;
+      }
+      if (wallLen < 86400000) {
+        if (_$("[data-testid='session-minutes-input']").value !== String(Math.round(wallLen / 60000))) throw new Error("minutes not 1380 on a DST day");
+        return;
+      }
+      if (_$("[data-testid='session-minutes-input']").value !== "1440") throw new Error("minutes not 1440");
+      if (_$("[data-testid='session-set']").disabled) throw new Error("Set disabled for a 24 h session");
+      _click("[data-testid='session-set']");
+      await _waitFor(() => !_$("[data-testid='session-dialog']"), 1500);
+      const s = hooks.getSessionForTest();
+      if (!s || s.end - s.start !== 86400000) throw new Error("stored session is not 24 h: " + JSON.stringify(s));
+    } finally { await _sesUiLeave(); }
+  }},
+  { name: "SD3: Minutes 0 and 1441 disable Set; a valid value enables it again", fn: async () => {
+    const hooks = _sesUiNeedHooks();
+    try {
+      hooks.setSessionForTest(null);
+      await _editorSetup();
+      await _sesTbOpen();
+      _click("[data-testid='session-chip-30']"); await _wait(60);
+      if (_$("[data-testid='session-set']").disabled) throw new Error("Set disabled after chip 30");
+      const mi = _$("[data-testid='session-minutes-input']");
+      for (const v of ["0", "1441"]) {
+        _sesUiSet(mi, v); await _wait(60);
+        if (!_$("[data-testid='session-set']").disabled) throw new Error(`Set enabled with Minutes ${v}`);
+        mi.focus(); _key("Enter"); await _wait(80);
+        if (hooks.getSessionForTest() !== null) throw new Error(`Enter stored a session with Minutes ${v}`);
+      }
+      _sesUiSet(mi, "45"); await _wait(60);
+      if (_$("[data-testid='session-set']").disabled) throw new Error("Set disabled with Minutes 45");
+      _click("[data-testid='session-cancel']");
+      await _waitFor(() => !_$("[data-testid='session-dialog']"), 1500);
+      if (hooks.getSessionForTest() !== null) throw new Error("Cancel stored a session");
+    } finally { await _sesUiLeave(); }
+  }},
+  // Summary wording: "<start> → <end> (<N> min) · <state>". The state comes
+  // from the resolved times against now (the same rule the dialog uses), so a
+  // run near midnight (day roll) checks the state the dialog really has.
+  { name: "SD-W1: summary before the start says 'starts in'", fn: async () => {
+    try {
+      _sesUiNeedHooks().setSessionForTest(null);
+      await _editorSetup();
+      await _sesTbOpen();
+      const t = Date.now(), st = fmtClock(t + 3600000), en = fmtClock(t + 7200000);
+      _sesUiSet(_$("[data-testid='session-start-input']"), st);
+      _sesUiSet(_$("[data-testid='session-end-input']"), en);
+      await _wait(80);
+      const txt = _$("[data-testid='session-summary']").textContent;
+      if (!new RegExp(`^${st} → ${en} \\(60 min\\) · starts in \\d+:\\d\\d(:\\d\\d)?$`).test(txt)) throw new Error("summary: " + txt);
+      if (!/^Deck needs ~\d+ min · session is 60 min$/.test(_$("[data-testid='session-precheck']").textContent)) throw new Error("precheck: " + _$("[data-testid='session-precheck']").textContent);
+    } finally { await _sesUiLeave(); }
+  }},
+  { name: "SD-W2: summary of a running session says '<countdown> left'; after the end it says 'ended … ago'", fn: async () => {
+    const realNow = Date.now;
+    try {
+      _sesUiNeedHooks().setSessionForTest(null);
+      await _editorSetup();
+      await _sesTbOpen();
+      const t = Date.now(), st = fmtClock(t - 3600000), en = fmtClock(t + 3600000);
+      _sesUiSet(_$("[data-testid='session-start-input']"), st);
+      _sesUiSet(_$("[data-testid='session-end-input']"), en);
+      await _wait(80);
+      const r = resolveSessionTimes(st, en, sessionDialogBase(null, t), t);
+      const now = Date.now();
+      const want = now < r.start ? "starts in \\d+:\\d\\d(:\\d\\d)?" : now < r.end ? "\\d+:\\d\\d(:\\d\\d)? left" : "ended \\d+:\\d\\d(:\\d\\d)? ago";
+      let txt = _$("[data-testid='session-summary']").textContent;
+      if (!new RegExp(`^${st} → ${en} \\(120 min\\) · ${want}$`).test(txt)) throw new Error("running summary: " + txt);
+      if (now >= r.start && now < r.end && !/ left$/.test(txt)) throw new Error("running session does not say left: " + txt);
+      // After the end: move the clock past it for one render (restored in finally).
+      const late = r.end + 125000;
+      Date.now = () => late;
+      _sesUiSet(_$("[data-testid='session-minutes-input']"), "119");
+      await _wait(80);
+      txt = _$("[data-testid='session-summary']").textContent;
+      Date.now = realNow;
+      const r2 = resolveSessionTimes(st, fmtClock(r.start + 119 * 60000), sessionDialogBase(null, t), t);
+      const ago = fmtCountdown((late - r2.end) / 1000);
+      if (txt !== `${st} → ${fmtClock(r2.end)} (119 min) · ended ${ago} ago`) throw new Error("ended summary: " + txt);
+    } finally { Date.now = realNow; await _sesUiLeave(); }
+  }},
+  { name: "SD-W3: Minutes 0 gives no valid session: no summary times and no stale 'session is N min'", fn: async () => {
+    try {
+      _sesUiNeedHooks().setSessionForTest(null);
+      await _editorSetup();
+      await _sesTbOpen();
+      _sesUiSet(_$("[data-testid='session-start-input']"), "09:00");
+      _sesUiSet(_$("[data-testid='session-end-input']"), "10:00");
+      await _wait(80);
+      if (!/ · session is 60 min$/.test(_$("[data-testid='session-precheck']").textContent)) throw new Error("valid precheck: " + _$("[data-testid='session-precheck']").textContent);
+      _sesUiSet(_$("[data-testid='session-minutes-input']"), "0");
+      await _wait(80);
+      const pre = _$("[data-testid='session-precheck']").textContent;
+      if (!/^Deck needs ~\d+ min$/.test(pre)) throw new Error("invalid precheck: " + pre);
+      if (_$("[data-testid='session-summary']").textContent !== "Enter a start and an end (1 min to 24 h)") throw new Error("invalid summary: " + _$("[data-testid='session-summary']").textContent);
+      if (!_$("[data-testid='session-set']").disabled) throw new Error("Set enabled for Minutes 0");
+    } finally { await _sesUiLeave(); }
+  }},
+  // Review fix F3: the summary describes the session that Set would store
+  // (resolveSessionDialogSet): unchanged fields keep the ended session.
+  { name: "SD-W4: an unchanged ended session says 'ended … ago'; a changed one shows the day-shifted session", fn: async () => {
+    try {
+      const t = Date.now(), live = { start: t - 3600000, end: t - 1200000 };
+      _sesUiNeedHooks().setSessionForTest(live);
+      await _editorSetup();
+      await _sesTbOpen();
+      await _wait(80);
+      let txt = _$("[data-testid='session-summary']").textContent;
+      const m = new RegExp(`^${fmtClock(live.start)} → ${fmtClock(live.end)} \\(40 min\\) · ended (\\d+:\\d\\d(?::\\d\\d)?) ago$`).exec(txt);
+      if (!m) throw new Error("unchanged ended summary: " + txt);
+      const ago = _sesSecs(m[1])[0];
+      if (ago < 1195 || ago > 1270) throw new Error(`ended ${ago} s ago, want about 1200`);
+      _sesUiSet(_$("[data-testid='session-minutes-input']"), "39");
+      await _wait(80);
+      txt = _$("[data-testid='session-summary']").textContent;
+      const st = _$("[data-testid='session-start-input']").value, en = _$("[data-testid='session-end-input']").value;
+      const m2 = new RegExp(`^${st} → ${en} \\(39 min\\) · starts in (\\d+:\\d\\d:\\d\\d)$`).exec(txt);
+      if (!m2) throw new Error("changed summary: " + txt);
+      const r = resolveSessionDialogSet(st, en, sessionDialogBase(live, t), Date.now(), live);
+      if (!r || r.keep || r.session.start <= Date.now()) throw new Error("Set would not store a day-shifted session");
+      const secs = _sesSecs(m2[1])[0], want = (r.session.start - Date.now()) / 1000;
+      if (Math.abs(secs - want) > 5) throw new Error(`starts in ${secs} s, Set stores a start in ${Math.round(want)} s`);
+    } finally { await _sesUiLeave(); }
+  }},
+  // Review fix F4: a 1 s tick re-renders the summary; it must not reset the
+  // fields or move focus.
+  { name: "SD-W5: the countdown updates while the dialog is open; typed values and focus stay", fn: async () => {
+    try {
+      const t = Date.now();
+      _sesUiNeedHooks().setSessionForTest({ start: t - 600000, end: t + 1200000 });
+      await _editorSetup();
+      await _sesTbOpen();
+      await _wait(80);
+      const endIn = _$("[data-testid='session-end-input']"), minIn = _$("[data-testid='session-minutes-input']");
+      const en = fmtClock(t + 25 * 60000);
+      _sesUiSet(endIn, en);
+      await _wait(80);
+      const min0 = minIn.value, focus0 = document.activeElement;
+      const s1 = _$("[data-testid='session-summary']").textContent;
+      if (!/ left$/.test(s1)) throw new Error("running summary: " + s1);
+      await _waitFor(() => _$("[data-testid='session-summary']")?.textContent !== s1, 2500).catch(() => { throw new Error("summary did not change in 2.5 s: " + s1); });
+      if (endIn.value !== en || minIn.value !== min0) throw new Error(`fields reset: end ${endIn.value} (want ${en}), minutes ${minIn.value} (want ${min0})`);
+      if (document.activeElement !== focus0) throw new Error("the tick moved focus");
+      if (!/ left$/.test(_$("[data-testid='session-summary']").textContent)) throw new Error("summary after tick: " + _$("[data-testid='session-summary']").textContent);
+    } finally { await _sesUiLeave(); }
+  }},
+]);
+
+// ── Session end: review fixes (v13.80) ────────────────────────────
+const _sesSig = (hooks) => { const s = hooks.getDeckStateForTest(); return `${s.selectedId}#${s.slideIndex}`; };
+const _sesWheel = (el, n = 3) => { for (let i = 0; i < n; i++) el.dispatchEvent(new WheelEvent("wheel", { deltaY: 300, bubbles: true, cancelable: true })); };
+const _sesSwipe = (el) => {
+  const a = new Touch({ identifier: 7, target: el, clientX: 400, clientY: 300 }), b = new Touch({ identifier: 7, target: el, clientX: 100, clientY: 300 });
+  el.dispatchEvent(new TouchEvent("touchstart", { touches: [a], targetTouches: [a], changedTouches: [a], bubbles: true, cancelable: true }));
+  el.dispatchEvent(new TouchEvent("touchend", { touches: [], targetTouches: [], changedTouches: [b], bubbles: true, cancelable: true }));
+};
+
+uiSuite("session-review-fixes", [
+  { name: "SR1: wheel and swipe over the Present session dialog (chip and backdrop) do not change the slide or module", fn: async () => {
+    const hooks = _sesUiNeedHooks();
+    try {
+      hooks.setSessionForTest(null);
+      await _sesUiPresent();
+      await _sesUiOpenPresenter();
+      _click("[data-testid='presenter-session-set']");
+      await _waitFor(() => _$("[data-testid='session-dialog']"), 1500);
+      const chip = _click("[data-testid='session-chip-30']");
+      chip.focus(); await _wait(80);
+      const back = chip.closest("[data-vela-modal]");
+      if (!back) throw new Error("dialog backdrop has no data-vela-modal mark");
+      const before = _sesSig(hooks);
+      for (const [el, what] of [[chip, "chip"], [back, "backdrop"]]) {
+        _sesWheel(el); await _wait(150);
+        if (_sesSig(hooks) !== before) throw new Error(`wheel on the ${what} changed the slide: ${before} -> ${_sesSig(hooks)}`);
+        _sesSwipe(el); await _wait(150);
+        if (_sesSig(hooks) !== before) throw new Error(`swipe on the ${what} changed the slide: ${before} -> ${_sesSig(hooks)}`);
+      }
+      if (!_$("[data-testid='session-dialog']")) throw new Error("dialog closed");
+    } finally { await _sesUiLeave(); }
+  }},
+  { name: "SR2: on-slide time counts only from the session start", fn: async () => {
+    const S0 = _SS_T0, ses = { start: S0, end: S0 + 1800000 }, est = { est: [600, 600, 600] };
+    const on = sessionOnSlideSec(S0, S0 - 600000, ses); // entered 10 min before the start
+    _ssEq(on, 0, "on-slide sec at the start");
+    _ssEq(computeSessionPace(est, 0, on, ses, S0).verdict, "on pace", "verdict at the start (deck fits exactly)");
+    _ssEq(sessionOnSlideSec(S0 + 120000, S0 - 600000, ses), 120, "2 min after the start");
+    _ssEq(sessionOnSlideSec(S0 + 120000, S0 + 60000, ses), 60, "entered after the start");
+    _ssEq(sessionOnSlideSec(S0 - 60000, S0 - 600000, ses), 0, "before the start");
+    _ssEq(sessionOnSlideSec(S0 + 1000, S0, null), 1, "no session: from entry");
+    for (const bad of [NaN, Infinity, "x", undefined]) if (sessionOnSlideSec(bad, S0, ses) !== 0) throw new Error(`now ${String(bad)} not 0`);
+    if (sessionOnSlideSec(S0 + 1000, NaN, ses) !== 1) throw new Error("NaN entry did not fall back to the start");
+  }},
+  { name: "SR3: dialog dates: a past session moves to the next day; a live session keeps its start date", fn: async () => {
+    const at = (d, h, m) => new Date(2026, 5, d, h, m).getTime();
+    let now = at(10, 23, 55);
+    let r = resolveSessionTimes("00:05", "01:00", sessionDialogBase(null, now), now);
+    _ssEq(r && [r.start - now, r.end], [600000, at(11, 1, 0)], "23:55: 00:05-01:00 starts in 10 min");
+    now = at(10, 10, 30);
+    r = resolveSessionTimes("09:00", "10:00", sessionDialogBase(null, now), now);
+    _ssEq(r && [r.start, r.end], [at(11, 9, 0), at(11, 10, 0)], "10:30: 09:00-10:00 is tomorrow");
+    now = at(10, 8, 0);
+    r = resolveSessionTimes("09:00", "10:00", sessionDialogBase(null, now), now);
+    _ssEq(r && [r.start, r.end], [at(10, 9, 0), at(10, 10, 0)], "08:00: normal case");
+    let live = { start: at(9, 23, 30), end: at(10, 0, 30) };
+    now = at(10, 0, 10);
+    r = resolveSessionTimes("23:30", "00:45", sessionDialogBase(live, now), now);
+    _ssEq(r && [r.start, r.end], [live.start, at(10, 0, 45)], "live 23:30-00:30, End 00:45 at 00:10");
+    live = { start: at(9, 23, 0), end: at(10, 1, 0) };
+    now = at(10, 0, 20);
+    r = resolveSessionTimes("23:10", "01:00", sessionDialogBase(live, now), now);
+    _ssEq(r && [r.start, r.end], [at(9, 23, 10), at(10, 1, 0)], "live 23:00-01:00, Start 23:10 at 00:20");
+    // Over a DST change the next-day roll uses the local date (wall time kept).
+    const d1 = new Date(at(10, 9, 0) + 86400000 * 3);
+    _ssEq(new Date(resolveSessionTimes("09:00", "10:00", d1.getTime() + 7200000, d1.getTime() + 7200000).start).getHours(), 9, "rolled start keeps 09:00");
+  }},
+  { name: "SR4: a session in the past is set for tomorrow; the summary says starts in; the file note shows", fn: async () => {
+    const hooks = _sesUiNeedHooks();
+    try {
+      hooks.setSessionForTest(null);
+      await _editorSetup();
+      await _sesTbOpen();
+      const note = _$("[data-testid='session-file-note']");
+      if (!note || note.textContent !== "Saved in the deck file (also in exports of the deck).") throw new Error("file note missing: " + note?.textContent);
+      if (parseFloat(getComputedStyle(note).fontSize) < 13) throw new Error("file note below 13 px");
+      const t = Date.now();
+      _sesUiSet(_$("[data-testid='session-start-input']"), fmtClock(t - 7200000));
+      _sesUiSet(_$("[data-testid='session-end-input']"), fmtClock(t - 3600000));
+      await _wait(80);
+      const txt = _$("[data-testid='session-summary']").textContent;
+      if (!/starts in \d/.test(txt)) throw new Error("summary does not say starts in: " + txt);
+      _click("[data-testid='session-set']");
+      await _waitFor(() => !_$("[data-testid='session-dialog']"), 1500);
+      const s = hooks.getSessionForTest();
+      if (!s || !(s.start > Date.now()) || !liveSession(s, Date.now())) throw new Error("stored session is not a future live session: " + JSON.stringify(s));
+    } finally { await _sesUiLeave(); }
+  }},
+  { name: "SR5: wheel inside the Presenter View right column scrolls it and does not change the slide", fn: async () => {
+    const hooks = _sesUiNeedHooks();
+    let col = null;
+    try {
+      hooks.setSessionForTest({ start: Date.now() - 600000, end: Date.now() + 1200000 });
+      await _sesUiPresent();
+      await _sesUiOpenPresenter();
+      const panel = _$("[data-testid='presenter-session-panel']");
+      col = panel.parentElement;
+      while (col && getComputedStyle(col).overflowY !== "auto") col = col.parentElement;
+      if (!col) throw new Error("right column not found");
+      col.style.maxHeight = "120px"; await _wait(80); // a short viewport: the column overflows
+      if (!(col.scrollHeight > col.clientHeight + 1)) throw new Error("right column does not overflow");
+      const before = _sesSig(hooks);
+      _sesWheel(panel); await _wait(200);
+      if (_sesSig(hooks) !== before) throw new Error(`wheel in the right column changed the slide: ${before} -> ${_sesSig(hooks)}`);
+    } finally { if (col) col.style.maxHeight = ""; await _sesUiLeave(); }
+  }},
+  { name: "SR6: dialog Set with no change keeps a live session in overtime; a changed time keeps the day-shift rule", fn: async () => {
+    const at = (d, h, m) => new Date(2026, 5, d, h, m).getTime();
+    const live = { start: at(10, 9, 0), end: at(10, 10, 0) };
+    const now = at(10, 10, 2); // 2 min over
+    const base = sessionDialogBase(live, now);
+    _ssEq(resolveSessionDialogSet("09:00", "10:00", base, now, live), { keep: true, session: live }, "no change");
+    _ssEq(resolveSessionDialogSet("09:00", "10:12", base, now, live), { keep: false, session: { start: live.start, end: at(10, 10, 12) } }, "End = now + 10 min is today");
+    _ssEq(resolveSessionDialogSet("09:00", "09:30", base, now, live), { keep: false, session: { start: at(11, 9, 0), end: at(11, 9, 30) } }, "changed to a past End moves to tomorrow");
+    _ssEq(resolveSessionDialogSet("09:00", "10:00", sessionDialogBase(null, now), now, null), { keep: false, session: { start: at(11, 9, 0), end: at(11, 10, 0) } }, "no live session: a past session moves to tomorrow");
+    const sec = { start: live.start + 15000, end: live.end + 42000 }; // compared to the minute; kept with its seconds
+    _ssEq(resolveSessionDialogSet("09:00", "10:00", sessionDialogBase(sec, now), now, sec), { keep: true, session: sec }, "live session with seconds");
+    _ssEq(resolveSessionDialogSet("9:00", "10:00", base, now, live), null, "invalid field");
+    _ssEq(resolveSessionDialogSet("09:00", "10:00", base, now, { start: "x", end: 1 }), { keep: false, session: { start: at(11, 9, 0), end: at(11, 10, 0) } }, "invalid live session is ignored");
+  }},
+  { name: "SR7: session over by 2 min: Set with no change keeps it; End = now + 10 min is today", fn: async () => {
+    const hooks = _sesUiNeedHooks();
+    try {
+      const t = Date.now();
+      const ses = { start: t - 32 * 60000, end: t - 2 * 60000 };
+      hooks.setSessionForTest(ses);
+      await _editorSetup();
+      await _sesTbOpen();
+      _click("[data-testid='session-set']");
+      await _waitFor(() => !_$("[data-testid='session-dialog']"), 1500);
+      _ssEq(hooks.getSessionForTest(), ses, "stored session after Set with no change");
+      await _sesTbOpen();
+      _sesUiSet(_$("[data-testid='session-end-input']"), fmtClock(Date.now() + 10 * 60000));
+      await _wait(80);
+      _click("[data-testid='session-set']");
+      await _waitFor(() => !_$("[data-testid='session-dialog']"), 1500);
+      const s = hooks.getSessionForTest();
+      const left = s ? s.end - Date.now() : NaN;
+      if (!(left > 8 * 60000 && left < 11 * 60000)) throw new Error("End is not today at now + 10 min: " + JSON.stringify(s));
+      if (s.start !== Math.floor(ses.start / 60000) * 60000) throw new Error("Start changed: " + JSON.stringify(s));
+    } finally { await _sesUiLeave(); }
+  }},
+]);
+
+uiSuite("session-panel-verdict", [
+  { name: "SV1: in-progress verdict (ahead, on pace, behind) equals computeSessionPace for the same deck and slide", fn: async () => {
+    const hooks = _sesUiNeedHooks();
+    if (!VELA_TEST_STARTUP_PATCH) throw new Error("startup deck fixture missing");
+    const lanes = validateAndSanitizeDeck(JSON.parse(JSON.stringify(VELA_TEST_STARTUP_PATCH)), { keepIds: true }).lanes;
+    try {
+      hooks.setSessionForTest(null);
+      await _sesUiPresent();
+      await _sesUiOpenPresenter();
+      const seq = presentSequence(lanes, hooks.getDeckStateForTest().selectedId);
+      const est = sessionEstimates(seq);
+      const youNum = () => { const m = /YOU · slide (\d+)/.exec(_$("[data-testid='presenter-session-panel']")?.textContent || ""); return m ? +m[1] : null; };
+      const check = async (label, endInSec, want) => {
+        const ses = { start: Date.now() - 60000, end: Date.now() + endInSec * 1000 };
+        hooks.setSessionForTest(ses);
+        const pv = await _waitFor(() => _$("[data-testid='presenter-pace']"), 2000);
+        await _wait(80);
+        const n = youNum();
+        const idx = seq.findIndex((e) => e.num === n);
+        if (idx < 0) throw new Error(`${label}: YOU slide ${n} not in the sequence`);
+        const exp = computeSessionPace(est, idx, 0, ses, Date.now());
+        const got = pv.textContent;
+        if (_sesShape(got) !== _sesShape(exp.verdict)) throw new Error(`${label}: verdict "${got}" vs "${exp.verdict}"`);
+        const a = _sesSecs(got), b = _sesSecs(exp.verdict);
+        if (a.length !== b.length || a.some((x, k) => Math.abs(x - b[k]) > 10)) throw new Error(`${label}: numbers "${got}" vs "${exp.verdict}"`);
+        if (getComputedStyle(pv).color !== _sesRgb(SESSION_PACE_COLORS[exp.paceKey])) throw new Error(`${label}: colour ${getComputedStyle(pv).color} vs ${exp.paceKey}`);
+        if (want && !want.test(got)) throw new Error(`${label}: unexpected verdict "${got}"`);
+        const gap = _$("[data-testid='presenter-pace-gap']");
+        if (!gap || getComputedStyle(gap).backgroundColor !== _sesRgb(SESSION_PACE_COLORS[exp.paceKey])) throw new Error(`${label}: pace gap colour`);
+        if (gap.getBoundingClientRect().width < 5.5) throw new Error(`${label}: pace gap narrower than 6 px`);
+        return exp;
+      };
+      const n0 = await (async () => { hooks.setSessionForTest({ start: Date.now() - 60000, end: Date.now() + 3600000 }); await _waitFor(() => youNum() !== null, 2000); return youNum(); })();
+      const i0 = seq.findIndex((e) => e.num === n0);
+      const need0 = computeSessionPace(est, i0, 0, { start: Date.now() - 60000, end: Date.now() + 3600000 }, Date.now()).need;
+      await check("ahead", Math.round(need0) + 900, /ahead · you can slow down$/);
+      await check("on pace", Math.round(need0), /^on pace$/);
+      await check("behind", Math.max(61, Math.round(need0) - 600), /behind · speed up$/);
+    } finally { await _sesUiLeave(); }
+  }},
+]);
+
+uiSuite("session-ingress-live", [
+  { name: "SL1: Import of a deck with a valid session sets it; hostile sessions load as null; a deck without one clears it", fn: async () => {
+    const hooks = _sesUiNeedHooks();
+    if (!VELA_TEST_STARTUP_PATCH || !hooks.restoreStartupDeck) throw new Error("startup deck fixture missing");
+    const deck = (session) => { const d = JSON.parse(JSON.stringify(VELA_TEST_STARTUP_PATCH)); delete d.session; if (session !== undefined) d.session = session; return d; };
+    const t0 = Date.now() - 60000;
+    const valid = { start: t0, end: t0 + 1800000 };
+    const hostile = [
+      { start: String(t0), end: t0 + 1800000 },
+      { start: t0, end: String(t0 + 1800000) },
+      { start: t0 + 0.5, end: t0 + 1800000 },
+      { start: t0 + 1800000, end: t0 },
+      { start: t0, end: t0 + 30 * 86400000 },
+      [t0, t0 + 1800000],
+      "x",
+    ];
+    try {
+      await _editorSetup();
+      for (const h of hostile) {
+        await _sesImport(deck(valid));
+        await _waitFor(() => JSON.stringify(hooks.getSessionForTest()) === JSON.stringify(valid), 2000).catch(() => { throw new Error("valid session not loaded by Import"); });
+        await _sesImport(deck(h));
+        await _waitFor(() => hooks.getSessionForTest() === null, 2000).catch(() => { throw new Error("hostile session kept by Import: " + JSON.stringify(h)); });
+      }
+      await _sesImport(deck(valid));
+      await _waitFor(() => hooks.getSessionForTest() !== null, 2000);
+      await _sesImport(deck(undefined));
+      await _waitFor(() => hooks.getSessionForTest() === null, 2000).catch(() => { throw new Error("deck without session kept the previous session"); });
+    } finally { hooks.restoreStartupDeck(); hooks.setSessionForTest?.(null); await _wait(150); }
+  }},
+]);
+
+uiSuite("session-toolbar", [
+  { name: "ST1: icon only; state in title/aria-label: not set without a session, ends HH:MM when live, not set when stale; timer flips it at end + 3 h", fn: async () => {
+    const hooks = _sesUiNeedHooks();
+    try {
+      hooks.setSessionForTest(null);
+      await _editorSetup();
+      const btn = await _waitFor(() => _sesTbBtn(), 1500);
+      if (btn.tagName !== "BUTTON" || !btn.getAttribute("aria-label") || !btn.title) throw new Error("session-end-btn is not a labelled button");
+      const present = _$("[data-testid='present-btn']");
+      if (btn.nextElementSibling !== present) throw new Error("session-end-btn is not immediately before present-btn");
+      if (!_sesTbIs(null)) throw new Error("no-session state: " + _sesTbDesc());
+      const live = { start: Date.now() - 60000, end: Date.now() + 1800000 };
+      hooks.setSessionForTest(live);
+      await _waitFor(() => _sesTbIs(live.end), 1500).catch(() => { throw new Error("live state: " + _sesTbDesc()); });
+      const stale = { start: Date.now() - SESSION_STALE_MS - 1000 - 1800000, end: Date.now() - SESSION_STALE_MS - 1000 };
+      hooks.setSessionForTest(stale);
+      await _waitFor(() => _sesTbIs(null), 1500).catch(() => { throw new Error("stale state: " + _sesTbDesc()); });
+      if (hooks.getSessionForTest() === null) throw new Error("stale session not kept in state");
+      const soon = { start: Date.now() - SESSION_STALE_MS - 1800000 + 1500, end: Date.now() - SESSION_STALE_MS + 1500 };
+      hooks.setSessionForTest(soon);
+      await _waitFor(() => _sesTbIs(soon.end), 1500).catch(() => { throw new Error("nearly stale state: " + _sesTbDesc()); });
+      await _waitFor(() => _sesTbIs(null), 5000).catch(() => { throw new Error("state did not go back to not set at end + 3 h: " + _sesTbDesc()); });
+    } finally { await _sesUiLeave(); }
+  }},
+  { name: "ST2: click opens one dialog; ArrowRight / Delete / f do nothing while it is open", fn: async () => {
+    const hooks = _sesUiNeedHooks();
+    try {
+      hooks.setSessionForTest(null);
+      await _editorSetup();
+      const before = JSON.stringify([hooks.getDeckStateForTest().selectedId, hooks.getDeckStateForTest().slideIndex, hooks.getHistoryCounts().past]);
+      await _sesTbOpen();
+      if (_$$("[data-testid='session-dialog']").length !== 1) throw new Error("more than one session dialog");
+      _$("[data-testid='session-chip-15']").focus();
+      for (const k of ["ArrowRight", "Delete", "f"]) { _key(k); await _wait(80); }
+      document.activeElement?.blur();
+      for (const k of ["ArrowRight", "Delete", "f"]) { _key(k); await _wait(80); }
+      await _wait(150);
+      if (!_$("[data-testid='session-dialog']")) throw new Error("a key closed the dialog");
+      if (!_$("header") || hooks.getDeckStateForTest().fullscreen) throw new Error("f entered Present");
+      const after = JSON.stringify([hooks.getDeckStateForTest().selectedId, hooks.getDeckStateForTest().slideIndex, hooks.getHistoryCounts().past]);
+      if (after !== before) throw new Error(`editor state changed: ${before} -> ${after}`);
+      _click("[data-testid='session-cancel']");
+      await _waitFor(() => !_$("[data-testid='session-dialog']"), 1500);
+    } finally { await _sesUiLeave(); }
+  }},
+  { name: "ST3: Set and Clear from the editor dialog; Ctrl+Z restores the previous session value", fn: async () => {
+    const hooks = _sesUiNeedHooks();
+    try {
+      hooks.setSessionForTest(null);
+      await _editorSetup();
+      await _wait(100);
+      await _sesTbOpen();
+      _click("[data-testid='session-chip-30']"); await _wait(60);
+      _click("[data-testid='session-set']");
+      await _waitFor(() => !_$("[data-testid='session-dialog']"), 1500);
+      const s1 = hooks.getSessionForTest();
+      if (!s1 || s1.end - s1.start !== 1800000) throw new Error("Set did not store 30 min: " + JSON.stringify(s1));
+      await _waitFor(() => _sesTbIs(s1.end), 1500);
+      document.activeElement?.blur(); await _wait(80);
+      _key("z", { ctrlKey: true });
+      await _waitFor(() => hooks.getSessionForTest() === null, 1500).catch(() => { throw new Error("undo did not restore the empty session"); });
+      await _waitFor(() => _sesTbIs(null), 1500);
+      hooks.setSessionForTest(s1);
+      await _waitFor(() => hooks.getSessionForTest() !== null, 1500);
+      await _sesTbOpen();
+      _click("[data-testid='session-clear']");
+      await _waitFor(() => hooks.getSessionForTest() === null && !_$("[data-testid='session-dialog']"), 1500).catch(() => { throw new Error("Clear did not remove the session"); });
+      document.activeElement?.blur(); await _wait(80);
+      _key("z", { ctrlKey: true });
+      await _waitFor(() => JSON.stringify(hooks.getSessionForTest()) === JSON.stringify(s1), 1500).catch(() => { throw new Error("undo did not restore the cleared session"); });
+    } finally { await _sesUiLeave(); }
+  }},
+  { name: "ST4: button at every desktop header width (1024-1440 px); the top bar stays on one line", fn: async () => {
+    // Forcing the header width stands in for a window resize (as meridian-CR13).
+    await _editorSetup();
+    const h = await _waitFor(() => _$("header"), 2000);
+    const frames = () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+    const prev = h.style.width;
+    const bad = [];
+    try {
+      for (const w of [1024, 1100, 1280, 1440, 1100, 1024]) {
+        h.style.width = `${w}px`;
+        for (let f = 0; f < 3; f++) await frames();
+        const btns = _$$("button", h).filter((b) => b.offsetParent && !b.closest("[role='group']"));
+        const minH = Math.min(...btns.map((b) => b.offsetHeight));
+        const wrapped = btns.filter((b) => b.offsetHeight > minH + 8).map((b) => b.title || b.textContent.trim());
+        const sb = _sesTbBtn();
+        if (!sb || !sb.offsetParent || sb.getBoundingClientRect().width < 1) bad.push(`${w}px: button absent`);
+        if (h.scrollWidth > h.clientWidth + 1) bad.push(`${w}px: overflow ${h.scrollWidth}>${h.clientWidth}`);
+        if (wrapped.length) bad.push(`${w}px: wrapped ${wrapped.join(", ")}`);
+      }
+    } finally {
+      h.style.width = prev;
+      await frames();
+    }
+    if (bad.length) throw new Error(bad.slice(0, 4).join(" | "));
+  }},
+]);
+
+uiSuite("session-bar-geometry", [
+  { name: "SG1: sessionBarGeom table", fn: async () => {
+    const g = (p) => { const r = sessionBarGeom(p); return r && [r.over, r.key, r.lo, r.hi, r.gap, r.you, r.should]; };
+    _ssEq(g({ youFrac: 0.6, shouldFrac: 0.25, paceKey: "green" }), [false, "green", 25, 60, 35, 60, 25], "ahead");
+    _ssEq(g({ youFrac: 0.2, shouldFrac: 0.5, paceKey: "amber" }), [false, "amber", 20, 50, 30, 20, 50], "behind amber");
+    _ssEq(g({ youFrac: 0.1, shouldFrac: 0.7, paceKey: "red" }), [false, "red", 10, 70, 60, 10, 70], "behind red");
+    _ssEq(g({ youFrac: 0.4, shouldFrac: 0.4, paceKey: "white" }), [false, "white", 40, 40, 0, 40, 40], "on pace");
+    _ssEq(g({ youFrac: 0.3, shouldFrac: 1, paceKey: "red", over: true }), [true, "red", 0, 100, 100, 30, 100], "over");
+    _ssEq(g({ youFrac: 0, shouldFrac: 0, paceKey: "green", before: true }), [false, "green", 0, 0, 0, 0, 0], "before start / both 0");
+    _ssEq(g({ youFrac: 1, shouldFrac: 1, paceKey: "white" }), [false, "white", 100, 100, 0, 100, 100], "both 1");
+    _ssEq(g({ youFrac: 0.123456, shouldFrac: 0.5, paceKey: "amber" }), [false, "amber", 12.35, 50, 37.65, 12.35, 50], "rounding");
+    _ssEq(g({ youFrac: NaN, shouldFrac: Infinity, paceKey: "url(x)" }), [false, "white", 0, 0, 0, 0, 0], "non-finite input, unknown key");
+    _ssEq(g({ youFrac: -2, shouldFrac: 7, paceKey: "__proto__" }), [false, "white", 0, 100, 100, 0, 100], "clamped, inherited key");
+    if (sessionBarGeom(null) !== null || sessionBarGeom("x") !== null) throw new Error("non-object pace must give null");
+    const live = computeSessionPace({ est: [60, 60, 60] }, 0, 0, { start: _SS_T0, end: _SS_T0 + 300000 }, _SS_T0 + 1000);
+    const lg = sessionBarGeom(live);
+    if (lg.key !== live.paceKey || lg.you !== Math.round(live.youFrac * 10000) / 100) throw new Error("geometry does not follow computeSessionPace");
+  }},
+]);
+
+// ── Present clock chip (v13.80, C key). Each test restores: chip off,
+// storage key removed, session null, Present left.
+const _clkChip = () => _$("[data-testid='present-clock-chip']");
+const _clkBtn = () => _$("[data-testid='present-clock-toggle']");
+const _clkKey = async (opts) => { document.activeElement?.blur(); await _wait(50); _key("c", opts); await _wait(150); };
+const _clkStored = () => { try { return localStorage.getItem(VELA_PRESENT_CLOCK_KEY); } catch { return "no storage"; } };
+const _clkNowOk = (txt) => [Date.now() - 2000, Date.now()].map((t) => fmtClock(t)).includes(txt);
+const _clkLeave = async () => {
+  if (!_sesUiRoot()) await _sesUiPresent().catch(() => {});
+  if (_$("[data-testid='presenter-view']")) { _click("[data-testid='presenter-toggle']"); await _waitFor(() => !_$("[data-testid='presenter-view']"), 1500).catch(() => {}); }
+  if (_$text("GALLERY")) { document.activeElement?.blur(); _key("g"); await _waitFor(() => !_$text("GALLERY"), 1500).catch(() => {}); }
+  if (_clkBtn()?.getAttribute("aria-pressed") === "true") { _click(_clkBtn()); await _waitFor(() => !_clkChip(), 1000).catch(() => {}); }
+  try { localStorage.removeItem(VELA_PRESENT_CLOCK_KEY); } catch {}
+  await _sesUiLeave();
+};
+const _clkOn = async () => { await _clkKey(); return _waitFor(() => _clkChip(), 1500); };
+
+uiSuite("session-clock-chip", [
+  { name: "CK1: off by default; C shows and hides it; HH:MM only without a session; 15 px, no clicks, inside Present", fn: async () => {
+    const hooks = _sesUiNeedHooks();
+    try {
+      hooks.setSessionForTest(null);
+      try { localStorage.removeItem(VELA_PRESENT_CLOCK_KEY); } catch {}
+      await _sesUiPresent();
+      await _wait(200);
+      if (_clkChip()) throw new Error("chip shown by default");
+      const chip = await _clkOn();
+      if (!_sesUiRoot().contains(chip)) throw new Error("chip is not inside the Present root");
+      if (!/^\d\d:\d\d$/.test(chip.textContent) || !_clkNowOk(chip.textContent)) throw new Error("chip text is not the clock: " + chip.textContent);
+      if (_$("[data-testid='present-clock-left']")) throw new Error("time-left part shown without a session");
+      const cs = getComputedStyle(chip);
+      if (parseFloat(cs.fontSize) < 13) throw new Error("chip font below 13 px");
+      if (cs.pointerEvents !== "none") throw new Error("chip takes pointer events");
+      if (_clkStored() !== "1") throw new Error("choice not stored: " + _clkStored());
+      await _clkKey();
+      await _waitFor(() => !_clkChip(), 1500).catch(() => { throw new Error("C did not hide the chip"); });
+      if (_clkStored() !== null) throw new Error("storage key not removed: " + _clkStored());
+      await _exitFullscreen();
+      if (_clkChip()) throw new Error("chip in the editor");
+    } finally { await _clkLeave(); }
+  }},
+  { name: "CK2: Ctrl+C, Cmd+C, Shift+C, Alt+C and C with focus in a text field do not toggle", fn: async () => {
+    const hooks = _sesUiNeedHooks();
+    let inp = null;
+    try {
+      hooks.setSessionForTest(null);
+      await _sesUiPresent();
+      for (const o of [{ ctrlKey: true }, { metaKey: true }, { shiftKey: true }, { altKey: true }]) {
+        await _clkKey(o);
+        if (_clkChip()) throw new Error("a modified C toggled the chip: " + JSON.stringify(o));
+      }
+      // The top of the Present key handler already returns for an INPUT /
+      // TEXTAREA target. To prove the C guard on document.activeElement, the
+      // event goes to window (target is not the field) while the field has focus.
+      for (const tag of ["input", "textarea", "select", "contenteditable"]) {
+        inp = document.createElement(tag === "contenteditable" ? "div" : tag);
+        if (tag === "contenteditable") { inp.contentEditable = "true"; inp.tabIndex = 0; }
+        _sesUiRoot().appendChild(inp);
+        inp.focus(); await _wait(50);
+        if (document.activeElement !== inp) throw new Error(tag + " did not take focus");
+        window.dispatchEvent(new KeyboardEvent("keydown", { key: "c", bubbles: true, cancelable: true }));
+        await _wait(150);
+        if (_clkChip()) throw new Error("C with focus in a " + tag + " toggled the chip");
+        inp.remove(); inp = null;
+      }
+      await _clkOn();
+    } finally { if (inp) inp.remove(); await _clkLeave(); }
+  }},
+  { name: "CK3: live session: running (time left + colour key), before start, over; stale session -> clock only", fn: async () => {
+    const hooks = _sesUiNeedHooks();
+    try {
+      const t = Date.now();
+      hooks.setSessionForTest({ start: t - 20 * 60000, end: t + 6 * 60000 });
+      await _sesUiPresent();
+      await _clkOn();
+      let left = await _waitFor(() => _$("[data-testid='present-clock-left']"), 1500);
+      if (!/^\d+:\d\d left$/.test(left.textContent)) throw new Error("running text: " + left.textContent);
+      if (_clkChip().dataset.timeKey !== "amber" || getComputedStyle(left).color !== _sesRgb(SESSION_PACE_COLORS.amber)) throw new Error("running colour: " + _clkChip().dataset.timeKey);
+      if (!_clkNowOk(_$("[data-testid='present-clock-time']").textContent)) throw new Error("clock part: " + _$("[data-testid='present-clock-time']").textContent);
+      hooks.setSessionForTest({ start: Date.now() + 5 * 60000, end: Date.now() + 35 * 60000 });
+      left = await _waitFor(() => /^starts in \d+:\d\d$/.test(_$("[data-testid='present-clock-left']")?.textContent || "") && _$("[data-testid='present-clock-left']"), 2000).catch(() => { throw new Error("before text: " + _$("[data-testid='present-clock-left']")?.textContent); });
+      if (_clkChip().dataset.timeKey !== "white") throw new Error("before colour: " + _clkChip().dataset.timeKey);
+      hooks.setSessionForTest({ start: Date.now() - 32 * 60000, end: Date.now() - 2 * 60000 });
+      left = await _waitFor(() => /^\+2:\d\d over$/.test(_$("[data-testid='present-clock-left']")?.textContent || "") && _$("[data-testid='present-clock-left']"), 2000).catch(() => { throw new Error("over text: " + _$("[data-testid='present-clock-left']")?.textContent); });
+      if (_clkChip().dataset.timeKey !== "red" || getComputedStyle(left).color !== _sesRgb(SESSION_PACE_COLORS.red)) throw new Error("over colour: " + _clkChip().dataset.timeKey);
+      hooks.setSessionForTest({ start: Date.now() - 270 * 60000, end: Date.now() - 240 * 60000 });
+      await _waitFor(() => !_$("[data-testid='present-clock-left']") && _clkChip(), 2000).catch(() => { throw new Error("stale session still shows the time-left part"); });
+      if (!/^\d\d:\d\d$/.test(_clkChip().textContent)) throw new Error("stale text: " + _clkChip().textContent);
+    } finally { await _clkLeave(); }
+  }},
+  { name: "CK4: hidden under the Presenter View and the gallery; back when they close", fn: async () => {
+    const hooks = _sesUiNeedHooks();
+    try {
+      hooks.setSessionForTest({ start: Date.now() - 10 * 60000, end: Date.now() + 20 * 60000 });
+      await _sesUiPresent();
+      await _clkOn();
+      await _sesUiOpenPresenter();
+      if (_clkChip()) throw new Error("chip shown with the Presenter View open");
+      _key("s");
+      await _waitFor(() => !_$("[data-testid='presenter-view']") && _clkChip(), 1500).catch(() => { throw new Error("chip not back after the Presenter View"); });
+      document.activeElement?.blur(); await _wait(50);
+      _key("g");
+      await _waitFor(() => _$text("GALLERY"), 5000);
+      if (_clkChip()) throw new Error("chip shown with the gallery open");
+      _key("g");
+      await _waitFor(() => !_$text("GALLERY") && _clkChip(), 2000).catch(() => { throw new Error("chip not back after the gallery"); });
+    } finally { await _clkLeave(); }
+  }},
+  { name: "CK5: hover button toggles the chip and shows the state in aria-pressed; the choice stays when Present is entered again", fn: async () => {
+    const hooks = _sesUiNeedHooks();
+    try {
+      hooks.setSessionForTest(null);
+      await _sesUiPresent();
+      const b = await _waitFor(() => _clkBtn(), 1500);
+      if (b.tagName !== "BUTTON" || b.title !== "Clock on slide (C)" || b.getAttribute("aria-pressed") !== "false") throw new Error("button: " + b.tagName + " | " + b.title + " | " + b.getAttribute("aria-pressed"));
+      _click(b);
+      await _waitFor(() => _clkChip() && _clkBtn().getAttribute("aria-pressed") === "true", 1500).catch(() => { throw new Error("button did not show the chip"); });
+      await _exitFullscreen();
+      await _sesUiPresent();
+      await _waitFor(() => _clkChip(), 1500).catch(() => { throw new Error("choice lost after entering Present again"); });
+      if (_clkStored() !== "1") throw new Error("stored value: " + _clkStored());
+      _click(_clkBtn());
+      await _waitFor(() => !_clkChip() && _clkBtn().getAttribute("aria-pressed") === "false", 1500).catch(() => { throw new Error("button did not hide the chip"); });
+    } finally { await _clkLeave(); }
+  }},
+  { name: "CK6: storage that throws: C still toggles the chip and nothing throws", fn: async () => {
+    const hooks = _sesUiNeedHooks();
+    const P = Storage.prototype, set0 = P.setItem, rm0 = P.removeItem;
+    const errs = [];
+    const onErr = (e) => errs.push(String(e.message || e));
+    window.addEventListener("error", onErr);
+    try {
+      hooks.setSessionForTest(null);
+      await _sesUiPresent();
+      P.setItem = function () { throw new Error("blocked"); };
+      P.removeItem = function () { throw new Error("blocked"); };
+      await _clkOn();
+      await _clkKey();
+      await _waitFor(() => !_clkChip(), 1500).catch(() => { throw new Error("C did not hide the chip with blocked storage"); });
+      if (errs.length) throw new Error("errors: " + errs.join(" | "));
+    } finally { P.setItem = set0; P.removeItem = rm0; window.removeEventListener("error", onErr); await _clkLeave(); }
+  }},
+  { name: "CK7: Space and Enter on the focused clock button toggle the chip and do not change the slide", fn: async () => {
+    const hooks = _sesUiNeedHooks();
+    try {
+      hooks.setSessionForTest(null);
+      await _sesUiPresent();
+      const b = await _waitFor(() => _clkBtn(), 1500);
+      const pos0 = _slidePos();
+      if (pos0 == null) throw new Error("no slide position");
+      b.focus(); await _wait(50);
+      if (document.activeElement !== b) throw new Error("button did not take focus");
+      _key(" "); await _wait(200);
+      if (_slidePos() !== pos0) throw new Error(`Space changed the slide: ${pos0} -> ${_slidePos()}`);
+      if (!_clkChip() || _clkBtn().getAttribute("aria-pressed") !== "true") throw new Error("Space did not show the chip");
+      _clkBtn().focus(); await _wait(50);
+      _key("Enter"); await _wait(200);
+      if (_slidePos() !== pos0) throw new Error(`Enter changed the slide: ${pos0} -> ${_slidePos()}`);
+      if (_clkChip() || _clkBtn().getAttribute("aria-pressed") !== "false") throw new Error("Enter did not hide the chip");
+    } finally { await _clkLeave(); }
+  }},
+  { name: "CK8: chip bottom clears the footer, and a bottom-left logo box at every window size; numbers only", fn: async () => {
+    if (typeof presentClockBottom !== "function") throw new Error("no chip-bottom helper: the chip does not know the logo");
+    const re = /^calc\(max\(([\d.]+)vw, ([\d.]+)vh\) \+ 10px\)$/;
+    // K = virtual px the chip clears (0 = the plain 24 px place).
+    const parse = (b) => {
+      const v = presentClockBottom(b);
+      if (v === 24) return null;
+      const m = re.exec(v);
+      if (!m) throw new Error("bottom is not a numbers-only calc: " + v);
+      const kw = +m[1] * VIRTUAL_W / 100, kh = +m[2] * VIRTUAL_H / 100;
+      if (Math.abs(kw - kh) > 0.01) throw new Error("vw and vh parts differ: " + v);
+      return { k: Math.round(kw), vwP: +m[1], vhP: +m[2] };
+    };
+    const L = "data:image/png;base64,iVBORw0KGgo=";
+    const k = (b) => { const r = parse(b); return r ? r.k : 0; };
+    const BL = { enabled: true, logo: L, logoPosition: "bottom-left" };
+    _ssEq([null, undefined, { enabled: false, logo: L, logoPosition: "bottom-left", logoSize: 56 }].map(k), [0, 0, 0], "branding off");
+    _ssEq([{ enabled: true }, { ...BL, logo: null }, { ...BL, logoPosition: "bottom-right" }, { ...BL, logoPosition: "top-left" }, { ...BL, logoPosition: "top-right" }].map(k), [28, 28, 28, 28, 28], "footer only");
+    _ssEq([56, 20, 120, undefined, 0, NaN, -5, 500, Infinity, "80"].map((s) => k({ ...BL, logoSize: s })), [100, 64, 164, 100, 100, 100, 100, 164, 100, 100], "bottom-left logo heights");
+    // Screen check: fill-mode scale (computeFillDims) at real window sizes;
+    // the chip bottom must be above the logo top (36 + height) and the footer.
+    const fillScale = (W, H) => { const rh0 = Math.round(VIRTUAL_W * H / W); const hr = rh0 / VIRTUAL_H; const z = hr <= 1.05 ? 1 : Math.pow(hr, 0.45); return Math.min(W / Math.round(VIRTUAL_W / z), H / Math.round(rh0 / z)); };
+    const bad = [];
+    for (const [W, H] of [[1920, 1080], [1280, 800], [1024, 768], [1440, 810], [2560, 1080], [1920, 1200], [800, 1000]]) {
+      const s = fillScale(W, H);
+      for (const h of [20, 56, 120]) {
+        const r = parse({ ...BL, logoSize: h });
+        const bottom = Math.max(r.vwP * W / 100, r.vhP * H / 100) + 10;
+        if (bottom < (36 + h) * s + 4) bad.push(`${W}x${H} h${h}: chip ${bottom.toFixed(1)} logo top ${((36 + h) * s).toFixed(1)}`);
+      }
+      const f = parse({ enabled: true });
+      if (Math.max(f.vwP * W / 100, f.vhP * H / 100) + 10 < 28 * s + 4) bad.push(`${W}x${H}: footer`);
+    }
+    if (bad.length) throw new Error(bad.slice(0, 4).join(" | "));
+  }},
+  { name: "CK9: a held C or T key (auto-repeat) toggles once", fn: async () => {
+    const hooks = _sesUiNeedHooks();
+    try {
+      hooks.setSessionForTest(null);
+      await _sesUiPresent();
+      document.activeElement?.blur(); await _wait(50);
+      const h0 = VELA_SESSION_BAR.hidden;
+      for (let i = 0; i < 5; i++) {
+        _key("c", i ? { repeat: true } : {}); _key("t", i ? { repeat: true } : {});
+        await _wait(80);
+        if (!_clkChip() || _clkStored() !== "1") throw new Error(`C keydown ${i + 1}: chip ${!!_clkChip()}, stored ${_clkStored()}`);
+        if (VELA_SESSION_BAR.hidden !== !h0) throw new Error(`T keydown ${i + 1}: pace bar hidden ${VELA_SESSION_BAR.hidden}`);
+      }
+    } finally { await _clkLeave(); }
+  }},
+  { name: "CK10: C and T do nothing in the Presenter View; C does nothing in the gallery", fn: async () => {
+    const hooks = _sesUiNeedHooks();
+    try {
+      hooks.setSessionForTest({ start: Date.now() - 10 * 60000, end: Date.now() + 20 * 60000 });
+      await _sesUiPresent();
+      await _sesUiOpenPresenter();
+      document.activeElement?.blur(); await _wait(50);
+      const h0 = VELA_SESSION_BAR.hidden;
+      _key("c"); await _wait(150);
+      _key("t"); await _wait(150);
+      if (_clkStored() !== null) throw new Error("C in the Presenter View wrote storage: " + _clkStored());
+      if (VELA_SESSION_BAR.hidden !== h0) throw new Error("T in the Presenter View changed the pace bar");
+      _key("s");
+      await _waitFor(() => !_$("[data-testid='presenter-view']"), 1500);
+      await _wait(150);
+      if (_clkChip()) throw new Error("chip on after C in the Presenter View");
+      document.activeElement?.blur(); await _wait(50);
+      _key("g");
+      await _waitFor(() => _$text("GALLERY"), 5000);
+      _key("c"); await _wait(150);
+      if (_clkStored() !== null) throw new Error("C in the gallery wrote storage: " + _clkStored());
+      _key("g");
+      await _waitFor(() => !_$text("GALLERY"), 2000);
+      await _wait(150);
+      if (_clkChip()) throw new Error("chip on after C in the gallery");
+    } finally { await _clkLeave(); }
+  }},
+  { name: "CK11: last 5 min is red; Caps Lock C (no Shift) toggles", fn: async () => {
+    const hooks = _sesUiNeedHooks();
+    try {
+      hooks.setSessionForTest({ start: Date.now() - 26 * 60000, end: Date.now() + 4 * 60000 });
+      await _sesUiPresent();
+      document.activeElement?.blur(); await _wait(50);
+      _key("C"); await _wait(150);
+      const left = await _waitFor(() => _$("[data-testid='present-clock-left']"), 1500).catch(() => { throw new Error("Caps Lock C did not show the chip"); });
+      if (!/^\d+:\d\d left$/.test(left.textContent)) throw new Error("text: " + left.textContent);
+      if (_clkChip().dataset.timeKey !== "red" || getComputedStyle(left).color !== _sesRgb(SESSION_PACE_COLORS.red)) throw new Error("last 5 min colour: " + _clkChip().dataset.timeKey);
+      _key("C");
+      await _waitFor(() => !_clkChip(), 1500).catch(() => { throw new Error("Caps Lock C did not hide the chip"); });
+    } finally { await _clkLeave(); }
   }},
 ]);
 

@@ -104,6 +104,34 @@ def check_block_gradients(node, loc, errors, path=""):
                 check_block_gradients(val, loc, errors, here)
 
 
+# Optional deck-level `session` { start, end } (epoch ms). Same rule as the app's
+# sanitizeSession (part-imports.jsx): integers only (no bool/float/string),
+# 2000-01-01 <= start, end <= 2100-01-01, 1 min <= end - start <= 24 h. A bad
+# value is a WARNING, not an error: the app drops it fail-closed on load, and an
+# error would block `ship`.
+SESSION_EPOCH_MIN = 946684800000
+SESSION_EPOCH_MAX = 4102444800000
+
+
+def _check_session(deck, warnings):
+    if "session" not in deck:
+        return
+    v = deck["session"]
+    reason = None
+    if not isinstance(v, dict):
+        reason = "must be an object {start, end}"
+    elif type(v.get("start")) is not int or type(v.get("end")) is not int:
+        reason = "start and end must be whole-number epoch milliseconds"
+    elif not all(SESSION_EPOCH_MIN <= v[k] <= SESSION_EPOCH_MAX for k in ("start", "end")):
+        reason = "start or end out of range (years 2000-2100)"
+    elif v["end"] <= v["start"]:
+        reason = "end must be after start"
+    elif not (60000 <= v["end"] - v["start"] <= 86400000):
+        reason = "length must be 1 min to 24 h"
+    if reason:
+        warnings.append(f"session ignored by the app: {reason}")
+
+
 def validate(path):
     with open(path, 'r', encoding="utf-8") as f:
         deck = json.load(f)
@@ -132,6 +160,8 @@ def validate(path):
 
     if not deck.get("deckTitle"):
         errors.append("Missing 'deckTitle' — every deck needs a title")
+    if isinstance(deck, dict):
+        _check_session(deck, warnings)
 
     lanes = deck.get("lanes", [])
     if not lanes:

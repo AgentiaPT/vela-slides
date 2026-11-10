@@ -10,6 +10,13 @@
 
 Pipeline: any format → `_load_full()` auto-expands → validate → assemble → ship.
 
+**Deck-level optional fields (Full format only).** Besides `deckTitle` and
+`lanes`, a Full deck can carry `branding`, `guidelines` and `session`.
+`session` is `{ "start": <epoch ms>, "end": <epoch ms> }`: whole numbers,
+years 2000–2100, length 1 min to 24 h. The app drops an invalid value;
+`validate.py` warns about it. The app sets this field (session end time);
+compact and turbo do not carry `branding`, `guidelines` or `session`.
+
 ## Compact Format — Full Key Reference
 
 ### Key Differences from Full Format

@@ -1,11 +1,12 @@
 // © 2025-present Rui Quintino. Vela Slides — licensed under ELv2. See LICENSE.
 // ━━━ Branding Overlay ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-function BrandingOverlay({ branding, index, total, displayIndex, displayTotal, slideBg }) {
+function BrandingOverlay({ branding, index, total, displayIndex, displayTotal, hideSlideNumber, slideBg }) {
   if (!branding?.enabled) return null;
   const b = branding;
   const di = displayIndex != null ? displayIndex : index;
   const dt = displayTotal != null ? displayTotal : total;
-  const slideNum = `${String(di + 1).padStart(2, "0")} / ${String(dt).padStart(2, "0")}`;
+  // A Present detour (hidden slide) has no place in the numbering: show none.
+  const slideNum = hideSlideNumber ? "" : `${String(di + 1).padStart(2, "0")} / ${String(dt).padStart(2, "0")}`;
   const rightText = b.footerRight === "auto" ? slideNum : (b.footerRight || "");
   // Detect light slides for contrast-appropriate footer defaults
   const isLight = (() => {

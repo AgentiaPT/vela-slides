@@ -138,8 +138,11 @@ const velaClipboardReadSlides = async () => {
   return [];
 };
 
-const VELA_VERSION = "13.78";
+const VELA_VERSION = "13.81";
 const VELA_CHANGELOG = [
+  { v: "13.81", d: ["Editor: search in the slide list (Ctrl+E or /), same engine as Present", "Search: ↑↓ + Enter, highlighted matches, match count; finds text in column layouts, notes and section names (editor)", "Editor: short outline on the matched block when a result opens"] },
+  { v: "13.80", d: ["Session end time: set it from the toolbar or the Presenter View.", "Presenter View: clock, time left and pace guidance (ahead / on pace / behind).", "Present: thin pace bar on the slide edge (T hides it).", "Present: optional clock on the slide (C key)."] },
+  { v: "13.79", d: ["Present: Ctrl+E search also matches slide text, with a snippet.", "Present: while typing, search also lists hidden slides and slides in collapsed lanes (a detour).", "Present: after a detour, arrows, wheel or Esc return to the slide you left.", "Present: a detour slide shows no slide number; Presenter view shows where you will return."] },
   { v: "13.78", d: ["Images: up to 10 per slide; overflow goes to a new slide.", "Images: drag image files from your computer onto a slide.", "Images: drag tiles to reorder.", "Story mode: present a slide's images one by one.", "Export: expand story slides to one page per image (PDF/PPTX).", "Text: Ctrl+U underline is saved and shows everywhere (++text++).", "Images: dropped files use the same ordered, safe queue as pasted images.", "Story mode: grid tiles keep a one-line title row, so tiles align.", "Vector PDF: text after bold/italic/underline/link keeps its space and letter spacing.", "Drop: images dropped outside a slide show a hint; a deck file dropped with images still loads.", "Slide toolbar stays on one row; labels change to icons when space is short."] },
   { v: "13.77", d: ["Two-column slides: edits to a column block (link, text, hide, delete) are saved; before, they were lost.", "Link boxes accept a bare domain (example.com) or an email address; before, these were saved as an empty link.", "Desktop: outside edits to decks up to 50 MB now reload live (was 5 MB).", "Present: Esc exits fullscreen, also inside Claude.ai artifacts.", "Esc closes the gallery, presenter view, image zoom or an open dialog first.", "Present toolbar: removed the duplicate gallery icon; presenter view uses a notes icon.", "Image zoom fills the window again (it was limited to the scaled slide).", "Zoom: arrow keys step through the images on the slide; past the first or last image they close the zoom.", "Present toolbar stays faint until you point at it.", "Editor: Ctrl+E toggles the TOC (as in present mode); [ also works with AltGr keyboards."] },
   { v: "13.76", d: ["TOC: dragging a slide or section near the list edge auto-scrolls the list.", "TOC: moving a slide to a section in an earlier lane no longer loses the slide.", "Images: a pasted image on an empty slide fills the slide, not one half.", "Images: grids pick rows and columns by image aspect ratio.", "Images: solo and wide images fill the free slide area.", "Images: images shrink to fit, so text below an image stays on the slide.", "Editing: all text in checklist, comparison, matrix, number-row, progress and flow blocks is editable inline.", "Checklist: type a status name to change the status; custom status labels survive compact/turbo formats."] },
@@ -537,6 +540,37 @@ function sanitizeString(val, maxLen = 500) {
 // capped to a sane title length. (v13.26, F-12)
 function sanitizeDeckTitle(t) {
   return String(t == null ? "" : t).slice(0, 200) || "Untitled";
+}
+
+// Deck-level presentation session { start, end } (epoch ms). Numbers only: the
+// value never reaches a style/URL/DOM sink as a string; the UI formats it in code.
+// Fail closed: any defect drops the WHOLE field (null). Type-check first, never
+// coerce: a numeric string, boolean, float, NaN, Infinity or huge number is out.
+// Own props only, each read once (a getter cannot pass one value to the check
+// and another to the result); the result is a fresh object with exactly 2 keys,
+// so extra keys and prototype tricks never reach state.
+const SESSION_EPOCH_MIN = 946684800000;   // 2000-01-01T00:00:00Z
+const SESSION_EPOCH_MAX = 4102444800000;  // 2100-01-01T00:00:00Z
+const SESSION_LEN_MIN = 60000;            // 1 min
+const SESSION_LEN_MAX = 86400000;         // 24 h
+const SESSION_STALE_MS = 3 * 3600000;     // end + 3 h -> treated as NOT SET in the UI
+function sanitizeSession(raw) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const own = Object.prototype.hasOwnProperty;
+  if (!own.call(raw, "start") || !own.call(raw, "end")) return null;
+  const start = raw.start, end = raw.end;
+  if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end)) return null; // false for non-numbers
+  if (start < SESSION_EPOCH_MIN || end > SESSION_EPOCH_MAX) return null;
+  const len = end - start;
+  if (!(len >= SESSION_LEN_MIN && len <= SESSION_LEN_MAX)) return null;      // also end > start
+  return { start, end };
+}
+// Storage-reload backstop (same rule as resanitizeLoadedBranding): storage is
+// hostile input, so a stored `session` is re-checked. Only touch the key if the
+// stored deck carries one, so a deck without it keeps that exact shape.
+function resanitizeLoadedSession(data) {
+  if (data && typeof data === "object" && "session" in data) data.session = sanitizeSession(data.session);
+  return data;
 }
 
 function sanitizeUrl(url, allowedProtocols = ["http:", "https:", "mailto:"]) {
@@ -1925,7 +1959,9 @@ function adoptPriorDeckIds(sanitized, raw, cur) {
 // signature equals the file's known content is skipped, so opening a deck the
 // user did not change never writes the file (CR01).
 function localDeckPayload(s) {
-  return { deckTitle: s.deckTitle, lanes: s.lanes, branding: s.branding, guidelines: s.guidelines };
+  // `session` only when set: a deck without one writes byte-identical JSON, so the
+  // no-edit guard and existing files stay unchanged.
+  return { deckTitle: s.deckTitle, lanes: s.lanes, branding: s.branding, guidelines: s.guidelines, ...(s.session ? { session: s.session } : {}) };
 }
 
 function validateAndSanitizeDeck(raw, opts) {
@@ -1990,7 +2026,10 @@ function validateAndSanitizeDeck(raw, opts) {
     : "";
   return { lanes, guidelines: importedGuidelines, selectedId: null, slideIndex: 0, fullscreen: VELA_PRESENTATION_MODE, chatOpen: false,
     chatMessages: [{ role: "assistant", content: "Deck imported successfully! Ready to sail. ⛵🖖", ts: now() }],
-    chatLoading: false, lastDebug: "", branding: importedBranding };
+    chatLoading: false, lastDebug: "", branding: importedBranding,
+    // Key ALWAYS present (value or null): LOAD spreads the payload over state,
+    // so a missing key would keep the previous deck's session.
+    session: sanitizeSession(raw.session) };
 }
 
 // ━━━ Image Compression ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -2560,6 +2599,179 @@ const fmtTimeMin = (s) => { if (!s || s <= 0) return ""; const totalMin = Math.r
 const visibleSlides = (slides) => (slides || []).filter((s) => !(s && s.hidden));
 const sumDurations = (slides) => (slides || []).reduce((s, sl) => s + (sl.duration || 0), 0);
 const sumVisibleDurations = (slides) => visibleSlides(slides).reduce((s, sl) => s + (sl.duration || 0), 0);
+// ━━━ Session end: pure pace helpers (v13.80) ━━━━━━━━━━━━━━━━━━━━━━━━
+// All inputs are numbers from sanitizeSession / code; outputs are numbers, static
+// colour keys and code-built strings only. Every helper is total: no throw and no
+// NaN/Infinity output for any input (the UI writes these into text and CSS %).
+// Live session: sanitized and not stale (now <= end + 3 h). Else null.
+const liveSession = (session, now) => { const s = sanitizeSession(session); return s && typeof now === "number" && now <= s.end + SESSION_STALE_MS ? s : null; };
+
+// Present pace sequence: entries { s, num, itemId, rawIdx } in Present order.
+// num = 1-based global visible slide number over ALL lanes (the "Slide i / N"
+// numbering). An entry is in the sequence when the slide is not hidden AND its
+// lane is not collapsed or holds the item `keepItemId` (Present navigation
+// skips collapsed lanes, so their slides are not remaining work).
+// `seq.before` (Map itemId -> count of entries before that item) lets
+// sessionSeqIndex place an item that has no entry.
+const presentSequence = (lanes, keepItemId) => {
+  const out = [], before = new Map();
+  let num = 0;
+  for (const l of (Array.isArray(lanes) ? lanes : [])) {
+    const items = l && Array.isArray(l.items) ? l.items : [];
+    const keep = !(l && l.collapsed) || (keepItemId != null && items.some((it) => it && it.id === keepItemId));
+    for (const it of items) {
+      if (!it) continue;
+      if (!before.has(it.id)) before.set(it.id, out.length);
+      const slides = Array.isArray(it.slides) ? it.slides : [];
+      for (let r = 0; r < slides.length; r++) {
+        const s = slides[r];
+        if (!s || s.hidden) continue;
+        num++;
+        if (keep) out.push({ s, num, itemId: it.id, rawIdx: r });
+      }
+    }
+  }
+  out.before = before;
+  return out;
+};
+
+// Index into seq for the slide at raw index `rawIdx` (Present index minus the
+// title-card offset) of item `itemId`: the item's entry with the largest
+// rawIdx <= rawIdx; else the item's first entry (title card); else, for an item
+// with no entry, the count of entries before it. Clamped to [0, len - 1]; 0 for
+// an empty sequence or an unknown item.
+function sessionSeqIndex(seq, itemId, rawIdx) {
+  const n = Array.isArray(seq) ? seq.length : 0;
+  if (!n) return 0;
+  const r = typeof rawIdx === "number" && !Number.isNaN(rawIdx) ? rawIdx : 0;
+  let best = -1, first = -1;
+  for (let k = 0; k < n; k++) {
+    const e = seq[k];
+    if (!e || e.itemId !== itemId) continue;
+    if (first < 0) first = k;
+    if (e.rawIdx <= r) best = k;
+  }
+  if (best >= 0) return best;
+  if (first >= 0) return first;
+  const b = seq.before instanceof Map ? seq.before.get(itemId) : undefined;
+  return Number.isSafeInteger(b) ? Math.max(0, Math.min(n - 1, b)) : 0;
+}
+
+// Per-slide estimate (s). A usable duration: finite number, > 0, capped at 86400.
+// Missing -> average of usable ones; none usable -> 60.
+const sessionEstimates = (seq) => {
+  const list = Array.isArray(seq) ? seq : [];
+  const ok = (d) => typeof d === "number" && Number.isFinite(d) && d > 0;
+  const dur = (e) => (e && e.s ? e.s.duration : undefined);
+  const have = list.filter((e) => ok(dur(e))).map((e) => Math.min(dur(e), 86400));
+  const avg = have.length ? have.reduce((a, b) => a + b, 0) / have.length : 60;
+  let estimated = 0;
+  const est = list.map((e) => { const d = dur(e); if (ok(d)) return Math.min(d, 86400); estimated++; return avg; });
+  return { est, total: est.reduce((a, b) => a + b, 0), estimated };
+};
+
+const SESSION_PACE_COLORS = { green: "#22c55e", white: "#f8fafc", amber: "#f59e0b", red: "#ef4444" }; // static, code-authored
+
+const pad2 = (n) => String(n).padStart(2, "0");
+const fmtClock = (ms) => { if (typeof ms !== "number" || !Number.isFinite(ms)) return "--:--"; const d = new Date(ms); if (Number.isNaN(d.getTime())) return "--:--"; return `${pad2(d.getHours())}:${pad2(d.getMinutes())}`; }; // local 24 h
+const fmtCountdown = (sec) => { const s = Math.max(0, Math.floor(typeof sec === "number" && Number.isFinite(sec) ? sec : 0)); const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), r = s % 60; return h > 0 ? `${h}:${pad2(m)}:${pad2(r)}` : `${m}:${pad2(r)}`; };
+
+// Seconds on the current slide that count as presenting time: from the later
+// of the slide entry and the session start (waiting on the slide before the
+// start is not presenting time, so it must not reduce "need"). Never NaN or < 0.
+function sessionOnSlideSec(nowMs, enterAt, session) {
+  if (typeof nowMs !== "number" || !Number.isFinite(nowMs)) return 0;
+  const enter = typeof enterAt === "number" && Number.isFinite(enterAt) ? enterAt : -Infinity;
+  const ses = session && typeof session.start === "number" && Number.isFinite(session.start) ? session.start : -Infinity;
+  const from = Math.max(enter, ses);
+  return Number.isFinite(from) ? Math.max(0, (nowMs - from) / 1000) : 0;
+}
+
+// Pace for seq position `idx` (0-based, clamped), `onSlideSec` on the current
+// slide, a session and `now` (ms). Returns null for an invalid session. The total
+// is recomputed from the (finite, capped) estimates, so no field can be NaN.
+// shouldIdx: 0-based index into seq where the speaker should be now.
+function computeSessionPace(estimates, idx, onSlideSec, session, now) {
+  const ses = sanitizeSession(session);
+  if (!ses) return null;
+  const fin = (x, d) => (typeof x === "number" && Number.isFinite(x) ? x : d);
+  const est = (estimates && Array.isArray(estimates.est) ? estimates.est : []).map((x) => Math.min(86400, Math.max(0, fin(x, 0))));
+  const total = est.reduce((a, b) => a + b, 0);
+  const N = est.length, i = Math.max(0, Math.min(Math.max(0, N - 1), Math.trunc(fin(idx, 0))));
+  const t0 = fin(now, ses.start);
+  const onS = typeof onSlideSec === "number" && onSlideSec > 0 ? onSlideSec : 0; // NaN/negative -> 0; Infinity -> slide done
+  const lenSec = (ses.end - ses.start) / 1000;
+  const before = t0 < ses.start, over = t0 > ses.end;
+  const have = before ? lenSec : (ses.end - t0) / 1000;               // < 0 when over
+  let need = N ? Math.max(0, est[i] - onS) : 0;
+  for (let k = i + 1; k < N; k++) need += est[k];
+  const delta = have - need;
+  const paceKey = over ? "red" : delta > 60 ? "green" : delta >= -60 ? "white" : delta >= -180 ? "amber" : "red";
+  const verdict = over ? `+${fmtCountdown((t0 - ses.end) / 1000)} over · wrap up`
+    : before ? `starts in ${fmtCountdown((ses.start - t0) / 1000)}`
+    : delta > 60 ? `${fmtCountdown(delta)} ahead · you can slow down`
+    : delta >= -60 ? "on pace" : `${fmtCountdown(-delta)} behind · speed up`;
+  const elapsedFrac = before ? 0 : Math.min(1, (t0 - ses.start) / (ses.end - ses.start));
+  const timeLeftSec = over ? (t0 - ses.end) / 1000 : have;            // counts UP when over
+  const timeLeftKey = over || (!before && have <= 300) ? "red" : elapsedFrac >= 0.75 ? "amber" : "white";
+  const clamp01 = (x) => (Number.isFinite(x) ? Math.max(0, Math.min(1, x)) : 0);
+  const shouldFrac = total > 0 ? clamp01((total - have) / total) : 0; // fill end
+  const youFrac = total > 0 ? clamp01((total - need) / total) : 0;    // white tick
+  const t = Math.max(0, Math.min(total, total - have));
+  let shouldIdx = Math.max(0, N - 1), cum = 0;
+  for (let k = 0; k < N; k++) { cum += est[k]; if (cum > t) { shouldIdx = k; break; } }
+  return { need, have, delta, before, over, paceKey, verdict, timeLeftSec, timeLeftKey, elapsedFrac, shouldFrac, youFrac, shouldIdx };
+}
+
+// Pace bar geometry, shared by the fullscreen edge bar and the Presenter View
+// pace track. Percent numbers (0..100, 2 decimals), never NaN. base = neutral
+// fill 0..lo; gap = lo..hi in the pace colour (the lead when ahead, the lag
+// when behind; the renderer gives it a minimum width, so the colour always
+// shows); you / should = tick positions. Over: the whole bar is red.
+// key is always a SESSION_PACE_COLORS key (static colour lookup only).
+const sessionBarGeom = (pace) => {
+  if (!pace || typeof pace !== "object") return null;
+  const pct = (f) => Math.round((typeof f === "number" && Number.isFinite(f) ? Math.max(0, Math.min(1, f)) : 0) * 10000) / 100;
+  const you = pct(pace.youFrac), should = pct(pace.shouldFrac);
+  if (pace.over === true) return { over: true, key: "red", lo: 0, hi: 100, gap: 100, you, should };
+  const key = Object.prototype.hasOwnProperty.call(SESSION_PACE_COLORS, pace.paceKey) ? pace.paceKey : "white";
+  const lo = Math.min(you, should), hi = Math.max(you, should);
+  return { over: false, key, lo, hi, gap: Math.round((hi - lo) * 100) / 100, you, should };
+};
+
+// Dialog: "HH:MM" strings (input type=time) -> { start, end } or null.
+// Start on the local date of `base`; end <= start (time of day) -> next day.
+// With `now`: a session that is all in the past (end <= now) moves forward by
+// one calendar day. new Date(y, m, d+1, hh, mm) keeps local wall time across DST.
+const SESSION_HHMM = /^([01]\d|2[0-3]):([0-5]\d)$/;
+function resolveSessionTimes(startHHMM, endHHMM, base, now) {
+  const a = SESSION_HHMM.exec(typeof startHHMM === "string" ? startHHMM : ""), b = SESSION_HHMM.exec(typeof endHHMM === "string" ? endHHMM : "");
+  if (!a || !b) return null;
+  const d = new Date(base), sh = +a[1], sm = +a[2], eh = +b[1], em = +b[2];
+  const next = eh * 60 + em <= sh * 60 + sm ? 1 : 0;
+  const at = (k) => ({
+    start: new Date(d.getFullYear(), d.getMonth(), d.getDate() + k, sh, sm).getTime(),
+    end: new Date(d.getFullYear(), d.getMonth(), d.getDate() + k + next, eh, em).getTime(),
+  });
+  let r = at(0);
+  if (typeof now === "number" && Number.isFinite(now) && r.end <= now) r = at(1);
+  return sanitizeSession(r);   // enforces 1 min .. 24 h, rejects NaN
+}
+// Dialog base date: the start date of the stored LIVE session, else today.
+const sessionDialogBase = (live, now) => (live && typeof live.start === "number" && Number.isFinite(live.start) ? live.start : now);
+// Dialog Set: null | { keep, session }. When the fields still name the stored
+// LIVE session (to the minute, before the day shift), keep it as it is
+// (keep: true, no state change), so a session in overtime does not move to
+// tomorrow on a Set with no change. Else resolveSessionTimes with `now`.
+function resolveSessionDialogSet(startHHMM, endHHMM, base, now, live) {
+  const r = resolveSessionTimes(startHHMM, endHHMM, base);
+  if (!r) return null;
+  const ses = sanitizeSession(live);
+  const toMin = (ms) => Math.floor(ms / 60000) * 60000;
+  if (ses && r.start === toMin(ses.start) && r.end === toMin(ses.end)) return { keep: true, session: ses };
+  const s = resolveSessionTimes(startHHMM, endHHMM, base, now);
+  return s ? { keep: false, session: s } : null;
+}
 const S = {
   btn: (o = {}) => ({ padding: "3px 8px", fontSize: 10, fontFamily: FONT.mono, fontWeight: 700, background: "transparent", border: `1px solid ${T.border}`, borderRadius: 3, color: T.textDim, cursor: "pointer", ...o }),
   primaryBtn: (o = {}) => ({ padding: "4px 10px", fontSize: 10, fontFamily: FONT.mono, fontWeight: 700, background: T.accent, color: "#fff", border: "none", borderRadius: 3, cursor: "pointer", ...o }),
@@ -2670,8 +2882,8 @@ function useSwipe(ref, { onLeft, onRight, threshold = 50 } = {}) {
     const onEnd = (e) => {
       const t = e.changedTouches[0]; const dx = t.clientX - startX; const dy = t.clientY - startY;
       if (Math.abs(dx) > Math.abs(dy) && Math.abs(dx) > threshold) {
-        if (dx < 0 && onLeft) onLeft();
-        if (dx > 0 && onRight) onRight();
+        if (dx < 0 && onLeft) onLeft(e);
+        if (dx > 0 && onRight) onRight(e);
       }
     };
     el.addEventListener("touchstart", onStart, { passive: true });
@@ -5103,12 +5315,13 @@ function RenderBlock({ block: rawBlock, staggerIdx, slideTheme, editable, onChan
 }
 // © 2025-present Rui Quintino. Vela Slides — licensed under ELv2. See LICENSE.
 // ━━━ Branding Overlay ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-function BrandingOverlay({ branding, index, total, displayIndex, displayTotal, slideBg }) {
+function BrandingOverlay({ branding, index, total, displayIndex, displayTotal, hideSlideNumber, slideBg }) {
   if (!branding?.enabled) return null;
   const b = branding;
   const di = displayIndex != null ? displayIndex : index;
   const dt = displayTotal != null ? displayTotal : total;
-  const slideNum = `${String(di + 1).padStart(2, "0")} / ${String(dt).padStart(2, "0")}`;
+  // A Present detour (hidden slide) has no place in the numbering: show none.
+  const slideNum = hideSlideNumber ? "" : `${String(di + 1).padStart(2, "0")} / ${String(dt).padStart(2, "0")}`;
   const rightText = b.footerRight === "auto" ? slideNum : (b.footerRight || "");
   // Detect light slides for contrast-appropriate footer defaults
   const isLight = (() => {
@@ -5321,7 +5534,7 @@ function InlineCommentCard({ comment, itemId, slideIndex, dispatch }) {
   );
 }
 
-function SlideContent({ slide, index, total, branding, editable, onEdit, presenting, onBlockEdit, blockEditing, fontScale = 1, reviewMode, itemId, dispatch: externalDispatch, displayIndex, displayTotal, story, storyAnimate, onStoryJump, onStoryZoomOut, presentSurface }) {
+function SlideContent({ slide, index, total, branding, editable, onEdit, presenting, onBlockEdit, blockEditing, fontScale = 1, reviewMode, itemId, dispatch: externalDispatch, displayIndex, displayTotal, hideSlideNumber, story, storyAnimate, onStoryJump, onStoryZoomOut, presentSurface, flashBlock = -1 }) {
   const st = { text: slide.color || T.text, muted: slide.mutedColor || T.textMuted, textDim: T.textDim, accent: slide.accent || T.accent, border: T.border, codeBg: T.codeBg };
   // Hidden elements (CR: hide any element). In presentation they are removed
   // entirely — no render, no layout — so a slide can carry a title that only
@@ -5895,12 +6108,17 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
   // Render a single block with all editable chrome (hover, edit popup, link, etc.)
   // ── Per-block editor chrome: hover toolbar, AI/link/comment popups, badges ──
   const renderBlockItem = (b, i) => editable && onEdit ? (
-    <div key={i} data-block-type={b.type} style={{ position: "relative", ...(b.link ? { cursor: "pointer" } : {}), ...(b.hidden && !presenting ? { opacity: 0.4 } : {}) }}
+    <div key={i} data-block-type={b.type} data-search-flash={flashBlock === i && !presenting ? "1" : undefined} style={{ position: "relative", ...(b.link ? { cursor: "pointer" } : {}), ...(b.hidden && !presenting ? { opacity: 0.4 } : {}) }}
       title={b.link ? linkPreview(b.link, b.text || b.value || b.title) : undefined}
       data-pdf-link={b.link || undefined}
       onClick={b.link ? (e) => { e.stopPropagation(); openExternalLink(b.link); } : undefined}
       onMouseEnter={(e) => { setHoveredBlock(i); measureChromeRoom(e.currentTarget, i); }} onMouseLeave={() => { setHoveredBlock(null); setItemHovered(false); }}>
       {b.hidden && !presenting && <div style={{ position: "absolute", top: -6, left: -6, zIndex: 11, fontSize: 9, fontFamily: FONT.mono, fontWeight: 700, background: st.accent, color: "#fff", borderRadius: 4, padding: "0 4px", lineHeight: "14px", pointerEvents: "none" }} title="Hidden in presentation">🙈 hidden</div>}
+      {/* Editor search: brief outline on the matched block (SlidePanel flashBlock).
+          Static code-authored style, absolute + pointer-events none: no layout
+          change, no click or hover-toolbar block. Never in Present. The
+          outline sits inside the block box: a column wrapper clips overflow. */}
+      {flashBlock === i && !presenting && <div data-testid="search-flash" aria-hidden="true" style={{ position: "absolute", inset: 0, outline: "3px solid #f59e0b", outlineOffset: -3, borderRadius: 6, boxShadow: "0 0 12px rgba(245,158,11,0.45)", pointerEvents: "none", zIndex: 10 }} />}
       {editingBlockIdx === i && !presenting && <div style={{ position: "absolute", inset: -3, border: `2px solid ${st.accent}`, borderRadius: 6, pointerEvents: "none", zIndex: 10, boxShadow: `0 0 12px ${st.accent}40` }} />}
       {hoveredBlock === i && editingBlockIdx !== i && !presenting && <div style={{ position: "absolute", inset: -2, border: `1.5px dashed ${T.red}60`, borderRadius: 4, pointerEvents: "none", zIndex: 10 }} />}
       {hoveredBlock === i && !itemHovered && !presenting && <div data-testid="block-hover-toolbar" data-chrome-inside={chromeFlip[i]?.bar ? "true" : undefined} style={{ position: "absolute", ...(chromeFlip[i]?.bar ? { top: 6, right: 6 + (chromeFlip[i]?.shift || 0) } : { top: -8, right: -8 + (chromeFlip[i]?.shift || 0) }), display: "flex", gap: 3, zIndex: 11 }}>
@@ -6204,8 +6422,8 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
           </div>;
         })()}
         {branding?.enabled
-          ? <BrandingOverlay branding={branding} index={index} total={total} displayIndex={displayIndex} displayTotal={displayTotal} slideBg={slide.bg} />
-          : (() => { const di = displayIndex != null ? displayIndex : index; const dt = displayTotal != null ? displayTotal : total; return <div data-no-pdf="" style={{ position: "absolute", bottom: 16, right: 16, fontFamily: FONT.mono, fontSize: 11, fontWeight: 600, letterSpacing: "0.04em", color: "#e2e8f0", background: "rgba(0,0,0,0.4)", padding: "3px 9px", borderRadius: 20, opacity: 0.85 }}>{String(di + 1).padStart(2, "0")} / {String(dt).padStart(2, "0")}</div>; })()
+          ? <BrandingOverlay branding={branding} index={index} total={total} displayIndex={displayIndex} displayTotal={displayTotal} hideSlideNumber={hideSlideNumber} slideBg={slide.bg} />
+          : hideSlideNumber ? null : (() => { const di = displayIndex != null ? displayIndex : index; const dt = displayTotal != null ? displayTotal : total; return <div data-no-pdf="" style={{ position: "absolute", bottom: 16, right: 16, fontFamily: FONT.mono, fontSize: 11, fontWeight: 600, letterSpacing: "0.04em", color: "#e2e8f0", background: "rgba(0,0,0,0.4)", padding: "3px 9px", borderRadius: 20, opacity: 0.85 }}>{String(di + 1).padStart(2, "0")} / {String(dt).padStart(2, "0")}</div>; })()
         }
       </div>
     </SlideErrorBoundary>
@@ -6218,7 +6436,7 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
 // ModuleList local useState (CR2) so the TOC disclosure keys and the collapsed-header
 // current-slide marker can read/act on it.
 // aiWork (CR5): ephemeral UI signal (which slide Vera is actively editing) — never persisted.
-const init = { deckTitle: "Untitled", guidelines: "", lanes: [], selectedId: null, slideIndex: 0, selectedSlideIndices: [], collapsedSections: [], fullscreen: VELA_PRESENTATION_MODE, fontScale: 1, chatOpen: false, reviewMode: false, commentsPanelOpen: false, chatMessages: [{ role: "assistant", content: "Welcome aboard Vela. Paste your agenda or tell me where we're sailing. ⛵🖖", ts: now() }], chatLoading: false, lastDebug: "", branding: { ...defaultBranding }, veraMode: "editor", teacherHistory: {}, teacherLoading: false, aiWork: null, _deckEpoch: 0 };
+const init = { deckTitle: "Untitled", guidelines: "", lanes: [], selectedId: null, slideIndex: 0, selectedSlideIndices: [], collapsedSections: [], fullscreen: VELA_PRESENTATION_MODE, fontScale: 1, chatOpen: false, reviewMode: false, commentsPanelOpen: false, chatMessages: [{ role: "assistant", content: "Welcome aboard Vela. Paste your agenda or tell me where we're sailing. ⛵🖖", ts: now() }], chatLoading: false, lastDebug: "", branding: { ...defaultBranding }, session: null, veraMode: "editor", teacherHistory: {}, teacherLoading: false, aiWork: null, _deckEpoch: 0 };
 let _activeDeckEpoch = init._deckEpoch;
 const velaPrepareDeckReplacement = () => { _activeDeckEpoch += 1; };
 const velaSyncDeckEpoch = (epoch) => {
@@ -6589,6 +6807,16 @@ function innerReducer(state, a) {
       return { ...state, branding: b };
     }
     case "SET_GUIDELINES": return { ...state, guidelines: a.guidelines };
+    // Session end (deck-level, persisted). Re-sanitized here: third door into the
+    // field. null clears. An invalid non-null payload is a no-op (fail closed, and
+    // returning `state` adds no history step); so does an unchanged value.
+    case "SET_SESSION": {
+      const s = a.session == null ? null : sanitizeSession(a.session);
+      if (a.session != null && !s) return state;
+      const cur = state.session;
+      if ((cur == null && s == null) || (cur && s && cur.start === s.start && cur.end === s.end)) return state;
+      return { ...state, session: s };
+    }
     case "RESET": return { ...init, chatOpen: state.chatOpen, _deckEpoch: nextDeckEpoch(state) };
     case "SET_TITLE": return { ...state, deckTitle: a.title };
     default: return state;
@@ -8133,7 +8361,7 @@ function computeSlideLayoutStats(slideEl) {
 }
 
 // ━━━ Virtual Slide ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-function VirtualSlide({ slide, index, total, innerRef, branding, editable, onEdit, mode = "fit-width", onBlockEdit, blockEditing, fontScale, virtualW, virtualH, bordered, reviewMode, itemId, dispatch: externalDispatch, displayIndex, displayTotal, forceEdit, story, storyAnimate, onStoryJump, onStoryZoomOut }) {
+function VirtualSlide({ slide, index, total, innerRef, branding, editable, onEdit, mode = "fit-width", onBlockEdit, blockEditing, fontScale, virtualW, virtualH, bordered, reviewMode, itemId, dispatch: externalDispatch, displayIndex, displayTotal, hideSlideNumber, forceEdit, story, storyAnimate, onStoryJump, onStoryZoomOut, flashBlock = -1 }) {
   const outerRef = useRef(null);
   const isFill = mode === "fill";
 
@@ -8210,7 +8438,7 @@ function VirtualSlide({ slide, index, total, innerRef, branding, editable, onEdi
         transform: isFullscreen ? `translate(${offset.x}px, ${offset.y}px) scale(${scale})` : `scale(${scale})`,
         transformOrigin: "top left", background: bg, position: "absolute", top: 0, left: 0,
       }}>
-        {slide && <SlideContent key={`${index}-${vw}-${vh}`} slide={slide} index={index} total={total} branding={branding} editable={editable} onEdit={onEdit} presenting={((mode === "fit-viewport" || isFill) && !bordered) && !forceEdit} onBlockEdit={onBlockEdit} blockEditing={blockEditing} fontScale={fontScale} reviewMode={reviewMode} itemId={itemId} dispatch={externalDispatch} displayIndex={displayIndex} displayTotal={displayTotal}
+        {slide && <SlideContent key={`${index}-${vw}-${vh}`} slide={slide} index={index} total={total} branding={branding} editable={editable} onEdit={onEdit} presenting={((mode === "fit-viewport" || isFill) && !bordered) && !forceEdit} onBlockEdit={onBlockEdit} blockEditing={blockEditing} fontScale={fontScale} reviewMode={reviewMode} itemId={itemId} dispatch={externalDispatch} displayIndex={displayIndex} displayTotal={displayTotal} hideSlideNumber={hideSlideNumber} flashBlock={flashBlock}
           story={story} storyAnimate={storyAnimate === undefined ? presentSurface : !!storyAnimate} onStoryJump={onStoryJump} onStoryZoomOut={onStoryZoomOut} presentSurface={presentSurface} />}
       </div>
     </div>
@@ -8402,7 +8630,280 @@ function getSlideSource(slide, idx) {
 }
 function getSlideTitle(slide, idx) { return getSlideSource(slide, idx).text; }
 
-function PresenterTOC({ slides, slideIndex, onJump, lanes, currentConceptId, dispatch }) {
+// Search text of one slide (shared by Present and the editor): every string in
+// the slide's blocks and in the column areas L / R (nested layouts too), each
+// flagged when it sits in a hidden block. Each entry: { text, hidden, area, block }
+// where area is "blocks" | "L" | "R" and block the TOP-LEVEL index in that area
+// (area null, block -1 for slide.title). Styling, media and id keys are skipped
+// so colours and data URIs never match. The walk only reads: own enumerable keys
+// (Object.keys), prototype-named keys skipped, depth cap 8 (a read walk emits
+// nothing at the cap, so returning there is correct). The text is only compared
+// and rendered as React text children, never as markup or a style/URL value.
+//
+// Key classes (search reads prose only). Every key of SAFE_BLOCK_KEYS is in
+// exactly one of SEARCH_PROSE_KEYS (text written to be read: searched) and
+// PRESENT_SEARCH_SKIP (markup, colours, sizes, enums, icon names, ids, media,
+// flags: never searched); the search-engine suite (SE9) fails on a key in
+// neither set, so a new allowlisted field must get a class. Sub-objects (list
+// items, grid cells, sides, quadrants) keep any key (no allowlist at ingress),
+// so the walk skips by PRESENT_SEARCH_SKIP, which also lists the non-prose item
+// keys the renderers read (iconBg, status, gate, highlight, borderRadius).
+// Ambiguous keys: `alt` (not on the slide, but reader-facing text: searched);
+// `name` (the icon block's icon name: skipped); `lang` (code language: skipped).
+const SEARCH_PROSE_KEYS = new Set([
+  "text", "content", "title", "label", "value", "caption", "author", "alt", "items", "quadrants", "headers", "rows",
+  "gateLabel", "loopLabel", "centerLabel", "centerSub", "annotation", "leftLabel", "rightLabel",
+  "dividerLabel", "xLeft", "xRight", "yTop", "yBottom",
+  // sub-object prose keys: flow/steps sublabel, timeline date, funnel drop, grid cell blocks
+  "sublabel", "date", "drop", "blocks",
+]);
+const PRESENT_SEARCH_SKIP = new Set([
+  "type", "hidden", "style", "link", "markup", "src", "fit", "lang", "copy", "name", "cols",
+  "size", "align", "weight", "bold", "italic", "titleSize", "textSize", "labelSize", "sublabelSize", "captionSize",
+  "color", "bg", "border", "borderColor", "titleColor", "textColor", "labelColor", "sublabelColor", "captionColor",
+  "dateColor", "dotColor", "lineColor", "numberColor", "trackColor", "cellColor", "headerBg", "headerColor",
+  "arrowColor", "gateColor", "loopColor", "annotationColor", "iconColor", "iconBg",
+  "gap", "padding", "spacing", "maxWidth", "maxHeight", "height", "h", "rounded", "shadow", "bordered", "compact", "striped", "hideDivider",
+  "icon", "iconShape", "circle", "strokeWidth", "direction", "connectorStyle", "activeStep", "gateIcon", "loop", "loopStyle",
+  "showValue", "showIcons", "showLabels", "leftIcon", "rightIcon", "variant", "reveal",
+  // sub-object and legacy non-prose keys
+  "id", "image", "images", "svg", "bgGradient", "accent", "href", "url", "layout", "font", "comments",
+  "status", "gate", "highlight", "borderRadius",
+]);
+// Slide keys: the walk reads only title, blocks / L / R and (editor) notes.
+// Skipped: theme, layout, timing and flags; the legacy pre-block text fields
+// (subtitle, quote, author, bullets: not rendered on the slide); speakerNotes
+// and studyNotes (not in the search scope).
+const SEARCH_SLIDE_KEYS = {
+  prose: new Set(["title", "blocks", "L", "R", "notes"]),
+  skip: new Set(["layout", "subtitle", "quote", "author", "bullets", "bg", "bgGradient", "bgImage", "color", "mutedColor", "accent",
+    "align", "verticalAlign", "padding", "gap", "splitGap", "contentFlex", "imageFlex", "imageCols",
+    "duration", "timeLock", "hidden", "reviewed", "story", "speakerNotes", "studyNotes", "comments", "image"]),
+};
+function slideSearchTexts(slide) {
+  const out = [];
+  if (typeof slide?.title === "string" && slide.title) out.push({ text: slide.title, hidden: false, area: null, block: -1 });
+  const walk = (v, hidden, depth, area, block) => {
+    if (v == null || depth > 8) return;
+    if (typeof v === "string") { if (v && !v.startsWith("data:")) out.push({ text: v, hidden, area, block }); return; }
+    if (Array.isArray(v)) { for (const x of v) walk(x, hidden, depth + 1, area, block); return; }
+    if (typeof v === "object") {
+      const h = hidden || v.hidden === true;
+      for (const k of Object.keys(v)) {
+        if (PRESENT_SEARCH_SKIP.has(k) || k === "__proto__" || k === "constructor" || k === "prototype") continue;
+        walk(v[k], h, depth + 1, area, block);
+      }
+    }
+  };
+  // Depth 1 for each top-level block: the same depth the old walk over the
+  // blocks array gave its items, so the depth cap does not change.
+  for (const area of ["blocks", "L", "R"]) {
+    const arr = Array.isArray(slide?.[area]) ? slide[area] : [];
+    arr.forEach((b, i) => walk(b, false, 1, area, i));
+  }
+  return out;
+}
+// Render index of a matched top-level block: the `i` that the editor canvas
+// (SlideContent → renderBlockItem) gives it. blocks → i; column L → after the
+// blocks; column R → after blocks + L. Column areas render only on a "cols"
+// slide; else (or when the index is not exact) -1 = no block.
+function searchRenderIndex(slide, area, idx) {
+  if (typeof idx !== "number" || idx < 0) return -1;
+  const nB = Array.isArray(slide?.blocks) ? slide.blocks.length : 0;
+  if (area === "blocks") return idx;
+  const isCols = slide?.layout === "cols" && (Array.isArray(slide.L) || Array.isArray(slide.R));
+  if (!isCols || (area !== "L" && area !== "R")) return -1;
+  const nL = Array.isArray(slide.L) ? slide.L.length : 0;
+  return area === "L" ? nB + idx : nB + nL + idx;
+}
+// Snippet around the first hit (indexOf on lower-case text; no regex from the
+// query). A UTF-16 surrogate pair (emoji) is never cut at either end.
+// toLowerCase() can change the length (U+0130 "İ" -> 2 units): then an offset
+// in the lower-case text is not an offset in `flat`. In that case map the hit
+// [at, at + q.length) back to `flat` one code point at a time (per code point
+// the lower-case length is the same as in the whole string), start rounded
+// down and end rounded up to a code-point boundary, so the cut holds the hit.
+function searchSnippet(text, q) {
+  const flat = text.replace(/\s+/g, " ");
+  const lower = flat.toLowerCase();
+  const at = lower.indexOf(q);
+  let hitFrom = at, hitTo = at + q.length;
+  if (at >= 0 && lower.length !== flat.length) {
+    let o = 0, lo = 0;
+    hitFrom = -1;
+    while (o < flat.length) {
+      const ch = String.fromCodePoint(flat.codePointAt(o));
+      const n = ch.toLowerCase().length;
+      if (hitFrom < 0 && lo + n > at) hitFrom = o;
+      lo += n; o += ch.length;
+      if (lo >= at + q.length) break;
+    }
+    if (hitFrom < 0) hitFrom = o;
+    hitTo = o;
+  }
+  const low = (i) => { const c = flat.charCodeAt(i); return c >= 0xDC00 && c <= 0xDFFF; };
+  let from = Math.max(0, hitFrom - 24), to = Math.min(flat.length, hitTo + 36);
+  if (from > 0 && low(from)) from--;
+  if (to < flat.length && low(to)) to++;
+  return (from > 0 ? "…" : "") + flat.slice(from, to) + (to < flat.length ? "…" : "");
+}
+// One slide against a trimmed lower-case query: title first, then visible block
+// text, then hidden block text, then (opts.notes, editor only) slide.notes.
+// Returns null on no match, else { title, snippet, kind, area, block, hiddenBlock }.
+// kind: "title" | "block" | "hidden-block" | "notes". A title match carries no
+// block (no outline).
+function matchSlide(slide, idx, q, opts) {
+  const title = getSlideTitle(slide, idx);
+  if (!q || title.toLowerCase().includes(q)) return { title, snippet: null, kind: "title", area: null, block: -1, hiddenBlock: false };
+  const texts = slideSearchTexts(slide);
+  const has = (t) => t.text.toLowerCase().includes(q);
+  const hit = texts.find((t) => !t.hidden && has(t)) || texts.find((t) => t.hidden && has(t));
+  if (hit) return { title, snippet: searchSnippet(hit.text, q), kind: hit.hidden ? "hidden-block" : "block", area: hit.area, block: hit.block, hiddenBlock: hit.hidden };
+  if (opts?.notes && typeof slide?.notes === "string" && slide.notes.toLowerCase().includes(q))
+    return { title, snippet: searchSnippet(slide.notes, q), kind: "notes", area: null, block: -1, hiddenBlock: false };
+  return null;
+}
+// Present scope: no notes.
+function matchPresentSlide(slide, idx, q) { return matchSlide(slide, idx, q, null); }
+// Flat result list over all lanes (editor). One row per matching slide, in tree
+// order (lane order, then item `order`, as ModuleList). opts.notes: also search
+// slide notes. opts.sections: a section whose NAME matches with no matching
+// slide gives one row for its first slide (kind "section"); an empty section
+// gives no row. renderIdx: canvas render index of the matched block, or -1.
+function searchDeck(lanes, query, opts) {
+  const q = String(query || "").toLowerCase().trim();
+  if (!q) return [];
+  const rows = [];
+  for (const lane of (Array.isArray(lanes) ? lanes : [])) {
+    const items = [...(Array.isArray(lane?.items) ? lane.items : [])].sort((a, b) => (a.order ?? 999) - (b.order ?? 999));
+    for (const item of items) {
+      const slides = Array.isArray(item?.slides) ? item.slides : [];
+      const before = rows.length;
+      slides.forEach((s, i) => {
+        const m = matchSlide(s, i, q, opts);
+        if (m) rows.push({ key: item.id + ":" + i, sectionId: item.id, sectionTitle: item.title, laneId: lane.id, slideIdx: i,
+          title: m.title, snippet: m.snippet, kind: m.kind, block: m.block, renderIdx: m.area ? searchRenderIndex(s, m.area, m.block) : -1,
+          hiddenSlide: !!s?.hidden, collapsedLane: !!lane.collapsed });
+      });
+      if (opts?.sections && rows.length === before && slides.length && typeof item.title === "string" && item.title.toLowerCase().includes(q))
+        rows.push({ key: item.id + ":0", sectionId: item.id, sectionTitle: item.title, laneId: lane.id, slideIdx: 0,
+          title: getSlideTitle(slides[0], 0), snippet: searchSnippet(item.title, q), kind: "section", block: -1, renderIdx: -1,
+          hiddenSlide: !!slides[0]?.hidden, collapsedLane: !!lane.collapsed });
+    }
+  }
+  return rows;
+}
+// Split text into [{ t, hit }] at each case-insensitive occurrence of q (already
+// lower-case + trimmed). indexOf only, never a RegExp from the query.
+// Non-overlapping, left to right, at most maxHits hits. toLowerCase() can change
+// the length of a string (for example U+0130): then lower-case offsets do not
+// map to the original, so that string gets no highlight (the match still
+// counts). A hit that would cut a surrogate pair is not highlighted.
+function splitHighlight(text, q, maxHits = 50) {
+  const s = typeof text === "string" ? text : "";
+  if (!q || typeof q !== "string" || !s) return [{ t: s, hit: false }];
+  const lower = s.toLowerCase();
+  if (lower.length !== s.length) return [{ t: s, hit: false }];
+  const hi = (i) => { const c = s.charCodeAt(i); return c >= 0xD800 && c <= 0xDBFF; };
+  const lo = (i) => { const c = s.charCodeAt(i); return c >= 0xDC00 && c <= 0xDFFF; };
+  const out = [];
+  let pos = 0, from = 0, n = 0;
+  while (n < maxHits) {
+    const at = lower.indexOf(q, from);
+    if (at < 0) break;
+    const end = at + q.length;
+    if ((at > 0 && lo(at) && hi(at - 1)) || (end < s.length && lo(end) && hi(end - 1))) { from = at + 1; continue; }
+    if (at > pos) out.push({ t: s.slice(pos, at), hit: false });
+    out.push({ t: s.slice(at, end), hit: true });
+    pos = from = end; n++;
+  }
+  if (pos < s.length || !out.length) out.push({ t: s.slice(pos), hit: false });
+  return out;
+}
+// Highlighted text: React text children + a <span> with a static, code-authored
+// style (no deck value in any style). Min 13 px for the hit.
+function HighlightText({ text, q }) {
+  return <>{splitHighlight(text, q).map((p, i) => p.hit
+    ? <span key={i} data-testid="search-hit" style={{ background: T.amber + "55", color: "inherit", borderRadius: 2, fontSize: "max(13px, 1em)" }}>{p.t}</span>
+    : <React.Fragment key={i}>{p.t}</React.Fragment>)}</>;
+}
+// Keyboard selection over a flat result list. Up/Down stop at the ends (no wrap)
+// and act only when there are results (else the caret moves as usual). The
+// selection resets to the first result when resetKey (the query) changes.
+function useSearchNav(count, resetKey, { onOpen, onEscape }) {
+  const [sel, setSel] = useState(0);
+  useEffect(() => { setSel(0); }, [resetKey]);
+  const selRef = useRef(null); // DOM node of the selected row
+  useEffect(() => { selRef.current?.scrollIntoView?.({ block: "nearest" }); }, [sel, resetKey]);
+  const cur = Math.min(sel, Math.max(0, count - 1));
+  const onKey = (e) => { // from the input's onKeyDown; true when handled
+    if ((e.key === "ArrowDown" || e.key === "ArrowUp") && count > 0) {
+      e.preventDefault();
+      setSel(e.key === "ArrowDown" ? Math.min(count - 1, cur + 1) : Math.max(0, cur - 1));
+      return true;
+    }
+    if (e.key === "Enter") { e.preventDefault(); if (count > 0) onOpen(cur); return true; }
+    if (e.key === "Escape") { e.preventDefault(); onEscape(); return true; }
+    return false;
+  };
+  return { sel: cur, setSel, onKey, selRef };
+}
+// One search / TOC result row (PresenterTOC; the editor search reuses it).
+// selected = keyboard selection (accent outline, aria-selected); active = the
+// current slide (accent tint + left bar). The two looks differ on purpose.
+// size "present" keeps the Present panel sizes; "editor" uses 13 px text.
+function SearchResultRow({ title, snippet, kind, hiddenBlock, hiddenSlide, q, selected, active, dim, muted, num, onClick, rowRef, testid, size = "present" }) {
+  const ed = size === "editor";
+  const badge = (label, color, id) => <span data-testid={id} style={{ fontFamily: FONT.mono, fontSize: ed ? 13 : 8, fontWeight: 700, color, border: `1px solid ${color}60`, borderRadius: 3, padding: "0 3px", marginRight: 5, letterSpacing: "0.04em" }}>{label}</span>;
+  return (
+    <div
+      ref={rowRef}
+      data-testid={testid}
+      data-search-row={q ? "1" : undefined}
+      role={q ? "option" : undefined}
+      aria-selected={q ? !!selected : undefined}
+      onClick={onClick}
+      style={{
+        padding: "6px 16px 6px 24px", cursor: "pointer",
+        display: "flex", alignItems: "baseline", gap: 10,
+        background: active ? `${T.accent}18` : "transparent",
+        borderLeft: active ? `3px solid ${T.accent}` : "3px solid transparent",
+        outline: selected ? `2px solid ${T.accent}` : "none", outlineOffset: -2,
+        transition: "background 0.15s", opacity: dim && !active ? 0.6 : 1,
+      }}
+      onMouseEnter={(e) => { if (!active) e.currentTarget.style.background = T.isDark ? "rgba(255,255,255,0.04)" : "rgba(0,0,0,0.04)"; }}
+      onMouseLeave={(e) => { if (!active) e.currentTarget.style.background = "transparent"; }}
+    >
+      <span style={{ fontFamily: FONT.mono, fontSize: ed ? 13 : 9, color: active ? T.accent : T.textDim, minWidth: 14, textAlign: "right", flexShrink: 0 }}>{num}</span>
+      <span style={{ display: "flex", flexDirection: "column", minWidth: 0, gap: 2 }}>
+        <span style={{
+          fontFamily: FONT.display, fontSize: 13, fontWeight: active ? 600 : 400,
+          color: active ? T.text : muted ? T.textMuted : T.textDim,
+          lineHeight: 1.4, overflow: "hidden", textOverflow: "ellipsis",
+          display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical",
+        }}>{hiddenSlide && badge("HIDDEN", T.amber, "search-hidden-slide")}<HighlightText text={title} q={q} /></span>
+        {snippet && <span data-testid="toc-snippet" style={{ fontFamily: FONT.body, fontSize: ed ? 13 : 11, color: T.textDim, lineHeight: 1.35, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {hiddenBlock && badge("HIDDEN BLOCK", T.amber, "toc-hidden-block")}
+          {kind === "notes" && badge("NOTES", T.textMuted, "search-notes-badge")}
+          {kind === "section" && badge("SECTION", T.textMuted, "search-section-badge")}
+          <HighlightText text={snippet} q={q} />
+        </span>}
+      </span>
+    </div>
+  );
+}
+// "Module · slide title" for a detour's return point (Present index → raw slide).
+function detourReturnTitle(lanes, ret) {
+  for (const l of (lanes || [])) {
+    const it = (l.items || []).find((i) => i.id === ret.id);
+    if (!it) continue;
+    const raw = ret.index - (it.presentCard ? 1 : 0);
+    return raw < 0 ? it.title : `${it.title} · ${getSlideTitle((it.slides || [])[raw], raw)}`;
+  }
+  return "";
+}
+
+function PresenterTOC({ slides, slideIndex, onJump, lanes, currentConceptId, dispatch, onDetour }) {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [pinned, setPinned] = useState(false);
@@ -8460,11 +8961,31 @@ function PresenterTOC({ slides, slideIndex, onJump, lanes, currentConceptId, dis
         // Hidden slides are not part of the presentation, so keep them out of the
         // presenter TOC/search entirely (but preserve their real slide index).
         const itemSlides = (item.slides || []).map((s, i) => {
-          const title = getSlideTitle(s, i);
-          return { title, slideIdx: i, hidden: !!s.hidden, visible: !s.hidden && (!q || title.toLowerCase().includes(q)) };
-        }).filter((s) => !s.hidden);
+          if (s.hidden) return null;
+          const m = matchPresentSlide(s, i, q);
+          return { title: m ? m.title : getSlideTitle(s, i), snippet: m?.snippet, hiddenBlock: !!m?.hiddenBlock, slideIdx: i, visible: !!m };
+        }).filter(Boolean);
         if (q && !itemSlides.some((s) => s.visible) && !item.title.toLowerCase().includes(q)) continue;
         groups.push({ id: item.id, title: item.title, laneTitle: lane.title, slides: itemSlides, isCurrent: item.id === currentConceptId });
+      }
+    }
+    return groups;
+  }, [lanes, search, currentConceptId]);
+  // Detour results: while a query is typed, matching hidden slides and slides
+  // in collapsed lanes, listed after the presentation's own matches.
+  const detourGroups = useMemo(() => {
+    const q = search.toLowerCase().trim();
+    if (!q) return [];
+    const groups = [];
+    for (const lane of (lanes || [])) {
+      for (const item of lane.items) {
+        const hits = [];
+        (item.slides || []).forEach((s, i) => {
+          if (!s.hidden && !lane.collapsed) return;
+          const m = matchPresentSlide(s, i, q);
+          if (m) hits.push({ ...m, slideIdx: i, visible: true });
+        });
+        if (hits.length) groups.push({ id: item.id, title: item.title, slides: hits, isCurrent: item.id === currentConceptId });
       }
     }
     return groups;
@@ -8494,10 +9015,12 @@ function PresenterTOC({ slides, slideIndex, onJump, lanes, currentConceptId, dis
   const activeRef = useRef(null);
   useEffect(() => { if (open) requestAnimationFrame(() => { activeRef.current?.scrollIntoView({ block: "nearest", behavior: "smooth" }); }); }, [slideIndex, open, currentConceptId]);
 
-  const handleJump = (moduleId, slideIdx) => {
+  const handleJump = (moduleId, slideIdx, detour = false) => {
     // Add the target module's title-card offset so the jump lands on the intended
     // slide (not one early) in presentCard modules.
     const idx = slideIdx + (presentCardOf(moduleId) ? 1 : 0);
+    // A detour jump records where to return; a normal jump ends any detour.
+    onDetour?.(detour, { id: moduleId, index: idx });
     if (moduleId === currentConceptId) {
       onJump(idx);
     } else {
@@ -8510,12 +9033,37 @@ function PresenterTOC({ slides, slideIndex, onJump, lanes, currentConceptId, dis
     setOpen(false);
   };
 
-  // Enter in the search box jumps to the first slide that matches (CR: theme jump).
-  const jumpFirstMatch = () => {
-    for (const g of grouped) {
-      const first = g.slides.find((s) => s.visible);
-      if (first) { handleJump(g.id, first.slideIdx); return; }
-    }
+  // Search results in one keyboard order: the presentation's own matches, then
+  // the detour matches (hidden slides / collapsed lanes). Enter opens the
+  // selected one (the first by default, CR: theme jump); a detour row starts the
+  // detour as a click does.
+  const q = search.toLowerCase().trim();
+  const flat = q ? [
+    ...grouped.flatMap((g) => g.slides.filter((s) => s.visible).map((s) => ({ g, s, detour: false }))),
+    ...detourGroups.flatMap((g) => g.slides.map((s) => ({ g, s, detour: true }))),
+  ] : [];
+  const nav = useSearchNav(flat.length, q, {
+    onOpen: (i) => handleJump(flat[i].g.id, flat[i].s.slideIdx, flat[i].detour),
+    onEscape: () => { if (search) setSearch(""); else { setOpen(false); setPinned(false); } },
+  });
+  const selItem = flat[nav.sel];
+
+  const renderRow = (group, s, detour) => {
+    const { title, slideIdx, visible, snippet, hiddenBlock } = s;
+    if (!visible) return null;
+    const active = group.isCurrent && slideIdx === slideIndex - currentOffset;
+    const selected = !!selItem && selItem.g === group && selItem.s === s;
+    return (
+      <SearchResultRow
+        key={slideIdx}
+        rowRef={(el) => { if (active) activeRef.current = el; if (selected) nav.selRef.current = el; }}
+        testid={detour ? "toc-detour-row" : undefined}
+        onClick={() => handleJump(group.id, slideIdx, detour)}
+        title={title} snippet={snippet} hiddenBlock={hiddenBlock} q={q}
+        selected={selected} active={active} dim={detour} muted={group.isCurrent}
+        num={detour ? "🙈" : slideIdx + 1}
+      />
+    );
   };
 
   return (
@@ -8554,8 +9102,7 @@ function PresenterTOC({ slides, slideIndex, onJump, lanes, currentConceptId, dis
               // Ctrl/Cmd+E must still bubble to the global toggle so it closes the pane.
               if ((e.ctrlKey || e.metaKey) && (e.key === "e" || e.key === "E")) return;
               e.stopPropagation();
-              if (e.key === "Enter") { e.preventDefault(); jumpFirstMatch(); }
-              if (e.key === "Escape") { if (search) setSearch(""); else { setOpen(false); setPinned(false); } }
+              nav.onKey(e);
             }}
             placeholder="Search slides… (Enter jumps)"
             style={{
@@ -8565,9 +9112,13 @@ function PresenterTOC({ slides, slideIndex, onJump, lanes, currentConceptId, dis
             }}
           />
         </div>
+        {q && <div data-testid="search-count" style={{ display: "flex", justifyContent: "space-between", padding: "0 14px 6px", fontFamily: FONT.mono, fontSize: 13, color: T.textDim }}>
+          <span data-testid="search-count-pos">{flat.length ? nav.sel + 1 : 0} / {flat.length}</span>
+          <span data-testid="search-count-total">{flat.length} {flat.length === 1 ? "slide" : "slides"}</span>
+        </div>}
 
         {/* Grouped slide list */}
-        <div data-scroll-container style={{ flex: 1, overflowY: "auto", padding: "4px 0" }}>
+        <div data-scroll-container role={q ? "listbox" : undefined} aria-label={q ? "Search results" : undefined} style={{ flex: 1, overflowY: "auto", padding: "4px 0" }}>
           {grouped.map((group) => (
             <div key={group.id}>
               {/* Module header */}
@@ -8583,38 +9134,24 @@ function PresenterTOC({ slides, slideIndex, onJump, lanes, currentConceptId, dis
                 <span style={{ fontFamily: FONT.mono, fontSize: 9, color: T.textDim }}>{group.slides.length}</span>
               </div>
               {/* Slides */}
-              {group.slides.map(({ title, slideIdx, visible }) => {
-                if (!visible) return null;
-                const active = group.isCurrent && slideIdx === slideIndex - currentOffset;
-                return (
-                  <div
-                    key={slideIdx}
-                    ref={active ? activeRef : null}
-                    onClick={() => handleJump(group.id, slideIdx)}
-                    style={{
-                      padding: "6px 16px 6px 24px", cursor: "pointer",
-                      display: "flex", alignItems: "baseline", gap: 10,
-                      background: active ? `${T.accent}18` : "transparent",
-                      borderLeft: active ? `3px solid ${T.accent}` : "3px solid transparent",
-                      transition: "background 0.15s",
-                    }}
-                    onMouseEnter={(e) => { if (!active) e.currentTarget.style.background = T.isDark ? "rgba(255,255,255,0.04)" : "rgba(0,0,0,0.04)"; }}
-                    onMouseLeave={(e) => { if (!active) e.currentTarget.style.background = "transparent"; }}
-                  >
-                    <span style={{ fontFamily: FONT.mono, fontSize: 9, color: active ? T.accent : T.textDim, minWidth: 14, textAlign: "right", flexShrink: 0 }}>{slideIdx + 1}</span>
-                    <span style={{
-                      fontFamily: FONT.display, fontSize: 13, fontWeight: active ? 600 : 400,
-                      color: active ? T.text : group.isCurrent ? T.textMuted : T.textDim,
-                      lineHeight: 1.4, overflow: "hidden", textOverflow: "ellipsis",
-                      display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical",
-                    }}>{title}</span>
-                  </div>
-                );
-              })}
+              {group.slides.map((s) => renderRow(group, s, false))}
             </div>
           ))}
-          {grouped.length === 0 && search && (
-            <div style={{ padding: "20px 16px", fontFamily: FONT.body, fontSize: 13, color: T.textDim, textAlign: "center" }}>No matches</div>
+          {detourGroups.length > 0 && (
+            <div data-testid="toc-detour-section" style={{ marginTop: 6, borderTop: `1px dashed ${T.border}` }}>
+              <div style={{ padding: "8px 16px 2px", display: "flex", alignItems: "center", gap: 6, fontFamily: FONT.mono, fontSize: 9, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: T.textDim }}>
+                🙈 Hidden · detour
+              </div>
+              {detourGroups.map((group) => (
+                <div key={group.id}>
+                  <div style={{ padding: "6px 16px 2px", fontFamily: FONT.mono, fontSize: 9, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: T.textDim, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{group.title}</div>
+                  {group.slides.map((s) => renderRow(group, s, true))}
+                </div>
+              ))}
+            </div>
+          )}
+          {grouped.length === 0 && detourGroups.length === 0 && search && (
+            <div data-testid="search-no-matches" style={{ padding: "20px 16px", fontFamily: FONT.body, fontSize: 13, color: T.textDim, textAlign: "center" }}>No matches</div>
           )}
         </div>
 
@@ -8710,7 +9247,67 @@ function fmtElapsed(totalSeconds) {
   const r = s % 60;
   return `${m}:${String(r).padStart(2, "0")}`;
 }
-function PresenterView({ current, next, index, total, duration, elapsed, branding, onClose, currentStory, nextStory }) {
+// Session card (v13.80, layout "C"): NOW clock; with a live session also time
+// left, time bar, pace verdict and pace track. Every value is a number or a
+// code-built string from the pace helpers; colours come from the static
+// SESSION_PACE_COLORS map; widths/lefts are clamped fractions. A label on the
+// pace track uses left:X% + translateX(-X%), so it stays inside the track at
+// 0 % and 100 %. YOU sits above and SHOULD BE below, so they never overlap.
+function PresenterSessionCard({ nowMs, session, pace, estimated, youNum, shouldNum, onEditSession }) {
+  const lab = { display: "block", fontFamily: FONT.mono, fontSize: 13, color: "#94a3b8", letterSpacing: "0.06em" };
+  const clock = <span data-testid="presenter-clock" style={{ display: "block", fontFamily: FONT.mono, fontSize: 56, fontWeight: 700, color: "#fff", lineHeight: 1.05 }}>{fmtClock(nowMs)}</span>;
+  const card = { flexShrink: 0, background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 10 };
+  if (!session || !pace) return (
+    <div data-testid="presenter-session-panel" style={{ ...card, padding: "14px 18px" }}>
+      <span style={lab}>NOW</span>
+      {clock}
+      <button type="button" data-testid="presenter-session-set" onClick={onEditSession} title="Set session end" aria-label="Set session end" style={{ marginTop: 12, width: "100%", padding: "8px 12px", fontFamily: FONT.mono, fontSize: 14, fontWeight: 600, color: "#e2e8f0", background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.2)", borderRadius: 6, cursor: "pointer" }}>{"🕒"} Set session end</button>
+    </div>
+  );
+  const pc = (f) => `${(Math.max(0, Math.min(1, f)) * 100).toFixed(2)}%`;
+  const paceColor = SESSION_PACE_COLORS[pace.paceKey] || SESSION_PACE_COLORS.white;
+  const leftColor = SESSION_PACE_COLORS[pace.timeLeftKey] || SESSION_PACE_COLORS.white;
+  const leftText = `${pace.over ? "+" : ""}${fmtCountdown(pace.timeLeftSec)}`;
+  // Pace track: same geometry as the fullscreen edge bar (sessionBarGeom).
+  const geom = sessionBarGeom(pace);
+  const barColor = SESSION_PACE_COLORS[geom.key];
+  const you = `${geom.you}%`, should = `${geom.should}%`;
+  const tag = (frac, extra) => ({ position: "absolute", left: frac, transform: `translateX(-${frac})`, whiteSpace: "nowrap", fontFamily: FONT.mono, fontSize: 13, fontWeight: 700, ...extra });
+  return (
+    <div data-testid="presenter-session-panel" style={card}>
+      <button type="button" onClick={onEditSession} title="Edit session end" aria-label={`Session: ${leftText} ${pace.over ? "over" : "left"}, ${pace.verdict}. Edit session end`}
+        style={{ display: "block", width: "100%", textAlign: "left", padding: "14px 18px", background: "none", border: "none", color: "#e2e8f0", cursor: "pointer", font: "inherit" }}>
+        <span style={lab}>NOW</span>
+        {clock}
+        <span style={{ ...lab, marginTop: 10 }}>TIME LEFT</span>
+        <span data-testid="presenter-time-left" style={{ display: "block", fontFamily: FONT.mono, fontSize: 34, fontWeight: 700, color: leftColor, lineHeight: 1.15 }}>{leftText}</span>
+        <span data-testid="presenter-time-bar" style={{ display: "block", position: "relative", height: 8, marginTop: 8, borderRadius: 4, background: "rgba(255,255,255,0.12)", overflow: "hidden" }}>
+          <span style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: pace.over ? "100%" : pc(pace.elapsedFrac), background: leftColor, borderRadius: 4 }} />
+        </span>
+        <span style={{ display: "flex", justifyContent: "space-between", marginTop: 6, fontFamily: FONT.mono, fontSize: 13, color: "#94a3b8" }}>
+          <span>started {fmtClock(session.start)}</span><span>ends {fmtClock(session.end)}</span>
+        </span>
+        <span style={{ ...lab, marginTop: 12 }}>PACE</span>
+        <span data-testid="presenter-pace" style={{ display: "block", fontFamily: FONT.mono, fontSize: 22, fontWeight: 700, color: paceColor, lineHeight: 1.25 }}>{pace.verdict}</span>
+        <span style={{ display: "block", position: "relative", height: 18, marginTop: 8 }}>
+          <span style={tag(you, { top: 0, color: "#fff" })}>YOU · slide {youNum ?? "–"}</span>
+        </span>
+        <span data-testid="presenter-pace-track" style={{ display: "block", position: "relative", height: 8, marginTop: 4, borderRadius: 4, background: "rgba(255,255,255,0.12)" }}>
+          <span style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: `${geom.lo}%`, background: "rgba(255,255,255,0.45)", borderRadius: 4 }} />
+          <span data-testid="presenter-pace-gap" style={{ position: "absolute", top: 0, bottom: 0, left: `min(${geom.lo}%, calc(100% - 6px))`, width: `max(6px, ${geom.gap}%)`, background: barColor, borderRadius: 4 }} />
+          <span data-testid="presenter-pace-should" style={{ position: "absolute", top: -5, bottom: -5, width: 3, left: should, transform: `translateX(-${should})`, background: barColor, borderRadius: 1 }} />
+          <span data-testid="presenter-pace-you" style={{ position: "absolute", top: -5, bottom: -5, width: 3, left: you, transform: `translateX(-${you})`, background: "#fff", borderRadius: 1 }} />
+        </span>
+        <span style={{ display: "block", position: "relative", height: 18, marginTop: 6 }}>
+          <span style={tag(should, { top: 0, color: paceColor })}>SHOULD BE · slide {shouldNum ?? "–"}</span>
+        </span>
+        <span style={{ display: "block", marginTop: 8, fontFamily: FONT.mono, fontSize: 13, color: "#94a3b8", lineHeight: 1.4 }}>slides left need {fmtCountdown(pace.need)} · you have {fmtCountdown(Math.max(0, pace.have))}</span>
+        {estimated > 0 && <span style={{ display: "block", marginTop: 4, fontFamily: FONT.mono, fontSize: 13, color: "#64748b", fontStyle: "italic" }}>~ {estimated} slides estimated (no duration)</span>}
+      </button>
+    </div>
+  );
+}
+function PresenterView({ current, next, index, total, duration, elapsed, branding, onClose, currentStory, nextStory, detourReturn, sessionCard }) {
   const notes = (current?.notes || "").trim();
   // Story slide: the NEXT step can still be on this slide (nextStory set), so
   // NEXT then shows the current slide at that step, labelled "image k/N" or
@@ -8725,7 +9322,9 @@ function PresenterView({ current, next, index, total, duration, elapsed, brandin
         <span style={{ fontSize: 16 }}>🗒️</span>
         <span style={{ fontFamily: FONT.mono, fontSize: 13, fontWeight: 700, color: "#60a5fa", letterSpacing: "0.05em" }}>PRESENTER VIEW</span>
         <span data-testid="presenter-timer" style={{ fontFamily: FONT.mono, fontSize: 15, fontWeight: 700, color: "#fff", background: "rgba(255,255,255,0.08)", padding: "3px 12px", borderRadius: 6 }}>⏱ {fmtElapsed(elapsed)}</span>
-        <span style={{ fontFamily: FONT.mono, fontSize: 12, color: "#94a3b8" }}>Slide {index + 1} / {total}</span>
+        {detourReturn != null
+          ? <span data-testid="presenter-detour" style={{ fontFamily: FONT.mono, fontSize: 12, fontWeight: 700, color: "#0a0d14", background: "#f59e0b", padding: "3px 10px", borderRadius: 6, maxWidth: "40%", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>↪ DETOUR · hidden slide · ← → Esc return to {detourReturn}</span>
+          : <span style={{ fontFamily: FONT.mono, fontSize: 12, color: "#94a3b8" }}>Slide {index + 1} / {total}</span>}
         {duration > 0 && <span style={{ fontFamily: FONT.mono, fontSize: 12, color: "#facc15" }}>budget {fmtElapsed(duration)}</span>}
         <span style={{ marginLeft: "auto", fontFamily: FONT.mono, fontSize: 11, color: "#64748b" }}>← → to advance · S or Esc to close</span>
         <button onClick={onClose} title="Close presenter view" style={{ background: "none", border: "none", color: "#94a3b8", cursor: "pointer", fontSize: 18, padding: 4 }}>✕</button>
@@ -8736,7 +9335,7 @@ function PresenterView({ current, next, index, total, duration, elapsed, brandin
           <div style={{ flex: 1, minHeight: 0, borderRadius: 10, overflow: "hidden", border: "2px solid #3b82f6", boxShadow: "0 0 24px rgba(59,130,246,0.25)", display: "flex", alignItems: "center" }}>
             {current ? <GalleryThumb slide={current} slideIdx={index} total={total} branding={branding} story={currentStory} /> : <div style={{ width: "100%", padding: 40, textAlign: "center", color: "#64748b" }}>No slide</div>}
           </div>
-          <div data-testid="presenter-notes" style={{ flexShrink: 0, maxHeight: "38%", overflowY: "auto", background: "rgba(255,255,255,0.05)", borderRadius: 8, padding: 14 }}>
+          <div data-testid="presenter-notes" data-scroll-container style={{ flexShrink: 0, maxHeight: "38%", overflowY: "auto", background: "rgba(255,255,255,0.05)", borderRadius: 8, padding: 14 }}>
             <div style={{ fontFamily: FONT.mono, fontSize: 10, color: "#64748b", letterSpacing: "0.05em", marginBottom: 6 }}>📝 SPEAKER NOTES</div>
             {notes ? <div style={{ fontSize: 14, lineHeight: 1.6, whiteSpace: "pre-wrap" }}>{notes}</div> : <div style={{ fontSize: 13, color: "#64748b", fontStyle: "italic" }}>No notes</div>}
             {studyNotes && <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px solid rgba(255,255,255,0.08)" }}>
@@ -8745,13 +9344,14 @@ function PresenterView({ current, next, index, total, duration, elapsed, brandin
             </div>}
           </div>
         </div>
-        <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 8, minWidth: 180, maxWidth: 320 }}>
+        <div data-scroll-container style={{ flex: 1, display: "flex", flexDirection: "column", gap: 8, minWidth: 180, maxWidth: 320, minHeight: 0, overflowY: "auto" }}>
           <div style={{ fontFamily: FONT.mono, fontSize: 10, color: "#64748b", letterSpacing: "0.05em" }}>NEXT ▸{nextInSlide && <span data-testid="presenter-next-story"> {nextStoryLabel}</span>}</div>
-          <div data-testid="presenter-next" style={{ borderRadius: 8, overflow: "hidden", border: "1px solid rgba(255,255,255,0.15)", opacity: 0.85 }}>
+          <div data-testid="presenter-next" style={{ flexShrink: 0, borderRadius: 8, overflow: "hidden", border: "1px solid rgba(255,255,255,0.15)", opacity: 0.85 }}>
             {/* One key for both NEXT thumbs: no remount (shimmer) when the story ends. */}
             {nextInSlide ? <GalleryThumb key="next" slide={current} slideIdx={index} total={total} branding={branding} story={nextStory} />
               : next ? <GalleryThumb key="next" slide={next} slideIdx={index + 1} total={total} branding={branding} /> : <div style={{ aspectRatio: "16/9", display: "flex", alignItems: "center", justifyContent: "center", color: "#64748b", fontFamily: FONT.mono, fontSize: 13, background: "rgba(255,255,255,0.03)", borderRadius: 8 }}>End</div>}
           </div>
+          {sessionCard && <PresenterSessionCard {...sessionCard} />}
         </div>
       </div>
     </div>
@@ -9501,6 +10101,30 @@ function useToolbarCompact(ref, key) {
   return hide;
 }
 
+// Present edge bar (v13.80): the T-key hide choice. Memory only, for the page
+// session; module-level so it survives SlidePanel remounts. Never stored.
+const VELA_SESSION_BAR = { hidden: false };
+// Present clock chip (v13.80): the C-key show choice, kept on this device only
+// (not in the deck). Stored as "1" or absent; a read compares with "1" only.
+const VELA_PRESENT_CLOCK_KEY = "vela-present-clock";
+// Clock chip bottom offset (CSS) in Present. `branding` is the sanitized
+// branding state, or null when the slide shows no branding. Only booleans and
+// clamped numbers come from it: no branding string reaches the style.
+// Fill mode: slide scale s <= max(vw/960, vh/540) (computeFillDims: the zoom is
+// never above the height ratio), so K virtual px are at most
+// max(K/960 vw, K/540 vh) on screen. Branding on: clear the 28 px footer strip.
+// Logo at the bottom left (same position test as BrandingOverlay): clear the
+// logo box too (bottom 36 + height, then 8 px). Height as BrandingOverlay
+// draws it (logoSize || 56), capped at the 120 px limit of the import sanitizer.
+function presentClockBottom(branding) {
+  if (!branding?.enabled) return 24;
+  const pos = typeof branding.logoPosition === "string" && branding.logoPosition ? branding.logoPosition : "top-left";
+  const logoBottomLeft = !!branding.logo && !pos.startsWith("top") && pos.endsWith("left");
+  const h = Number.isFinite(branding.logoSize) && branding.logoSize > 0 ? Math.min(branding.logoSize, 120) : 56;
+  const k = logoBottomLeft ? 36 + h + 8 : 28;
+  return `calc(max(${(k * 100 / VIRTUAL_W).toFixed(4)}vw, ${(k * 100 / VIRTUAL_H).toFixed(4)}vh) + 10px)`;
+}
+
 function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, branding, guidelines, isMobile, fontScale, actionsRef, onRibbonUpdate }) {
   const deckEpochRef = useRef(state._deckEpoch);
   deckEpochRef.current = state._deckEpoch;
@@ -9751,10 +10375,12 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
   // Presenter-view elapsed timer (CR-08): starts fresh each time Present mode
   // is entered, stops (and hides the presenter view) on exit.
   useEffect(() => {
-    if (!fullscreen) { presentStartRef.current = null; setPresentElapsed(0); setPresenterView(false); return; }
+    if (!fullscreen) { presentStartRef.current = null; setPresentElapsed(0); setPresenterView(false); setSessionDialogOpen(false); return; }
     presentStartRef.current = Date.now();
     setPresentElapsed(0);
-    const id = setInterval(() => { setPresentElapsed(Math.round((Date.now() - presentStartRef.current) / 1000)); }, 1000);
+    setNowMs(Date.now());
+    // One 1 s tick for the elapsed timer and the session clock / pace (v13.80).
+    const id = setInterval(() => { setPresentElapsed(Math.round((Date.now() - presentStartRef.current) / 1000)); setNowMs(Date.now()); }, 1000);
     return () => clearInterval(id);
   }, [fullscreen]); // eslint-disable-line -- intentionally minimal deps, mirrors prevFullscreen effect above
   useEffect(() => { setEditingDuration(false); setShowCommentPopover(false); }, [slideIndex]);
@@ -9768,15 +10394,20 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
   // already steps over hidden slides WITHIN a module (nextVisible/prevVisible),
   // so this only fires on a land and can never oscillate (it always resolves to a
   // visible slide, and nav never re-lands on a hidden one).
+  // Present detour state (see onDetour below). Declared here, before its first
+  // use in this effect's deps, so the render never reads it in the TDZ.
+  const [detour, setDetour] = useState(null);
   useEffect(() => {
     if (!fullscreen) return;
     const cur = presSlides[slideIndex];
     if (!cur || !cur.hidden) return;
+    // A detour shows a hidden slide on purpose; do not nudge off it.
+    if (detour && detour.at.id === concept.id && detour.at.index === slideIndex) return;
     let n = -1;
     for (let i = slideIndex + 1; i < presSlides.length; i++) if (!presSlides[i].hidden) { n = i; break; }
     if (n < 0) for (let i = slideIndex - 1; i >= 0; i--) if (!presSlides[i].hidden) { n = i; break; }
     if (n >= 0 && n !== slideIndex) dispatch({ type: "SET_SLIDE_INDEX", index: n });
-  }, [fullscreen, slideIndex, presSlides]);
+  }, [fullscreen, slideIndex, presSlides, detour, concept.id]);
   const [showImproveInput, setShowImproveInput] = useState(false);
   const [improvePrompt, setImprovePrompt] = useState("");
   const [improveScope, setImproveScope] = useState("all"); // "slide" | "module" | "section" | "all"
@@ -9790,6 +10421,30 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
   // CR07: editor-only review cycle — arrow keys skip slides marked `reviewed`.
   // Distinct from state.reviewMode (comments review), which owns that name.
   const [reviewCycle, setReviewCycle] = useState(false);
+  // Present detour: a TOC search jump to a hidden slide (or a collapsed lane).
+  // `ret` is the last VISIBLE slide (kept across chained detours), `at` is the
+  // detour slide. Arrows, wheel and Esc on the detour slide return to `ret`;
+  // landing anywhere else ends the detour (effect below). Indices are Present
+  // indices (title-card offset included), as passed to SET_SLIDE_INDEX.
+  // (The `detour` state itself is declared above the hidden-slide nudge effect.)
+  const detourRef = useRef(null);
+  detourRef.current = detour;
+  const onDetour = useCallback((on, at) => {
+    if (!on) { setDetour(null); return; }
+    setDetour((d) => ({ ret: d ? d.ret : { id: concept.id, index: slideIndex }, at }));
+  }, [concept.id, slideIndex]);
+  const detourBackRef = useRef(() => false);
+  detourBackRef.current = () => {
+    const d = detourRef.current;
+    if (!d) return false;
+    setDetour(null);
+    if (d.ret.id !== concept.id) dispatch({ type: "SELECT", id: d.ret.id });
+    dispatch({ type: "SET_SLIDE_INDEX", index: d.ret.index });
+    return true;
+  };
+  useEffect(() => {
+    if (detour && (!fullscreen || detour.at.id !== concept.id || detour.at.index !== slideIndex)) setDetour(null);
+  }, [detour, fullscreen, concept.id, slideIndex]);
   const showGalleryRef = useRef(false);
   const setGallery = (v) => { const val = typeof v === "function" ? v(showGalleryRef.current) : v; showGalleryRef.current = val; setShowGallery(val); };
   // ── Presenter view (CR-08) — single-screen speaker dashboard: current +
@@ -9806,6 +10461,38 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
   useEffect(() => { if (!fullscreen) setPresentEdit(false); }, [fullscreen]);
   const [presentElapsed, setPresentElapsed] = useState(0); // seconds since Present mode was entered
   const presentStartRef = useRef(null);
+  // ── Session end (v13.80): clock, pace, Present edge bar, dialog. Present only.
+  // Pace follows the Present numbering (presentSequence); during a detour it
+  // uses the return slide (detour.ret, with that item's own title-card offset).
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  const [sessionDialogOpen, setSessionDialogOpen] = useState(false);
+  const sessionDialogOpenRef = useRef(false);
+  sessionDialogOpenRef.current = sessionDialogOpen;
+  const [sessionBarHidden, setSessionBarHidden] = useState(() => VELA_SESSION_BAR.hidden);
+  // Clock chip on/off. Storage can throw (sandboxed artifact): read and write
+  // in try/catch, and the app works without storage (default off).
+  const [clockOn, setClockOn] = useState(() => { try { return localStorage.getItem(VELA_PRESENT_CLOCK_KEY) === "1"; } catch { return false; } });
+  const toggleClock = () => setClockOn((v) => {
+    const on = !v;
+    try { if (on) localStorage.setItem(VELA_PRESENT_CLOCK_KEY, "1"); else localStorage.removeItem(VELA_PRESENT_CLOCK_KEY); } catch {}
+    return on;
+  });
+  const paceItemId = detour ? detour.ret.id : concept.id;
+  const sessionSeq = useMemo(() => { const seq = presentSequence(lanes, paceItemId); return { seq, est: sessionEstimates(seq) }; }, [lanes, paceItemId]);
+  const paceRawIdx = (() => {
+    if (!detour) return slideIndex - presOffset;
+    let retItem = null;
+    for (const l of lanes || []) for (const it of (l && l.items) || []) if (it && it.id === detour.ret.id) retItem = it;
+    return detour.ret.index - (retItem && retItem.presentCard ? 1 : 0);
+  })();
+  const paceIdx = sessionSeqIndex(sessionSeq.seq, paceItemId, paceRawIdx);
+  // On-slide counter: restarts when the pace position changes (not on a detour).
+  const slideEnterRef = useRef({ key: null, at: 0 });
+  const paceSlideKey = fullscreen ? `${paceItemId}|${detour ? detour.ret.index : slideIndex}` : null;
+  if (slideEnterRef.current.key !== paceSlideKey) slideEnterRef.current = { key: paceSlideKey, at: Date.now() };
+  const sessionLive = fullscreen ? liveSession(state.session, nowMs) : null;
+  const sessionPace = sessionLive ? computeSessionPace(sessionSeq.est, paceIdx, sessionOnSlideSec(nowMs, slideEnterRef.current.at, sessionLive), sessionLive, nowMs) : null;
+  const closeSessionDialog = () => { setSessionDialogOpen(false); containerRef.current?.focus({ preventScroll: true }); };
   const [showNewSlide, setShowNewSlide] = useState(false);
   const [newSlidePrompt, setNewSlidePrompt] = useState("");
   const [newSlideImage, setNewSlideImage] = useState(null);
@@ -9941,6 +10628,28 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
     else if (mode === "presenter") { setGallery(false); if (!fullscreen) { stopAll(); dispatch({ type: "SET_FULLSCREEN", value: true }); } }
   };
 
+  // Editor search: a short amber outline on the matched top-level block
+  // ({ id, index, block } = section id, slide index, canvas render index).
+  // UI state only: no deck change, no undo step, no save. The outline shows
+  // only while that exact slide is on the editor canvas (checked at render);
+  // the effect below drops it when the slide or section changes, or when
+  // Present or the gallery opens. Only code-authored values are stored.
+  const [searchFlash, setSearchFlash] = useState(null);
+  const searchFlashTimer = useRef(null);
+  const flashSearchBlock = (id, index, block) => {
+    clearTimeout(searchFlashTimer.current);
+    if (typeof id !== "string" || !Number.isInteger(index) || index < 0 || !Number.isInteger(block) || block < 0) { setSearchFlash(null); return; }
+    setSearchFlash({ id, index, block });
+    searchFlashTimer.current = setTimeout(() => setSearchFlash(null), 1500);
+  };
+  useEffect(() => () => clearTimeout(searchFlashTimer.current), []);
+  useEffect(() => {
+    if (searchFlash && (fullscreen || showGallery || searchFlash.id !== concept.id || searchFlash.index !== slideIndex)) {
+      clearTimeout(searchFlashTimer.current);
+      setSearchFlash(null);
+    }
+  }, [searchFlash, fullscreen, showGallery, concept.id, slideIndex]);
+
   // Expose slide panel state + actions to app ribbon via ref
   useEffect(() => {
     if (!actionsRef) return;
@@ -9959,6 +10668,8 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       getLayoutStats: () => computeSlideLayoutStats(slideRef.current),
       // CR13: view state read by the top-bar view switcher (editor|presenter|gallery).
       viewMode, setView,
+      // Editor search: outline the matched block for a moment (UI state only).
+      flashBlock: flashSearchBlock,
     };
     onRibbonUpdate?.();
   }, [slides.length, moduleTime, previewRatio, showBranding, showTimingScope, estimating, showImproveInput, improving, fullscreen, showGallery]);
@@ -9991,8 +10702,11 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
   useEffect(() => () => clearTimeout(navToastTimer.current), []);
 
   // Touch swipe for mobile slide navigation (crosses module boundaries like keyboard)
+  // A modal over the slide (session dialog, any ModalBackdrop) owns the swipe.
+  const swipeBlocked = (e) => sessionDialogOpenRef.current || !!e?.target?.closest?.("[data-vela-modal]");
   useSwipe(containerRef, {
-    onLeft: useCallback(() => {
+    onLeft: useCallback((e) => {
+      if (swipeBlocked(e)) return;
       if (storyStepRef.current(1)) return;
       const navSlides = fullscreen ? presSlides : slides;
       if (navSlides.length > 0 && slideIndex < navSlides.length - 1) {
@@ -10009,7 +10723,8 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
         }
       }
     }, [slideIndex, slides.length, presSlides.length, fullscreen, dispatch, concept.id, flatModules, showNavToast]),
-    onRight: useCallback(() => {
+    onRight: useCallback((e) => {
+      if (swipeBlocked(e)) return;
       if (storyStepRef.current(-1)) return;
       if (slideIndex > 0) {
         storyEnterBack();
@@ -10310,6 +11025,10 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       // (editor nav keeps reaching them so they can be edited/unhidden).
       const nextVisible = (from) => { for (let i = from + 1; i < navSlides.length; i++) if (!fullscreen || !navSlides[i].hidden) return i; return -1; };
       const prevVisible = (from) => { for (let i = from - 1; i >= 0; i--) if (!fullscreen || !navSlides[i].hidden) return i; return -1; };
+      // Present detour: any step key returns to the slide the detour left.
+      if (fullscreen && detourRef.current && ["ArrowRight", "ArrowDown", " ", "ArrowLeft", "ArrowUp"].includes(e.key)) {
+        e.preventDefault(); stopAlternatives(); detourBackRef.current(); return;
+      }
       // CR07: editor review cycle — step through unreviewed slides across modules.
       // The current slide stays in the order (even if reviewed) only to anchor the step.
       const reviewNav = !fullscreen && reviewCycle;
@@ -10399,6 +11118,26 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       if (e.key === "g" && !e.metaKey && !e.ctrlKey && !e.shiftKey && !["INPUT", "TEXTAREA"].includes(document.activeElement?.tagName)) {
         e.preventDefault(); setGallery((v) => !v);
       }
+      // T → hide/show the session edge bar (Present only; no modifiers; not
+      // in a text field; not while a dialog is open). Memory only (v13.80).
+      // A held key (e.repeat) toggles once. No action while the Presenter View or
+      // the gallery covers the slide (the bar is hidden there: no feedback).
+      if (fullscreen && (e.key === "t" || e.key === "T") && !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey && VELA_OPEN_CHROME.modals.size === 0 && !sessionDialogOpenRef.current && !showPresenterViewRef.current && !showGalleryRef.current) {
+        const ae = document.activeElement;
+        if (!(ae && (["INPUT", "TEXTAREA", "SELECT"].includes(ae.tagName) || ae.isContentEditable))) {
+          e.preventDefault(); if (e.repeat) return; setSessionBarHidden((v) => { VELA_SESSION_BAR.hidden = !v; return !v; }); return;
+        }
+      }
+      // C → show/hide the clock chip (Present only). No modifiers, so Ctrl/Cmd+C
+      // (slide copy) keeps working; not in a text field; not while a dialog is open.
+      // A held key (e.repeat) toggles once. No action while the Presenter View or
+      // the gallery covers the slide (the chip is hidden there: no feedback).
+      if (fullscreen && (e.key === "c" || e.key === "C") && !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey && VELA_OPEN_CHROME.modals.size === 0 && !sessionDialogOpenRef.current && !showPresenterViewRef.current && !showGalleryRef.current) {
+        const ae = document.activeElement;
+        if (!(ae && (["INPUT", "TEXTAREA", "SELECT"].includes(ae.tagName) || ae.isContentEditable))) {
+          e.preventDefault(); if (!e.repeat) toggleClock(); return;
+        }
+      }
       // S → presenter view toggle (Present mode only)
       if (fullscreen && e.key === "s" && !e.metaKey && !e.ctrlKey && !e.shiftKey && !["INPUT", "TEXTAREA"].includes(document.activeElement?.tagName)) {
         e.preventDefault(); setPresenterView((v) => !v);
@@ -10417,6 +11156,8 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       // sandboxed iframe (Claude.ai artifact) requestFullscreen fails, so the key lands here.
       // An open modal takes Esc first (it closes on the same keydown).
       // A story slide zoomed on an image: Esc zooms out to the grid first and Present stays.
+      // A Present detour: Esc returns to the slide it left, and Present stays.
+      if (e.key === "Escape" && fullscreen && VELA_OPEN_CHROME.modals.size === 0 && detourBackRef.current()) { e.preventDefault(); return; }
       if (e.key === "Escape" && fullscreen && VELA_OPEN_CHROME.modals.size === 0 && storyEscRef.current()) { e.preventDefault(); return; }
       if (e.key === "Escape" && fullscreen && VELA_OPEN_CHROME.modals.size === 0) { e.preventDefault(); stopAlternatives(); dispatch({ type: "SET_FULLSCREEN", value: false }); return; }
       // Ctrl+C → copy ALL selected slides (multi-select) to system clipboard,
@@ -10486,6 +11227,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
     // layering here: a zoom, gallery or presenter view closes first and Present stays.
     const onFsChange = () => {
       if (document.fullscreenElement || !fullscreen) return;
+      if (sessionDialogOpenRef.current) { setSessionDialogOpen(false); return; } // browser Esc: the session dialog closes first
       if (VELA_OPEN_CHROME.zooms.size > 0) { window.dispatchEvent(new Event("vela-close-zoom")); return; }
       if (VELA_OPEN_CHROME.panels.size > 0) { window.dispatchEvent(new Event("vela-close-panel")); return; }
       if (showGalleryRef.current) { setGallery(false); return; }
@@ -10506,7 +11248,12 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
     if (!el || slides.length === 0) return;
     const handler = (e) => {
       if (["INPUT", "TEXTAREA"].includes(document.activeElement?.tagName)) return;
+      // A modal over the slide (session dialog, any ModalBackdrop) owns the wheel.
+      if (sessionDialogOpenRef.current || e.target.closest?.("[data-vela-modal]")) return;
       if (!fullscreen && e.target.closest?.("[data-scroll-container]")) return;
+      // Present: a scroll area of an overlay (Presenter View column, notes)
+      // scrolls when it can; elsewhere the wheel changes slides.
+      if (fullscreen) { const sc = e.target.closest?.("[data-scroll-container]"); if (sc && sc.scrollHeight > sc.clientHeight + 1) return; }
       if (e.target.closest?.("[data-teacher-panel]")) return;
       e.preventDefault();
       scrollAccum.current += e.deltaY;
@@ -10515,6 +11262,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       if (Math.abs(scrollAccum.current) >= SCROLL_THRESHOLD) {
         const dir = scrollAccum.current > 0 ? 1 : -1;
         scrollAccum.current = 0;
+        if (fullscreen && detourBackRef.current()) return; // a detour returns first
         if (storyStepRef.current(dir)) return; // one story step per notch
         const navSlides = fullscreen ? presSlides : slides;
         if (dir > 0) {
@@ -10894,9 +11642,40 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
             .slide-transition-fade (part-imports.jsx). Independent of the per-block
             .stg-N stagger reveal inside SlideContent, which keeps working as-is. */}
         <div key={slideIndex} className="slide-transition-fade" style={{ position: "relative", width: "100%", height: "100%" }}>
-          <FullscreenSlide key={`deck-${state._deckEpoch}`} slide={presSlides[slideIndex]} index={slideIndex} total={presSlides.length} innerRef={slideRef} branding={presSlides[slideIndex]?._virtual ? null : branding} editable={!isStudent && !presSlides[slideIndex]?._virtual} onEdit={isStudent || presSlides[slideIndex]?._virtual ? undefined : handleSlideEdit} onBlockEdit={isStudent || presSlides[slideIndex]?._virtual ? undefined : runBlockEdit} blockEditing={isStudent ? null : blockEditing} fontScale={fontScale} mode="fill" forceEdit={presentEdit && !isStudent} displayIndex={globalSlideIndex - presOffset} displayTotal={globalSlideTotal} story={story} onStoryJump={story ? onStoryJump : undefined} onStoryZoomOut={story ? onStoryZoomOut : undefined} />
+          <FullscreenSlide key={`deck-${state._deckEpoch}`} slide={presSlides[slideIndex]} index={slideIndex} total={presSlides.length} innerRef={slideRef} branding={presSlides[slideIndex]?._virtual ? null : branding} editable={!isStudent && !presSlides[slideIndex]?._virtual} onEdit={isStudent || presSlides[slideIndex]?._virtual ? undefined : handleSlideEdit} onBlockEdit={isStudent || presSlides[slideIndex]?._virtual ? undefined : runBlockEdit} blockEditing={isStudent ? null : blockEditing} fontScale={fontScale} mode="fill" forceEdit={presentEdit && !isStudent} displayIndex={globalSlideIndex - presOffset} displayTotal={globalSlideTotal} hideSlideNumber={!!detour} story={story} onStoryJump={story ? onStoryJump : undefined} onStoryZoomOut={story ? onStoryZoomOut : undefined} />
         </div>
-        {!isMobile && <PresenterTOC slides={presSlides} slideIndex={slideIndex} onJump={(i) => dispatch({ type: "SET_SLIDE_INDEX", index: i })} lanes={lanes} currentConceptId={concept.id} dispatch={dispatch} />}
+        {/* Session edge bar (v13.80): neutral fill up to the first of YOU / SHOULD
+            BE, pace-colour gap between them, white tick = YOU (sessionBarGeom).
+            Numbers are clamped percents; colours are static. It
+            takes no clicks and hides under the presenter view and the gallery. */}
+        {sessionPace && !sessionBarHidden && !showPresenterView && !showGallery && (() => {
+          // sessionBarGeom: clamped percent numbers + a static colour key. A dark
+          // backing keeps the neutral parts visible on light and dark slides.
+          const g = sessionBarGeom(sessionPace);
+          if (!g) return null;
+          return <div data-testid="present-session-bar" data-pace={g.key} aria-hidden="true" style={{ position: "absolute", left: 0, right: 0, bottom: 0, height: 5, zIndex: 15, pointerEvents: "none", background: "rgba(0,0,0,0.35)" }}>
+            <div style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: `${g.lo}%`, background: "rgba(255,255,255,0.45)", pointerEvents: "none" }} />
+            <div data-testid="present-session-gap" style={{ position: "absolute", top: 0, bottom: 0, left: `min(${g.lo}%, calc(100% - 6px))`, width: `max(6px, ${g.gap}%)`, background: SESSION_PACE_COLORS[g.key], pointerEvents: "none" }} />
+            <div data-testid="present-session-you" style={{ position: "absolute", bottom: 0, height: 12, width: 4, boxSizing: "border-box", left: `${g.you}%`, transform: `translateX(-${g.you}%)`, background: "#fff", border: "1px solid rgba(0,0,0,0.75)", pointerEvents: "none" }} />
+          </div>;
+        })()}
+        {/* Clock chip (v13.80, C key): bottom-left twin of the slide-number
+            chip. Static colours only; the text is built from numbers by
+            fmtClock / fmtCountdown (no deck string). With branding on, it sits
+            above the footer strip and a bottom-left logo (presentClockBottom:
+            booleans and clamped numbers only; no branding string reaches the
+            chip). */}
+        {clockOn && !showPresenterView && !showGallery && (() => {
+          const branded = !!branding?.enabled && !presSlides[slideIndex]?._virtual;
+          const p = sessionPace;
+          const tk = p ? (Object.prototype.hasOwnProperty.call(SESSION_PACE_COLORS, p.timeLeftKey) ? p.timeLeftKey : "white") : null;
+          const rest = !p ? "" : p.over ? `+${fmtCountdown(p.timeLeftSec)} over` : p.before ? `starts in ${fmtCountdown((sessionLive.start - nowMs) / 1000)}` : `${fmtCountdown(p.timeLeftSec)} left`;
+          return <div data-testid="present-clock-chip" data-time-key={tk || undefined} aria-hidden="true" style={{ position: "absolute", left: 24, bottom: presentClockBottom(branded ? branding : null), zIndex: 15, pointerEvents: "none", fontFamily: FONT.mono, fontSize: 15, fontWeight: 600, letterSpacing: "0.04em", lineHeight: 1.3, whiteSpace: "nowrap", color: "#e2e8f0", background: "rgba(0,0,0,0.4)", padding: "4px 12px", borderRadius: 20, opacity: 0.85 }}>
+            <span data-testid="present-clock-time">{fmtClock(nowMs)}</span>
+            {p && <><span style={{ color: "#94a3b8" }}>{" · "}</span><span data-testid="present-clock-left" style={{ color: SESSION_PACE_COLORS[tk] }}>{rest}</span></>}
+          </div>;
+        })()}
+        {!isMobile && <PresenterTOC slides={presSlides} slideIndex={slideIndex} onJump={(i) => dispatch({ type: "SET_SLIDE_INDEX", index: i })} lanes={lanes} currentConceptId={concept.id} dispatch={dispatch} onDetour={onDetour} />}
                 {fontScale !== 1 && <div style={{ position: "absolute", top: 12, right: 16, fontFamily: FONT.mono, fontSize: 13, fontWeight: 700, color: T.accent, background: T.bgPanel + "e0", padding: "3px 10px", borderRadius: 4, border: `1px solid ${T.accent}40`, zIndex: 20, letterSpacing: "0.05em", pointerEvents: "none" }}>FONT {Math.round(fontScale * 100)}%</div>}
         {improving && <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, padding: "10px 20px", background: "rgba(0,0,0,0.82)", backdropFilter: "blur(6px)", display: "flex", alignItems: "center", gap: 12, zIndex: 20 }}>
           <div style={{ fontSize: 18, animation: "spin 1.5s linear infinite", display: "inline-block" }}>✨</div>
@@ -10916,16 +11695,23 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
         {!isMobile && <div data-testid="student-toggle" className="slide-nav-btn" onClick={() => dispatch({ type: "SET_VERA_MODE", mode: isStudent ? "editor" : "student" })} title={isStudent ? "Exit student mode" : "Student mode — Vera teaches"} style={{ position: "absolute", top: 16, right: 52, padding: 8, background: isStudent ? T.accent + "30" : undefined, borderRadius: 6 }}><span style={{ fontSize: 16, color: "#fff" }}>🎓</span></div>}
         {/* Gallery is reached through the view switch (fs-view-switch), so it has no separate icon here. */}
         {!isMobile && <div data-testid="presenter-toggle" className="slide-nav-btn" onClick={() => setPresenterView((v) => !v)} title={showPresenterView ? "Exit presenter view (S)" : "Presenter view — notes, next slide, timer (S)"} style={{ position: "absolute", top: 16, right: 88, padding: 8, background: showPresenterView ? T.accent + "30" : undefined, borderRadius: 6 }}><span style={{ fontSize: 16, color: "#fff" }}>{"\u{1F5D2}\uFE0F"}</span></div>}
+        {/* Clock chip toggle (C). A real button; mousedown keeps focus on the
+            Present root, so after a click Space / Enter still go to slide
+            navigation. With keyboard focus on the button, Space / Enter toggle
+            the chip here and stop at the button: the window key handler would
+            change the slide and cancel the click. preventDefault: no second
+            toggle from the native click. A held key toggles once. */}
+        {!isMobile && <button type="button" data-testid="present-clock-toggle" className="slide-nav-btn" aria-pressed={clockOn} aria-label="Clock on slide (C)" title="Clock on slide (C)" onMouseDown={(e) => e.preventDefault()} onClick={toggleClock} onKeyDown={(e) => { if (e.key === " " || e.key === "Enter") { e.preventDefault(); e.stopPropagation(); if (!e.repeat) toggleClock(); } }} style={{ position: "absolute", top: 16, right: 124, padding: 8, border: "none", borderRadius: 6, display: "flex", background: clockOn ? T.accent + "30" : undefined }}>{getIcon("Clock", { size: 18, color: "#fff" })}</button>}
         {/* Present Edit toggle (Shift+E): restore inline click-to-edit while
             presenting. Uses the Lucide pencil (SVG), NOT the ✏ emoji, so the
             CR-03 "no edit chrome" test still passes when edit mode is off.
             Hidden in student mode, where editing is disabled by design. */}
-        {!isMobile && !isStudent && <div data-testid="present-edit-toggle" className="slide-nav-btn" onClick={() => setPresentEdit((v) => !v)} title={presentEdit ? "Editing on — click text/icons to edit (Shift+E)" : "Edit mode — click text/icons to edit while presenting (Shift+E)"} style={{ position: "absolute", top: 16, right: 124, padding: 8, background: presentEdit ? T.accent + "30" : undefined, borderRadius: 6 }}>{getIcon("edit", { size: 18, color: "#fff" })}</div>}
+        {!isMobile && !isStudent && <div data-testid="present-edit-toggle" className="slide-nav-btn" onClick={() => setPresentEdit((v) => !v)} title={presentEdit ? "Editing on — click text/icons to edit (Shift+E)" : "Edit mode — click text/icons to edit while presenting (Shift+E)"} style={{ position: "absolute", top: 16, right: 160, padding: 8, background: presentEdit ? T.accent + "30" : undefined, borderRadius: 6 }}>{getIcon("edit", { size: 18, color: "#fff" })}</div>}
         {/* CR13: the same view switch as the top bar, left of the icon row. */}
-        {!isMobile && <ViewSwitch testid="fs-view-switch" mode={viewMode} onSet={setView} compact onDark style={{ position: "absolute", top: 16, right: VELA_LOCAL_MODE ? 164 : 200 }} />}
+        {!isMobile && <ViewSwitch testid="fs-view-switch" mode={viewMode} onSet={setView} compact onDark style={{ position: "absolute", top: 16, right: VELA_LOCAL_MODE ? 200 : 236 }} />}
         {/* Browser fullscreen toggle removed — Vela fullscreen (F key / minimize button) is sufficient */}
         {!isMobile && !VELA_LOCAL_MODE && <>
-          <div className="slide-nav-btn" onClick={() => setShowCinemaTip((v) => !v)} title="Cinema mode — fullscreen in browser" style={{ position: "absolute", top: 16, right: 160, padding: 8 }}><VelaIcon size={18} /></div>
+          <div className="slide-nav-btn" onClick={() => setShowCinemaTip((v) => !v)} title="Cinema mode — fullscreen in browser" style={{ position: "absolute", top: 16, right: 196, padding: 8 }}><VelaIcon size={18} /></div>
         </>}
         </div>
         {!isMobile && !VELA_LOCAL_MODE && showCinemaTip && <CinemaTip onClose={() => setShowCinemaTip(false)} />}
@@ -10951,8 +11737,15 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
         for (let i = slideIndex + 1; i < presSlides.length; i++) if (!presSlides[i].hidden) { nextIdx = i; break; }
         // NEXT on a story slide is its next step; after the last step, the next slide.
         const nextStory = story ? storyNext(story, storyN) : null;
-        return <PresenterView current={presSlides[slideIndex]} next={nextStory ? presSlides[slideIndex] : nextIdx >= 0 ? presSlides[nextIdx] : null} currentStory={story} nextStory={nextStory || undefined} index={globalSlideIndex - presOffset} total={globalSlideTotal} duration={presSlides[slideIndex]?.duration || 0} elapsed={presentElapsed} branding={branding} onClose={() => setPresenterView(false)} />;
+        return <PresenterView current={presSlides[slideIndex]} next={nextStory ? presSlides[slideIndex] : nextIdx >= 0 ? presSlides[nextIdx] : null} currentStory={story} nextStory={nextStory || undefined} index={globalSlideIndex - presOffset} total={globalSlideTotal} duration={presSlides[slideIndex]?.duration || 0} elapsed={presentElapsed} branding={branding} onClose={() => setPresenterView(false)} detourReturn={detour ? detourReturnTitle(lanes, detour.ret) : null}
+          sessionCard={{ nowMs, session: sessionLive, pace: sessionPace, estimated: sessionSeq.est.estimated, youNum: sessionSeq.seq[paceIdx]?.num, shouldNum: sessionPace ? sessionSeq.seq[sessionPace.shouldIdx]?.num : undefined, onEditSession: () => setSessionDialogOpen(true) }} />;
       })()}
+      {/* Session dialog INSIDE the Present root: App-level modals are outside the
+          browser-fullscreen element and would be invisible here. */}
+      {sessionDialogOpen && <SessionEndDialog session={sessionLive} stored={!!sanitizeSession(state.session)} lanes={lanes}
+        onSet={(s) => { const v = sanitizeSession(s); if (v) dispatch({ type: "SET_SESSION", session: v }); closeSessionDialog(); }}
+        onClear={() => { dispatch({ type: "SET_SESSION", session: null }); closeSessionDialog(); }}
+        onClose={closeSessionDialog} />}
     </div>
   );
 
@@ -11019,7 +11812,8 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
                       default "auto"/Fit ratio) so the editor viewport height is
                       content-independent and the toolbar below stays put. Elastic
                       container-shaped "fill" is reserved for fullscreen/present. */}
-                  <VirtualSlide key={`deck-${state._deckEpoch}`} slide={displaySlide} index={slideIndex} total={slides.length} innerRef={slideRef} branding={branding} editable onEdit={handleSlideEdit} mode="fit-viewport" onBlockEdit={runBlockEdit} blockEditing={blockEditing} virtualW={isAuto ? VIRTUAL_W : vw} virtualH={isAuto ? VIRTUAL_H : vh} bordered reviewMode={state.reviewMode} itemId={concept.id} dispatch={dispatch} displayIndex={globalSlideIndex} displayTotal={globalSlideTotal} />
+                  <VirtualSlide key={`deck-${state._deckEpoch}`} slide={displaySlide} index={slideIndex} total={slides.length} innerRef={slideRef} branding={branding} editable onEdit={handleSlideEdit} mode="fit-viewport" onBlockEdit={runBlockEdit} blockEditing={blockEditing} virtualW={isAuto ? VIRTUAL_W : vw} virtualH={isAuto ? VIRTUAL_H : vh} bordered reviewMode={state.reviewMode} itemId={concept.id} dispatch={dispatch} displayIndex={globalSlideIndex} displayTotal={globalSlideTotal}
+                    flashBlock={searchFlash && !fullscreen && !showGallery && displaySlide === slides[slideIndex] && searchFlash.id === concept.id && searchFlash.index === slideIndex ? searchFlash.block : -1} />
                   {/* Comment badge overlay (top-right) — hidden when comments panel or popover is open */}
                   {!fullscreen && !state.commentsPanelOpen && !showCommentPopover && (() => {
                     const sc = (slides[slideIndex]?.comments || []).filter((c) => c.status === "open");
@@ -11976,7 +12770,7 @@ function ConceptRow({ item, selected, laneId, dispatch, maxTime, globalMaxSlideD
         <span onClick={(e) => { e.stopPropagation(); onToggleCollapse(e.ctrlKey || e.metaKey); }} aria-label={`${collapsed ? "Expand" : "Collapse"} section ${item.title}`} title="Click to collapse this section · Ctrl/Cmd-click to collapse or expand all" style={{ fontSize: 10, color: T.textDim, transition: "transform .15s", transform: collapsed ? "rotate(-90deg)" : "rotate(0)", cursor: "pointer", flexShrink: 0, width: 12, textAlign: "center" }}>▼</span>
         <div className="imp-dot" onClick={(e) => { e.stopPropagation(); const cycle = { must: "should", should: "nice", nice: "must" }; dispatch({ type: "SET_IMPORTANCE", id: item.id, importance: cycle[item.importance || "should"] }); }} style={{ background: IMP[item.importance || "should"].dot, cursor: "pointer" }} title={`Priority: ${IMP[item.importance || "should"].label} (click to cycle)`} />
         {editing ? <input autoFocus value={title} onChange={(e) => setTitle(e.target.value)} onFocus={(e) => e.target.select()} placeholder="Section name" onKeyDown={(e) => { if (e.key === "Enter") commitRename(); if (e.key === "Escape") setEditing(false); }} onBlur={commitRename} onClick={(e) => e.stopPropagation()} style={S.input({ padding: "2px 6px", border: `1px solid ${T.borderLight}` })} />
-          : <span onDoubleClick={startRename} style={{ flex: 1, fontSize: 14, fontFamily: FONT.body, color: T.text, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.title}</span>}
+          : <span data-testid="toc-section-title" onDoubleClick={startRename} style={{ flex: 1, fontSize: 14, fontFamily: FONT.body, color: T.text, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.title}</span>}
         {showMarker && <span data-testid="toc-collapsed-marker" title={`Current slide ${markerK} of ${item.slides.length} (section collapsed)`} style={{ fontSize: 9, fontFamily: FONT.mono, fontWeight: 700, color: T.accent, background: T.accent + "1f", borderRadius: 8, padding: "0 5px", minWidth: 14, textAlign: "center", flexShrink: 0, lineHeight: "16px" }}>{markerK} / {item.slides.length}</span>}
         {reviewMode && openCommentCount > 0 && <span style={{ fontSize: 9, fontFamily: FONT.mono, fontWeight: 700, color: "#fff", background: T.amber, borderRadius: 8, padding: "0 4px", minWidth: 14, textAlign: "center", flexShrink: 0, lineHeight: "16px" }}>{openCommentCount}</span>}
         {reviewMode && <span onClick={(e) => { e.stopPropagation(); setNotesOpen(!notesOpen); }} title={notesOpen ? "Hide comments" : "Show comments"} style={{ fontSize: 10, cursor: "pointer", flexShrink: 0, opacity: (openCommentCount > 0 || hasNotes) ? 1 : 0.3, color: (openCommentCount > 0 || hasNotes) ? T.accent : T.textDim, lineHeight: 1 }}>💬</span>}
@@ -12023,6 +12817,147 @@ function ConceptRow({ item, selected, laneId, dispatch, maxTime, globalMaxSlideD
           empty-section bug). It renders just the add row when there are no slides. */}
       {!collapsed && <SlideListWithAdder item={item} selected={selected} slideIndex={slideIndex} selectedSlideIndices={selectedSlideIndices} lanes={lanes} dispatch={dispatch} guidelines={guidelines} globalMaxSlideDur={globalMaxSlideDur} slideOffset={slideOffset || 0} slideTimeOffset={slideTimeOffset || 0} laneId={laneId} treeNav={treeNav} deckEpoch={deckEpoch} />}
     </div>
+  );
+}
+
+// ━━━ Editor search ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Search field at the top of the editor slide list (Ctrl+E or "/"). While a
+// query is typed, result rows show in place of the tree. The tree (children)
+// stays mounted with display:none, so ModuleList keeps its state. Shared engine
+// (searchDeck / useSearchNav / SearchResultRow) in part-slides.jsx. Deck text is
+// rendered only as React text (HighlightText); no deck value reaches a style,
+// URL or attribute. Not rendered in Present: the list panel stays mounted under
+// the Present overlay, and the Present field is found by its placeholder.
+function EditorSearch({ lanes, selectedId, slideIndex, fullscreen, isMobile, focusReq, focusTick, onCollapse, onOpenResult, children }) {
+  const [query, setQuery] = useState("");
+  const q = query.toLowerCase().trim();
+  const rows = useMemo(() => searchDeck(lanes, q, { notes: true, sections: true }), [lanes, q]);
+  const boxRef = useRef(null);
+  const inputRef = useRef(null);
+  const treeRef = useRef(null);
+  const savedTop = useRef(0);   // tree scroll position when the query started
+  const opened = useRef(false); // a result was opened during this query
+  const scroller = () => boxRef.current?.parentElement || null;
+  const open = (i) => {
+    const r = rows[i];
+    if (!r) return;
+    opened.current = true;
+    onOpenResult(r);
+  };
+  const nav = useSearchNav(rows.length, q, {
+    onOpen: open,
+    onEscape: () => { if (query) setQuery(""); else inputRef.current?.blur(); },
+  });
+  // App asks for focus (Ctrl+E or "/"): on mount after the list opens, or on a tick.
+  useEffect(() => {
+    if (!focusReq?.current || !inputRef.current) return;
+    focusReq.current = false;
+    inputRef.current.focus();
+    inputRef.current.select();
+  }, [focusTick, fullscreen]);
+  // Rows that scroll into view must not end under the sticky field.
+  useEffect(() => {
+    const box = boxRef.current, sc = scroller();
+    if (!box || !sc || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(() => { sc.style.scrollPaddingTop = box.offsetHeight + "px"; });
+    ro.observe(box);
+    return () => { ro.disconnect(); sc.style.scrollPaddingTop = ""; };
+  }, [fullscreen]);
+  // Query starts: results from the top. Query cleared: show the opened slide row
+  // (its scroll effect ran while the tree was hidden), else the old position.
+  const hasQ = !!q;
+  const hadQ = useRef(false);
+  useEffect(() => {
+    if (hasQ === hadQ.current) return;
+    hadQ.current = hasQ;
+    const sc = scroller();
+    if (hasQ) { if (sc) sc.scrollTop = 0; return; }
+    const wasOpened = opened.current;
+    opened.current = false;
+    requestAnimationFrame(() => {
+      const t = treeRef.current;
+      const row = wasOpened && t && (t.querySelector("[data-testid='toc-slide-row'][aria-selected='true']") || t.querySelector(".concept-row.selected"));
+      if (row) row.scrollIntoView({ block: "nearest" });
+      else if (sc) sc.scrollTop = savedTop.current;
+    });
+  }, [hasQ]);
+  const onChange = (e) => {
+    const v = e.target.value;
+    if (!q && v.trim()) { const sc = scroller(); savedTop.current = sc ? sc.scrollTop : 0; }
+    setQuery(v);
+  };
+  const onKeyDown = (e) => {
+    // Ctrl/Cmd+E in the field: collapse the list (third state of the toggle).
+    // Without a selected section the list cannot collapse: leave the field only.
+    if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && (e.key === "e" || e.key === "E")) {
+      e.preventDefault(); e.stopPropagation();
+      inputRef.current?.blur();
+      if (selectedId) onCollapse();
+      return;
+    }
+    // Every other key stays in the field: no editor shortcut (slide delete,
+    // copy/paste, undo, arrows, f, e, n, g ...) may fire while the user types.
+    e.stopPropagation();
+    if (e.nativeEvent?.isComposing) return; // IME: Enter confirms the text
+    nav.onKey(e);
+  };
+  const clear = () => { setQuery(""); inputRef.current?.focus(); };
+  // One tree shape in every state, so children (ModuleList) never remount.
+  const show = !!q && !fullscreen;
+  let prevSection = null;
+  // The list panel has 8px top padding. marginTop -8 puts the field at the panel
+  // top edge; top -8 keeps it there when it sticks (sticky offsets count from
+  // inside that padding). With top 0 the stuck field moved down 8px and covered
+  // the first row. The opaque T.bg hides the rows that scroll under it.
+  return (
+    <>
+      {!fullscreen && <div ref={boxRef} data-testid="editor-search" style={{ position: "sticky", top: -8, zIndex: 3, background: T.bg, marginTop: -8, padding: "8px 10px 6px" }}>
+        <div style={{ position: "relative" }}>
+          <Search size={13} color={T.textDim} style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", pointerEvents: "none" }} />
+          <input
+            ref={inputRef}
+            data-testid="editor-search-input"
+            value={query}
+            onChange={onChange}
+            onKeyDown={onKeyDown}
+            placeholder={isMobile ? "Search slides…" : "Search slides… (Ctrl+E)"}
+            aria-label="Search slides"
+            aria-controls={q ? "editor-search-results" : undefined}
+            style={{
+              width: "100%", padding: "6px 30px 6px 30px", fontSize: 13, fontFamily: FONT.body,
+              background: T.bgInput, border: `1px solid ${T.border}`,
+              borderRadius: 6, color: T.text, outline: "none", boxSizing: "border-box",
+            }}
+          />
+          {query && <button data-testid="editor-search-clear" aria-label="Clear search" onMouseDown={(e) => e.preventDefault()} onClick={clear}
+            style={{ position: "absolute", right: 4, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", color: T.textDim, fontSize: 13, lineHeight: 1, padding: "4px 6px" }}>✕</button>}
+        </div>
+        {q && <div data-testid="editor-search-count" style={{ display: "flex", justifyContent: "space-between", padding: "6px 4px 0", fontFamily: FONT.mono, fontSize: 13, color: T.textDim }}>
+          <span data-testid="editor-search-count-pos">{rows.length ? nav.sel + 1 : 0} / {rows.length}</span>
+          <span data-testid="editor-search-count-total">{rows.length} {rows.length === 1 ? "slide" : "slides"}</span>
+        </div>}
+      </div>}
+      <div ref={treeRef} style={{ display: show ? "none" : undefined }}>{children}</div>
+      {show && <div id="editor-search-results" role="listbox" aria-label="Search results" data-testid="editor-search-results" onMouseDown={(e) => e.preventDefault()}>
+        {rows.map((r, i) => {
+          const head = r.sectionId !== prevSection;
+          prevSection = r.sectionId;
+          const selected = i === nav.sel;
+          return <React.Fragment key={r.key}>
+            {head && <div data-testid="editor-search-section" style={{ padding: "8px 16px 2px", fontFamily: FONT.mono, fontSize: 13, fontWeight: 700, letterSpacing: "0.04em", textTransform: "uppercase", color: r.sectionId === selectedId ? T.accent : T.textDim, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}><HighlightText text={r.sectionTitle} q={q} /></div>}
+            <SearchResultRow
+              rowRef={(el) => { if (selected) nav.selRef.current = el; }}
+              testid="editor-search-row"
+              onClick={() => { nav.setSel(i); open(i); inputRef.current?.focus(); }}
+              title={r.title} snippet={r.snippet} kind={r.kind} hiddenBlock={r.kind === "hidden-block"} hiddenSlide={r.hiddenSlide} q={q}
+              selected={selected} active={r.sectionId === selectedId && r.slideIdx === slideIndex} muted
+              num={r.slideIdx + 1} size="editor"
+            />
+          </React.Fragment>;
+        })}
+        {!rows.length && <div data-testid="editor-search-no-matches" style={{ padding: "20px 16px", fontFamily: FONT.body, fontSize: 13, color: T.textDim, textAlign: "center" }}>No matches</div>}
+      </div>}
+    </>
   );
 }
 
@@ -17991,11 +18926,22 @@ uiSuite("Link box input normalization", [
 ]);
 
 uiSuite("Editor TOC toggle keys", [
-  { name: "Ctrl+E and AltGr+[ toggle the TOC in the editor", fn: async () => {
+  { name: "Ctrl+E focuses the search field, again hides the TOC, again shows it; AltGr+[ toggles the TOC", fn: async () => {
     try { document.activeElement?.blur?.(); } catch {}
     const tocShown = () => _$$(".concept-row").length > 0;
+    const inField = () => !!document.activeElement && document.activeElement === _$("[data-testid='editor-search-input']");
     if (!tocShown()) throw new Error("TOC not shown at start");
-    for (const [key, opts, label] of [["e", { ctrlKey: true }, "Ctrl+E"], ["[", { ctrlKey: true, altKey: true }, "AltGr+["]]) {
+    // v13.81: Ctrl+E with focus outside the field focuses it (TOC stays); in the
+    // field it hides the TOC; with the TOC hidden it shows it and focuses the field.
+    _key("e", { ctrlKey: true });
+    await _waitFor(inField, 2000).catch(() => { throw new Error("Ctrl+E did not focus the search field"); });
+    if (!tocShown()) throw new Error("Ctrl+E with focus outside the field hid the TOC");
+    _key("e", { ctrlKey: true });
+    await _waitFor(() => !tocShown(), 2000).catch(() => { throw new Error("Ctrl+E in the field did not hide the TOC"); });
+    _key("e", { ctrlKey: true });
+    await _waitFor(() => tocShown() && inField(), 2000).catch(() => { throw new Error("Ctrl+E did not show the TOC and focus the field"); });
+    document.activeElement?.blur?.();
+    for (const [key, opts, label] of [["[", { ctrlKey: true, altKey: true }, "AltGr+["]]) {
       _key(key, opts);
       await _waitFor(() => !tocShown(), 2000).catch(() => { throw new Error(label + " did not hide the TOC"); });
       _key(key, opts);
@@ -18526,7 +19472,12 @@ uiSuite("tideline-CR26 edit every block text", [
 // section. The pane is made short here so it overflows with any deck.
 async function _tidelineTocDrag(fn) {
   const tree = await _waitFor(() => document.querySelector('[data-testid="toc-tree"]'), 3000);
-  const pane = tree.parentElement; const old = pane.style.maxHeight;
+  // The pane is the list panel that scrolls. Since v13.81 the tree sits in an
+  // EditorSearch wrapper, so it is not always the direct parent of the tree.
+  let pane = tree.parentElement;
+  while (pane && !/(auto|scroll)/.test(getComputedStyle(pane).overflowY)) pane = pane.parentElement;
+  if (!pane) throw new Error("no TOC scroll pane");
+  const old = pane.style.maxHeight;
   pane.style.maxHeight = Math.max(90, Math.min(220, Math.floor(tree.offsetHeight / 2))) + "px";
   try {
     await _wait(60);
@@ -20309,6 +21260,2144 @@ uiSuite("toolbar-auto-compact", [
       const pad = getComputedStyle(_tbButtons()[0]).paddingLeft;
       if (pad !== "6px") throw new Error(`icon buttons do not use compact padding at 360 px (padding-left ${pad})`);
     });
+  }},
+]);
+
+// v13.79 Present detour: while typing, Ctrl+E search lists hidden slides (and
+// matches hidden-block text); a jump shows the hidden slide with no slide
+// number; arrows or Esc return to the slide that was left; Present stays.
+const _pdSel = () => _hooks().getSelection();
+const _pdOnSlide = (t) => _$$("[data-block-type]").some((el) => (el.textContent || "").includes(t));
+const _pdSame = (a, b) => !!a && !!b && a.itemId === b.itemId && a.slideIdx === b.slideIdx;
+// Make the slide after the first one hidden, with a hidden block that holds the
+// search word, then go back to the first slide. Returns the history mark.
+const _pdPrepare = async () => {
+  const past = _hooks().getHistoryCounts().past;
+  const s0 = _pdSel();
+  if (!s0) throw new Error("no module selected");
+  document.activeElement?.blur?.();
+  _key("ArrowRight");
+  await _waitFor(() => { const s = _pdSel(); return s && s.itemId === s0.itemId && s.slideIdx === s0.slideIdx + 1; }, 1500)
+    .catch(() => { throw new Error("the first module needs 2 or more slides"); });
+  _hooks().injectBlocks([{ type: "heading", text: "PDBACKUP heading" }, { type: "text", text: "secret zqxdetour token", hidden: true }], { hidden: true });
+  await _wait(150);
+  document.activeElement?.blur?.();
+  _key("ArrowLeft");
+  await _waitFor(() => _pdSame(_pdSel(), s0), 1500);
+  return past;
+};
+const _pdEnterPresent = async () => { document.activeElement?.blur?.(); _key("f"); await _waitFor(() => !_$("header"), 2000); await _wait(150); };
+// Open the Present TOC, type the word, and jump to the detour row.
+const _pdJump = async (checkEmpty) => {
+  _key("e", { ctrlKey: true });
+  await _waitFor(_hfeTocOpen, 2000);
+  await _wait(150);
+  if (checkEmpty && _$("[data-testid='toc-detour-section']")) throw new Error("hidden slides are listed with an empty search");
+  _type(_$("input[placeholder^='Search slides']"), "zqxdetour");
+  const row = await _waitFor(() => _$("[data-testid='toc-detour-row']"), 1500).catch(() => { throw new Error("search did not list the hidden slide"); });
+  if (checkEmpty && !row.querySelector("[data-testid='toc-hidden-block']")) throw new Error("a hidden-block match has no HIDDEN BLOCK tag");
+  _click(row);
+  await _waitFor(() => _pdOnSlide("PDBACKUP"), 1500).catch(() => { throw new Error("the jump did not show the hidden slide"); });
+  await _wait(400); // the hidden-slide auto-skip must not move off a detour
+  if (!_pdOnSlide("PDBACKUP")) throw new Error("Present moved off the detour slide by itself");
+  document.activeElement?.blur?.();
+};
+uiSuite("present-detour-search", [
+  { name: "D1: hidden slide found only while typing; jump shows it with no number; Presenter view shows the detour; an arrow returns", fn: async () => {
+    let past = null;
+    try {
+      past = await _pdPrepare();
+      await _pdEnterPresent();
+      const before = _pdSel();
+      await _pdJump(true);
+      if (_slideCounterEl()) throw new Error("the detour slide shows a slide number");
+      _key("s");
+      await _waitFor(() => _$("[data-testid='presenter-detour']"), 1500).catch(() => { throw new Error("Presenter view shows no detour cue"); });
+      _key("s");
+      await _waitFor(() => !_$("[data-testid='presenter-view']"), 1500);
+      document.activeElement?.blur?.();
+      _key("ArrowRight");
+      await _waitFor(() => _pdSame(_pdSel(), before), 1500).catch(() => { throw new Error("ArrowRight did not return to the slide the detour left"); });
+      if (_pdOnSlide("PDBACKUP")) throw new Error("the hidden slide is still on screen after the return");
+      if (_$("header")) throw new Error("the return left Present");
+    } finally { await _exitFullscreen(); if (past != null) await _mrdUndoTo(past); }
+  }},
+  { name: "D2: Esc on a detour returns to the slide that was left and keeps Present", fn: async () => {
+    let past = null;
+    try {
+      past = await _pdPrepare();
+      await _pdEnterPresent();
+      const before = _pdSel();
+      await _pdJump(false);
+      _key("Escape");
+      await _waitFor(() => _pdSame(_pdSel(), before), 1500).catch(() => { throw new Error("Esc did not return to the slide the detour left"); });
+      await _wait(200);
+      if (_$("header")) throw new Error("Esc on a detour left Present");
+    } finally { await _exitFullscreen(); if (past != null) await _mrdUndoTo(past); }
+  }},
+], { setup: _selectFirstModule });
+
+// v13.81 shared search engine (pure): matchSlide / searchDeck / splitHighlight.
+const _seEq = (got, want, what) => { const g = JSON.stringify(got), w = JSON.stringify(want); if (g !== w) throw new Error(`${what}: got ${g}, want ${w}`); };
+const _seLoneSurrogate = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
+const _seH = (text) => ({ type: "heading", text });
+const _seT = (text, extra) => ({ type: "text", text, ...(extra || {}) });
+const _sePick = (m) => m && { kind: m.kind, area: m.area, block: m.block, hiddenBlock: m.hiddenBlock };
+uiSuite("search-engine", [
+  { name: "SE1: title, visible block, hidden block, no match, case and whitespace", fn: async () => {
+    const s = { blocks: [_seH("Alpha Tools"), _seT("find me here"), _seT("secret word", { hidden: true }), _seT("dup hidden", { hidden: true }), _seT("dup shown")] };
+    const t = matchSlide(s, 0, "tool", null);
+    _seEq([t.title, t.snippet, t.kind, t.block], ["Alpha Tools", null, "title", -1], "title match");
+    _seEq(_sePick(matchSlide(s, 0, "find me", null)), { kind: "block", area: "blocks", block: 1, hiddenBlock: false }, "visible block");
+    _seEq(_sePick(matchSlide(s, 0, "secret", null)), { kind: "hidden-block", area: "blocks", block: 2, hiddenBlock: true }, "hidden block");
+    _seEq(_sePick(matchSlide(s, 0, "dup", null)), { kind: "block", area: "blocks", block: 4, hiddenBlock: false }, "visible text before hidden text");
+    if (matchSlide(s, 0, "absent", null) !== null) throw new Error("no-match is not null");
+    if (!matchSlide(s, 0, "find me", null).snippet.includes("find me")) throw new Error("snippet misses the hit");
+    const lanes = [{ id: "l", items: [{ id: "a", title: "A", order: 1, slides: [s] }] }];
+    _seEq(searchDeck(lanes, "  FIND ME  ", null).map((r) => [r.key, r.kind, r.renderIdx]), [["a:0", "block", 1]], "upper case + spaces");
+    _seEq(searchDeck(lanes, "   ", null), [], "blank query");
+    _seEq(searchDeck(null, "x", null), [], "no lanes");
+    const st = { title: "Plain slide title zqx", blocks: [_seT("x")] };
+    _seEq([matchSlide(st, 0, "zqx", null).block, searchDeck([{ id: "l", items: [{ id: "b", title: "B", slides: [st] }] }], "zqx", null)[0].renderIdx], [-1, -1], "slide.title string: no block");
+  }},
+  { name: "SE2: special characters and emoji match literally and never throw", fn: async () => {
+    for (const q of ["(", "[", "*", "\\", "<", ">", "&", "\"", "a(b", "[x]", "<b>", "&amp;", "🚀", "$&", "$1"]) {
+      const s = { blocks: [_seH("H"), _seT(`pre ${q} post`)] };
+      const m = matchSlide(s, 0, q.toLowerCase(), null);
+      if (!m || m.kind !== "block") throw new Error(`no literal match for ${JSON.stringify(q)}`);
+      if (!m.snippet.includes(q)) throw new Error(`snippet lost ${JSON.stringify(q)}`);
+      if (matchSlide({ blocks: [_seH("H"), _seT("plain text")] }, 0, q.toLowerCase(), null) !== null) throw new Error(`false match for ${JSON.stringify(q)}`);
+      const parts = splitHighlight(`pre ${q} post`, q.toLowerCase());
+      _seEq(parts.filter((p) => p.hit).map((p) => p.t), [q], `highlight of ${JSON.stringify(q)}`);
+    }
+    for (const q of [".", ".*", "a|b", "^", "$"]) if (matchSlide({ blocks: [_seH("H"), _seT("abc")] }, 0, q, null) !== null) throw new Error(`regex semantics for ${q}`);
+    const a = matchSlide({ blocks: [_seH("H"), _seT("🚀".repeat(20) + "a" + "needle" + "b" + "🚀".repeat(30))] }, 0, "needle", null);
+    if (_seLoneSurrogate.test(a.snippet)) throw new Error("snippet cuts a surrogate pair: " + JSON.stringify(a.snippet));
+  }},
+  { name: "SE3: column text (L / R) is found with the canvas render index; nested text gives the top-level block", fn: async () => {
+    const cols = { layout: "cols", blocks: [_seH("Cols")], L: [_seT("left one"), _seT("left two")], R: [_seT("right one")] };
+    _seEq(_sePick(matchSlide(cols, 0, "left two", null)), { kind: "block", area: "L", block: 1, hiddenBlock: false }, "L match");
+    _seEq(_sePick(matchSlide(cols, 0, "right one", null)), { kind: "block", area: "R", block: 0, hiddenBlock: false }, "R match");
+    if (!matchPresentSlide(cols, 0, "right one")) throw new Error("Present does not find column text");
+    const lanes = [{ id: "l", items: [{ id: "c", title: "C", slides: [cols, { blocks: [_seH("N"), _seT("x")], L: [_seT("stray left")] }] }] }];
+    _seEq(searchDeck(lanes, "left two", null).map((r) => r.renderIdx), [2], "L render index");
+    _seEq(searchDeck(lanes, "right one", null).map((r) => r.renderIdx), [3], "R render index");
+    _seEq(searchDeck(lanes, "stray left", null).map((r) => r.renderIdx), [-1], "L on a non-cols slide: no index");
+    _seEq([searchRenderIndex(cols, "X", 0), searchRenderIndex(cols, "L", -1), searchRenderIndex(cols, "blocks", "1"), searchRenderIndex(null, "R", 0)], [-1, -1, -1, -1], "inexact mapping");
+    const nested = { blocks: [_seH("N"), { type: "grid", items: [{ title: "t", body: [{ text: "deep nested word" }] }] }] };
+    _seEq(_sePick(matchSlide(nested, 0, "nested word", null)), { kind: "block", area: "blocks", block: 1, hiddenBlock: false }, "nested");
+  }},
+  { name: "SE4: notes and section names only with their option; empty section gives no row; tree order", fn: async () => {
+    const s = { blocks: [_seH("Has notes")], notes: "speaker zqxnote here" };
+    if (matchSlide(s, 0, "zqxnote", null) !== null || matchPresentSlide(s, 0, "zqxnote") !== null) throw new Error("notes found without the option");
+    _seEq(_sePick(matchSlide(s, 0, "zqxnote", { notes: true })), { kind: "notes", area: null, block: -1, hiddenBlock: false }, "notes on");
+    const lanes = [
+      { id: "l1", items: [
+        { id: "b", title: "Second zqxsec", order: 2, slides: [{ blocks: [_seH("B0")], hidden: true }] },
+        { id: "a", title: "First zqxsec", order: 1, slides: [{ blocks: [_seH("A0")] }, s] },
+        { id: "e", title: "Empty zqxsec", order: 3, slides: [] },
+      ] },
+      { id: "l2", collapsed: true, items: [{ id: "c", title: "Other", order: 1, slides: [{ blocks: [_seH("zqxsec in C")] }] }] },
+    ];
+    _seEq(searchDeck(lanes, "zqxsec", null).map((r) => r.key), ["c:0"], "sections off");
+    _seEq(searchDeck(lanes, "zqxsec", { sections: true }).map((r) => [r.key, r.kind, r.hiddenSlide, r.collapsedLane]),
+      [["a:0", "section", false, false], ["b:0", "section", true, false], ["c:0", "title", false, true]], "sections on, tree order");
+    _seEq(searchDeck(lanes, "zqxnote", null), [], "deck notes off");
+    _seEq(searchDeck(lanes, "zqxnote", { notes: true }).map((r) => [r.key, r.kind, r.renderIdx]), [["a:1", "notes", -1]], "deck notes on");
+  }},
+  { name: "SE5: deep nesting, prototype keys, data: strings and skip keys never match", fn: async () => {
+    let deep = { text: "zqxdeep" }; for (let i = 0; i < 20; i++) deep = { child: deep };
+    const shallow = { type: "card", body: { inner: { text: "zqxshallow" } } };
+    const s = { blocks: [_seH("H"), deep, shallow] };
+    if (matchSlide(s, 0, "zqxdeep", null) !== null) throw new Error("text past the depth cap matched");
+    if (!matchSlide(s, 0, "zqxshallow", null)) throw new Error("text inside the depth cap not found");
+    const parsed = JSON.parse('{"blocks":[{"type":"heading","text":"H"},{"type":"text","text":"x","__proto__":{"t":"zqxproto"},"constructor":"zqxctor","prototype":"zqxproto2"}]}');
+    for (const q of ["zqxproto", "zqxctor", "zqxproto2"]) if (matchSlide(parsed, 0, q, null) !== null) throw new Error(`prototype key matched: ${q}`);
+    if (({}).t !== undefined) throw new Error("Object.prototype was changed");
+    const inh = Object.assign(Object.create({ text: "zqxinherited" }), { type: "text" });
+    if (matchSlide({ blocks: [_seH("H"), inh] }, 0, "zqxinherited", null) !== null) throw new Error("inherited key matched");
+    const media = { blocks: [_seH("H"), { type: "image", src: "zqxsrc", alt: "data:zqxdata", color: "zqxcolor", href: "zqxhref", style: { color: "zqxstyle" }, comments: [{ text: "zqxcomment" }] }] };
+    for (const q of ["zqxsrc", "zqxdata", "zqxcolor", "zqxhref", "zqxstyle", "zqxcomment"]) if (matchSlide(media, 0, q, null) !== null) throw new Error(`skip key matched: ${q}`);
+  }},
+  { name: "SE6: splitHighlight keeps the text and case; length change (U+0130) and surrogate cuts give no highlight", fn: async () => {
+    const chk = (text, q, want, what) => {
+      const parts = splitHighlight(text, q);
+      _seEq(parts.map((p) => (p.hit ? "[" + p.t + "]" : p.t)).join(""), want, what);
+      if (parts.map((p) => p.t).join("") !== (typeof text === "string" ? text : "")) throw new Error(`${what}: text changed`);
+      if (parts.some((p) => _seLoneSurrogate.test(p.t))) throw new Error(`${what}: a part cuts a surrogate pair`);
+    };
+    chk("abc", "x", "abc", "no hit");
+    chk("Hello World", "world", "Hello [World]", "one hit, case kept");
+    chk("aXbXc", "x", "a[X]b[X]c", "many");
+    chk("abab", "ab", "[ab][ab]", "adjacent, start and end");
+    chk("aaa", "aa", "[aa]a", "non-overlapping");
+    chk("", "x", "", "empty text");
+    chk(null, "x", "", "non-string text");
+    chk("abc", "", "abc", "empty query");
+    chk("İstanbul İzmir", "stanbul", "İstanbul İzmir", "U+0130 length change: no highlight");
+    if (!matchSlide({ blocks: [_seH("H"), _seT("İstanbul trip")] }, 0, "stanbul", null)) throw new Error("U+0130 text: the match must still count");
+    chk("😀😁", "\uDE00", "😀😁", "lone low surrogate query");
+    chk("x😀y", "😀", "x[😀]y", "emoji hit");
+    const many = splitHighlight("a".repeat(1000), "a");
+    if (many.filter((p) => p.hit).length !== 50 || many.map((p) => p.t).join("") !== "a".repeat(1000)) throw new Error("maxHits cap");
+  }},
+  { name: "SE7: a 100 000-char string is searched; the snippet stays short; under 50 ms", fn: async () => {
+    const long = "lorem ipsum ".repeat(8400) + "zqxneedle tail";
+    const s = { blocks: [_seH("H"), _seT(long)] };
+    const t0 = performance.now();
+    const m = matchSlide(s, 0, "zqxneedle", null);
+    const parts = splitHighlight(m.snippet, "zqxneedle");
+    const ms = performance.now() - t0;
+    if (!m || !m.snippet.includes("zqxneedle")) throw new Error("needle not found");
+    if (m.snippet.length > 24 + 9 + 36 + 2) throw new Error("snippet too long: " + m.snippet.length);
+    if (parts.filter((p) => p.hit).length !== 1) throw new Error("snippet highlight");
+    if (ms > 50) throw new Error(`long string took ${ms.toFixed(1)} ms`);
+  }},
+  { name: "SE8: 500-slide deck: one search under 50 ms", fn: async () => {
+    const lanes = [];
+    for (let l = 0; l < 5; l++) {
+      const items = [];
+      for (let it = 0; it < 10; it++) {
+        const slides = [];
+        for (let k = 0; k < 10; k++) {
+          const n = (l * 10 + it) * 10 + k;
+          slides.push({ layout: k % 3 === 0 ? "cols" : undefined, blocks: [_seH(`Slide ${n} heading`), _seT(`Body text of slide ${n} with several words in it`), { type: "bullets", items: [`point one ${n}`, `point two ${n}`, { text: `point three ${n}` }] }],
+            L: k % 3 === 0 ? [_seT(`left col ${n}`)] : undefined, R: k % 3 === 0 ? [_seT(`right col ${n}`)] : undefined, notes: `notes ${n}` });
+        }
+        if (l === 4 && it === 9) slides[9].blocks.push(_seT("zqxlastone"));
+        items.push({ id: `i${l}-${it}`, title: `Section ${l}-${it}`, order: it, slides });
+      }
+      lanes.push({ id: `l${l}`, items });
+    }
+    searchDeck(lanes, "warm", { notes: true, sections: true });
+    let worst = 0, rows = null, rare = null;
+    for (const q of ["point", "zqxlastone", "no such text at all"]) {
+      const t0 = performance.now();
+      const r = searchDeck(lanes, q, { notes: true, sections: true });
+      worst = Math.max(worst, performance.now() - t0);
+      if (q === "point") rows = r; if (q === "zqxlastone") rare = r;
+    }
+    if (rows.length !== 500) throw new Error("expected 500 rows for a common word, got " + rows.length);
+    _seEq(rare.map((r) => r.key), ["i4-9:9"], "rare word");
+    if (worst > 50) throw new Error(`500-slide search took ${worst.toFixed(1)} ms (bound 50 ms)`);
+  }},
+  // Review fix F1: search reads prose only. Every key of the block and slide
+  // allowlists has a class (prose = searched, else skipped), so a new field
+  // fails here until it gets one.
+  { name: "SE9: every SAFE_BLOCK_KEYS / SAFE_SLIDE_KEYS key is classified as prose or skipped, and the walk obeys it", fn: async () => {
+    const both = [...SEARCH_PROSE_KEYS].filter((k) => PRESENT_SEARCH_SKIP.has(k));
+    if (both.length) throw new Error("keys in both the prose set and the skip set: " + both.join(", "));
+    const nb = [...SAFE_BLOCK_KEYS].filter((k) => !SEARCH_PROSE_KEYS.has(k) && !PRESENT_SEARCH_SKIP.has(k));
+    if (nb.length) throw new Error("unclassified block keys (add each to SEARCH_PROSE_KEYS or PRESENT_SEARCH_SKIP): " + nb.join(", "));
+    const ns = [...SAFE_SLIDE_KEYS].filter((k) => SEARCH_SLIDE_KEYS.prose.has(k) === SEARCH_SLIDE_KEYS.skip.has(k));
+    if (ns.length) throw new Error("slide keys with no class or two classes (SEARCH_SLIDE_KEYS): " + ns.join(", "));
+    for (const k of SAFE_BLOCK_KEYS) {
+      const m = matchSlide({ blocks: [_seH("H"), { type: "text", [k]: "zqxkeyval" }] }, 0, "zqxkeyval", null);
+      if (PRESENT_SEARCH_SKIP.has(k) ? m !== null : !m) throw new Error(`block key ${k}: ${m ? "matched" : "not found"}`);
+    }
+  }},
+  { name: "SE10: SVG markup, colour and icon values never match; prose of every block type is found", fn: async () => {
+    const svg = { blocks: [_seH("Logo"), { type: "svg", markup: "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 48 48\"><path d=\"M0 0\" stroke=\"#fff\"/></svg>", caption: "zqxcap" }] };
+    for (const q of ["viewbox", "path", "stroke", "svg", "xmlns", "www.w3.org", "48 48"]) if (matchSlide(svg, 0, q, null) !== null) throw new Error(`SVG markup matched: ${q}`);
+    if (!matchSlide(svg, 0, "zqxcap", null)) throw new Error("SVG caption not found");
+    const paint = { blocks: [_seH("C"), { type: "callout", text: "note", border: "#818cf850", borderColor: "#818cf8", bg: "#818cf820", iconColor: "#818cf8", titleSize: "zqxsize" }] };
+    for (const q of ["#818cf8", "818cf8", "zqxsize"]) if (matchSlide(paint, 0, q, null) !== null) throw new Error(`style value matched: ${q}`);
+    const nested = { blocks: [_seH("N"), { type: "flow", items: [{ icon: "zqxicon", color: "#123abc", iconBg: "#123abc", label: "go" }] }, { type: "icon", name: "zqxname", label: "lbl" }] };
+    for (const q of ["zqxicon", "#123abc", "zqxname"]) if (matchSlide(nested, 0, q, null) !== null) throw new Error(`non-prose value matched: ${q}`);
+    const w = "zqxprose";
+    const cases = [
+      ["heading", { text: w }], ["text", { text: w }], ["bullets", { items: ["a", { text: w, icon: "Zap" }] }], ["image", { caption: w }],
+      ["code", { text: w }], ["grid", { cols: 2, items: [{ blocks: [{ type: "text", text: w }] }] }], ["callout", { title: w }],
+      ["metric", { value: w }], ["quote", { author: w }], ["badge", { text: w }], ["icon", { name: "Zap", label: w }],
+      ["icon-row", { items: [{ icon: "Zap", title: w }] }], ["flow", { items: [{ label: "x", sublabel: w }], gateLabel: "g" }],
+      ["table", { headers: ["h"], rows: [["a", w]] }], ["progress", { items: [{ label: w, value: 50 }] }], ["steps", { items: [{ title: w }] }],
+      ["tag-group", { items: [{ text: w }] }], ["timeline", { items: [{ date: w }] }], ["svg", { markup: "<svg viewBox=\"0 0 1 1\"/>", caption: w }],
+      ["comparison", { items: [{ title: "a", items: [w] }, { title: "b", items: [] }] }], ["funnel", { items: [{ label: "x", drop: w }] }],
+      ["cycle", { centerSub: w }], ["number-row", { items: [{ value: w }] }], ["matrix", { quadrants: [{ title: "q", items: [w] }] }],
+      ["checklist", { items: [{ text: w, status: "done" }] }],
+    ];
+    for (const [type, f] of cases) {
+      const m = matchSlide({ blocks: [_seH("H"), { type, ...f }] }, 0, w, null);
+      if (!m || m.kind !== "block" || m.block !== 1) throw new Error(`prose of a ${type} block not found`);
+    }
+  }},
+  // Review fix F2: toLowerCase can change the length (U+0130 -> 2 units), so
+  // an offset in the lower-case text is not an offset in the original.
+  { name: "SE11: the snippet keeps the match when lower case changes the length, before or after the hit; no throw, no cut pair", fn: async () => {
+    const snip = (t, q) => matchSlide({ blocks: [_seH("H"), _seT(t)] }, 0, q, null).snippet;
+    const a = snip("İ".repeat(60) + " qqz " + "x".repeat(60), "qqz");
+    if (!a.includes("qqz")) throw new Error("length change before the hit: " + JSON.stringify(a));
+    const b = snip("x".repeat(60) + " qqz " + "İ".repeat(60), "qqz");
+    if (!b.includes("qqz")) throw new Error("length change after the hit: " + JSON.stringify(b));
+    const c = snip("a".repeat(50) + "İ".repeat(10) + "İQQZ" + "b".repeat(50), "i̇qqz");
+    if (!c.includes("İQQZ")) throw new Error("hit that holds the long char: " + JSON.stringify(c));
+    const d = snip("🚀İ".repeat(30) + "qqz" + "İ🚀".repeat(30), "qqz");
+    if (!d.includes("qqz") || _seLoneSurrogate.test(d)) throw new Error("emoji + long char: " + JSON.stringify(d));
+    let seed = 7; const rnd = (n) => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed % n; };
+    const parts = ["İ", "🚀", "a", "B", " ", "ß", "Σ", "ǅ", "x"];
+    for (let i = 0; i < 300; i++) {
+      let t = ""; const n = 1 + rnd(120); for (let j = 0; j < n; j++) t += parts[rnd(parts.length)];
+      const cps = Array.from(t), s = rnd(cps.length), q = cps.slice(s, s + 1 + rnd(4)).join("").toLowerCase().trim();
+      if (!q || !t.replace(/\s+/g, " ").toLowerCase().includes(q)) continue; // only inputs that match (as matchSlide checks first)
+      const out = searchSnippet(t, q);
+      if (!out.toLowerCase().includes(q)) throw new Error(`snippet lost ${JSON.stringify(q)} in ${JSON.stringify(t)}: ${JSON.stringify(out)}`);
+      if (_seLoneSurrogate.test(out)) throw new Error("cut surrogate pair: " + JSON.stringify(out));
+    }
+  }},
+]);
+
+// v13.81 Present search keyboard model: first result selected, Up/Down stop at
+// the ends, Enter opens the selected row (detour rows too), count line, the
+// selected row looks different from the current-slide row, Esc clears then closes.
+const _psnInput = () => _$("input[placeholder^='Search slides']");
+const _psnRows = () => _$$("[data-search-row='1']").filter((r) => _hfeTocPanel()?.contains(r));
+const _psnSelIdx = () => _psnRows().findIndex((r) => r.getAttribute("aria-selected") === "true");
+const _psnCount = () => { const a = _$("[data-testid='search-count-pos']"), b = _$("[data-testid='search-count-total']"); return a && b ? `${a.textContent}|${b.textContent}` : null; };
+// Give the first two slides of the first module a known word, then return to slide 1.
+const _psnPrepare = async () => {
+  const past = _hooks().getHistoryCounts().past;
+  const s0 = _pdSel();
+  if (!s0) throw new Error("no module selected");
+  _hooks().injectBlocks([_seH("PSN one"), _seT("alpha zqxnav first")]);
+  await _wait(120);
+  document.activeElement?.blur?.();
+  _key("ArrowRight");
+  await _waitFor(() => { const s = _pdSel(); return s && s.itemId === s0.itemId && s.slideIdx === s0.slideIdx + 1; }, 1500)
+    .catch(() => { throw new Error("the first module needs 2 or more slides"); });
+  _hooks().injectBlocks([_seH("PSN two"), _seT("beta ZQXNAV second")]);
+  await _wait(120);
+  document.activeElement?.blur?.();
+  _key("ArrowLeft");
+  await _waitFor(() => _pdSame(_pdSel(), s0), 1500);
+  return { past, s0 };
+};
+const _psnOpen = async (word) => {
+  _key("e", { ctrlKey: true });
+  await _waitFor(_hfeTocOpen, 2000);
+  await _wait(150);
+  _type(_psnInput(), word);
+  await _wait(120);
+};
+uiSuite("present-search-nav", [
+  { name: "PSN1: first result selected; Down/Up move and stop at the ends; count line; selected differs from current; highlight", fn: async () => {
+    let p = null;
+    try {
+      p = await _psnPrepare();
+      await _pdEnterPresent();
+      await _psnOpen("zqxnav");
+      await _waitFor(() => _psnRows().length === 2, 1500).catch(() => { throw new Error("expected 2 result rows, got " + _psnRows().length); });
+      if (_psnSelIdx() !== 0) throw new Error("the first result is not selected");
+      _seEq(_psnCount(), "1 / 2|2 slides", "count line");
+      const cnt = _$("[data-testid='search-count']");
+      if (parseFloat(getComputedStyle(cnt).fontSize) < 13) throw new Error("count line under 13 px");
+      _key("ArrowUp"); await _wait(60);
+      if (_psnSelIdx() !== 0) throw new Error("ArrowUp at the top moved the selection");
+      _key("ArrowDown"); await _wait(60);
+      if (_psnSelIdx() !== 1) throw new Error("ArrowDown did not select the second result");
+      _seEq(_psnCount(), "2 / 2|2 slides", "count after ArrowDown");
+      _key("ArrowDown"); await _wait(60);
+      if (_psnSelIdx() !== 1) throw new Error("ArrowDown at the end moved the selection");
+      const [cur, sel] = _psnRows();
+      if (cur.style.borderLeft.indexOf("3px solid") < 0 || /transparent/.test(cur.style.borderLeft)) throw new Error("current-slide row lost its left bar");
+      if (cur.style.outlineStyle && cur.style.outlineStyle !== "none") throw new Error("the current (not selected) row has the selection outline");
+      if (!/solid/.test(sel.style.outline || "") || !/transparent/.test(sel.style.borderLeft)) throw new Error("the selected row does not look different from the current row");
+      const hits = sel.querySelectorAll("[data-testid='search-hit']");
+      if (!hits.length || [...hits].some((h) => h.textContent.toLowerCase() !== "zqxnav")) throw new Error("highlight text does not equal the query");
+      if (hits[0].textContent !== "ZQXNAV") throw new Error("highlight does not keep the case");
+      if ([...hits].some((h) => parseFloat(getComputedStyle(h).fontSize) < 13)) throw new Error("highlight under 13 px");
+      _key("ArrowUp"); await _wait(60);
+      if (_psnSelIdx() !== 0) throw new Error("ArrowUp did not move back");
+      _key("ArrowDown"); await _wait(60);
+      _key("Enter");
+      await _waitFor(() => !_hfeTocOpen(), 1500).catch(() => { throw new Error("Enter did not close the panel"); });
+      await _waitFor(() => { const s = _pdSel(); return s && s.itemId === p.s0.itemId && s.slideIdx === p.s0.slideIdx + 1; }, 1500)
+        .catch(() => { throw new Error("Enter did not open the selected (second) result"); });
+      if (_$("header")) throw new Error("Enter left Present");
+    } finally { await _exitFullscreen(); if (p) await _mrdUndoTo(p.past); }
+  }},
+  { name: "PSN2: no matches; Enter does nothing; Esc clears, then closes; Present stays", fn: async () => {
+    try {
+      await _pdEnterPresent();
+      const before = _pdSel();
+      await _psnOpen("zqxnomatch000");
+      await _waitFor(() => _$("[data-testid='search-no-matches']"), 1500).catch(() => { throw new Error("no 'No matches' state"); });
+      _seEq(_psnCount(), "0 / 0|0 slides", "count line with no match");
+      _key("ArrowDown"); _key("Enter"); await _wait(150);
+      if (!_hfeTocOpen() || !_pdSame(_pdSel(), before)) throw new Error("Enter with no result changed something");
+      _key("Escape"); await _wait(120);
+      if (_psnInput().value !== "" || _$("[data-testid='search-count']")) throw new Error("Esc did not clear the query and the count line");
+      if (!_hfeTocOpen()) throw new Error("the first Esc closed the panel");
+      _key("Escape");
+      await _waitFor(() => !_hfeTocOpen(), 1500).catch(() => { throw new Error("the second Esc did not close the panel"); });
+      if (_$("header")) throw new Error("Esc left Present");
+    } finally { await _exitFullscreen(); }
+  }},
+  { name: "PSN3: detour rows come after the normal rows in the same order; Enter on one starts the detour", fn: async () => {
+    let past = null;
+    try {
+      past = await _pdPrepare();
+      _hooks().injectBlocks([_seH("PSN visible"), _seT("visible zqxdetour text")]);
+      await _wait(120);
+      await _pdEnterPresent();
+      await _psnOpen("zqxdetour");
+      await _waitFor(() => _psnRows().length === 2, 1500).catch(() => { throw new Error("expected 1 normal + 1 detour row, got " + _psnRows().length); });
+      const rows = _psnRows();
+      if (rows[0].getAttribute("data-testid") === "toc-detour-row" || rows[1].getAttribute("data-testid") !== "toc-detour-row") throw new Error("detour row is not after the normal row");
+      _key("ArrowDown"); await _wait(60);
+      if (_psnSelIdx() !== 1) throw new Error("ArrowDown did not reach the detour row");
+      _key("Enter");
+      await _waitFor(() => _pdOnSlide("PDBACKUP"), 1500).catch(() => { throw new Error("Enter on the detour row did not show the hidden slide"); });
+      if (_slideCounterEl()) throw new Error("the detour slide shows a slide number");
+    } finally { await _exitFullscreen(); if (past != null) await _mrdUndoTo(past); }
+  }},
+  { name: "PSN4: the selected row scrolls into view", fn: async () => {
+    try {
+      await _pdEnterPresent();
+      await _psnOpen("e");
+      const n = _psnRows().length;
+      if (!n) throw new Error("no results for a one-letter query");
+      for (let i = 0; i < Math.min(n - 1, 40); i++) { _key("ArrowDown"); await _wait(25); }
+      await _wait(150);
+      const sel = _psnRows()[_psnSelIdx()];
+      const box = _hfeTocPanel().querySelector("[data-scroll-container]").getBoundingClientRect(), r = sel.getBoundingClientRect();
+      if (r.top < box.top - 1 || r.bottom > box.bottom + 1) throw new Error(`selected row is out of view (row ${r.top}-${r.bottom}, list ${box.top}-${box.bottom})`);
+      if (_psnSelIdx() !== Math.min(n - 1, 40)) throw new Error("selection index wrong");
+    } finally { await _exitFullscreen(); }
+  }},
+], { setup: _selectFirstModule });
+
+// v13.81 editor search: field at the top of the slide list; rows replace the
+// tree while a query is typed; Ctrl+E / "/" keys; opening keeps query + focus.
+const _esInput = () => _$("[data-testid='editor-search-input']");
+const _esRows = () => _$$("[data-testid='editor-search-row']");
+const _esSelIdx = () => _esRows().findIndex((r) => r.getAttribute("aria-selected") === "true");
+const _esCount = () => { const a = _$("[data-testid='editor-search-count-pos']"), b = _$("[data-testid='editor-search-count-total']"); return a && b ? `${a.textContent}|${b.textContent}` : null; };
+const _esTreeShown = () => { const t = _$("[data-testid='toc-tree']"); return !!t && t.offsetParent !== null; };
+const _esFocused = () => !!_esInput() && document.activeElement === _esInput();
+const _esPast = () => _hooks().getHistoryCounts().past;
+const _esType = async (word) => { _type(_esInput(), word); await _wait(120); };
+const _esPress = (key, opts) => { const ev = new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true, ...(opts || {}) }); (document.activeElement || document.body).dispatchEvent(ev); return ev; };
+const _esClear = async () => { const i = _esInput(); if (i && i.value) { _type(i, ""); await _wait(80); } document.activeElement?.blur?.(); };
+const _esShowToc = async () => { if (_$("[data-testid='toc-tree']")) return; document.activeElement?.blur?.(); _key("["); await _waitFor(() => _$("[data-testid='toc-tree']"), 1500).catch(() => {}); };
+const _esStart = async () => { await _exitFullscreen(); await _esShowToc(); await _esClear(); await _selectFirstModule(); };
+const _esEnd = async (past) => { await _exitFullscreen(); await _esShowToc(); await _esClear(); if (past != null) await _mrdUndoTo(past); await _selectFirstModule(); };
+uiSuite("editor-search", [
+  { name: "ES1: field renders at the top of the editor list, not in Present", fn: async () => {
+    try {
+      await _esStart();
+      const i = _esInput();
+      if (!i) throw new Error("no editor search field");
+      if (i.placeholder !== "Search slides… (Ctrl+E)") throw new Error("placeholder: " + i.placeholder);
+      if (parseFloat(getComputedStyle(i).fontSize) < 13) throw new Error("field text under 13 px");
+      // The whole sticky box (not only the input) must end above the first row,
+      // and a point at the top of that row must hit the row, not the field.
+      const tree = _$("[data-testid='toc-tree']"), box = _$("[data-testid='editor-search']");
+      const sc = box.parentElement;
+      sc.scrollTop = 0; await _wait(60);
+      if (box.getBoundingClientRect().bottom > tree.getBoundingClientRect().top + 1) throw new Error("the field covers the tree");
+      const fr = tree.querySelector(".concept-row").getBoundingClientRect();
+      if (!tree.querySelector(".concept-row").contains(document.elementFromPoint(fr.left + 40, fr.top + 2))) throw new Error("the field covers the first section row");
+      if (getComputedStyle(box).backgroundColor.replace(/\s/g, "").match(/rgba\(.*,0(\.\d+)?\)$/)) throw new Error("the field background is not opaque");
+      if (!_esTreeShown() || _esRows().length) throw new Error("idle field must show the tree and no rows");
+      await _pdEnterPresent();
+      if (_esInput()) throw new Error("the editor field renders in Present");
+      if (_$$("input[placeholder^='Search slides']").length > 1) throw new Error("two search fields in Present");
+    } finally { await _esEnd(null); }
+  }},
+  { name: "ES2: typing shows rows with highlight, count, section header; no matches; clear button", fn: async () => {
+    let p = null;
+    try {
+      await _esStart();
+      p = await _psnPrepare();
+      await _esType("zqxnav");
+      await _waitFor(() => _esRows().length === 2, 1500).catch(() => { throw new Error("expected 2 rows, got " + _esRows().length); });
+      if (_esTreeShown()) throw new Error("the tree shows while a query is typed");
+      if (!_$("[data-testid='toc-tree']")) throw new Error("the tree unmounted while a query is typed");
+      _seEq(_esCount(), "1 / 2|2 slides", "count line");
+      if (_esSelIdx() !== 0) throw new Error("the first row is not selected");
+      if (!_$("[data-testid='editor-search-section']")) throw new Error("no section header");
+      const hits = _$$("[data-testid='editor-search-results'] [data-testid='search-hit']");
+      if (!hits.length || hits.some((h) => h.textContent.toLowerCase() !== "zqxnav")) throw new Error("highlight text does not equal the query");
+      if (!hits.some((h) => h.textContent === "ZQXNAV")) throw new Error("highlight does not keep the case");
+      const box = _$("[data-testid='editor-search']");
+      for (const el of [box, _$("[data-testid='editor-search-results']")]) for (const n of [el, ...el.querySelectorAll("*")]) {
+        if ([...n.childNodes].some((c) => c.nodeType === 3 && c.nodeValue.trim()) && parseFloat(getComputedStyle(n).fontSize) < 13) throw new Error(`text under 13 px: "${n.textContent.slice(0, 30)}"`);
+      }
+      await _esType("zqxnomatch000");
+      await _waitFor(() => _$("[data-testid='editor-search-no-matches']"), 1500).catch(() => { throw new Error("no 'No matches' state"); });
+      _seEq(_esCount(), "0 / 0|0 slides", "count with no match");
+      _click(_$("[data-testid='editor-search-clear']"));
+      await _waitFor(() => _esInput().value === "" && _esTreeShown(), 1500).catch(() => { throw new Error("clear button did not clear and show the tree"); });
+      if (!_esFocused()) throw new Error("clear button did not keep focus in the field");
+    } finally { await _esEnd(p && p.past); }
+  }},
+  { name: "ES3: Up/Down stop at the ends; Enter opens and keeps query + focus + rows; no undo step; Esc clears then blurs", fn: async () => {
+    let p = null;
+    try {
+      await _esStart();
+      p = await _psnPrepare();
+      const mark = _esPast();
+      await _esType("zqxnav");
+      await _waitFor(() => _esRows().length === 2, 1500);
+      _key("ArrowUp"); await _wait(60);
+      if (_esSelIdx() !== 0) throw new Error("ArrowUp at the top moved the selection");
+      _key("ArrowDown"); await _wait(60);
+      _key("ArrowDown"); await _wait(60);
+      if (_esSelIdx() !== 1) throw new Error("ArrowDown did not stop at the last row");
+      _key("Enter");
+      await _waitFor(() => { const s = _pdSel(); return s && s.itemId === p.s0.itemId && s.slideIdx === p.s0.slideIdx + 1; }, 1500).catch(() => { throw new Error("Enter did not open the second row"); });
+      await _wait(150);
+      if (!_esFocused()) throw new Error("focus left the field after Enter");
+      if (_esInput().value !== "zqxnav" || _esRows().length !== 2 || _esSelIdx() !== 1) throw new Error("query, rows or selection changed after Enter");
+      _key("ArrowUp"); await _wait(60);
+      _key("Enter");
+      await _waitFor(() => _pdSame(_pdSel(), p.s0), 1500).catch(() => { throw new Error("Enter did not open the first row"); });
+      if (_esPast() !== mark) throw new Error(`search/open made an undo step (${mark} -> ${_esPast()})`);
+      _key("ArrowDown"); await _wait(60); _key("Enter"); await _wait(150);
+      _key("Escape");
+      await _waitFor(() => _esInput().value === "" && _esTreeShown(), 1500).catch(() => { throw new Error("Esc did not clear the query"); });
+      if (!_esFocused()) throw new Error("the first Esc left the field");
+      await _wait(250);
+      const row = _$("[data-testid='toc-tree'] [data-testid='toc-slide-row'][aria-selected='true']");
+      if (!row) throw new Error("no active slide row after Esc");
+      const sc = _$("[data-testid='editor-search']").parentElement.getBoundingClientRect(), fb = _$("[data-testid='editor-search']").getBoundingClientRect(), r = row.getBoundingClientRect();
+      if (r.top < fb.bottom - 1 || r.bottom > sc.bottom + 1) throw new Error(`opened slide row not in view (row ${r.top}-${r.bottom}, view ${fb.bottom}-${sc.bottom})`);
+      _key("Escape"); await _wait(100);
+      if (_esFocused()) throw new Error("the second Esc did not leave the field");
+      if (!_esTreeShown()) throw new Error("the second Esc closed the list");
+    } finally { await _esEnd(p && p.past); }
+  }},
+  { name: "ES4: a click on a row opens it and returns focus to the field", fn: async () => {
+    let p = null;
+    try {
+      await _esStart();
+      p = await _psnPrepare();
+      await _esType("zqxnav");
+      await _waitFor(() => _esRows().length === 2, 1500);
+      _click(_esRows()[1]);
+      await _waitFor(() => { const s = _pdSel(); return s && s.itemId === p.s0.itemId && s.slideIdx === p.s0.slideIdx + 1; }, 1500).catch(() => { throw new Error("click did not open the row"); });
+      await _wait(100);
+      if (!_esFocused() || _esInput().value !== "zqxnav" || _esSelIdx() !== 1) throw new Error("click did not keep focus, query and selection");
+    } finally { await _esEnd(p && p.past); }
+  }},
+  { name: "ES5: a hidden slide is a normal row with the HIDDEN mark and opens", fn: async () => {
+    let past = null;
+    try {
+      await _esStart();
+      past = await _pdPrepare();
+      const s0 = _pdSel();
+      await _esType("zqxdetour");
+      await _waitFor(() => _esRows().length === 1, 1500).catch(() => { throw new Error("hidden slide not listed"); });
+      const row = _esRows()[0];
+      if (!row.querySelector("[data-testid='search-hidden-slide']")) throw new Error("no HIDDEN mark");
+      if (!row.querySelector("[data-testid='toc-hidden-block']")) throw new Error("no HIDDEN BLOCK tag");
+      _key("Enter");
+      await _waitFor(() => { const s = _pdSel(); return s && s.itemId === s0.itemId && s.slideIdx === s0.slideIdx + 1; }, 1500).catch(() => { throw new Error("Enter did not open the hidden slide"); });
+      await _waitFor(() => _pdOnSlide("PDBACKUP"), 1500).catch(() => { throw new Error("the hidden slide is not on screen"); });
+    } finally { await _esEnd(past); }
+  }},
+  { name: "ES6: a notes-only match shows the NOTES snippet and opens", fn: async () => {
+    let past = null;
+    try {
+      await _esStart();
+      past = _esPast();
+      const s0 = _pdSel();
+      _hooks().injectBlocks([_seH("ES notes slide")], { notes: "speaker hint zqxnotes here" });
+      await _wait(150);
+      _key("ArrowRight"); await _wait(150); document.activeElement?.blur?.();
+      await _esType("zqxnotes");
+      await _waitFor(() => _esRows().length === 1, 1500).catch(() => { throw new Error("notes match not listed"); });
+      const row = _esRows()[0];
+      if (!row.querySelector("[data-testid='search-notes-badge']")) throw new Error("no NOTES badge");
+      if (!/zqxnotes/.test(row.querySelector("[data-testid='toc-snippet']")?.textContent || "")) throw new Error("snippet does not show the notes text");
+      _key("Enter");
+      await _waitFor(() => _pdSame(_pdSel(), s0), 1500).catch(() => { throw new Error("Enter did not open the notes match"); });
+    } finally { await _esEnd(past); }
+  }},
+  { name: "ES7: a section-name match shows a SECTION row; a folded section unfolds on open", fn: async () => {
+    let past = null;
+    try {
+      await _esStart();
+      past = _esPast();
+      const head = _$(".concept-row");
+      head.querySelector("[data-testid='toc-section-title']").dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+      const inp = await _waitFor(() => _$("input[placeholder='Section name']"), 1500);
+      _type(inp, "Zqxsect area");
+      inp.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+      await _waitFor(() => !_$("input[placeholder='Section name']"), 1500);
+      const caret = _$(".concept-row [aria-label^='Collapse section']");
+      _click(caret);
+      await _waitFor(() => _$(".concept-row [aria-label^='Expand section']"), 1500).catch(() => { throw new Error("could not fold the section"); });
+      await _esType("zqxsect");
+      await _waitFor(() => _esRows().length === 1, 1500).catch(() => { throw new Error("section match not listed, rows " + _esRows().length); });
+      if (!_esRows()[0].querySelector("[data-testid='search-section-badge']")) throw new Error("no SECTION badge");
+      if (!_$("[data-testid='editor-search-section'] [data-testid='search-hit']")) throw new Error("section header has no highlight");
+      _key("Enter"); await _wait(150);
+      _key("Escape");
+      await _waitFor(() => _esTreeShown() && _$(".concept-row [aria-label^='Collapse section']"), 1500).catch(() => { throw new Error("the folded section did not unfold on open"); });
+      if (!_$("[data-testid='toc-tree'] [data-testid='toc-slide-row'][aria-selected='true']")) throw new Error("no active slide row after open");
+    } finally {
+      await _esClear();
+      const folded = _$(".concept-row [aria-label^='Expand section']");
+      if (folded) { _click(folded); await _wait(80); }
+      await _esEnd(past);
+    }
+  }},
+  { name: "ES8: a slide in a collapsed lane is a normal row and opens", fn: async () => {
+    let p = null, lane = false;
+    try {
+      await _esStart();
+      p = await _psnPrepare();
+      lane = _hooks().toggleSelectedLaneForTest(); await _wait(120);
+      await _esType("zqxnav");
+      await _waitFor(() => _esRows().length === 2, 1500).catch(() => { throw new Error("collapsed-lane slides not listed"); });
+      _key("ArrowDown"); await _wait(60); _key("Enter");
+      await _waitFor(() => { const s = _pdSel(); return s && s.itemId === p.s0.itemId && s.slideIdx === p.s0.slideIdx + 1; }, 1500).catch(() => { throw new Error("Enter did not open the collapsed-lane slide"); });
+    } finally { if (lane) { _hooks().toggleSelectedLaneForTest(); await _wait(80); } await _esEnd(p && p.past); }
+  }},
+  { name: "ES9: Ctrl+E state machine and the / key", fn: async () => {
+    try {
+      await _esStart();
+      _key("[");
+      await _waitFor(() => !_esInput(), 1500).catch(() => { throw new Error("[ did not collapse the list"); });
+      let ev = _esPress("e", { ctrlKey: true });
+      await _waitFor(() => _esTreeShown() && _esFocused(), 1500).catch(() => { throw new Error("Ctrl+E (collapsed) did not open and focus"); });
+      if (!ev.defaultPrevented) throw new Error("Ctrl+E not prevented");
+      _esPress("e", { ctrlKey: true });
+      await _waitFor(() => !_esInput(), 1500).catch(() => { throw new Error("Ctrl+E in the field did not collapse"); });
+      _esPress("e", { metaKey: true });
+      await _waitFor(() => _esFocused(), 1500).catch(() => { throw new Error("Cmd+E (collapsed) did not open and focus"); });
+      _type(_esInput(), "abc"); await _wait(60);
+      document.activeElement?.blur?.();
+      _esPress("e", { ctrlKey: true });
+      await _waitFor(_esFocused, 1500).catch(() => { throw new Error("Ctrl+E (open, not focused) did not focus"); });
+      if (!_esTreeShown() && !_esRows().length && !_$("[data-testid='editor-search-no-matches']")) throw new Error("list closed");
+      const i = _esInput();
+      if (i.selectionStart !== 0 || i.selectionEnd !== i.value.length) throw new Error("Ctrl+E did not select the field text");
+      await _esClear();
+      ev = _esPress("/");
+      await _waitFor(_esFocused, 1500).catch(() => { throw new Error("/ did not focus the field"); });
+      if (!ev.defaultPrevented) throw new Error("/ not prevented (it would be typed)");
+      ev = _esPress("/");
+      if (ev.defaultPrevented) throw new Error("/ typed in the field was prevented");
+      document.activeElement?.blur?.();
+      _key("[");
+      await _waitFor(() => !_esInput(), 1500);
+      _esPress("/");
+      await _waitFor(() => _esTreeShown() && _esFocused(), 1500).catch(() => { throw new Error("/ (collapsed) did not open and focus"); });
+    } finally { await _esEnd(null); }
+  }},
+  { name: "ES10: / and Ctrl+E do nothing while typing in another field", fn: async () => {
+    const els = [document.createElement("input"), document.createElement("textarea"), document.createElement("div")];
+    els[2].contentEditable = "true";
+    try {
+      await _esStart();
+      for (const el of els) {
+        document.body.appendChild(el); el.focus();
+        const a = _esPress("/"), b = _esPress("e", { ctrlKey: true });
+        await _wait(120);
+        if (_esFocused() || a.defaultPrevented || b.defaultPrevented) throw new Error(`a key acted while typing in ${el.tagName}`);
+        if (!_esTreeShown()) throw new Error(`Ctrl+E in ${el.tagName} collapsed the list`);
+        el.remove();
+      }
+    } finally { els.forEach((el) => el.remove()); await _esEnd(null); }
+  }},
+  { name: "ES11: editor shortcuts do not fire while the field has focus", fn: async () => {
+    let p = null;
+    const darkKey = () => T.bg;
+    try {
+      await _esStart();
+      p = await _psnPrepare();
+      const mark = _esPast(), fut = _hooks().getHistoryCounts().future, sel = _pdSel(), bg = darkKey();
+      for (const q of ["", "zqxnomatch000"]) {
+        await _esType(q); _esInput().focus();
+        for (const [k, o] of [["Delete"], ["Backspace"], ["ArrowDown"], ["ArrowRight"], ["ArrowLeft"], ["z", { ctrlKey: true }], ["y", { ctrlKey: true }], ["c", { ctrlKey: true }], ["v", { ctrlKey: true }], ["f"], ["e"], ["n"], ["g"], ["s"], ["d"], ["r"], ["?"], ["["], [" "], ["F5"]]) {
+          _esPress(k, o); await _wait(40);
+        }
+        await _wait(200);
+        if (!_esFocused()) throw new Error("focus left the field");
+        if (!_pdSame(_pdSel(), sel)) throw new Error("the selected slide changed");
+        if (_esPast() !== mark || _hooks().getHistoryCounts().future !== fut) throw new Error("the history changed (undo/redo or a deck edit fired)");
+        if (!_$("header")) throw new Error("Present started");
+        if (darkKey() !== bg) throw new Error("the theme changed");
+        if (!_$("[data-testid='toc-tree']")) throw new Error("the list collapsed");
+        if ((document.body.textContent || "").includes("Toggle navigator panel")) throw new Error("the shortcut help opened");
+      }
+      // Probe check: the same key event sent outside the field does move the
+      // slide, so a shortcut that fires in the field would be seen above.
+      document.activeElement?.blur?.();
+      _esPress("ArrowRight");
+      await _waitFor(() => !_pdSame(_pdSel(), sel), 1500).catch(() => { throw new Error("probe check: ArrowRight outside the field did not move the slide"); });
+    } finally { await _esEnd(p && p.past); }
+  }},
+  { name: "ES12: special characters and a 2000-character query do not throw", fn: async () => {
+    try {
+      await _esStart();
+      for (const q of ["( [ * \\ < > & \"", ".*+?^${}|", "🙈", "<img src=x onerror=alert(1)>", "a".repeat(2000), "İ"]) {
+        await _esType(q);
+        if (!_esCount()) throw new Error("no count line for " + q.slice(0, 20));
+        if (_$("[data-testid='editor-search'] img, [data-testid='editor-search-results'] img")) throw new Error("query became markup");
+      }
+      const t0 = performance.now(); await _esType("e".repeat(2000)); if (performance.now() - t0 > 1000) throw new Error("2000-char query too slow");
+    } finally { await _esEnd(null); }
+  }},
+  // Review fix F5: the field sits under the modal backdrop, so a key must not
+  // move focus there (typed text would go into a hidden field).
+  { name: "ES13: / , Ctrl+E and [ do nothing while a modal dialog (Keyboard Shortcuts) is open", fn: async () => {
+    try {
+      await _esStart();
+      document.activeElement?.blur?.();
+      _esPress("?");
+      await _waitFor(() => _$("[data-vela-modal]"), 1500).catch(() => { throw new Error("Keyboard Shortcuts dialog did not open"); });
+      const focus0 = document.activeElement;
+      for (const [k, o] of [["/", null], ["e", { ctrlKey: true }], ["e", { metaKey: true }], ["[", null]]) {
+        const ev = _esPress(k, o);
+        await _wait(120);
+        if (_esFocused() || document.activeElement !== focus0) throw new Error(`${k} moved focus behind the modal`);
+        if (ev.defaultPrevented) throw new Error(`${k} acted behind the modal`);
+        if (!_esTreeShown()) throw new Error(`${k} collapsed the list behind the modal`);
+      }
+      _esPress("a"); _esPress("b"); await _wait(80);
+      if (_esInput().value !== "") throw new Error("typed text went into the search field");
+    } finally {
+      if (_$("[data-vela-modal]")) { _click("[data-vela-modal]"); await _waitFor(() => !_$("[data-vela-modal]"), 1500).catch(() => {}); }
+      await _esEnd(null);
+    }
+  }},
+], { setup: _selectFirstModule });
+
+// ── Editor search: amber outline on the matched block (flashBlock) ──
+const _esfFlashed = () => _$$("[data-search-flash='1']");
+// Slide 0 of the first module: heading + two text blocks; slide 1: a "cols"
+// slide with L / R column blocks. Returns { past, s0, s1 } (past = undo mark).
+const _esfPrep = async () => {
+  const past = _esPast();
+  _hooks().injectBlocks([_seH("ESF title zqxfltitle"), { type: "text", text: "plain first" }, { type: "text", text: "second zqxflblk" }]);
+  await _wait(150);
+  const s0 = _pdSel();
+  _key("ArrowRight"); await _wait(150);
+  _hooks().injectBlocks([_seH("ESF cols")], { layout: "cols", L: [{ type: "text", text: "left zqxflleft" }], R: [{ type: "text", text: "right first" }, { type: "text", text: "right zqxflright" }] });
+  await _wait(150);
+  const s1 = _pdSel();
+  if (!s0 || !s1 || s0.itemId !== s1.itemId || s0.slideIdx + 1 !== s1.slideIdx) throw new Error("prep: the first module needs 2+ slides");
+  document.activeElement?.blur?.();
+  return { past, s0, s1 };
+};
+const _esfOpen = async (q, want) => {
+  _type(_esInput(), q); await _wait(120);
+  await _waitFor(() => _esRows().length === 1, 1500).catch(() => { throw new Error(`no single row for ${q}`); });
+  _key("Enter");
+  await _waitFor(() => _pdSame(_pdSel(), want), 1500).catch(() => { throw new Error(`Enter did not open ${q}`); });
+};
+uiSuite("editor-search-flash", [
+  { name: "ESF1: Enter on a block match outlines that block; the outline goes within 2.5 s; no undo step, no deck change", fn: async () => {
+    let p = null;
+    try {
+      await _esStart();
+      p = await _esfPrep();
+      const mark = _esPast(), fut = _hooks().getHistoryCounts().future;
+      const epoch0 = _hooks().getDeckStateForTest().epoch;
+      _key("ArrowLeft"); await _wait(150);
+      const slide0 = JSON.stringify(_hooks().getCurrentSlideForTest());
+      _key("ArrowRight"); await _wait(150); document.activeElement?.blur?.();
+      await _esfOpen("zqxflblk", p.s0);
+      const f = await _waitFor(() => _esfFlashed().length === 1 && _esfFlashed()[0], 400).catch(() => { throw new Error("no outline within 400 ms"); });
+      if (!(f.textContent || "").includes("second zqxflblk")) throw new Error("outline on the wrong block: " + f.textContent);
+      if (f.getAttribute("data-block-type") !== "text") throw new Error("outline not on a top-level block wrapper");
+      const ov = f.querySelector("[data-testid='search-flash']");
+      if (!ov || getComputedStyle(ov).pointerEvents !== "none") throw new Error("outline overlay missing or blocks clicks");
+      await _waitFor(() => _esfFlashed().length === 0 && !_$("[data-testid='search-flash']"), 2500).catch(() => { throw new Error("outline still shown after 2.5 s"); });
+      if (_esPast() !== mark || _hooks().getHistoryCounts().future !== fut) throw new Error("the flash made an undo step");
+      if (JSON.stringify(_hooks().getCurrentSlideForTest()) !== slide0) throw new Error("the flash changed the slide");
+      if (_hooks().getDeckStateForTest().epoch !== epoch0) throw new Error("the flash changed the deck epoch");
+    } finally { await _esEnd(p && p.past); }
+  }},
+  { name: "ESF2: a title match gives no outline", fn: async () => {
+    let p = null;
+    try {
+      await _esStart();
+      p = await _esfPrep();
+      await _esfOpen("zqxfltitle", p.s0);
+      await _wait(400);
+      if (_esfFlashed().length || _$("[data-testid='search-flash']")) throw new Error("a title match outlined a block");
+    } finally { await _esEnd(p && p.past); }
+  }},
+  { name: "ESF3: a right-column match on a cols slide outlines that column block", fn: async () => {
+    let p = null;
+    try {
+      await _esStart();
+      p = await _esfPrep();
+      _key("ArrowLeft"); await _wait(150); document.activeElement?.blur?.();
+      await _esfOpen("zqxflright", p.s1);
+      const f = await _waitFor(() => _esfFlashed().length === 1 && _esfFlashed()[0], 400).catch(() => { throw new Error("no outline on the column block"); });
+      if (!(f.textContent || "").includes("right zqxflright")) throw new Error("outline on the wrong block: " + f.textContent);
+      if (!f.closest("[data-cols-side='right']")) throw new Error("outlined block is not in the right column");
+    } finally { await _esEnd(p && p.past); }
+  }},
+  { name: "ESF4: a second result within 1.5 s moves the outline; the old one clears", fn: async () => {
+    let p = null;
+    try {
+      await _esStart();
+      p = await _esfPrep();
+      await _esfOpen("zqxflblk", p.s0);
+      await _waitFor(() => _esfFlashed().length === 1, 400).catch(() => { throw new Error("no first outline"); });
+      await _esfOpen("zqxflleft", p.s1);
+      const f = await _waitFor(() => _esfFlashed().length === 1 && (_esfFlashed()[0].textContent || "").includes("left zqxflleft") && _esfFlashed()[0], 400).catch(() => { throw new Error("outline did not move: " + _esfFlashed().map((e) => e.textContent).join(" | ")); });
+      if (!f.closest("[data-cols-side='left']")) throw new Error("second outline not in the left column");
+      if (_$$("[data-testid='search-flash']").length !== 1) throw new Error("more than one outline");
+      await _waitFor(() => _esfFlashed().length === 0, 2500).catch(() => { throw new Error("second outline did not clear"); });
+    } finally { await _esEnd(p && p.past); }
+  }},
+  { name: "ESF5: entering Present clears the outline; it does not come back on exit", fn: async () => {
+    let p = null;
+    try {
+      await _esStart();
+      p = await _esfPrep();
+      await _esfOpen("zqxflblk", p.s0);
+      await _waitFor(() => _esfFlashed().length === 1, 400).catch(() => { throw new Error("no outline"); });
+      await _pdEnterPresent();
+      if (_esfFlashed().length || _$("[data-testid='search-flash']")) throw new Error("outline shown in Present");
+      await _exitFullscreen();
+      await _wait(100);
+      if (_esfFlashed().length || _$("[data-testid='search-flash']")) throw new Error("outline came back after Present");
+    } finally { await _esEnd(p && p.past); }
+  }},
+  // Review F6: split layouts render the image in its own column; the outline
+  // must still land on the text block that holds the match.
+  { name: "ESF6: a block match on an image-right and an image-left slide outlines that block", fn: async () => {
+    const past = _esPast();
+    const png = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+    try {
+      await _esStart();
+      const s0 = _pdSel();
+      for (const layout of ["image-right", "image-left"]) {
+        await _esClear();
+        _hooks().injectBlocks([_seH("Split head"), { type: "image", src: png }, { type: "text", text: "split zqxflsplit body" }], { layout });
+        await _wait(150); document.activeElement?.blur?.();
+        await _esfOpen("zqxflsplit", s0);
+        const f = await _waitFor(() => _esfFlashed().length === 1 && _esfFlashed()[0], 400).catch(() => { throw new Error(`${layout}: no outline`); });
+        if (!(f.textContent || "").includes("split zqxflsplit body")) throw new Error(`${layout}: outline on the wrong block: ` + f.textContent);
+        if (f.getAttribute("data-block-type") !== "text") throw new Error(`${layout}: outline not on the text block`);
+        await _waitFor(() => _esfFlashed().length === 0, 2500).catch(() => { throw new Error(`${layout}: outline still shown after 2.5 s`); });
+      }
+    } finally { await _esEnd(past); }
+  }},
+], { setup: _selectFirstModule });
+
+// ━━━ Session end (v13.80): sanitizer, pace math, deck ingress ━━━━━━━
+const _SS_T0 = 1700000000000;
+const _ssEq = (got, want, what) => { const g = JSON.stringify(got), w = JSON.stringify(want); if (g !== w) throw new Error(`${what}: got ${g}, want ${w}`); };
+const _ssNoNaN = (o, what) => { for (const [k, v] of Object.entries(o || {})) if (typeof v === "number" && !Number.isFinite(v)) throw new Error(`${what}: ${k} = ${v}`); };
+const _ssSeq = (durs) => durs.map((d, i) => ({ s: { duration: d }, num: i + 1, itemId: "m", rawIdx: i }));
+const _ssSes = (lenSec) => ({ start: _SS_T0, end: _SS_T0 + lenSec * 1000 });
+
+uiSuite("session-sanitizer", [
+  { name: "SS1: valid sessions are accepted as fresh 2-key objects; extra keys are dropped", fn: async () => {
+    _ssEq(sanitizeSession({ start: _SS_T0, end: _SS_T0 + 60000 }), { start: _SS_T0, end: _SS_T0 + 60000 }, "1 min");
+    _ssEq(sanitizeSession({ start: _SS_T0, end: _SS_T0 + 86400000 }), { start: _SS_T0, end: _SS_T0 + 86400000 }, "24 h");
+    const raw = { start: _SS_T0, end: _SS_T0 + 600000, x: 1, _private: true, style: "color:red" };
+    const out = sanitizeSession(raw);
+    _ssEq(Object.keys(out), ["start", "end"], "keys");
+    if (out === raw) throw new Error("result is the raw object, not a fresh one");
+    _ssEq(sanitizeSession({ start: SESSION_EPOCH_MIN, end: SESSION_EPOCH_MIN + 60000 }), { start: SESSION_EPOCH_MIN, end: SESSION_EPOCH_MIN + 60000 }, "epoch min");
+    _ssEq(sanitizeSession({ start: SESSION_EPOCH_MAX - 60000, end: SESSION_EPOCH_MAX }), { start: SESSION_EPOCH_MAX - 60000, end: SESSION_EPOCH_MAX }, "epoch max");
+  }},
+  { name: "SS2: every malformed value is rejected (null, never coerced)", fn: async () => {
+    const T = _SS_T0, E = T + 600000;
+    const bad = [
+      ["null", null], ["undefined", undefined], ["array", [T, E]], ["array with props", Object.assign([], { start: T, end: E })],
+      ["string", "x"], ["number", 5], ["true", true], ["function", Object.assign(() => 0, { start: T, end: E })], ["{}", {}],
+      ["missing end", { start: T }], ["missing start", { end: E }],
+      ["numeric string start", { start: String(T), end: E }], ["numeric string end", { start: T, end: String(E) }],
+      ["bool start", { start: true, end: E }], ["float start", { start: T + 0.5, end: E }], ["float end", { start: T, end: E + 0.5 }],
+      ["NaN", { start: NaN, end: E }], ["Infinity end", { start: T, end: Infinity }], ["-Infinity start", { start: -Infinity, end: E }],
+      ["1e300", { start: T, end: 1e300 }], ["negative", { start: -1, end: E }], ["unsafe integer", { start: T, end: 2 ** 53 }],
+      ["Number object", { start: new Number(T), end: E }], ["null start", { start: null, end: E }],
+      ["end == start", { start: T, end: T }], ["end < start", { start: E, end: T }],
+      ["length 59999", { start: T, end: T + 59999 }], ["length 86400001", { start: T, end: T + 86400001 }],
+      ["start before 2000", { start: SESSION_EPOCH_MIN - 1, end: SESSION_EPOCH_MIN + 60000 }],
+      ["end after 2100", { start: SESSION_EPOCH_MAX - 60000, end: SESSION_EPOCH_MAX + 1 }],
+      ["inherited start/end", Object.create({ start: T, end: E })],
+      ["inherited end only", Object.assign(Object.create({ end: E }), { start: T })],
+    ];
+    for (const [label, v] of bad) { const r = sanitizeSession(v); if (r !== null) throw new Error(`${label} accepted: ${JSON.stringify(r)}`); }
+  }},
+  { name: "SS3: getters are read once; the checked value is the stored value", fn: async () => {
+    let rs = 0, re = 0;
+    const g = {};
+    Object.defineProperty(g, "start", { enumerable: true, get: () => (++rs === 1 ? _SS_T0 : "x") });
+    Object.defineProperty(g, "end", { enumerable: true, get: () => (++re === 1 ? _SS_T0 + 60000 : 1e300) });
+    const out = sanitizeSession(g);
+    if (rs !== 1 || re !== 1) throw new Error(`getter reads: start ${rs}, end ${re}`);
+    _ssEq(out, { start: _SS_T0, end: _SS_T0 + 60000 }, "getter result");
+    let n = 0;
+    const h = {};
+    Object.defineProperty(h, "start", { get: () => (++n === 1 ? "1700000000000" : _SS_T0) });
+    Object.defineProperty(h, "end", { get: () => _SS_T0 + 60000 });
+    if (sanitizeSession(h) !== null) throw new Error("getter that first returns a string was accepted");
+  }},
+  { name: "SS4: liveSession treats a session as not set from end + 3 h + 1 ms", fn: async () => {
+    const s = _ssSes(600);
+    if (!liveSession(s, s.start - 86400000)) throw new Error("future session not live");
+    if (!liveSession(s, s.end + SESSION_STALE_MS)) throw new Error("end + 3 h not live");
+    if (liveSession(s, s.end + SESSION_STALE_MS + 1) !== null) throw new Error("end + 3 h + 1 ms still live");
+    if (liveSession({ start: "x", end: 1 }, s.start) !== null) throw new Error("invalid session live");
+    if (liveSession(s, NaN) !== null) throw new Error("NaN now gave a live session");
+  }},
+  { name: "SS5: SET_SESSION re-sanitizes; invalid and unchanged values return the same state", fn: async () => {
+    const st = { ...init, session: null };
+    const valid = { start: _SS_T0, end: _SS_T0 + 600000, evil: 1 };
+    const s1 = innerReducer(st, { type: "SET_SESSION", session: valid });
+    _ssEq(s1.session, { start: _SS_T0, end: _SS_T0 + 600000 }, "set");
+    if (innerReducer(s1, { type: "SET_SESSION", session: { start: "1", end: 2 } }) !== s1) throw new Error("invalid payload changed state");
+    if (innerReducer(s1, { type: "SET_SESSION", session: { start: _SS_T0, end: _SS_T0 + 600000 } }) !== s1) throw new Error("unchanged payload changed state");
+    if (innerReducer(st, { type: "SET_SESSION", session: null }) !== st) throw new Error("null on null changed state");
+    const s2 = innerReducer(s1, { type: "SET_SESSION", session: null });
+    if (s2.session !== null) throw new Error("null did not clear");
+  }},
+]);
+
+uiSuite("session-pace-math", [
+  { name: "SP1: verdict thresholds at delta 61 / 60 / -60 / -61 / -180 / -181", fn: async () => {
+    // est [60,60,60,820] = need 1000 s at idx 0, onSlide 0; a 2000 s session keeps
+    // every row inside the session (have = 1000 + delta > 0); now = end - have.
+    const est = sessionEstimates(_ssSeq([60, 60, 60, 820]));
+    const at = (delta) => { const ses = _ssSes(2000); const have = 1000 + delta; return computeSessionPace(est, 0, 0, ses, ses.end - have * 1000); };
+    const rows = [[61, "green", "1:01 ahead · you can slow down"], [60, "white", "on pace"], [0, "white", "on pace"], [-60, "white", "on pace"],
+      [-61, "amber", "1:01 behind · speed up"], [-180, "amber", "3:00 behind · speed up"], [-181, "red", "3:01 behind · speed up"]];
+    for (const [d, key, text] of rows) {
+      const p = at(d);
+      if (p.delta !== d) throw new Error(`delta ${d}: got ${p.delta}`);
+      if (p.paceKey !== key || p.verdict !== text) throw new Error(`delta ${d}: ${p.paceKey} "${p.verdict}"`);
+      _ssNoNaN(p, `delta ${d}`);
+    }
+  }},
+  { name: "SP2: before start, over, onSlideSec, fractions and shouldIdx", fn: async () => {
+    const est = sessionEstimates(_ssSeq([60, 60, 60]));
+    const ses = _ssSes(180);
+    const b = computeSessionPace(est, 0, 0, ses, ses.start - 60000);
+    if (!b.before || b.over || b.verdict !== "starts in 1:00" || b.timeLeftSec !== 180 || b.elapsedFrac !== 0 || b.delta !== 0) throw new Error(`before: ${JSON.stringify(b)}`);
+    const o = computeSessionPace(est, 2, 0, ses, ses.end + 10000);
+    if (!o.over || o.paceKey !== "red" || o.timeLeftKey !== "red" || o.verdict !== "+0:10 over · wrap up" || o.timeLeftSec !== 10 || o.elapsedFrac !== 1) throw new Error(`over: ${JSON.stringify(o)}`);
+    const m = computeSessionPace(est, 1, 30, ses, ses.start + 90000);
+    if (m.need !== 90 || m.have !== 90 || m.paceKey !== "white") throw new Error(`mid: ${JSON.stringify(m)}`);
+    const f = computeSessionPace(est, 0, 500, ses, ses.start);
+    if (f.need !== 120) throw new Error(`onSlideSec floor: need ${f.need}`);
+    if (computeSessionPace(est, 0, -50, ses, ses.start).need !== 180) throw new Error("negative onSlideSec changed need");
+    // shouldIdx: t = total - have; first k with cumulative est > t.
+    const sAt = (sec) => computeSessionPace(est, 0, 0, ses, ses.start + sec * 1000).shouldIdx;
+    _ssEq([sAt(0), sAt(59), sAt(60), sAt(119), sAt(120), sAt(180)], [0, 0, 1, 1, 2, 2], "shouldIdx");
+    _ssEq(computeSessionPace(est, 0, 0, ses, ses.end + 999999).shouldIdx, 2, "shouldIdx over");
+    const big = computeSessionPace(est, 0, 0, _ssSes(3600), _SS_T0);
+    if (big.shouldFrac !== 0 || big.youFrac !== 0) throw new Error(`fracs clamp low: ${big.shouldFrac} ${big.youFrac}`);
+    const late = computeSessionPace(est, 2, 0, ses, ses.end + 5000);
+    if (late.shouldFrac !== 1 || !(late.youFrac >= 0 && late.youFrac <= 1)) throw new Error(`fracs clamp high: ${late.shouldFrac} ${late.youFrac}`);
+    if (computeSessionPace(est, 0, 0, { start: "x", end: 1 }, _SS_T0) !== null) throw new Error("invalid session gave a pace");
+  }},
+  { name: "SP3: timeLeftKey: white, amber at 75 % elapsed, red at 5 min left", fn: async () => {
+    const est = sessionEstimates(_ssSeq([60]));
+    const ses = _ssSes(3600);
+    _ssEq(computeSessionPace(est, 0, 0, ses, ses.start + 60000).timeLeftKey, "white", "early");
+    _ssEq(computeSessionPace(est, 0, 0, ses, ses.start + 2700000).timeLeftKey, "amber", "75 %");
+    _ssEq(computeSessionPace(est, 0, 0, ses, ses.end - 300000).timeLeftKey, "red", "5 min left");
+    _ssEq(computeSessionPace(est, 0, 0, ses, ses.start - 1).timeLeftKey, "white", "before start");
+  }},
+  { name: "SP4: estimates: deck average for missing durations, fallback 60 s, bad durations count as missing", fn: async () => {
+    const a = sessionEstimates(_ssSeq([30, undefined, 90, "60", NaN, -5, Infinity, 0]));
+    _ssEq(a, { est: [30, 60, 90, 60, 60, 60, 60, 60], total: 480, estimated: 6 }, "average rule");
+    _ssEq(sessionEstimates(_ssSeq([undefined, null])), { est: [60, 60], total: 120, estimated: 2 }, "fallback 60");
+    _ssEq(sessionEstimates(_ssSeq([999999])), { est: [86400], total: 86400, estimated: 0 }, "cap");
+    _ssEq(sessionEstimates([]), { est: [], total: 0, estimated: 0 }, "empty");
+    _ssEq(sessionEstimates(null), { est: [], total: 0, estimated: 0 }, "null");
+    _ssEq(sessionEstimates([null, { s: null }]), { est: [60, 60], total: 120, estimated: 2 }, "broken entries");
+  }},
+  { name: "SP5: presentSequence numbering, hidden slides and the collapsed lane rule; sessionSeqIndex", fn: async () => {
+    const lanes = [
+      { title: "A", items: [{ id: "a1", slides: [{ duration: 10 }, { hidden: true }, { duration: 20 }] }] },
+      { title: "B", collapsed: true, items: [{ id: "b1", slides: [{}, {}] }, { id: "b2", slides: [{}] }] },
+      { title: "C", items: [{ id: "c1", slides: [{ hidden: true }] }, { id: "c2", slides: [{}] }] },
+    ];
+    const seq = presentSequence(lanes, "a1");
+    _ssEq(seq.map((e) => [e.num, e.itemId, e.rawIdx]), [[1, "a1", 0], [2, "a1", 2], [6, "c2", 0]], "collapsed lane skipped");
+    if (seq[0].s !== lanes[0].items[0].slides[0]) throw new Error("entry.s is not the slide");
+    const keep = presentSequence(lanes, "b2");
+    _ssEq(keep.map((e) => [e.num, e.itemId, e.rawIdx]), [[1, "a1", 0], [2, "a1", 2], [3, "b1", 0], [4, "b1", 1], [5, "b2", 0], [6, "c2", 0]], "lane of keepItemId kept");
+    _ssEq(sessionEstimates(seq).est, [10, 20, 15], "estimates read entry.s.duration");
+    _ssEq([sessionSeqIndex(seq, "a1", 0), sessionSeqIndex(seq, "a1", 1), sessionSeqIndex(seq, "a1", 2), sessionSeqIndex(seq, "a1", 9)], [0, 0, 1, 1], "largest rawIdx <= given");
+    _ssEq(sessionSeqIndex(seq, "a1", -1), 0, "title card -> first entry of item");
+    _ssEq(sessionSeqIndex(seq, "c2", -1), 2, "title card of later item");
+    _ssEq(sessionSeqIndex(seq, "c1", 0), 2, "item with no entry -> entries before it");
+    _ssEq(sessionSeqIndex(seq, "b1", 0), 2, "collapsed item -> entries before it");
+    _ssEq(sessionSeqIndex(seq, "zz", 0), 0, "unknown item");
+    _ssEq(sessionSeqIndex(seq, "a1", NaN), 0, "NaN rawIdx");
+    _ssEq(sessionSeqIndex([], "a1", 0), 0, "empty seq");
+    _ssEq(sessionSeqIndex(null, "a1", 0), 0, "null seq");
+    const tail = presentSequence([{ items: [{ id: "x", slides: [{}] }, { id: "y", slides: [{ hidden: true }] }] }], null);
+    _ssEq(sessionSeqIndex(tail, "y", 0), 0, "trailing item with no entry clamps to last index");
+    _ssEq(presentSequence(null, null).length, 0, "null lanes");
+    _ssEq(presentSequence([null, { items: null }, { items: [null, { id: "q", slides: [null, {}] }] }], null).map((e) => [e.num, e.rawIdx]), [[1, 1]], "broken lanes");
+  }},
+  { name: "SP6: no NaN / Infinity in any field for edge inputs", fn: async () => {
+    const e3 = sessionEstimates(_ssSeq([60, 60, 60]));
+    const ses = _ssSes(600);
+    const rows = [
+      ["empty seq", { est: [], total: 0 }, 0, 0, ses.start + 1000],
+      ["total 0", { est: [0, 0], total: 0 }, 1, 0, ses.start + 1000],
+      ["wrong total", { est: [60], total: NaN }, 0, 0, ses.start],
+      ["est junk", { est: [NaN, Infinity, -5, "9", 1e308] }, 0, 0, ses.start],
+      ["no estimates object", null, 0, 0, ses.start],
+      ["huge onSlideSec", e3, 0, 1e308, ses.start + 1000],
+      ["Infinity onSlideSec", e3, 0, Infinity, ses.start + 1000],
+      ["NaN onSlideSec", e3, 0, NaN, ses.start + 1000],
+      ["NaN idx", e3, NaN, 0, ses.start],
+      ["huge idx", e3, 1e20, 0, ses.start],
+      ["negative idx", e3, -7, 0, ses.start],
+      ["now far before", e3, 0, 0, -8.64e15],
+      ["now far after", e3, 0, 0, 8.64e15],
+      ["now 1e308", e3, 0, 0, 1e308],
+      ["now NaN", e3, 0, 0, NaN],
+      ["now Infinity", e3, 0, 0, Infinity],
+    ];
+    for (const [label, est, idx, on, now] of rows) {
+      const p = computeSessionPace(est, idx, on, ses, now);
+      if (!p) throw new Error(`${label}: null`);
+      _ssNoNaN(p, label);
+      if (!(p.shouldIdx >= 0 && p.shouldIdx <= Math.max(0, (est?.est?.length || 0) - 1))) throw new Error(`${label}: shouldIdx ${p.shouldIdx}`);
+      for (const k of ["shouldFrac", "youFrac", "elapsedFrac"]) if (!(p[k] >= 0 && p[k] <= 1)) throw new Error(`${label}: ${k} ${p[k]}`);
+      if (!SESSION_PACE_COLORS[p.paceKey] || !SESSION_PACE_COLORS[p.timeLeftKey]) throw new Error(`${label}: colour key`);
+      if (/NaN|Infinity|undefined/.test(p.verdict)) throw new Error(`${label}: verdict "${p.verdict}"`);
+    }
+  }},
+  { name: "SP7: fmtCountdown, fmtClock, resolveSessionTimes", fn: async () => {
+    _ssEq([fmtCountdown(0), fmtCountdown(59.9), fmtCountdown(61), fmtCountdown(3600), fmtCountdown(-5), fmtCountdown(NaN), fmtCountdown(Infinity), fmtCountdown("9")], ["0:00", "0:59", "1:01", "1:00:00", "0:00", "0:00", "0:00", "0:00"], "fmtCountdown");
+    if (!/^\d\d:\d\d$/.test(fmtClock(Date.now()))) throw new Error(`fmtClock: ${fmtClock(Date.now())}`);
+    _ssEq([fmtClock(NaN), fmtClock(8.64e15 + 1), fmtClock("x")], ["--:--", "--:--", "--:--"], "fmtClock invalid");
+    const now = new Date(2026, 5, 10, 8, 0).getTime();
+    const len = (r) => (r ? (r.end - r.start) / 60000 : null);
+    _ssEq(len(resolveSessionTimes("09:00", "10:00", now)), 60, "1 h");
+    _ssEq(len(resolveSessionTimes("23:30", "00:15", now)), 45, "next day");
+    _ssEq(len(resolveSessionTimes("09:00", "09:00", now)), 1440, "equal -> 24 h");
+    _ssEq(resolveSessionTimes("09:00", "10:00", now).start, new Date(2026, 5, 10, 9, 0).getTime(), "start on today");
+    for (const [a, b] of [["24:00", "10:00"], ["9:00", "10:00"], ["", "10:00"], ["09:00", null], [900, "10:00"], ["09:00 ", "10:00"]]) {
+      if (resolveSessionTimes(a, b, now) !== null) throw new Error(`accepted ${JSON.stringify([a, b])}`);
+    }
+    if (resolveSessionTimes("09:00", "10:00", NaN) !== null) throw new Error("NaN now accepted");
+  }},
+]);
+
+uiSuite("session-ingress", [
+  { name: "SI1: validateAndSanitizeDeck always returns a session key (value or null)", fn: async () => {
+    const lanes = () => [{ title: "L", items: [{ title: "I", slides: [{ blocks: [] }] }] }];
+    const none = validateAndSanitizeDeck({ lanes: lanes() });
+    if (!Object.prototype.hasOwnProperty.call(none, "session") || none.session !== null) throw new Error("deck without session: key missing or not null");
+    const ok = validateAndSanitizeDeck({ lanes: lanes(), session: { start: _SS_T0, end: _SS_T0 + 600000, x: 1 } });
+    _ssEq(ok.session, { start: _SS_T0, end: _SS_T0 + 600000 }, "valid session");
+    const bad = validateAndSanitizeDeck({ lanes: lanes(), session: { start: "1700000000000", end: _SS_T0 + 600000 } });
+    if (bad.session !== null) throw new Error("hostile session kept");
+  }},
+  { name: "SI2: storage-reload shape: hostile session is dropped; a deck without the key keeps its shape", fn: async () => {
+    const d1 = { lanes: [], session: { start: _SS_T0, end: "x" } };
+    resanitizeLoadedSession(d1);
+    if (d1.session !== null) throw new Error("hostile stored session kept");
+    const d2 = { lanes: [], session: { start: _SS_T0, end: _SS_T0 + 60000, __proto__x: 1 } };
+    resanitizeLoadedSession(d2);
+    _ssEq(d2.session, { start: _SS_T0, end: _SS_T0 + 60000 }, "valid stored session");
+    const d3 = { lanes: [] };
+    resanitizeLoadedSession(d3);
+    if ("session" in d3) throw new Error("key added to a deck without one");
+    for (const v of [null, undefined, "x", 5]) resanitizeLoadedSession(v);
+  }},
+  { name: "SI3: file/export payload carries session only when set", fn: async () => {
+    const base = { deckTitle: "D", lanes: [], branding: {}, guidelines: "" };
+    const p0 = localDeckPayload({ ...base, session: null, chatMessages: [] });
+    _ssEq(Object.keys(p0), ["deckTitle", "lanes", "branding", "guidelines"], "no session");
+    const p1 = localDeckPayload({ ...base, session: { start: _SS_T0, end: _SS_T0 + 60000 } });
+    _ssEq(p1.session, { start: _SS_T0, end: _SS_T0 + 60000 }, "session set");
+    _ssEq(Object.keys(extractSave({ ...init, session: { start: _SS_T0, end: _SS_T0 + 60000 } })).includes("session"), true, "extractSave keeps session");
+  }},
+  { name: "SI4: LOAD of a deck without session clears the session of the previous deck (live state)", fn: async () => {
+    const hooks = _hooks();
+    if (!hooks.setSessionForTest || !hooks.getSessionForTest || !hooks.restoreStartupDeck) throw new Error("session test hooks missing");
+    try {
+      hooks.setSessionForTest({ start: _SS_T0, end: _SS_T0 + 600000 });
+      await _waitFor(() => hooks.getSessionForTest() !== null, 1500).catch(() => { throw new Error("SET_SESSION did not reach state"); });
+      _ssEq(hooks.getDeckStateForTest().session, { start: _SS_T0, end: _SS_T0 + 600000 }, "getDeckStateForTest");
+      hooks.setSessionForTest({ start: _SS_T0, end: _SS_T0 });
+      await _wait(80);
+      _ssEq(hooks.getSessionForTest(), { start: _SS_T0, end: _SS_T0 + 600000 }, "invalid SET_SESSION changed state");
+      if (!hooks.restoreStartupDeck()) throw new Error("startup deck fixture missing");
+      await _waitFor(() => hooks.getSessionForTest() === null, 1500).catch(() => { throw new Error("LOAD kept the session of the previous deck"); });
+    } finally { hooks.setSessionForTest?.(null); }
+  }},
+]);
+
+// ── Session end: Present-side UI (v13.80, P2) ─────────────────────────
+// Present root = the fixed inset:0 zIndex 9999 element. Each test restores:
+// session null, dialog closed, presenter view closed, Present left.
+const _sesUiRoot = () => _$$("div").find((d) => d.style.position === "fixed" && d.style.inset === "0px" && d.style.zIndex === "9999");
+const _sesUiPresent = async () => {
+  await _editorSetup();
+  document.activeElement?.blur(); await _wait(100);
+  _key("f");
+  await _waitFor(() => !_$("header") && _sesUiRoot(), 2000);
+};
+const _sesUiLeave = async () => {
+  const hooks = _hooks();
+  if (_$("[data-testid='session-cancel']")) { _click("[data-testid='session-cancel']"); await _waitFor(() => !_$("[data-testid='session-dialog']"), 1500).catch(() => {}); }
+  if (_$("[data-testid='presenter-view']")) { _click("[data-testid='presenter-toggle']"); await _waitFor(() => !_$("[data-testid='presenter-view']"), 1500).catch(() => {}); }
+  // T again while Present is open: resets the mounted SlidePanel state, not
+  // only the module flag (SlidePanel is not remounted on Present exit).
+  if (VELA_SESSION_BAR.hidden && _sesUiRoot()) { document.activeElement?.blur(); await _wait(50); _key("t"); await _waitFor(() => !VELA_SESSION_BAR.hidden, 1000).catch(() => {}); }
+  hooks.setSessionForTest?.(null);
+  VELA_SESSION_BAR.hidden = false;
+  await _exitFullscreen();
+};
+const _sesUiSet = (el, value) => {
+  Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set.call(el, String(value));
+  el.dispatchEvent(new Event("input", { bubbles: true }));
+};
+const _sesUiOpenPresenter = async () => {
+  document.activeElement?.blur(); await _wait(80);
+  _key("s");
+  await _waitFor(() => _$("[data-testid='presenter-session-panel']"), 2000);
+};
+const _sesUiNeedHooks = () => {
+  const hooks = _hooks();
+  if (!hooks.setSessionForTest || !hooks.getSessionForTest) throw new Error("session test hooks missing");
+  return hooks;
+};
+
+uiSuite("session-presenter-panel", [
+  { name: "SP1: no session -> clock and Set session end button; dialog opens INSIDE the Present root", fn: async () => {
+    const hooks = _sesUiNeedHooks();
+    try {
+      hooks.setSessionForTest(null);
+      await _sesUiPresent();
+      await _sesUiOpenPresenter();
+      const clock = _$("[data-testid='presenter-clock']");
+      if (!clock || !/^\d\d:\d\d$/.test(clock.textContent.trim())) throw new Error("presenter-clock missing or not HH:MM: " + clock?.textContent);
+      if (_$("[data-testid='presenter-time-left']")) throw new Error("time left shown without a session");
+      const btn = _$("[data-testid='presenter-session-set']");
+      if (!btn || btn.tagName !== "BUTTON") throw new Error("presenter-session-set is not a button");
+      _click(btn);
+      const dlg = await _waitFor(() => _$("[data-testid='session-dialog']"), 1500);
+      if (!_sesUiRoot()?.contains(dlg)) throw new Error("session dialog is not inside the Present root");
+      await _waitFor(() => document.activeElement === _$("[data-testid='session-end-input']"), 1000).catch(() => { throw new Error("focus is not on the End input"); });
+      if (_$("[data-testid='session-clear']")) throw new Error("Clear shown without a stored session");
+      if (!_$("[data-testid='session-set']").disabled) throw new Error("Set enabled with an empty End");
+    } finally { await _sesUiLeave(); }
+  }},
+  { name: "SP2: chip 30 sets End = Start + 30; Set stores 30 min; panel shows every pace element", fn: async () => {
+    const hooks = _sesUiNeedHooks();
+    try {
+      hooks.setSessionForTest(null);
+      await _sesUiPresent();
+      await _sesUiOpenPresenter();
+      _click("[data-testid='presenter-session-set']");
+      await _waitFor(() => _$("[data-testid='session-dialog']"), 1500);
+      _click("[data-testid='session-chip-30']");
+      await _wait(80);
+      const st = _$("[data-testid='session-start-input']").value, en = _$("[data-testid='session-end-input']").value;
+      const t = Date.now();
+      const r = resolveSessionTimes(st, en, t, t);
+      if (!r || r.end - r.start !== 1800000) throw new Error(`chip 30 gave ${st} -> ${en}`);
+      if (_$("[data-testid='session-minutes-input']").value !== "30") throw new Error("minutes field not 30");
+      _click("[data-testid='session-set']");
+      await _waitFor(() => !_$("[data-testid='session-dialog']"), 1500);
+      const s = hooks.getSessionForTest();
+      if (!s || s.end - s.start !== 1800000) throw new Error("stored session is not 30 min: " + JSON.stringify(s));
+      if (!_$("[data-testid='presenter-view']")) throw new Error("Set closed the presenter view");
+      for (const id of ["presenter-clock", "presenter-time-left", "presenter-time-bar", "presenter-pace", "presenter-pace-track", "presenter-pace-you", "presenter-pace-should"]) {
+        await _waitFor(() => _$(`[data-testid='${id}']`), 1500).catch(() => { throw new Error(`${id} missing with a session`); });
+      }
+      if (_$("[data-testid='presenter-session-set']")) throw new Error("Set button still shown with a session");
+    } finally { await _sesUiLeave(); }
+  }},
+  { name: "SP3: verdict matches computeSessionPace (over and not-yet-started); colour follows the verdict", fn: async () => {
+    const hooks = _sesUiNeedHooks();
+    const cands = (ses) => [0, 1000, 2000].map((d) => computeSessionPace({ est: [60] }, 0, 0, ses, Date.now() - d).verdict);
+    try {
+      await _sesUiPresent();
+      await _sesUiOpenPresenter();
+      const over = { start: Date.now() - 40 * 60000, end: Date.now() - 10 * 60000 };
+      hooks.setSessionForTest(over);
+      const tl = await _waitFor(() => _$("[data-testid='presenter-time-left']"), 2000);
+      await _wait(50);
+      const v1 = _$("[data-testid='presenter-pace']").textContent;
+      if (!cands(over).includes(v1)) throw new Error(`over verdict "${v1}" not in ${JSON.stringify(cands(over))}`);
+      if (!tl.textContent.startsWith("+")) throw new Error("time left does not count up when over: " + tl.textContent);
+      const before = { start: Date.now() + 5 * 60000, end: Date.now() + 35 * 60000 };
+      hooks.setSessionForTest(before);
+      await _waitFor(() => /^starts in /.test(_$("[data-testid='presenter-pace']")?.textContent || ""), 2000);
+      const v2 = _$("[data-testid='presenter-pace']").textContent;
+      if (!cands(before).includes(v2)) throw new Error(`before verdict "${v2}" not in ${JSON.stringify(cands(before))}`);
+      const live = { start: Date.now() - 47 * 60000, end: Date.now() + 28 * 60000 };
+      hooks.setSessionForTest(live);
+      await _waitFor(() => !/^starts in /.test(_$("[data-testid='presenter-pace']")?.textContent || ""), 2000);
+      const pv = _$("[data-testid='presenter-pace']");
+      const t = pv.textContent;
+      const key = /ahead/.test(t) ? "green" : t === "on pace" ? "white" : /behind/.test(t) ? null : "x";
+      if (key === "x") throw new Error("unexpected live verdict: " + t);
+      const rgb = (hex) => `rgb(${parseInt(hex.slice(1, 3), 16)}, ${parseInt(hex.slice(3, 5), 16)}, ${parseInt(hex.slice(5, 7), 16)})`;
+      const ok = key ? [rgb(SESSION_PACE_COLORS[key])] : [rgb(SESSION_PACE_COLORS.amber), rgb(SESSION_PACE_COLORS.red)];
+      if (!ok.includes(getComputedStyle(pv).color)) throw new Error(`verdict colour ${getComputedStyle(pv).color} does not match "${t}"`);
+      if (!_$("[data-testid='presenter-pace-you']") || !_$("[data-testid='presenter-pace-should']")) throw new Error("pace ticks missing");
+      if (!/YOU · slide \d+/.test(_$("[data-testid='presenter-session-panel']").textContent) || !/SHOULD BE · slide \d+/.test(_$("[data-testid='presenter-session-panel']").textContent)) throw new Error("YOU / SHOULD BE labels missing");
+    } finally { await _sesUiLeave(); }
+  }},
+  { name: "SP4: keys in the dialog do not reach Present; Escape closes only the dialog", fn: async () => {
+    const hooks = _sesUiNeedHooks();
+    try {
+      hooks.setSessionForTest(null);
+      await _sesUiPresent();
+      _key("ArrowRight"); await _wait(300);
+      await _sesUiOpenPresenter();
+      _click("[data-testid='presenter-session-set']");
+      await _waitFor(() => _$("[data-testid='session-dialog']"), 1500);
+      const pos = _slidePos();
+      const chip = _$("[data-testid='session-chip-15']");
+      chip.focus();
+      for (const k of ["ArrowRight", "ArrowLeft", " ", "s", "t", "g", "e", "n"]) { _key(k); await _wait(60); }
+      if (!_$("[data-testid='session-dialog']")) throw new Error("a key typed on a dialog button closed the dialog");
+      if (!_$("[data-testid='presenter-view']")) throw new Error("a key typed in the dialog closed the presenter view");
+      if (_slidePos() !== pos) throw new Error(`slide moved while the dialog was open: ${pos} -> ${_slidePos()}`);
+      // Focus outside the dialog (Present root): the capture trap still holds keys.
+      _sesUiRoot().focus();
+      _key("ArrowRight"); await _wait(200);
+      if (_slidePos() !== pos) throw new Error("ArrowRight with focus outside the dialog moved the slide");
+      _$("[data-testid='session-end-input']").focus();
+      _key("Escape");
+      await _waitFor(() => !_$("[data-testid='session-dialog']"), 1500);
+      await _wait(150);
+      if (!_$("[data-testid='presenter-view']")) throw new Error("Escape in the dialog closed the presenter view");
+      if (_$("header")) throw new Error("Escape in the dialog left Present");
+      if (hooks.getSessionForTest() !== null) throw new Error("Escape changed the session");
+    } finally { await _sesUiLeave(); }
+  }},
+  { name: "SP5: invalid input keeps Set disabled and Enter inert; Enter sets a valid value", fn: async () => {
+    const hooks = _sesUiNeedHooks();
+    try {
+      hooks.setSessionForTest(null);
+      await _sesUiPresent();
+      await _sesUiOpenPresenter();
+      _click("[data-testid='presenter-session-set']");
+      await _waitFor(() => _$("[data-testid='session-dialog']"), 1500);
+      const min = _$("[data-testid='session-minutes-input']");
+      _sesUiSet(min, "0"); await _wait(60);
+      if (!_$("[data-testid='session-set']").disabled) throw new Error("Set enabled for 0 minutes");
+      _sesUiSet(min, "1441"); await _wait(60);
+      if (!_$("[data-testid='session-set']").disabled) throw new Error("Set enabled for 1441 minutes");
+      min.focus(); _key("Enter"); await _wait(150);
+      if (!_$("[data-testid='session-dialog']") || hooks.getSessionForTest() !== null) throw new Error("Enter acted on invalid input");
+      _sesUiSet(min, "45"); await _wait(60);
+      if (_$("[data-testid='session-set']").disabled) throw new Error("Set disabled for 45 minutes");
+      min.focus(); _key("Enter");
+      await _waitFor(() => !_$("[data-testid='session-dialog']"), 1500);
+      const s = hooks.getSessionForTest();
+      if (!s || s.end - s.start !== 45 * 60000) throw new Error("Enter did not store 45 min: " + JSON.stringify(s));
+    } finally { await _sesUiLeave(); }
+  }},
+  { name: "SP6: card opens the dialog with the stored times; Cancel keeps, Clear removes", fn: async () => {
+    const hooks = _sesUiNeedHooks();
+    try {
+      const ses = { start: Date.now() - 10 * 60000, end: Date.now() + 50 * 60000 };
+      hooks.setSessionForTest(ses);
+      await _sesUiPresent();
+      await _sesUiOpenPresenter();
+      const cardBtn = await _waitFor(() => _$("[data-testid='presenter-session-panel'] button[aria-label*='Edit session end']"), 1500);
+      _click(cardBtn);
+      await _waitFor(() => _$("[data-testid='session-dialog']"), 1500);
+      if (_$("[data-testid='session-start-input']").value !== fmtClock(ses.start) || _$("[data-testid='session-end-input']").value !== fmtClock(ses.end)) throw new Error("dialog does not show the stored times");
+      _click("[data-testid='session-chip-90']"); await _wait(60);
+      _click("[data-testid='session-cancel']");
+      await _waitFor(() => !_$("[data-testid='session-dialog']"), 1500);
+      _ssEq(hooks.getSessionForTest(), ses, "Cancel changed the session");
+      _click(_$("[data-testid='presenter-session-panel'] button"));
+      await _waitFor(() => _$("[data-testid='session-clear']"), 1500);
+      _click("[data-testid='session-clear']");
+      await _waitFor(() => hooks.getSessionForTest() === null, 1500).catch(() => { throw new Error("Clear did not remove the session"); });
+      await _waitFor(() => _$("[data-testid='presenter-session-set']"), 1500);
+    } finally { await _sesUiLeave(); }
+  }},
+  { name: "SP7: S and Escape of the presenter view are unchanged with a session", fn: async () => {
+    const hooks = _sesUiNeedHooks();
+    try {
+      hooks.setSessionForTest({ start: Date.now() - 60000, end: Date.now() + 30 * 60000 });
+      await _sesUiPresent();
+      await _sesUiOpenPresenter();
+      _key("s");
+      await _waitFor(() => !_$("[data-testid='presenter-view']"), 1500);
+      await _sesUiOpenPresenter();
+      _key("Escape");
+      await _waitFor(() => !_$("[data-testid='presenter-view']"), 1500);
+      await _wait(150);
+      if (_$("header")) throw new Error("first Esc left Present");
+    } finally { await _sesUiLeave(); }
+  }},
+]);
+
+uiSuite("session-edge-bar", [
+  { name: "EB1: live session -> bar shows, takes no clicks; T hides and shows; Shift+T / Ctrl+T do nothing", fn: async () => {
+    const hooks = _sesUiNeedHooks();
+    try {
+      hooks.setSessionForTest({ start: Date.now() - 10 * 60000, end: Date.now() + 20 * 60000 });
+      await _sesUiPresent();
+      const bar = await _waitFor(() => _$("[data-testid='present-session-bar']"), 2000);
+      if (!_sesUiRoot().contains(bar)) throw new Error("bar is not inside the Present root");
+      if (getComputedStyle(bar).pointerEvents !== "none") throw new Error("bar takes pointer events");
+      if (bar.getBoundingClientRect().height > 6) throw new Error("bar is too tall");
+      document.activeElement?.blur();
+      _key("t");
+      await _waitFor(() => !_$("[data-testid='present-session-bar']"), 1500).catch(() => { throw new Error("T did not hide the bar"); });
+      _key("T", { shiftKey: true }); await _wait(120);
+      _key("t", { ctrlKey: true }); await _wait(120);
+      if (_$("[data-testid='present-session-bar']")) throw new Error("a modified T changed the bar");
+      _key("t");
+      await _waitFor(() => _$("[data-testid='present-session-bar']"), 1500).catch(() => { throw new Error("T did not show the bar"); });
+    } finally { await _sesUiLeave(); }
+  }},
+  { name: "EB2: the hide choice is kept when Present is left and entered again", fn: async () => {
+    const hooks = _sesUiNeedHooks();
+    try {
+      hooks.setSessionForTest({ start: Date.now() - 10 * 60000, end: Date.now() + 20 * 60000 });
+      await _sesUiPresent();
+      await _waitFor(() => _$("[data-testid='present-session-bar']"), 2000);
+      document.activeElement?.blur(); _key("t");
+      await _waitFor(() => !_$("[data-testid='present-session-bar']"), 1500);
+      await _exitFullscreen();
+      await _sesUiPresent();
+      await _wait(300);
+      if (_$("[data-testid='present-session-bar']")) throw new Error("hide choice lost after re-entering Present");
+      document.activeElement?.blur(); _key("t");
+      await _waitFor(() => _$("[data-testid='present-session-bar']"), 1500);
+    } finally { await _sesUiLeave(); }
+  }},
+  { name: "EB3: no bar over the presenter view, without a session, for an expired session, or in the editor", fn: async () => {
+    const hooks = _sesUiNeedHooks();
+    try {
+      hooks.setSessionForTest({ start: Date.now() - 10 * 60000, end: Date.now() + 20 * 60000 });
+      await _sesUiPresent();
+      await _waitFor(() => _$("[data-testid='present-session-bar']"), 2000);
+      await _sesUiOpenPresenter();
+      if (_$("[data-testid='present-session-bar']")) throw new Error("bar shown with the presenter view open");
+      _key("s");
+      await _waitFor(() => !_$("[data-testid='presenter-view']"), 1500);
+      hooks.setSessionForTest(null);
+      await _waitFor(() => !_$("[data-testid='present-session-bar']"), 1500).catch(() => { throw new Error("bar shown without a session"); });
+      hooks.setSessionForTest({ start: Date.now() - 270 * 60000, end: Date.now() - 240 * 60000 });
+      await _wait(1300);
+      if (hooks.getSessionForTest() === null) throw new Error("stale session did not reach state");
+      if (_$("[data-testid='present-session-bar']")) throw new Error("bar shown for an expired session");
+      hooks.setSessionForTest({ start: Date.now() - 10 * 60000, end: Date.now() + 20 * 60000 });
+      await _waitFor(() => _$("[data-testid='present-session-bar']"), 2000);
+      await _exitFullscreen();
+      await _wait(200);
+      if (_$("[data-testid='present-session-bar']")) throw new Error("bar shown in the editor");
+    } finally { await _sesUiLeave(); }
+  }},
+]);
+
+// ── Session end: editor toolbar, dialog, live ingress, bar geometry (v13.80, P3)
+const _sesTbBtn = () => _$("[data-testid='session-end-btn']");
+// The icon-only button carries its state in data-live, title and aria-label.
+// end = null: "Set session end"; end = a number: the live session end.
+const _sesTbIs = (end) => {
+  const b = _sesTbBtn();
+  if (!b) return false;
+  const tip = end == null ? "Set session end" : `Session ends ${fmtClock(end)} — click to change`;
+  return b.dataset.live === (end == null ? "0" : "1") && b.title === tip && b.getAttribute("aria-label") === tip && b.textContent === "🕒";
+};
+const _sesTbDesc = () => { const b = _sesTbBtn(); return b ? `${b.dataset.live} | ${b.title} | ${b.textContent}` : "no button"; };
+const _sesTbOpen = async () => {
+  _click(_sesTbBtn());
+  return _waitFor(() => _$("[data-testid='session-dialog']"), 1500);
+};
+// "M:SS" / "H:MM:SS" groups in a string -> seconds; non-numeric rest -> "#".
+const _sesSecs = (t) => (String(t).match(/\d+(?::\d\d)+/g) || []).map((x) => x.split(":").reduce((a, b) => a * 60 + +b, 0));
+const _sesShape = (t) => String(t).replace(/\d+(?::\d\d)+/g, "#");
+const _sesRgb = (hex) => `rgb(${parseInt(hex.slice(1, 3), 16)}, ${parseInt(hex.slice(3, 5), 16)}, ${parseInt(hex.slice(5, 7), 16)})`;
+// Import a deck through the real Import button path (hidden file input -> loadDeckFile).
+const _sesImport = async (deck) => {
+  const input = _$("input[type='file'][accept='.json,.vela']");
+  if (!input) throw new Error("import file input missing");
+  const dt = new DataTransfer();
+  dt.items.add(new File([JSON.stringify(deck)], "session-test.vela", { type: "application/json" }));
+  input.files = dt.files;
+  input.dispatchEvent(new Event("change", { bubbles: true }));
+};
+
+uiSuite("session-editor-dialog", [
+  { name: "SD1: End typed directly updates Minutes and the summary; Set stores { start, end }", fn: async () => {
+    const hooks = _sesUiNeedHooks();
+    try {
+      hooks.setSessionForTest(null);
+      await _editorSetup();
+      const t0 = Date.now();
+      await _sesTbOpen();
+      _sesUiSet(_$("[data-testid='session-start-input']"), "09:00");
+      _sesUiSet(_$("[data-testid='session-end-input']"), "10:15");
+      await _wait(80);
+      if (_$("[data-testid='session-minutes-input']").value !== "75") throw new Error("minutes not 75: " + _$("[data-testid='session-minutes-input']").value);
+      if (!/^09:00 → 10:15 \(75 min\) · /.test(_$("[data-testid='session-summary']").textContent)) throw new Error("summary: " + _$("[data-testid='session-summary']").textContent);
+      if (_$("[data-testid='session-set']").disabled) throw new Error("Set disabled for a valid End");
+      _click("[data-testid='session-set']");
+      await _waitFor(() => !_$("[data-testid='session-dialog']"), 1500);
+      const t1 = Date.now(); // the dialog's `now` is in [t0, t1]: accept either side of a day roll
+      const wants = [t0, t1].map((t) => JSON.stringify(resolveSessionTimes("09:00", "10:15", sessionDialogBase(null, t), t)));
+      if (!wants.includes(JSON.stringify(hooks.getSessionForTest()))) throw new Error(`stored session ${JSON.stringify(hooks.getSessionForTest())}, want one of ${wants.join(" / ")}`);
+    } finally { await _sesUiLeave(); }
+  }},
+  { name: "SD2: End equal to Start is the next day (24 h) and is accepted", fn: async () => {
+    const hooks = _sesUiNeedHooks();
+    try {
+      hooks.setSessionForTest(null);
+      await _editorSetup();
+      const d0 = new Date(Date.now());
+      await _sesTbOpen();
+      _sesUiSet(_$("[data-testid='session-start-input']"), "14:20");
+      _sesUiSet(_$("[data-testid='session-end-input']"), "14:20");
+      await _wait(80);
+      // Same local-date arithmetic as the app: on a DST change day the wall-clock
+      // 24 h is 23 h or 25 h; 25 h is over the 24 h cap, so Set stays disabled.
+      const wallLen = new Date(d0.getFullYear(), d0.getMonth(), d0.getDate() + 1, 14, 20) - new Date(d0.getFullYear(), d0.getMonth(), d0.getDate(), 14, 20);
+      if (wallLen > 86400000) {
+        if (!_$("[data-testid='session-set']").disabled) throw new Error("Set enabled for a 25 h session (DST day)");
+        return;
+      }
+      if (wallLen < 86400000) {
+        if (_$("[data-testid='session-minutes-input']").value !== String(Math.round(wallLen / 60000))) throw new Error("minutes not 1380 on a DST day");
+        return;
+      }
+      if (_$("[data-testid='session-minutes-input']").value !== "1440") throw new Error("minutes not 1440");
+      if (_$("[data-testid='session-set']").disabled) throw new Error("Set disabled for a 24 h session");
+      _click("[data-testid='session-set']");
+      await _waitFor(() => !_$("[data-testid='session-dialog']"), 1500);
+      const s = hooks.getSessionForTest();
+      if (!s || s.end - s.start !== 86400000) throw new Error("stored session is not 24 h: " + JSON.stringify(s));
+    } finally { await _sesUiLeave(); }
+  }},
+  { name: "SD3: Minutes 0 and 1441 disable Set; a valid value enables it again", fn: async () => {
+    const hooks = _sesUiNeedHooks();
+    try {
+      hooks.setSessionForTest(null);
+      await _editorSetup();
+      await _sesTbOpen();
+      _click("[data-testid='session-chip-30']"); await _wait(60);
+      if (_$("[data-testid='session-set']").disabled) throw new Error("Set disabled after chip 30");
+      const mi = _$("[data-testid='session-minutes-input']");
+      for (const v of ["0", "1441"]) {
+        _sesUiSet(mi, v); await _wait(60);
+        if (!_$("[data-testid='session-set']").disabled) throw new Error(`Set enabled with Minutes ${v}`);
+        mi.focus(); _key("Enter"); await _wait(80);
+        if (hooks.getSessionForTest() !== null) throw new Error(`Enter stored a session with Minutes ${v}`);
+      }
+      _sesUiSet(mi, "45"); await _wait(60);
+      if (_$("[data-testid='session-set']").disabled) throw new Error("Set disabled with Minutes 45");
+      _click("[data-testid='session-cancel']");
+      await _waitFor(() => !_$("[data-testid='session-dialog']"), 1500);
+      if (hooks.getSessionForTest() !== null) throw new Error("Cancel stored a session");
+    } finally { await _sesUiLeave(); }
+  }},
+  // Summary wording: "<start> → <end> (<N> min) · <state>". The state comes
+  // from the resolved times against now (the same rule the dialog uses), so a
+  // run near midnight (day roll) checks the state the dialog really has.
+  { name: "SD-W1: summary before the start says 'starts in'", fn: async () => {
+    try {
+      _sesUiNeedHooks().setSessionForTest(null);
+      await _editorSetup();
+      await _sesTbOpen();
+      const t = Date.now(), st = fmtClock(t + 3600000), en = fmtClock(t + 7200000);
+      _sesUiSet(_$("[data-testid='session-start-input']"), st);
+      _sesUiSet(_$("[data-testid='session-end-input']"), en);
+      await _wait(80);
+      const txt = _$("[data-testid='session-summary']").textContent;
+      if (!new RegExp(`^${st} → ${en} \\(60 min\\) · starts in \\d+:\\d\\d(:\\d\\d)?$`).test(txt)) throw new Error("summary: " + txt);
+      if (!/^Deck needs ~\d+ min · session is 60 min$/.test(_$("[data-testid='session-precheck']").textContent)) throw new Error("precheck: " + _$("[data-testid='session-precheck']").textContent);
+    } finally { await _sesUiLeave(); }
+  }},
+  { name: "SD-W2: summary of a running session says '<countdown> left'; after the end it says 'ended … ago'", fn: async () => {
+    const realNow = Date.now;
+    try {
+      _sesUiNeedHooks().setSessionForTest(null);
+      await _editorSetup();
+      await _sesTbOpen();
+      const t = Date.now(), st = fmtClock(t - 3600000), en = fmtClock(t + 3600000);
+      _sesUiSet(_$("[data-testid='session-start-input']"), st);
+      _sesUiSet(_$("[data-testid='session-end-input']"), en);
+      await _wait(80);
+      const r = resolveSessionTimes(st, en, sessionDialogBase(null, t), t);
+      const now = Date.now();
+      const want = now < r.start ? "starts in \\d+:\\d\\d(:\\d\\d)?" : now < r.end ? "\\d+:\\d\\d(:\\d\\d)? left" : "ended \\d+:\\d\\d(:\\d\\d)? ago";
+      let txt = _$("[data-testid='session-summary']").textContent;
+      if (!new RegExp(`^${st} → ${en} \\(120 min\\) · ${want}$`).test(txt)) throw new Error("running summary: " + txt);
+      if (now >= r.start && now < r.end && !/ left$/.test(txt)) throw new Error("running session does not say left: " + txt);
+      // After the end: move the clock past it for one render (restored in finally).
+      const late = r.end + 125000;
+      Date.now = () => late;
+      _sesUiSet(_$("[data-testid='session-minutes-input']"), "119");
+      await _wait(80);
+      txt = _$("[data-testid='session-summary']").textContent;
+      Date.now = realNow;
+      const r2 = resolveSessionTimes(st, fmtClock(r.start + 119 * 60000), sessionDialogBase(null, t), t);
+      const ago = fmtCountdown((late - r2.end) / 1000);
+      if (txt !== `${st} → ${fmtClock(r2.end)} (119 min) · ended ${ago} ago`) throw new Error("ended summary: " + txt);
+    } finally { Date.now = realNow; await _sesUiLeave(); }
+  }},
+  { name: "SD-W3: Minutes 0 gives no valid session: no summary times and no stale 'session is N min'", fn: async () => {
+    try {
+      _sesUiNeedHooks().setSessionForTest(null);
+      await _editorSetup();
+      await _sesTbOpen();
+      _sesUiSet(_$("[data-testid='session-start-input']"), "09:00");
+      _sesUiSet(_$("[data-testid='session-end-input']"), "10:00");
+      await _wait(80);
+      if (!/ · session is 60 min$/.test(_$("[data-testid='session-precheck']").textContent)) throw new Error("valid precheck: " + _$("[data-testid='session-precheck']").textContent);
+      _sesUiSet(_$("[data-testid='session-minutes-input']"), "0");
+      await _wait(80);
+      const pre = _$("[data-testid='session-precheck']").textContent;
+      if (!/^Deck needs ~\d+ min$/.test(pre)) throw new Error("invalid precheck: " + pre);
+      if (_$("[data-testid='session-summary']").textContent !== "Enter a start and an end (1 min to 24 h)") throw new Error("invalid summary: " + _$("[data-testid='session-summary']").textContent);
+      if (!_$("[data-testid='session-set']").disabled) throw new Error("Set enabled for Minutes 0");
+    } finally { await _sesUiLeave(); }
+  }},
+  // Review fix F3: the summary describes the session that Set would store
+  // (resolveSessionDialogSet): unchanged fields keep the ended session.
+  { name: "SD-W4: an unchanged ended session says 'ended … ago'; a changed one shows the day-shifted session", fn: async () => {
+    try {
+      const t = Date.now(), live = { start: t - 3600000, end: t - 1200000 };
+      _sesUiNeedHooks().setSessionForTest(live);
+      await _editorSetup();
+      await _sesTbOpen();
+      await _wait(80);
+      let txt = _$("[data-testid='session-summary']").textContent;
+      const m = new RegExp(`^${fmtClock(live.start)} → ${fmtClock(live.end)} \\(40 min\\) · ended (\\d+:\\d\\d(?::\\d\\d)?) ago$`).exec(txt);
+      if (!m) throw new Error("unchanged ended summary: " + txt);
+      const ago = _sesSecs(m[1])[0];
+      if (ago < 1195 || ago > 1270) throw new Error(`ended ${ago} s ago, want about 1200`);
+      _sesUiSet(_$("[data-testid='session-minutes-input']"), "39");
+      await _wait(80);
+      txt = _$("[data-testid='session-summary']").textContent;
+      const st = _$("[data-testid='session-start-input']").value, en = _$("[data-testid='session-end-input']").value;
+      const m2 = new RegExp(`^${st} → ${en} \\(39 min\\) · starts in (\\d+:\\d\\d:\\d\\d)$`).exec(txt);
+      if (!m2) throw new Error("changed summary: " + txt);
+      const r = resolveSessionDialogSet(st, en, sessionDialogBase(live, t), Date.now(), live);
+      if (!r || r.keep || r.session.start <= Date.now()) throw new Error("Set would not store a day-shifted session");
+      const secs = _sesSecs(m2[1])[0], want = (r.session.start - Date.now()) / 1000;
+      if (Math.abs(secs - want) > 5) throw new Error(`starts in ${secs} s, Set stores a start in ${Math.round(want)} s`);
+    } finally { await _sesUiLeave(); }
+  }},
+  // Review fix F4: a 1 s tick re-renders the summary; it must not reset the
+  // fields or move focus.
+  { name: "SD-W5: the countdown updates while the dialog is open; typed values and focus stay", fn: async () => {
+    try {
+      const t = Date.now();
+      _sesUiNeedHooks().setSessionForTest({ start: t - 600000, end: t + 1200000 });
+      await _editorSetup();
+      await _sesTbOpen();
+      await _wait(80);
+      const endIn = _$("[data-testid='session-end-input']"), minIn = _$("[data-testid='session-minutes-input']");
+      const en = fmtClock(t + 25 * 60000);
+      _sesUiSet(endIn, en);
+      await _wait(80);
+      const min0 = minIn.value, focus0 = document.activeElement;
+      const s1 = _$("[data-testid='session-summary']").textContent;
+      if (!/ left$/.test(s1)) throw new Error("running summary: " + s1);
+      await _waitFor(() => _$("[data-testid='session-summary']")?.textContent !== s1, 2500).catch(() => { throw new Error("summary did not change in 2.5 s: " + s1); });
+      if (endIn.value !== en || minIn.value !== min0) throw new Error(`fields reset: end ${endIn.value} (want ${en}), minutes ${minIn.value} (want ${min0})`);
+      if (document.activeElement !== focus0) throw new Error("the tick moved focus");
+      if (!/ left$/.test(_$("[data-testid='session-summary']").textContent)) throw new Error("summary after tick: " + _$("[data-testid='session-summary']").textContent);
+    } finally { await _sesUiLeave(); }
+  }},
+]);
+
+// ── Session end: review fixes (v13.80) ────────────────────────────
+const _sesSig = (hooks) => { const s = hooks.getDeckStateForTest(); return `${s.selectedId}#${s.slideIndex}`; };
+const _sesWheel = (el, n = 3) => { for (let i = 0; i < n; i++) el.dispatchEvent(new WheelEvent("wheel", { deltaY: 300, bubbles: true, cancelable: true })); };
+const _sesSwipe = (el) => {
+  const a = new Touch({ identifier: 7, target: el, clientX: 400, clientY: 300 }), b = new Touch({ identifier: 7, target: el, clientX: 100, clientY: 300 });
+  el.dispatchEvent(new TouchEvent("touchstart", { touches: [a], targetTouches: [a], changedTouches: [a], bubbles: true, cancelable: true }));
+  el.dispatchEvent(new TouchEvent("touchend", { touches: [], targetTouches: [], changedTouches: [b], bubbles: true, cancelable: true }));
+};
+
+uiSuite("session-review-fixes", [
+  { name: "SR1: wheel and swipe over the Present session dialog (chip and backdrop) do not change the slide or module", fn: async () => {
+    const hooks = _sesUiNeedHooks();
+    try {
+      hooks.setSessionForTest(null);
+      await _sesUiPresent();
+      await _sesUiOpenPresenter();
+      _click("[data-testid='presenter-session-set']");
+      await _waitFor(() => _$("[data-testid='session-dialog']"), 1500);
+      const chip = _click("[data-testid='session-chip-30']");
+      chip.focus(); await _wait(80);
+      const back = chip.closest("[data-vela-modal]");
+      if (!back) throw new Error("dialog backdrop has no data-vela-modal mark");
+      const before = _sesSig(hooks);
+      for (const [el, what] of [[chip, "chip"], [back, "backdrop"]]) {
+        _sesWheel(el); await _wait(150);
+        if (_sesSig(hooks) !== before) throw new Error(`wheel on the ${what} changed the slide: ${before} -> ${_sesSig(hooks)}`);
+        _sesSwipe(el); await _wait(150);
+        if (_sesSig(hooks) !== before) throw new Error(`swipe on the ${what} changed the slide: ${before} -> ${_sesSig(hooks)}`);
+      }
+      if (!_$("[data-testid='session-dialog']")) throw new Error("dialog closed");
+    } finally { await _sesUiLeave(); }
+  }},
+  { name: "SR2: on-slide time counts only from the session start", fn: async () => {
+    const S0 = _SS_T0, ses = { start: S0, end: S0 + 1800000 }, est = { est: [600, 600, 600] };
+    const on = sessionOnSlideSec(S0, S0 - 600000, ses); // entered 10 min before the start
+    _ssEq(on, 0, "on-slide sec at the start");
+    _ssEq(computeSessionPace(est, 0, on, ses, S0).verdict, "on pace", "verdict at the start (deck fits exactly)");
+    _ssEq(sessionOnSlideSec(S0 + 120000, S0 - 600000, ses), 120, "2 min after the start");
+    _ssEq(sessionOnSlideSec(S0 + 120000, S0 + 60000, ses), 60, "entered after the start");
+    _ssEq(sessionOnSlideSec(S0 - 60000, S0 - 600000, ses), 0, "before the start");
+    _ssEq(sessionOnSlideSec(S0 + 1000, S0, null), 1, "no session: from entry");
+    for (const bad of [NaN, Infinity, "x", undefined]) if (sessionOnSlideSec(bad, S0, ses) !== 0) throw new Error(`now ${String(bad)} not 0`);
+    if (sessionOnSlideSec(S0 + 1000, NaN, ses) !== 1) throw new Error("NaN entry did not fall back to the start");
+  }},
+  { name: "SR3: dialog dates: a past session moves to the next day; a live session keeps its start date", fn: async () => {
+    const at = (d, h, m) => new Date(2026, 5, d, h, m).getTime();
+    let now = at(10, 23, 55);
+    let r = resolveSessionTimes("00:05", "01:00", sessionDialogBase(null, now), now);
+    _ssEq(r && [r.start - now, r.end], [600000, at(11, 1, 0)], "23:55: 00:05-01:00 starts in 10 min");
+    now = at(10, 10, 30);
+    r = resolveSessionTimes("09:00", "10:00", sessionDialogBase(null, now), now);
+    _ssEq(r && [r.start, r.end], [at(11, 9, 0), at(11, 10, 0)], "10:30: 09:00-10:00 is tomorrow");
+    now = at(10, 8, 0);
+    r = resolveSessionTimes("09:00", "10:00", sessionDialogBase(null, now), now);
+    _ssEq(r && [r.start, r.end], [at(10, 9, 0), at(10, 10, 0)], "08:00: normal case");
+    let live = { start: at(9, 23, 30), end: at(10, 0, 30) };
+    now = at(10, 0, 10);
+    r = resolveSessionTimes("23:30", "00:45", sessionDialogBase(live, now), now);
+    _ssEq(r && [r.start, r.end], [live.start, at(10, 0, 45)], "live 23:30-00:30, End 00:45 at 00:10");
+    live = { start: at(9, 23, 0), end: at(10, 1, 0) };
+    now = at(10, 0, 20);
+    r = resolveSessionTimes("23:10", "01:00", sessionDialogBase(live, now), now);
+    _ssEq(r && [r.start, r.end], [at(9, 23, 10), at(10, 1, 0)], "live 23:00-01:00, Start 23:10 at 00:20");
+    // Over a DST change the next-day roll uses the local date (wall time kept).
+    const d1 = new Date(at(10, 9, 0) + 86400000 * 3);
+    _ssEq(new Date(resolveSessionTimes("09:00", "10:00", d1.getTime() + 7200000, d1.getTime() + 7200000).start).getHours(), 9, "rolled start keeps 09:00");
+  }},
+  { name: "SR4: a session in the past is set for tomorrow; the summary says starts in; the file note shows", fn: async () => {
+    const hooks = _sesUiNeedHooks();
+    try {
+      hooks.setSessionForTest(null);
+      await _editorSetup();
+      await _sesTbOpen();
+      const note = _$("[data-testid='session-file-note']");
+      if (!note || note.textContent !== "Saved in the deck file (also in exports of the deck).") throw new Error("file note missing: " + note?.textContent);
+      if (parseFloat(getComputedStyle(note).fontSize) < 13) throw new Error("file note below 13 px");
+      const t = Date.now();
+      _sesUiSet(_$("[data-testid='session-start-input']"), fmtClock(t - 7200000));
+      _sesUiSet(_$("[data-testid='session-end-input']"), fmtClock(t - 3600000));
+      await _wait(80);
+      const txt = _$("[data-testid='session-summary']").textContent;
+      if (!/starts in \d/.test(txt)) throw new Error("summary does not say starts in: " + txt);
+      _click("[data-testid='session-set']");
+      await _waitFor(() => !_$("[data-testid='session-dialog']"), 1500);
+      const s = hooks.getSessionForTest();
+      if (!s || !(s.start > Date.now()) || !liveSession(s, Date.now())) throw new Error("stored session is not a future live session: " + JSON.stringify(s));
+    } finally { await _sesUiLeave(); }
+  }},
+  { name: "SR5: wheel inside the Presenter View right column scrolls it and does not change the slide", fn: async () => {
+    const hooks = _sesUiNeedHooks();
+    let col = null;
+    try {
+      hooks.setSessionForTest({ start: Date.now() - 600000, end: Date.now() + 1200000 });
+      await _sesUiPresent();
+      await _sesUiOpenPresenter();
+      const panel = _$("[data-testid='presenter-session-panel']");
+      col = panel.parentElement;
+      while (col && getComputedStyle(col).overflowY !== "auto") col = col.parentElement;
+      if (!col) throw new Error("right column not found");
+      col.style.maxHeight = "120px"; await _wait(80); // a short viewport: the column overflows
+      if (!(col.scrollHeight > col.clientHeight + 1)) throw new Error("right column does not overflow");
+      const before = _sesSig(hooks);
+      _sesWheel(panel); await _wait(200);
+      if (_sesSig(hooks) !== before) throw new Error(`wheel in the right column changed the slide: ${before} -> ${_sesSig(hooks)}`);
+    } finally { if (col) col.style.maxHeight = ""; await _sesUiLeave(); }
+  }},
+  { name: "SR6: dialog Set with no change keeps a live session in overtime; a changed time keeps the day-shift rule", fn: async () => {
+    const at = (d, h, m) => new Date(2026, 5, d, h, m).getTime();
+    const live = { start: at(10, 9, 0), end: at(10, 10, 0) };
+    const now = at(10, 10, 2); // 2 min over
+    const base = sessionDialogBase(live, now);
+    _ssEq(resolveSessionDialogSet("09:00", "10:00", base, now, live), { keep: true, session: live }, "no change");
+    _ssEq(resolveSessionDialogSet("09:00", "10:12", base, now, live), { keep: false, session: { start: live.start, end: at(10, 10, 12) } }, "End = now + 10 min is today");
+    _ssEq(resolveSessionDialogSet("09:00", "09:30", base, now, live), { keep: false, session: { start: at(11, 9, 0), end: at(11, 9, 30) } }, "changed to a past End moves to tomorrow");
+    _ssEq(resolveSessionDialogSet("09:00", "10:00", sessionDialogBase(null, now), now, null), { keep: false, session: { start: at(11, 9, 0), end: at(11, 10, 0) } }, "no live session: a past session moves to tomorrow");
+    const sec = { start: live.start + 15000, end: live.end + 42000 }; // compared to the minute; kept with its seconds
+    _ssEq(resolveSessionDialogSet("09:00", "10:00", sessionDialogBase(sec, now), now, sec), { keep: true, session: sec }, "live session with seconds");
+    _ssEq(resolveSessionDialogSet("9:00", "10:00", base, now, live), null, "invalid field");
+    _ssEq(resolveSessionDialogSet("09:00", "10:00", base, now, { start: "x", end: 1 }), { keep: false, session: { start: at(11, 9, 0), end: at(11, 10, 0) } }, "invalid live session is ignored");
+  }},
+  { name: "SR7: session over by 2 min: Set with no change keeps it; End = now + 10 min is today", fn: async () => {
+    const hooks = _sesUiNeedHooks();
+    try {
+      const t = Date.now();
+      const ses = { start: t - 32 * 60000, end: t - 2 * 60000 };
+      hooks.setSessionForTest(ses);
+      await _editorSetup();
+      await _sesTbOpen();
+      _click("[data-testid='session-set']");
+      await _waitFor(() => !_$("[data-testid='session-dialog']"), 1500);
+      _ssEq(hooks.getSessionForTest(), ses, "stored session after Set with no change");
+      await _sesTbOpen();
+      _sesUiSet(_$("[data-testid='session-end-input']"), fmtClock(Date.now() + 10 * 60000));
+      await _wait(80);
+      _click("[data-testid='session-set']");
+      await _waitFor(() => !_$("[data-testid='session-dialog']"), 1500);
+      const s = hooks.getSessionForTest();
+      const left = s ? s.end - Date.now() : NaN;
+      if (!(left > 8 * 60000 && left < 11 * 60000)) throw new Error("End is not today at now + 10 min: " + JSON.stringify(s));
+      if (s.start !== Math.floor(ses.start / 60000) * 60000) throw new Error("Start changed: " + JSON.stringify(s));
+    } finally { await _sesUiLeave(); }
+  }},
+]);
+
+uiSuite("session-panel-verdict", [
+  { name: "SV1: in-progress verdict (ahead, on pace, behind) equals computeSessionPace for the same deck and slide", fn: async () => {
+    const hooks = _sesUiNeedHooks();
+    if (!VELA_TEST_STARTUP_PATCH) throw new Error("startup deck fixture missing");
+    const lanes = validateAndSanitizeDeck(JSON.parse(JSON.stringify(VELA_TEST_STARTUP_PATCH)), { keepIds: true }).lanes;
+    try {
+      hooks.setSessionForTest(null);
+      await _sesUiPresent();
+      await _sesUiOpenPresenter();
+      const seq = presentSequence(lanes, hooks.getDeckStateForTest().selectedId);
+      const est = sessionEstimates(seq);
+      const youNum = () => { const m = /YOU · slide (\d+)/.exec(_$("[data-testid='presenter-session-panel']")?.textContent || ""); return m ? +m[1] : null; };
+      const check = async (label, endInSec, want) => {
+        const ses = { start: Date.now() - 60000, end: Date.now() + endInSec * 1000 };
+        hooks.setSessionForTest(ses);
+        const pv = await _waitFor(() => _$("[data-testid='presenter-pace']"), 2000);
+        await _wait(80);
+        const n = youNum();
+        const idx = seq.findIndex((e) => e.num === n);
+        if (idx < 0) throw new Error(`${label}: YOU slide ${n} not in the sequence`);
+        const exp = computeSessionPace(est, idx, 0, ses, Date.now());
+        const got = pv.textContent;
+        if (_sesShape(got) !== _sesShape(exp.verdict)) throw new Error(`${label}: verdict "${got}" vs "${exp.verdict}"`);
+        const a = _sesSecs(got), b = _sesSecs(exp.verdict);
+        if (a.length !== b.length || a.some((x, k) => Math.abs(x - b[k]) > 10)) throw new Error(`${label}: numbers "${got}" vs "${exp.verdict}"`);
+        if (getComputedStyle(pv).color !== _sesRgb(SESSION_PACE_COLORS[exp.paceKey])) throw new Error(`${label}: colour ${getComputedStyle(pv).color} vs ${exp.paceKey}`);
+        if (want && !want.test(got)) throw new Error(`${label}: unexpected verdict "${got}"`);
+        const gap = _$("[data-testid='presenter-pace-gap']");
+        if (!gap || getComputedStyle(gap).backgroundColor !== _sesRgb(SESSION_PACE_COLORS[exp.paceKey])) throw new Error(`${label}: pace gap colour`);
+        if (gap.getBoundingClientRect().width < 5.5) throw new Error(`${label}: pace gap narrower than 6 px`);
+        return exp;
+      };
+      const n0 = await (async () => { hooks.setSessionForTest({ start: Date.now() - 60000, end: Date.now() + 3600000 }); await _waitFor(() => youNum() !== null, 2000); return youNum(); })();
+      const i0 = seq.findIndex((e) => e.num === n0);
+      const need0 = computeSessionPace(est, i0, 0, { start: Date.now() - 60000, end: Date.now() + 3600000 }, Date.now()).need;
+      await check("ahead", Math.round(need0) + 900, /ahead · you can slow down$/);
+      await check("on pace", Math.round(need0), /^on pace$/);
+      await check("behind", Math.max(61, Math.round(need0) - 600), /behind · speed up$/);
+    } finally { await _sesUiLeave(); }
+  }},
+]);
+
+uiSuite("session-ingress-live", [
+  { name: "SL1: Import of a deck with a valid session sets it; hostile sessions load as null; a deck without one clears it", fn: async () => {
+    const hooks = _sesUiNeedHooks();
+    if (!VELA_TEST_STARTUP_PATCH || !hooks.restoreStartupDeck) throw new Error("startup deck fixture missing");
+    const deck = (session) => { const d = JSON.parse(JSON.stringify(VELA_TEST_STARTUP_PATCH)); delete d.session; if (session !== undefined) d.session = session; return d; };
+    const t0 = Date.now() - 60000;
+    const valid = { start: t0, end: t0 + 1800000 };
+    const hostile = [
+      { start: String(t0), end: t0 + 1800000 },
+      { start: t0, end: String(t0 + 1800000) },
+      { start: t0 + 0.5, end: t0 + 1800000 },
+      { start: t0 + 1800000, end: t0 },
+      { start: t0, end: t0 + 30 * 86400000 },
+      [t0, t0 + 1800000],
+      "x",
+    ];
+    try {
+      await _editorSetup();
+      for (const h of hostile) {
+        await _sesImport(deck(valid));
+        await _waitFor(() => JSON.stringify(hooks.getSessionForTest()) === JSON.stringify(valid), 2000).catch(() => { throw new Error("valid session not loaded by Import"); });
+        await _sesImport(deck(h));
+        await _waitFor(() => hooks.getSessionForTest() === null, 2000).catch(() => { throw new Error("hostile session kept by Import: " + JSON.stringify(h)); });
+      }
+      await _sesImport(deck(valid));
+      await _waitFor(() => hooks.getSessionForTest() !== null, 2000);
+      await _sesImport(deck(undefined));
+      await _waitFor(() => hooks.getSessionForTest() === null, 2000).catch(() => { throw new Error("deck without session kept the previous session"); });
+    } finally { hooks.restoreStartupDeck(); hooks.setSessionForTest?.(null); await _wait(150); }
+  }},
+]);
+
+uiSuite("session-toolbar", [
+  { name: "ST1: icon only; state in title/aria-label: not set without a session, ends HH:MM when live, not set when stale; timer flips it at end + 3 h", fn: async () => {
+    const hooks = _sesUiNeedHooks();
+    try {
+      hooks.setSessionForTest(null);
+      await _editorSetup();
+      const btn = await _waitFor(() => _sesTbBtn(), 1500);
+      if (btn.tagName !== "BUTTON" || !btn.getAttribute("aria-label") || !btn.title) throw new Error("session-end-btn is not a labelled button");
+      const present = _$("[data-testid='present-btn']");
+      if (btn.nextElementSibling !== present) throw new Error("session-end-btn is not immediately before present-btn");
+      if (!_sesTbIs(null)) throw new Error("no-session state: " + _sesTbDesc());
+      const live = { start: Date.now() - 60000, end: Date.now() + 1800000 };
+      hooks.setSessionForTest(live);
+      await _waitFor(() => _sesTbIs(live.end), 1500).catch(() => { throw new Error("live state: " + _sesTbDesc()); });
+      const stale = { start: Date.now() - SESSION_STALE_MS - 1000 - 1800000, end: Date.now() - SESSION_STALE_MS - 1000 };
+      hooks.setSessionForTest(stale);
+      await _waitFor(() => _sesTbIs(null), 1500).catch(() => { throw new Error("stale state: " + _sesTbDesc()); });
+      if (hooks.getSessionForTest() === null) throw new Error("stale session not kept in state");
+      const soon = { start: Date.now() - SESSION_STALE_MS - 1800000 + 1500, end: Date.now() - SESSION_STALE_MS + 1500 };
+      hooks.setSessionForTest(soon);
+      await _waitFor(() => _sesTbIs(soon.end), 1500).catch(() => { throw new Error("nearly stale state: " + _sesTbDesc()); });
+      await _waitFor(() => _sesTbIs(null), 5000).catch(() => { throw new Error("state did not go back to not set at end + 3 h: " + _sesTbDesc()); });
+    } finally { await _sesUiLeave(); }
+  }},
+  { name: "ST2: click opens one dialog; ArrowRight / Delete / f do nothing while it is open", fn: async () => {
+    const hooks = _sesUiNeedHooks();
+    try {
+      hooks.setSessionForTest(null);
+      await _editorSetup();
+      const before = JSON.stringify([hooks.getDeckStateForTest().selectedId, hooks.getDeckStateForTest().slideIndex, hooks.getHistoryCounts().past]);
+      await _sesTbOpen();
+      if (_$$("[data-testid='session-dialog']").length !== 1) throw new Error("more than one session dialog");
+      _$("[data-testid='session-chip-15']").focus();
+      for (const k of ["ArrowRight", "Delete", "f"]) { _key(k); await _wait(80); }
+      document.activeElement?.blur();
+      for (const k of ["ArrowRight", "Delete", "f"]) { _key(k); await _wait(80); }
+      await _wait(150);
+      if (!_$("[data-testid='session-dialog']")) throw new Error("a key closed the dialog");
+      if (!_$("header") || hooks.getDeckStateForTest().fullscreen) throw new Error("f entered Present");
+      const after = JSON.stringify([hooks.getDeckStateForTest().selectedId, hooks.getDeckStateForTest().slideIndex, hooks.getHistoryCounts().past]);
+      if (after !== before) throw new Error(`editor state changed: ${before} -> ${after}`);
+      _click("[data-testid='session-cancel']");
+      await _waitFor(() => !_$("[data-testid='session-dialog']"), 1500);
+    } finally { await _sesUiLeave(); }
+  }},
+  { name: "ST3: Set and Clear from the editor dialog; Ctrl+Z restores the previous session value", fn: async () => {
+    const hooks = _sesUiNeedHooks();
+    try {
+      hooks.setSessionForTest(null);
+      await _editorSetup();
+      await _wait(100);
+      await _sesTbOpen();
+      _click("[data-testid='session-chip-30']"); await _wait(60);
+      _click("[data-testid='session-set']");
+      await _waitFor(() => !_$("[data-testid='session-dialog']"), 1500);
+      const s1 = hooks.getSessionForTest();
+      if (!s1 || s1.end - s1.start !== 1800000) throw new Error("Set did not store 30 min: " + JSON.stringify(s1));
+      await _waitFor(() => _sesTbIs(s1.end), 1500);
+      document.activeElement?.blur(); await _wait(80);
+      _key("z", { ctrlKey: true });
+      await _waitFor(() => hooks.getSessionForTest() === null, 1500).catch(() => { throw new Error("undo did not restore the empty session"); });
+      await _waitFor(() => _sesTbIs(null), 1500);
+      hooks.setSessionForTest(s1);
+      await _waitFor(() => hooks.getSessionForTest() !== null, 1500);
+      await _sesTbOpen();
+      _click("[data-testid='session-clear']");
+      await _waitFor(() => hooks.getSessionForTest() === null && !_$("[data-testid='session-dialog']"), 1500).catch(() => { throw new Error("Clear did not remove the session"); });
+      document.activeElement?.blur(); await _wait(80);
+      _key("z", { ctrlKey: true });
+      await _waitFor(() => JSON.stringify(hooks.getSessionForTest()) === JSON.stringify(s1), 1500).catch(() => { throw new Error("undo did not restore the cleared session"); });
+    } finally { await _sesUiLeave(); }
+  }},
+  { name: "ST4: button at every desktop header width (1024-1440 px); the top bar stays on one line", fn: async () => {
+    // Forcing the header width stands in for a window resize (as meridian-CR13).
+    await _editorSetup();
+    const h = await _waitFor(() => _$("header"), 2000);
+    const frames = () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+    const prev = h.style.width;
+    const bad = [];
+    try {
+      for (const w of [1024, 1100, 1280, 1440, 1100, 1024]) {
+        h.style.width = `${w}px`;
+        for (let f = 0; f < 3; f++) await frames();
+        const btns = _$$("button", h).filter((b) => b.offsetParent && !b.closest("[role='group']"));
+        const minH = Math.min(...btns.map((b) => b.offsetHeight));
+        const wrapped = btns.filter((b) => b.offsetHeight > minH + 8).map((b) => b.title || b.textContent.trim());
+        const sb = _sesTbBtn();
+        if (!sb || !sb.offsetParent || sb.getBoundingClientRect().width < 1) bad.push(`${w}px: button absent`);
+        if (h.scrollWidth > h.clientWidth + 1) bad.push(`${w}px: overflow ${h.scrollWidth}>${h.clientWidth}`);
+        if (wrapped.length) bad.push(`${w}px: wrapped ${wrapped.join(", ")}`);
+      }
+    } finally {
+      h.style.width = prev;
+      await frames();
+    }
+    if (bad.length) throw new Error(bad.slice(0, 4).join(" | "));
+  }},
+]);
+
+uiSuite("session-bar-geometry", [
+  { name: "SG1: sessionBarGeom table", fn: async () => {
+    const g = (p) => { const r = sessionBarGeom(p); return r && [r.over, r.key, r.lo, r.hi, r.gap, r.you, r.should]; };
+    _ssEq(g({ youFrac: 0.6, shouldFrac: 0.25, paceKey: "green" }), [false, "green", 25, 60, 35, 60, 25], "ahead");
+    _ssEq(g({ youFrac: 0.2, shouldFrac: 0.5, paceKey: "amber" }), [false, "amber", 20, 50, 30, 20, 50], "behind amber");
+    _ssEq(g({ youFrac: 0.1, shouldFrac: 0.7, paceKey: "red" }), [false, "red", 10, 70, 60, 10, 70], "behind red");
+    _ssEq(g({ youFrac: 0.4, shouldFrac: 0.4, paceKey: "white" }), [false, "white", 40, 40, 0, 40, 40], "on pace");
+    _ssEq(g({ youFrac: 0.3, shouldFrac: 1, paceKey: "red", over: true }), [true, "red", 0, 100, 100, 30, 100], "over");
+    _ssEq(g({ youFrac: 0, shouldFrac: 0, paceKey: "green", before: true }), [false, "green", 0, 0, 0, 0, 0], "before start / both 0");
+    _ssEq(g({ youFrac: 1, shouldFrac: 1, paceKey: "white" }), [false, "white", 100, 100, 0, 100, 100], "both 1");
+    _ssEq(g({ youFrac: 0.123456, shouldFrac: 0.5, paceKey: "amber" }), [false, "amber", 12.35, 50, 37.65, 12.35, 50], "rounding");
+    _ssEq(g({ youFrac: NaN, shouldFrac: Infinity, paceKey: "url(x)" }), [false, "white", 0, 0, 0, 0, 0], "non-finite input, unknown key");
+    _ssEq(g({ youFrac: -2, shouldFrac: 7, paceKey: "__proto__" }), [false, "white", 0, 100, 100, 0, 100], "clamped, inherited key");
+    if (sessionBarGeom(null) !== null || sessionBarGeom("x") !== null) throw new Error("non-object pace must give null");
+    const live = computeSessionPace({ est: [60, 60, 60] }, 0, 0, { start: _SS_T0, end: _SS_T0 + 300000 }, _SS_T0 + 1000);
+    const lg = sessionBarGeom(live);
+    if (lg.key !== live.paceKey || lg.you !== Math.round(live.youFrac * 10000) / 100) throw new Error("geometry does not follow computeSessionPace");
+  }},
+]);
+
+// ── Present clock chip (v13.80, C key). Each test restores: chip off,
+// storage key removed, session null, Present left.
+const _clkChip = () => _$("[data-testid='present-clock-chip']");
+const _clkBtn = () => _$("[data-testid='present-clock-toggle']");
+const _clkKey = async (opts) => { document.activeElement?.blur(); await _wait(50); _key("c", opts); await _wait(150); };
+const _clkStored = () => { try { return localStorage.getItem(VELA_PRESENT_CLOCK_KEY); } catch { return "no storage"; } };
+const _clkNowOk = (txt) => [Date.now() - 2000, Date.now()].map((t) => fmtClock(t)).includes(txt);
+const _clkLeave = async () => {
+  if (!_sesUiRoot()) await _sesUiPresent().catch(() => {});
+  if (_$("[data-testid='presenter-view']")) { _click("[data-testid='presenter-toggle']"); await _waitFor(() => !_$("[data-testid='presenter-view']"), 1500).catch(() => {}); }
+  if (_$text("GALLERY")) { document.activeElement?.blur(); _key("g"); await _waitFor(() => !_$text("GALLERY"), 1500).catch(() => {}); }
+  if (_clkBtn()?.getAttribute("aria-pressed") === "true") { _click(_clkBtn()); await _waitFor(() => !_clkChip(), 1000).catch(() => {}); }
+  try { localStorage.removeItem(VELA_PRESENT_CLOCK_KEY); } catch {}
+  await _sesUiLeave();
+};
+const _clkOn = async () => { await _clkKey(); return _waitFor(() => _clkChip(), 1500); };
+
+uiSuite("session-clock-chip", [
+  { name: "CK1: off by default; C shows and hides it; HH:MM only without a session; 15 px, no clicks, inside Present", fn: async () => {
+    const hooks = _sesUiNeedHooks();
+    try {
+      hooks.setSessionForTest(null);
+      try { localStorage.removeItem(VELA_PRESENT_CLOCK_KEY); } catch {}
+      await _sesUiPresent();
+      await _wait(200);
+      if (_clkChip()) throw new Error("chip shown by default");
+      const chip = await _clkOn();
+      if (!_sesUiRoot().contains(chip)) throw new Error("chip is not inside the Present root");
+      if (!/^\d\d:\d\d$/.test(chip.textContent) || !_clkNowOk(chip.textContent)) throw new Error("chip text is not the clock: " + chip.textContent);
+      if (_$("[data-testid='present-clock-left']")) throw new Error("time-left part shown without a session");
+      const cs = getComputedStyle(chip);
+      if (parseFloat(cs.fontSize) < 13) throw new Error("chip font below 13 px");
+      if (cs.pointerEvents !== "none") throw new Error("chip takes pointer events");
+      if (_clkStored() !== "1") throw new Error("choice not stored: " + _clkStored());
+      await _clkKey();
+      await _waitFor(() => !_clkChip(), 1500).catch(() => { throw new Error("C did not hide the chip"); });
+      if (_clkStored() !== null) throw new Error("storage key not removed: " + _clkStored());
+      await _exitFullscreen();
+      if (_clkChip()) throw new Error("chip in the editor");
+    } finally { await _clkLeave(); }
+  }},
+  { name: "CK2: Ctrl+C, Cmd+C, Shift+C, Alt+C and C with focus in a text field do not toggle", fn: async () => {
+    const hooks = _sesUiNeedHooks();
+    let inp = null;
+    try {
+      hooks.setSessionForTest(null);
+      await _sesUiPresent();
+      for (const o of [{ ctrlKey: true }, { metaKey: true }, { shiftKey: true }, { altKey: true }]) {
+        await _clkKey(o);
+        if (_clkChip()) throw new Error("a modified C toggled the chip: " + JSON.stringify(o));
+      }
+      // The top of the Present key handler already returns for an INPUT /
+      // TEXTAREA target. To prove the C guard on document.activeElement, the
+      // event goes to window (target is not the field) while the field has focus.
+      for (const tag of ["input", "textarea", "select", "contenteditable"]) {
+        inp = document.createElement(tag === "contenteditable" ? "div" : tag);
+        if (tag === "contenteditable") { inp.contentEditable = "true"; inp.tabIndex = 0; }
+        _sesUiRoot().appendChild(inp);
+        inp.focus(); await _wait(50);
+        if (document.activeElement !== inp) throw new Error(tag + " did not take focus");
+        window.dispatchEvent(new KeyboardEvent("keydown", { key: "c", bubbles: true, cancelable: true }));
+        await _wait(150);
+        if (_clkChip()) throw new Error("C with focus in a " + tag + " toggled the chip");
+        inp.remove(); inp = null;
+      }
+      await _clkOn();
+    } finally { if (inp) inp.remove(); await _clkLeave(); }
+  }},
+  { name: "CK3: live session: running (time left + colour key), before start, over; stale session -> clock only", fn: async () => {
+    const hooks = _sesUiNeedHooks();
+    try {
+      const t = Date.now();
+      hooks.setSessionForTest({ start: t - 20 * 60000, end: t + 6 * 60000 });
+      await _sesUiPresent();
+      await _clkOn();
+      let left = await _waitFor(() => _$("[data-testid='present-clock-left']"), 1500);
+      if (!/^\d+:\d\d left$/.test(left.textContent)) throw new Error("running text: " + left.textContent);
+      if (_clkChip().dataset.timeKey !== "amber" || getComputedStyle(left).color !== _sesRgb(SESSION_PACE_COLORS.amber)) throw new Error("running colour: " + _clkChip().dataset.timeKey);
+      if (!_clkNowOk(_$("[data-testid='present-clock-time']").textContent)) throw new Error("clock part: " + _$("[data-testid='present-clock-time']").textContent);
+      hooks.setSessionForTest({ start: Date.now() + 5 * 60000, end: Date.now() + 35 * 60000 });
+      left = await _waitFor(() => /^starts in \d+:\d\d$/.test(_$("[data-testid='present-clock-left']")?.textContent || "") && _$("[data-testid='present-clock-left']"), 2000).catch(() => { throw new Error("before text: " + _$("[data-testid='present-clock-left']")?.textContent); });
+      if (_clkChip().dataset.timeKey !== "white") throw new Error("before colour: " + _clkChip().dataset.timeKey);
+      hooks.setSessionForTest({ start: Date.now() - 32 * 60000, end: Date.now() - 2 * 60000 });
+      left = await _waitFor(() => /^\+2:\d\d over$/.test(_$("[data-testid='present-clock-left']")?.textContent || "") && _$("[data-testid='present-clock-left']"), 2000).catch(() => { throw new Error("over text: " + _$("[data-testid='present-clock-left']")?.textContent); });
+      if (_clkChip().dataset.timeKey !== "red" || getComputedStyle(left).color !== _sesRgb(SESSION_PACE_COLORS.red)) throw new Error("over colour: " + _clkChip().dataset.timeKey);
+      hooks.setSessionForTest({ start: Date.now() - 270 * 60000, end: Date.now() - 240 * 60000 });
+      await _waitFor(() => !_$("[data-testid='present-clock-left']") && _clkChip(), 2000).catch(() => { throw new Error("stale session still shows the time-left part"); });
+      if (!/^\d\d:\d\d$/.test(_clkChip().textContent)) throw new Error("stale text: " + _clkChip().textContent);
+    } finally { await _clkLeave(); }
+  }},
+  { name: "CK4: hidden under the Presenter View and the gallery; back when they close", fn: async () => {
+    const hooks = _sesUiNeedHooks();
+    try {
+      hooks.setSessionForTest({ start: Date.now() - 10 * 60000, end: Date.now() + 20 * 60000 });
+      await _sesUiPresent();
+      await _clkOn();
+      await _sesUiOpenPresenter();
+      if (_clkChip()) throw new Error("chip shown with the Presenter View open");
+      _key("s");
+      await _waitFor(() => !_$("[data-testid='presenter-view']") && _clkChip(), 1500).catch(() => { throw new Error("chip not back after the Presenter View"); });
+      document.activeElement?.blur(); await _wait(50);
+      _key("g");
+      await _waitFor(() => _$text("GALLERY"), 5000);
+      if (_clkChip()) throw new Error("chip shown with the gallery open");
+      _key("g");
+      await _waitFor(() => !_$text("GALLERY") && _clkChip(), 2000).catch(() => { throw new Error("chip not back after the gallery"); });
+    } finally { await _clkLeave(); }
+  }},
+  { name: "CK5: hover button toggles the chip and shows the state in aria-pressed; the choice stays when Present is entered again", fn: async () => {
+    const hooks = _sesUiNeedHooks();
+    try {
+      hooks.setSessionForTest(null);
+      await _sesUiPresent();
+      const b = await _waitFor(() => _clkBtn(), 1500);
+      if (b.tagName !== "BUTTON" || b.title !== "Clock on slide (C)" || b.getAttribute("aria-pressed") !== "false") throw new Error("button: " + b.tagName + " | " + b.title + " | " + b.getAttribute("aria-pressed"));
+      _click(b);
+      await _waitFor(() => _clkChip() && _clkBtn().getAttribute("aria-pressed") === "true", 1500).catch(() => { throw new Error("button did not show the chip"); });
+      await _exitFullscreen();
+      await _sesUiPresent();
+      await _waitFor(() => _clkChip(), 1500).catch(() => { throw new Error("choice lost after entering Present again"); });
+      if (_clkStored() !== "1") throw new Error("stored value: " + _clkStored());
+      _click(_clkBtn());
+      await _waitFor(() => !_clkChip() && _clkBtn().getAttribute("aria-pressed") === "false", 1500).catch(() => { throw new Error("button did not hide the chip"); });
+    } finally { await _clkLeave(); }
+  }},
+  { name: "CK6: storage that throws: C still toggles the chip and nothing throws", fn: async () => {
+    const hooks = _sesUiNeedHooks();
+    const P = Storage.prototype, set0 = P.setItem, rm0 = P.removeItem;
+    const errs = [];
+    const onErr = (e) => errs.push(String(e.message || e));
+    window.addEventListener("error", onErr);
+    try {
+      hooks.setSessionForTest(null);
+      await _sesUiPresent();
+      P.setItem = function () { throw new Error("blocked"); };
+      P.removeItem = function () { throw new Error("blocked"); };
+      await _clkOn();
+      await _clkKey();
+      await _waitFor(() => !_clkChip(), 1500).catch(() => { throw new Error("C did not hide the chip with blocked storage"); });
+      if (errs.length) throw new Error("errors: " + errs.join(" | "));
+    } finally { P.setItem = set0; P.removeItem = rm0; window.removeEventListener("error", onErr); await _clkLeave(); }
+  }},
+  { name: "CK7: Space and Enter on the focused clock button toggle the chip and do not change the slide", fn: async () => {
+    const hooks = _sesUiNeedHooks();
+    try {
+      hooks.setSessionForTest(null);
+      await _sesUiPresent();
+      const b = await _waitFor(() => _clkBtn(), 1500);
+      const pos0 = _slidePos();
+      if (pos0 == null) throw new Error("no slide position");
+      b.focus(); await _wait(50);
+      if (document.activeElement !== b) throw new Error("button did not take focus");
+      _key(" "); await _wait(200);
+      if (_slidePos() !== pos0) throw new Error(`Space changed the slide: ${pos0} -> ${_slidePos()}`);
+      if (!_clkChip() || _clkBtn().getAttribute("aria-pressed") !== "true") throw new Error("Space did not show the chip");
+      _clkBtn().focus(); await _wait(50);
+      _key("Enter"); await _wait(200);
+      if (_slidePos() !== pos0) throw new Error(`Enter changed the slide: ${pos0} -> ${_slidePos()}`);
+      if (_clkChip() || _clkBtn().getAttribute("aria-pressed") !== "false") throw new Error("Enter did not hide the chip");
+    } finally { await _clkLeave(); }
+  }},
+  { name: "CK8: chip bottom clears the footer, and a bottom-left logo box at every window size; numbers only", fn: async () => {
+    if (typeof presentClockBottom !== "function") throw new Error("no chip-bottom helper: the chip does not know the logo");
+    const re = /^calc\(max\(([\d.]+)vw, ([\d.]+)vh\) \+ 10px\)$/;
+    // K = virtual px the chip clears (0 = the plain 24 px place).
+    const parse = (b) => {
+      const v = presentClockBottom(b);
+      if (v === 24) return null;
+      const m = re.exec(v);
+      if (!m) throw new Error("bottom is not a numbers-only calc: " + v);
+      const kw = +m[1] * VIRTUAL_W / 100, kh = +m[2] * VIRTUAL_H / 100;
+      if (Math.abs(kw - kh) > 0.01) throw new Error("vw and vh parts differ: " + v);
+      return { k: Math.round(kw), vwP: +m[1], vhP: +m[2] };
+    };
+    const L = "data:image/png;base64,iVBORw0KGgo=";
+    const k = (b) => { const r = parse(b); return r ? r.k : 0; };
+    const BL = { enabled: true, logo: L, logoPosition: "bottom-left" };
+    _ssEq([null, undefined, { enabled: false, logo: L, logoPosition: "bottom-left", logoSize: 56 }].map(k), [0, 0, 0], "branding off");
+    _ssEq([{ enabled: true }, { ...BL, logo: null }, { ...BL, logoPosition: "bottom-right" }, { ...BL, logoPosition: "top-left" }, { ...BL, logoPosition: "top-right" }].map(k), [28, 28, 28, 28, 28], "footer only");
+    _ssEq([56, 20, 120, undefined, 0, NaN, -5, 500, Infinity, "80"].map((s) => k({ ...BL, logoSize: s })), [100, 64, 164, 100, 100, 100, 100, 164, 100, 100], "bottom-left logo heights");
+    // Screen check: fill-mode scale (computeFillDims) at real window sizes;
+    // the chip bottom must be above the logo top (36 + height) and the footer.
+    const fillScale = (W, H) => { const rh0 = Math.round(VIRTUAL_W * H / W); const hr = rh0 / VIRTUAL_H; const z = hr <= 1.05 ? 1 : Math.pow(hr, 0.45); return Math.min(W / Math.round(VIRTUAL_W / z), H / Math.round(rh0 / z)); };
+    const bad = [];
+    for (const [W, H] of [[1920, 1080], [1280, 800], [1024, 768], [1440, 810], [2560, 1080], [1920, 1200], [800, 1000]]) {
+      const s = fillScale(W, H);
+      for (const h of [20, 56, 120]) {
+        const r = parse({ ...BL, logoSize: h });
+        const bottom = Math.max(r.vwP * W / 100, r.vhP * H / 100) + 10;
+        if (bottom < (36 + h) * s + 4) bad.push(`${W}x${H} h${h}: chip ${bottom.toFixed(1)} logo top ${((36 + h) * s).toFixed(1)}`);
+      }
+      const f = parse({ enabled: true });
+      if (Math.max(f.vwP * W / 100, f.vhP * H / 100) + 10 < 28 * s + 4) bad.push(`${W}x${H}: footer`);
+    }
+    if (bad.length) throw new Error(bad.slice(0, 4).join(" | "));
+  }},
+  { name: "CK9: a held C or T key (auto-repeat) toggles once", fn: async () => {
+    const hooks = _sesUiNeedHooks();
+    try {
+      hooks.setSessionForTest(null);
+      await _sesUiPresent();
+      document.activeElement?.blur(); await _wait(50);
+      const h0 = VELA_SESSION_BAR.hidden;
+      for (let i = 0; i < 5; i++) {
+        _key("c", i ? { repeat: true } : {}); _key("t", i ? { repeat: true } : {});
+        await _wait(80);
+        if (!_clkChip() || _clkStored() !== "1") throw new Error(`C keydown ${i + 1}: chip ${!!_clkChip()}, stored ${_clkStored()}`);
+        if (VELA_SESSION_BAR.hidden !== !h0) throw new Error(`T keydown ${i + 1}: pace bar hidden ${VELA_SESSION_BAR.hidden}`);
+      }
+    } finally { await _clkLeave(); }
+  }},
+  { name: "CK10: C and T do nothing in the Presenter View; C does nothing in the gallery", fn: async () => {
+    const hooks = _sesUiNeedHooks();
+    try {
+      hooks.setSessionForTest({ start: Date.now() - 10 * 60000, end: Date.now() + 20 * 60000 });
+      await _sesUiPresent();
+      await _sesUiOpenPresenter();
+      document.activeElement?.blur(); await _wait(50);
+      const h0 = VELA_SESSION_BAR.hidden;
+      _key("c"); await _wait(150);
+      _key("t"); await _wait(150);
+      if (_clkStored() !== null) throw new Error("C in the Presenter View wrote storage: " + _clkStored());
+      if (VELA_SESSION_BAR.hidden !== h0) throw new Error("T in the Presenter View changed the pace bar");
+      _key("s");
+      await _waitFor(() => !_$("[data-testid='presenter-view']"), 1500);
+      await _wait(150);
+      if (_clkChip()) throw new Error("chip on after C in the Presenter View");
+      document.activeElement?.blur(); await _wait(50);
+      _key("g");
+      await _waitFor(() => _$text("GALLERY"), 5000);
+      _key("c"); await _wait(150);
+      if (_clkStored() !== null) throw new Error("C in the gallery wrote storage: " + _clkStored());
+      _key("g");
+      await _waitFor(() => !_$text("GALLERY"), 2000);
+      await _wait(150);
+      if (_clkChip()) throw new Error("chip on after C in the gallery");
+    } finally { await _clkLeave(); }
+  }},
+  { name: "CK11: last 5 min is red; Caps Lock C (no Shift) toggles", fn: async () => {
+    const hooks = _sesUiNeedHooks();
+    try {
+      hooks.setSessionForTest({ start: Date.now() - 26 * 60000, end: Date.now() + 4 * 60000 });
+      await _sesUiPresent();
+      document.activeElement?.blur(); await _wait(50);
+      _key("C"); await _wait(150);
+      const left = await _waitFor(() => _$("[data-testid='present-clock-left']"), 1500).catch(() => { throw new Error("Caps Lock C did not show the chip"); });
+      if (!/^\d+:\d\d left$/.test(left.textContent)) throw new Error("text: " + left.textContent);
+      if (_clkChip().dataset.timeKey !== "red" || getComputedStyle(left).color !== _sesRgb(SESSION_PACE_COLORS.red)) throw new Error("last 5 min colour: " + _clkChip().dataset.timeKey);
+      _key("C");
+      await _waitFor(() => !_clkChip(), 1500).catch(() => { throw new Error("Caps Lock C did not hide the chip"); });
+    } finally { await _clkLeave(); }
   }},
 ]);
 
@@ -25948,6 +29037,7 @@ function StandaloneHtmlModal({ state, onClose }) {
       const deck = { deckTitle, lanes: save.lanes || [] };
       if (save.branding) deck.branding = save.branding;
       if (save.guidelines) deck.guidelines = save.guidelines;
+      if (save.session) deck.session = save.session;
       const html = buildStandaloneHtml(jsxSource, deck, { footer, babel: window.Babel });
       const safeTitle = deckTitle.replace(/[^a-zA-Z0-9_-]/g, "-").replace(/-{2,}/g, "-").slice(0, 60) || "vela-deck";
       const blob = new Blob([html], { type: "text/html;charset=utf-8" });
@@ -27797,6 +30887,135 @@ function NewDeckDialog({ onClose, onSubmit }) {
   );
 }
 
+// ━━━ Session End Dialog (v13.80) ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Sets the deck-level session { start, end } (epoch ms). Start / End are
+// "HH:MM" (input type=time); Minutes and the chips set End = Start + N.
+// The result always goes through resolveSessionTimes (-> sanitizeSession), so
+// onSet only ever gets a sanitized 2-key object. All text is code-built.
+// Props: session = the LIVE session or null (prefills the fields); stored =
+// a valid session is in the deck, also a stale one (shows Clear; default
+// !!session); lanes = for the "deck needs" pre-check; onSet(session),
+// onClear(), onClose(). The parent dispatches SET_SESSION and closes.
+// Key isolation: this dialog can open over Present / Presenter view, whose
+// shortcuts are window keydown listeners. Keys typed in the dialog stop at
+// its wrapper (React stopPropagation = native, before window listeners).
+// Keys whose target is OUTSIDE the dialog (focus fell back to the Present
+// root after a click on the padding) are stopped by a window CAPTURE trap
+// while the dialog is open. Esc closes the dialog only, never Present.
+const SESSION_CHIPS = [15, 30, 45, 60, 90];
+function SessionEndDialog({ session, stored, lanes, onSet, onClear, onClose }) {
+  const live = sanitizeSession(session);
+  const hasStored = stored === undefined ? !!live : !!stored;
+  const [openNow] = useState(() => Date.now());
+  // 1 s tick while the dialog is open: it re-renders the summary countdown
+  // (the render reads the clock). It sets only this state, so the fields the
+  // user edits and the focus do not change. Cleared on unmount.
+  const [, setNow] = useState(openNow);
+  useEffect(() => { const id = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(id); }, []);
+  const [start, setStart] = useState(() => fmtClock(live ? live.start : openNow));
+  const [end, setEnd] = useState(() => (live ? fmtClock(live.end) : ""));
+  const [minutes, setMinutes] = useState(() => (live ? String(Math.round((live.end - live.start) / 60000)) : ""));
+  const rootRef = useRef(null);
+  const endRef = useRef(null);
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+  // Base date: the start date of the live session (a session that crosses
+  // midnight keeps its date when edited), else today. A session that is all
+  // in the past moves to the next day (resolveSessionTimes with openNow).
+  const base = sessionDialogBase(live, openNow);
+  const startMs = (hhmm) => { const r = resolveSessionTimes(hhmm, hhmm, base); return r ? r.start : null; };
+  const resolved = resolveSessionTimes(start, end, base, openNow);
+  const parseMin = (v) => (/^\d{1,4}$/.test(v) && +v >= 1 && +v <= 1440 ? +v : null);
+  const endFor = (st, n) => { const s0 = startMs(st); return s0 == null || n == null ? null : fmtClock(s0 + n * 60000); };
+  const minFor = (st, en) => { const r = resolveSessionTimes(st, en, base, openNow); return r ? String(Math.round((r.end - r.start) / 60000)) : ""; };
+  const onStart = (v) => {
+    setStart(v);
+    const n = parseMin(minutes);
+    if (n != null) { const e = endFor(v, n); if (e) setEnd(e); } else setMinutes(minFor(v, end));
+  };
+  const onEnd = (v) => { setEnd(v); setMinutes(minFor(start, v)); };
+  const onMinutes = (v) => { setMinutes(v); const e = endFor(start, parseMin(v)); if (e) setEnd(e); };
+  // Set needs a valid End AND a valid Minutes field (1..1440): an invalid
+  // Minutes value (0, 1441) leaves End unchanged, so End alone is not enough.
+  const canSet = !!resolved && parseMin(minutes) != null;
+  // Fields unchanged from the live session: keep it (no day shift, no state change).
+  const set = () => { const r = resolveSessionDialogSet(start, end, base, openNow, live); if (!r || parseMin(minutes) == null) return; if (r.keep) onClose(); else onSet(r.session); };
+  // Summary: the session that Set would store (the same pure function), so
+  // unchanged fields of a live session show it as it is, also after its end.
+  const shown = canSet ? resolveSessionDialogSet(start, end, base, openNow, live) : null;
+  const shownSes = shown ? shown.session : null;
+  const needMin = Math.round(sessionEstimates(presentSequence(lanes)).total / 60);
+  const lenMin = resolved ? Math.round((resolved.end - resolved.start) / 60000) : null;
+  // Summary state of the session against now: before, during or after it.
+  const sessionWhen = (r, now) => now < r.start ? `starts in ${fmtCountdown((r.start - now) / 1000)}`
+    : now < r.end ? `${fmtCountdown((r.end - now) / 1000)} left`
+    : `ended ${fmtCountdown((now - r.end) / 1000)} ago`;
+  useEffect(() => {
+    const prev = document.activeElement;
+    endRef.current?.focus();
+    const trap = (e) => {
+      const root = rootRef.current;
+      if (root && e.target instanceof Node && root.contains(e.target)) return; // the wrapper handles it
+      e.stopImmediatePropagation();
+      if (e.key === "Escape") { e.preventDefault(); onCloseRef.current(); }
+    };
+    window.addEventListener("keydown", trap, true);
+    return () => {
+      window.removeEventListener("keydown", trap, true);
+      // Focus back to the opener when it is still on the page.
+      if (prev && prev !== document.body && prev.isConnected && typeof prev.focus === "function") prev.focus({ preventScroll: true });
+    };
+  }, []);
+  const stop = (e) => e.stopPropagation();
+  const onKeyDown = (e) => {
+    e.stopPropagation();
+    if (e.key === "Escape") { e.preventDefault(); onClose(); return; }
+    // Enter = Set; on a focused button Enter keeps its normal click.
+    if (e.key === "Enter" && !e.shiftKey && !(e.target && e.target.tagName === "BUTTON")) { e.preventDefault(); if (canSet) set(); }
+  };
+  const lbl = { fontFamily: FONT.mono, fontSize: 13, fontWeight: 600, color: T.textMuted, display: "block", marginBottom: 5 };
+  const inp = { width: "100%", padding: "8px 10px", fontSize: 15, fontFamily: FONT.mono, color: T.text, background: T.bgInput, border: `1px solid ${T.border}`, borderRadius: 8, outline: "none", boxSizing: "border-box" };
+  const curMin = parseMin(minutes);
+  return (
+    <ModalBackdrop onClose={onClose}>
+      <div ref={rootRef} data-testid="session-dialog" role="dialog" aria-modal="true" aria-label="Session end" tabIndex={-1} onKeyDown={onKeyDown} onKeyUp={stop} onKeyPress={stop} style={{ outline: "none" }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
+          <span style={{ fontFamily: FONT.display, fontSize: 18, fontWeight: 700, color: T.text }}>{"🕒"} Session end</span>
+          <button type="button" onClick={onClose} aria-label="Close" title="Close" style={{ background: "none", border: "none", color: T.textDim, cursor: "pointer", fontSize: 18, padding: 4 }}>✕</button>
+        </div>
+        <div style={{ display: "flex", gap: 12, marginBottom: 14 }}>
+          <label style={{ flex: 1, minWidth: 0 }}><span style={lbl}>Start</span>
+            <input data-testid="session-start-input" type="time" value={start} onChange={(e) => onStart(e.target.value)} style={inp} /></label>
+          <label style={{ flex: 1, minWidth: 0 }}><span style={lbl}>End</span>
+            <input ref={endRef} data-testid="session-end-input" type="time" value={end} onChange={(e) => onEnd(e.target.value)} style={inp} /></label>
+          <label style={{ flex: 1, minWidth: 0 }}><span style={lbl}>Minutes</span>
+            <input data-testid="session-minutes-input" type="number" min={1} max={1440} step={1} value={minutes} onChange={(e) => onMinutes(e.target.value)} style={inp} /></label>
+        </div>
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 14 }}>
+          {SESSION_CHIPS.map((n) => (
+            <button key={n} type="button" data-testid={`session-chip-${n}`} aria-pressed={curMin === n} onClick={() => onMinutes(String(n))}
+              style={{ padding: "6px 12px", fontSize: 13, fontFamily: FONT.mono, fontWeight: 600, color: curMin === n ? "#fff" : T.textMuted, background: curMin === n ? T.accent : T.bgInput, border: `1px solid ${curMin === n ? T.accent : T.border}`, borderRadius: 6, cursor: "pointer" }}>{n} min</button>
+          ))}
+        </div>
+        <div data-testid="session-summary" style={{ fontFamily: FONT.mono, fontSize: 13, color: canSet ? T.text : T.red, marginBottom: 6 }}>
+          {shownSes ? `${fmtClock(shownSes.start)} → ${fmtClock(shownSes.end)} (${Math.round((shownSes.end - shownSes.start) / 60000)} min) · ${sessionWhen(shownSes, Date.now())}` : "Enter a start and an end (1 min to 24 h)"}
+        </div>
+        <div data-testid="session-file-note" style={{ fontFamily: FONT.mono, fontSize: 13, color: T.textMuted, marginBottom: 6 }}>Saved in the deck file (also in exports of the deck).</div>
+        <div data-testid="session-precheck" style={{ fontFamily: FONT.mono, fontSize: 13, color: T.textMuted, marginBottom: 18 }}>
+          {`Deck needs ~${needMin} min`}{canSet ? ` · session is ${lenMin} min` : ""}
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          {hasStored && <button type="button" data-testid="session-clear" onClick={onClear} style={S.btn({ padding: "8px 14px", fontSize: 14, color: T.red, borderRadius: 6 })}>Clear</button>}
+          <span style={{ flex: 1 }} />
+          <button type="button" data-testid="session-cancel" onClick={onClose} style={S.btn({ padding: "8px 16px", fontSize: 14, color: T.textMuted, borderRadius: 6 })}>Cancel</button>
+          <button type="button" data-testid="session-set" onClick={set} disabled={!canSet}
+            style={{ padding: "8px 20px", fontSize: 14, fontFamily: FONT.body, fontWeight: 600, color: "#fff", background: T.accent, border: "none", borderRadius: 6, cursor: canSet ? "pointer" : "not-allowed", opacity: canSet ? 1 : 0.45 }}>Set</button>
+        </div>
+      </div>
+    </ModalBackdrop>
+  );
+}
+
 // ━━━ Keyboard Shortcuts Overlay ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 const _questionKey = (e) => e.key === "?";
 function ShortcutHelp({ onClose }) {
@@ -27806,7 +31025,11 @@ function ShortcutHelp({ onClose }) {
       ["Space", "Next slide (same as →)"],
       ["↑ ↓", "Previous / next module"],
       ["", "Auto-crosses lane boundaries"],
-      ["[ / Ctrl+E", "Toggle navigator panel"],
+      ["[", "Toggle navigator panel"],
+      ["Ctrl+E", "Search slides (again: hide navigator)"],
+      ["/", "Search slides"],
+      ["↑ ↓ Enter", "Move through / open search results"],
+      ["Esc", "Clear search, then leave the field"],
       ["G", "Toggle gallery view"],
     ]},
     { title: "Presentation", items: [
@@ -27814,6 +31037,8 @@ function ShortcutHelp({ onClose }) {
       ["F5", "Enter fullscreen (blocks reload)"],
       ["Esc", "Exit fullscreen"],
       ["Ctrl+E", "Toggle slides TOC / search (fullscreen)"],
+      ["C", "Clock on slide (fullscreen)"],
+      ["T", "Pace bar (fullscreen, with a session end)"],
       ["D", "Toggle dark / light theme"],
       ["+ / −", "Scale font up / down"],
       ["0", "Reset font scale"],
@@ -28368,6 +31593,10 @@ export default function App() {
     try { return sessionStorage.getItem("vela-storage-warning-dismissed") === "1"; } catch { return false; }
   });
   const [newDeckDialog, setNewDeckDialog] = useState(false);
+  // Session end (v13.80): editor dialog. Present has its own instance inside
+  // the fullscreen root (SlidePanel), so this one closes on Present entry.
+  const [sessionDialog, setSessionDialog] = useState(false);
+  const [sessionTick, setSessionTick] = useState(0);
   const [pdfExport, setPdfExport] = useState(false);
   const [pptxExport, setPptxExport] = useState(false);
   const [standaloneExport, setStandaloneExport] = useState(false);
@@ -28673,6 +31902,7 @@ export default function App() {
         return s ? {
           deckTitle: s.deckTitle,
           guidelines: s.guidelines,
+          session: s.session ?? null,
           firstLaneTitle: firstLane?.title || null,
           firstItemId: firstItem?.id || null,
           firstItemTitle: firstItem?.title || null,
@@ -28729,6 +31959,8 @@ export default function App() {
       newDeckForTest: () => dispatch({ type: "NEW_DECK", title: "Tour interruption", prompt: "", images: [] }),
       getGuidelinesForTest: () => _localSyncState.current?.guidelines || "",
       setGuidelinesForTest: (value) => dispatch({ type: "SET_GUIDELINES", guidelines: value }),
+      getSessionForTest: () => _localSyncState.current?.session ?? null,
+      setSessionForTest: (v) => dispatch({ type: "SET_SESSION", session: v }),
       capturePostDemoFlushForTest: () => {
         const current = _localSyncState.current;
         return current ? {
@@ -28772,7 +32004,7 @@ export default function App() {
         document.documentElement.dataset.velaDemoRunning === "true") return;
     localSyncTimer.current = setTimeout(() => flushLocalStateRef.current?.(null), 600);
     return () => clearTimeout(localSyncTimer.current);
-  }, [state.lanes, state.branding, state.deckTitle, state.guidelines]);
+  }, [state.lanes, state.branding, state.deckTitle, state.guidelines, state.session]);
 
   // Receive deck updates from local server (file → browser)
   useEffect(() => {
@@ -28802,6 +32034,8 @@ export default function App() {
           // raw deck.guidelines: it goes into the Vera system prompt, and a
           // non-string would make every AI call throw.
           guidelines: deck.guidelines !== undefined ? sanitized.guidelines : cur.guidelines,
+          // The file is authoritative: sanitized value, or null when the file has none.
+          session: sanitized.session,
           // Reset selection when switching to a different deck so auto-select picks the first module
           ...(isDifferentDeck ? { selectedId: null, slideIndex: 0 } : {}),
         };
@@ -28887,7 +32121,7 @@ export default function App() {
   // that fits wins. No memory of past widths, so a window that grows gets its
   // labels back at once, and the same width always gives the same level.
   const HDR_TITLE_MIN = 120, HDR_TOP = 4, HDR_LABEL_GAP = 4;
-  const hdrGap = (lvl) => (lvl < 3 ? 8 : 10);
+  const hdrGap = (lvl) => (lvl < 3 ? 6 : 7);
   const [hdrSize, setHdrSize] = useState(1);
   const hdrSizeRef = useRef(1);
   hdrSizeRef.current = hdrSize;
@@ -28929,6 +32163,18 @@ export default function App() {
     if (next !== lvl) { hdrSizeRef.current = next; setHdrSize(next); }
   }, []);
   useLayoutEffect(() => { fitHeader(); });
+  // Session end button expiry: no interval. One timeout re-renders the editor
+  // when the live session becomes stale (end + 3 h), so the button goes back to
+  // "Set session end". The delay is capped at the setTimeout maximum; an early fire
+  // bumps sessionTick, which re-arms the effect.
+  useEffect(() => {
+    const s = liveSession(state.session, Date.now());
+    if (!s) return undefined;
+    const ms = Math.max(0, Math.min(2147483647, s.end + SESSION_STALE_MS - Date.now() + 1000));
+    const t = setTimeout(() => setSessionTick((n) => n + 1), ms);
+    return () => clearTimeout(t);
+  }, [state.session, sessionTick]);
+  useEffect(() => { if (state.fullscreen) setSessionDialog(false); }, [state.fullscreen]);
   useEffect(() => {
     if (typeof ResizeObserver === "undefined") return;
     // Web fonts change label widths without resizing the bar: measure again.
@@ -28948,6 +32194,10 @@ export default function App() {
   const [tocWidth, setTocWidth] = useState(() => { try { const v = parseInt(localStorage.getItem("vela-toc-width")); return v >= 160 && v <= 600 ? v : 270; } catch { return 270; } });
   const tocDragRef = useRef(null);
   const prevSelectedRef = useRef(null);
+  // Editor search focus request (Ctrl+E or "/"): EditorSearch reads the ref when
+  // it mounts (list opened) or when the tick changes (list already open).
+  const searchFocusReq = useRef(false);
+  const [searchFocusTick, setSearchFocusTick] = useState(0);
 
   // Auto-switch tabs on select/deselect
   useEffect(() => {
@@ -28957,20 +32207,36 @@ export default function App() {
     prevSelectedRef.current = state.selectedId;
   }, [state.selectedId, isMobile]);
 
-  // TOC toggle shortcuts: [ (not while typing) and Ctrl/Cmd+E (editor only —
-  // in fullscreen, PresenterTOC owns Ctrl+E). AltGr arrives as Ctrl+Alt, and
-  // PT/ES/DE layouts need AltGr for "[", so Ctrl+Alt+[ still counts as "[".
+  // TOC shortcuts: [ (not while typing) toggles the list. Ctrl/Cmd+E and "/"
+  // (editor only — in fullscreen, PresenterTOC owns Ctrl+E) open the list if it
+  // is collapsed and focus the search field; Ctrl+E in the field collapses the
+  // list (EditorSearch handles it there, the event does not reach this handler).
+  // AltGr arrives as Ctrl+Alt, and PT/ES/DE layouts need AltGr for "[", so
+  // Ctrl+Alt+[ still counts as "[".
+  const hasSections = state.lanes.some((l) => l.items.length > 0);
   useEffect(() => {
     if (isMobile) return;
     const h = (e) => {
+      // An open modal dialog (ModalBackdrop marks it) owns the keys: the list
+      // and its search field sit under the backdrop, so a key here must not
+      // move focus there or toggle the list. Static selector, no deck value.
+      if (document.querySelector("[data-vela-modal]")) return;
       const typing = ["INPUT","TEXTAREA","SELECT"].includes(e.target.tagName) || e.target.isContentEditable;
       const bracket = e.key === "[" && !e.metaKey && (!e.ctrlKey || e.altKey) && !typing;
       const ctrlE = (e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && (e.key === "e" || e.key === "E") && !state.fullscreen && !typing;
-      if (bracket || ctrlE) { e.preventDefault(); setTocCollapsed((c) => !c); }
+      const slash = e.key === "/" && !e.ctrlKey && !e.metaKey && !e.altKey && !state.fullscreen && !typing && hasSections;
+      if (bracket) { e.preventDefault(); setTocCollapsed((c) => !c); return; }
+      if (ctrlE || slash) {
+        e.preventDefault();
+        if (!hasSections) return; // no list, no field
+        searchFocusReq.current = true;
+        setTocCollapsed(false);
+        setSearchFocusTick((t) => t + 1);
+      }
     };
     window.addEventListener("keydown", h);
     return () => window.removeEventListener("keydown", h);
-  }, [isMobile, state.fullscreen]);
+  }, [isMobile, state.fullscreen, hasSections]);
 
   // Theme toggle shortcut: D
   useEffect(() => {
@@ -29057,6 +32323,7 @@ export default function App() {
           // that exact shape through the LOAD spread. (v13.26 / v13.27)
           data.lanes = resanitizeLoadedLanes(data.lanes);
           if ("branding" in data) data.branding = resanitizeLoadedBranding(data.branding);
+          resanitizeLoadedSession(data);
           dispatch({ type: "LOAD", payload: data });
           loadedDeck = data;
         } else if (data && data._version === 2) {
@@ -29086,6 +32353,7 @@ export default function App() {
           // that exact shape through the LOAD spread. (v13.26 / v13.27)
           payload.lanes = resanitizeLoadedLanes(payload.lanes);
           if ("branding" in payload) payload.branding = resanitizeLoadedBranding(payload.branding);
+          resanitizeLoadedSession(payload);
           dispatch({ type: "LOAD", payload });
           loadedDeck = payload;
           // Clean up old distributed keys in background
@@ -29102,6 +32370,7 @@ export default function App() {
           // that exact shape through the LOAD spread. (v13.26 / v13.27)
           data.lanes = resanitizeLoadedLanes(data.lanes);
           if ("branding" in data) data.branding = resanitizeLoadedBranding(data.branding);
+          resanitizeLoadedSession(data);
           dispatch({ type: "LOAD", payload: data });
           loadedDeck = data;
         }
@@ -29226,7 +32495,7 @@ export default function App() {
         document.documentElement.dataset.velaDemoRunning === "true") return;
     saveTimer.current = setTimeout(() => flushStorageStateRef.current?.(null), 1500);
     return () => clearTimeout(saveTimer.current);
-  }, [state.lanes, state.chatMessages, state.branding, state.deckTitle, state.guidelines]);
+  }, [state.lanes, state.chatMessages, state.branding, state.deckTitle, state.guidelines, state.session]);
 
   // Sync browser tab title with deck title
   React.useEffect(() => {
@@ -29246,6 +32515,7 @@ export default function App() {
     const deck = { deckTitle: title, lanes: save.lanes || [] };
     if (save.branding) deck.branding = save.branding;
     if (save.guidelines) deck.guidelines = save.guidelines;
+    if (save.session) deck.session = save.session;
     const blob = new Blob([JSON.stringify(deck, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a"); a.href = url;
@@ -29331,6 +32601,18 @@ export default function App() {
   let selectedConcept = null;
   for (const l of state.lanes) { const f = l.items.find((i) => i.id === state.selectedId); if (f) { selectedConcept = f; break; } }
   const total = state.lanes.reduce((s, l) => s + l.items.length, 0);
+  // Open an editor search result: select its section and slide; unfold the
+  // section if it is folded, so the slide row shows when the query is cleared.
+  // All three actions are in NO_HISTORY: no undo step, no deck change. The
+  // matched block's render index goes to SlidePanel (flashBlock), which may
+  // outline that block; -1 = title / notes / section match, no block.
+  const openSearchResult = (row) => {
+    if (Array.isArray(state.collapsedSections) && state.collapsedSections.includes(row.sectionId))
+      dispatch({ type: "SET_SECTION_COLLAPSED", id: row.sectionId, collapsed: false });
+    if (row.sectionId !== state.selectedId) dispatch({ type: "SELECT", id: row.sectionId, slideIndex: row.slideIdx });
+    else dispatch({ type: "SET_SLIDE_INDEX", index: row.slideIdx });
+    if (row.renderIdx >= 0) slideActionsRef.current?.flashBlock?.(row.sectionId, row.slideIdx, row.renderIdx);
+  };
   // Presentation totals exclude hidden slides; "…All" variants include them (for the stats dialog).
   const deckTime = state.lanes.reduce((s, l) => s + l.items.reduce((a, i) => a + sumVisibleDurations(i.slides), 0), 0);
   const deckTimeAll = state.lanes.reduce((s, l) => s + l.items.reduce((a, i) => a + sumDurations(i.slides), 0), 0);
@@ -29458,6 +32740,14 @@ export default function App() {
                   gallery is no longer reachable only from the Overview button below
                   the slide. */}
               <ViewSwitch mode={sa?.viewMode || "editor"} onSet={(m) => sa?.setView?.(m)} disabled={!has} compact={hdrSize < HDR_TOP} />
+              {(() => {
+                // Session end (v13.80): icon only; the state is in title and
+                // aria-label (fmtClock of a sanitized number). A stale session
+                // (end + 3 h) shows as not set.
+                const live = liveSession(state.session, Date.now());
+                const tip = live ? `Session ends ${fmtClock(live.end)} — click to change` : "Set session end";
+                return <button data-testid="session-end-btn" data-live={live ? "1" : "0"} onClick={() => setSessionDialog(true)} disabled={!has} title={tip} aria-label={tip} style={S.btn({ padding: "4px 6px", fontSize: 14, color: live ? T.accent : T.textDim, background: live ? T.accent + "20" : "transparent", borderRadius: 4, opacity: has ? 1 : 0.4, display: "flex", alignItems: "center" })}>{"🕒"}</button>;
+              })()}
               <button data-testid="present-btn" onClick={() => sa?.present?.()} disabled={!has} style={{ display: "flex", alignItems: "center", gap: 5, padding: "5px 14px", background: has ? T.green : T.border, color: has ? "#fff" : T.textDim, border: "none", borderRadius: 6, cursor: has ? "pointer" : "default", opacity: has ? 1 : 0.5, fontFamily: FONT.mono, fontSize: 14, fontWeight: 700 }} title="Present">{"▶"}{hdrLabel(" Present", 2)}</button>
             </>;
           })()}
@@ -29561,7 +32851,9 @@ export default function App() {
               </div>
             </div>
           )}
-          {total > 0 && <ModuleList lanes={state.lanes} selectedId={state.selectedId} slideIndex={state.slideIndex} selectedSlideIndices={state.selectedSlideIndices} collapsedSections={state.collapsedSections} dispatch={dispatch} maxModuleTime={maxModuleTime} guidelines={state.guidelines} reviewMode={state.reviewMode} deckEpoch={state._deckEpoch} />}
+          {total > 0 && <EditorSearch lanes={state.lanes} selectedId={state.selectedId} slideIndex={state.slideIndex} fullscreen={state.fullscreen} isMobile={isMobile} focusReq={searchFocusReq} focusTick={searchFocusTick} onCollapse={() => setTocCollapsed(true)} onOpenResult={openSearchResult}>
+            <ModuleList lanes={state.lanes} selectedId={state.selectedId} slideIndex={state.slideIndex} selectedSlideIndices={state.selectedSlideIndices} collapsedSections={state.collapsedSections} dispatch={dispatch} maxModuleTime={maxModuleTime} guidelines={state.guidelines} reviewMode={state.reviewMode} deckEpoch={state._deckEpoch} />
+          </EditorSearch>}
         </div>}
 
         {/* TOC toggle */}
@@ -29645,6 +32937,10 @@ export default function App() {
       {!isMobile && showShortcuts && <ShortcutHelp onClose={() => setShowShortcuts(false)} />}
       {showChangelog && <ChangelogDialog onClose={() => setShowChangelog(false)} />}
       {showStats && <StatsDialog state={state} onClose={() => setShowStats(false)} />}
+      {sessionDialog && !state.fullscreen && <SessionEndDialog session={liveSession(state.session, Date.now())} stored={!!sanitizeSession(state.session)} lanes={state.lanes}
+        onSet={(s) => { const v = sanitizeSession(s); if (v) dispatch({ type: "SET_SESSION", session: v }); setSessionDialog(false); }}
+        onClear={() => { dispatch({ type: "SET_SESSION", session: null }); setSessionDialog(false); }}
+        onClose={() => setSessionDialog(false)} />}
       {newDeckDialog && <NewDeckDialog onClose={() => setNewDeckDialog(false)} onSubmit={async ({ title, prompt, images }) => {
         // Desktop: allocate a NEW file in the same folder first, so creating a
         // deck never overwrites the one currently open (CR). If allocation FAILS

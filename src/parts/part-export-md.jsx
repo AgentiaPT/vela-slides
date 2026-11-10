@@ -535,6 +535,7 @@ function StandaloneHtmlModal({ state, onClose }) {
       const deck = { deckTitle, lanes: save.lanes || [] };
       if (save.branding) deck.branding = save.branding;
       if (save.guidelines) deck.guidelines = save.guidelines;
+      if (save.session) deck.session = save.session;
       const html = buildStandaloneHtml(jsxSource, deck, { footer, babel: window.Babel });
       const safeTitle = deckTitle.replace(/[^a-zA-Z0-9_-]/g, "-").replace(/-{2,}/g, "-").slice(0, 60) || "vela-deck";
       const blob = new Blob([html], { type: "text/html;charset=utf-8" });

@@ -85,6 +85,30 @@ function useToolbarCompact(ref, key) {
   return hide;
 }
 
+// Present edge bar (v13.80): the T-key hide choice. Memory only, for the page
+// session; module-level so it survives SlidePanel remounts. Never stored.
+const VELA_SESSION_BAR = { hidden: false };
+// Present clock chip (v13.80): the C-key show choice, kept on this device only
+// (not in the deck). Stored as "1" or absent; a read compares with "1" only.
+const VELA_PRESENT_CLOCK_KEY = "vela-present-clock";
+// Clock chip bottom offset (CSS) in Present. `branding` is the sanitized
+// branding state, or null when the slide shows no branding. Only booleans and
+// clamped numbers come from it: no branding string reaches the style.
+// Fill mode: slide scale s <= max(vw/960, vh/540) (computeFillDims: the zoom is
+// never above the height ratio), so K virtual px are at most
+// max(K/960 vw, K/540 vh) on screen. Branding on: clear the 28 px footer strip.
+// Logo at the bottom left (same position test as BrandingOverlay): clear the
+// logo box too (bottom 36 + height, then 8 px). Height as BrandingOverlay
+// draws it (logoSize || 56), capped at the 120 px limit of the import sanitizer.
+function presentClockBottom(branding) {
+  if (!branding?.enabled) return 24;
+  const pos = typeof branding.logoPosition === "string" && branding.logoPosition ? branding.logoPosition : "top-left";
+  const logoBottomLeft = !!branding.logo && !pos.startsWith("top") && pos.endsWith("left");
+  const h = Number.isFinite(branding.logoSize) && branding.logoSize > 0 ? Math.min(branding.logoSize, 120) : 56;
+  const k = logoBottomLeft ? 36 + h + 8 : 28;
+  return `calc(max(${(k * 100 / VIRTUAL_W).toFixed(4)}vw, ${(k * 100 / VIRTUAL_H).toFixed(4)}vh) + 10px)`;
+}
+
 function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, branding, guidelines, isMobile, fontScale, actionsRef, onRibbonUpdate }) {
   const deckEpochRef = useRef(state._deckEpoch);
   deckEpochRef.current = state._deckEpoch;
@@ -335,10 +359,12 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
   // Presenter-view elapsed timer (CR-08): starts fresh each time Present mode
   // is entered, stops (and hides the presenter view) on exit.
   useEffect(() => {
-    if (!fullscreen) { presentStartRef.current = null; setPresentElapsed(0); setPresenterView(false); return; }
+    if (!fullscreen) { presentStartRef.current = null; setPresentElapsed(0); setPresenterView(false); setSessionDialogOpen(false); return; }
     presentStartRef.current = Date.now();
     setPresentElapsed(0);
-    const id = setInterval(() => { setPresentElapsed(Math.round((Date.now() - presentStartRef.current) / 1000)); }, 1000);
+    setNowMs(Date.now());
+    // One 1 s tick for the elapsed timer and the session clock / pace (v13.80).
+    const id = setInterval(() => { setPresentElapsed(Math.round((Date.now() - presentStartRef.current) / 1000)); setNowMs(Date.now()); }, 1000);
     return () => clearInterval(id);
   }, [fullscreen]); // eslint-disable-line -- intentionally minimal deps, mirrors prevFullscreen effect above
   useEffect(() => { setEditingDuration(false); setShowCommentPopover(false); }, [slideIndex]);
@@ -352,15 +378,20 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
   // already steps over hidden slides WITHIN a module (nextVisible/prevVisible),
   // so this only fires on a land and can never oscillate (it always resolves to a
   // visible slide, and nav never re-lands on a hidden one).
+  // Present detour state (see onDetour below). Declared here, before its first
+  // use in this effect's deps, so the render never reads it in the TDZ.
+  const [detour, setDetour] = useState(null);
   useEffect(() => {
     if (!fullscreen) return;
     const cur = presSlides[slideIndex];
     if (!cur || !cur.hidden) return;
+    // A detour shows a hidden slide on purpose; do not nudge off it.
+    if (detour && detour.at.id === concept.id && detour.at.index === slideIndex) return;
     let n = -1;
     for (let i = slideIndex + 1; i < presSlides.length; i++) if (!presSlides[i].hidden) { n = i; break; }
     if (n < 0) for (let i = slideIndex - 1; i >= 0; i--) if (!presSlides[i].hidden) { n = i; break; }
     if (n >= 0 && n !== slideIndex) dispatch({ type: "SET_SLIDE_INDEX", index: n });
-  }, [fullscreen, slideIndex, presSlides]);
+  }, [fullscreen, slideIndex, presSlides, detour, concept.id]);
   const [showImproveInput, setShowImproveInput] = useState(false);
   const [improvePrompt, setImprovePrompt] = useState("");
   const [improveScope, setImproveScope] = useState("all"); // "slide" | "module" | "section" | "all"
@@ -374,6 +405,30 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
   // CR07: editor-only review cycle — arrow keys skip slides marked `reviewed`.
   // Distinct from state.reviewMode (comments review), which owns that name.
   const [reviewCycle, setReviewCycle] = useState(false);
+  // Present detour: a TOC search jump to a hidden slide (or a collapsed lane).
+  // `ret` is the last VISIBLE slide (kept across chained detours), `at` is the
+  // detour slide. Arrows, wheel and Esc on the detour slide return to `ret`;
+  // landing anywhere else ends the detour (effect below). Indices are Present
+  // indices (title-card offset included), as passed to SET_SLIDE_INDEX.
+  // (The `detour` state itself is declared above the hidden-slide nudge effect.)
+  const detourRef = useRef(null);
+  detourRef.current = detour;
+  const onDetour = useCallback((on, at) => {
+    if (!on) { setDetour(null); return; }
+    setDetour((d) => ({ ret: d ? d.ret : { id: concept.id, index: slideIndex }, at }));
+  }, [concept.id, slideIndex]);
+  const detourBackRef = useRef(() => false);
+  detourBackRef.current = () => {
+    const d = detourRef.current;
+    if (!d) return false;
+    setDetour(null);
+    if (d.ret.id !== concept.id) dispatch({ type: "SELECT", id: d.ret.id });
+    dispatch({ type: "SET_SLIDE_INDEX", index: d.ret.index });
+    return true;
+  };
+  useEffect(() => {
+    if (detour && (!fullscreen || detour.at.id !== concept.id || detour.at.index !== slideIndex)) setDetour(null);
+  }, [detour, fullscreen, concept.id, slideIndex]);
   const showGalleryRef = useRef(false);
   const setGallery = (v) => { const val = typeof v === "function" ? v(showGalleryRef.current) : v; showGalleryRef.current = val; setShowGallery(val); };
   // ── Presenter view (CR-08) — single-screen speaker dashboard: current +
@@ -390,6 +445,38 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
   useEffect(() => { if (!fullscreen) setPresentEdit(false); }, [fullscreen]);
   const [presentElapsed, setPresentElapsed] = useState(0); // seconds since Present mode was entered
   const presentStartRef = useRef(null);
+  // ── Session end (v13.80): clock, pace, Present edge bar, dialog. Present only.
+  // Pace follows the Present numbering (presentSequence); during a detour it
+  // uses the return slide (detour.ret, with that item's own title-card offset).
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  const [sessionDialogOpen, setSessionDialogOpen] = useState(false);
+  const sessionDialogOpenRef = useRef(false);
+  sessionDialogOpenRef.current = sessionDialogOpen;
+  const [sessionBarHidden, setSessionBarHidden] = useState(() => VELA_SESSION_BAR.hidden);
+  // Clock chip on/off. Storage can throw (sandboxed artifact): read and write
+  // in try/catch, and the app works without storage (default off).
+  const [clockOn, setClockOn] = useState(() => { try { return localStorage.getItem(VELA_PRESENT_CLOCK_KEY) === "1"; } catch { return false; } });
+  const toggleClock = () => setClockOn((v) => {
+    const on = !v;
+    try { if (on) localStorage.setItem(VELA_PRESENT_CLOCK_KEY, "1"); else localStorage.removeItem(VELA_PRESENT_CLOCK_KEY); } catch {}
+    return on;
+  });
+  const paceItemId = detour ? detour.ret.id : concept.id;
+  const sessionSeq = useMemo(() => { const seq = presentSequence(lanes, paceItemId); return { seq, est: sessionEstimates(seq) }; }, [lanes, paceItemId]);
+  const paceRawIdx = (() => {
+    if (!detour) return slideIndex - presOffset;
+    let retItem = null;
+    for (const l of lanes || []) for (const it of (l && l.items) || []) if (it && it.id === detour.ret.id) retItem = it;
+    return detour.ret.index - (retItem && retItem.presentCard ? 1 : 0);
+  })();
+  const paceIdx = sessionSeqIndex(sessionSeq.seq, paceItemId, paceRawIdx);
+  // On-slide counter: restarts when the pace position changes (not on a detour).
+  const slideEnterRef = useRef({ key: null, at: 0 });
+  const paceSlideKey = fullscreen ? `${paceItemId}|${detour ? detour.ret.index : slideIndex}` : null;
+  if (slideEnterRef.current.key !== paceSlideKey) slideEnterRef.current = { key: paceSlideKey, at: Date.now() };
+  const sessionLive = fullscreen ? liveSession(state.session, nowMs) : null;
+  const sessionPace = sessionLive ? computeSessionPace(sessionSeq.est, paceIdx, sessionOnSlideSec(nowMs, slideEnterRef.current.at, sessionLive), sessionLive, nowMs) : null;
+  const closeSessionDialog = () => { setSessionDialogOpen(false); containerRef.current?.focus({ preventScroll: true }); };
   const [showNewSlide, setShowNewSlide] = useState(false);
   const [newSlidePrompt, setNewSlidePrompt] = useState("");
   const [newSlideImage, setNewSlideImage] = useState(null);
@@ -525,6 +612,28 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
     else if (mode === "presenter") { setGallery(false); if (!fullscreen) { stopAll(); dispatch({ type: "SET_FULLSCREEN", value: true }); } }
   };
 
+  // Editor search: a short amber outline on the matched top-level block
+  // ({ id, index, block } = section id, slide index, canvas render index).
+  // UI state only: no deck change, no undo step, no save. The outline shows
+  // only while that exact slide is on the editor canvas (checked at render);
+  // the effect below drops it when the slide or section changes, or when
+  // Present or the gallery opens. Only code-authored values are stored.
+  const [searchFlash, setSearchFlash] = useState(null);
+  const searchFlashTimer = useRef(null);
+  const flashSearchBlock = (id, index, block) => {
+    clearTimeout(searchFlashTimer.current);
+    if (typeof id !== "string" || !Number.isInteger(index) || index < 0 || !Number.isInteger(block) || block < 0) { setSearchFlash(null); return; }
+    setSearchFlash({ id, index, block });
+    searchFlashTimer.current = setTimeout(() => setSearchFlash(null), 1500);
+  };
+  useEffect(() => () => clearTimeout(searchFlashTimer.current), []);
+  useEffect(() => {
+    if (searchFlash && (fullscreen || showGallery || searchFlash.id !== concept.id || searchFlash.index !== slideIndex)) {
+      clearTimeout(searchFlashTimer.current);
+      setSearchFlash(null);
+    }
+  }, [searchFlash, fullscreen, showGallery, concept.id, slideIndex]);
+
   // Expose slide panel state + actions to app ribbon via ref
   useEffect(() => {
     if (!actionsRef) return;
@@ -543,6 +652,8 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       getLayoutStats: () => computeSlideLayoutStats(slideRef.current),
       // CR13: view state read by the top-bar view switcher (editor|presenter|gallery).
       viewMode, setView,
+      // Editor search: outline the matched block for a moment (UI state only).
+      flashBlock: flashSearchBlock,
     };
     onRibbonUpdate?.();
   }, [slides.length, moduleTime, previewRatio, showBranding, showTimingScope, estimating, showImproveInput, improving, fullscreen, showGallery]);
@@ -575,8 +686,11 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
   useEffect(() => () => clearTimeout(navToastTimer.current), []);
 
   // Touch swipe for mobile slide navigation (crosses module boundaries like keyboard)
+  // A modal over the slide (session dialog, any ModalBackdrop) owns the swipe.
+  const swipeBlocked = (e) => sessionDialogOpenRef.current || !!e?.target?.closest?.("[data-vela-modal]");
   useSwipe(containerRef, {
-    onLeft: useCallback(() => {
+    onLeft: useCallback((e) => {
+      if (swipeBlocked(e)) return;
       if (storyStepRef.current(1)) return;
       const navSlides = fullscreen ? presSlides : slides;
       if (navSlides.length > 0 && slideIndex < navSlides.length - 1) {
@@ -593,7 +707,8 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
         }
       }
     }, [slideIndex, slides.length, presSlides.length, fullscreen, dispatch, concept.id, flatModules, showNavToast]),
-    onRight: useCallback(() => {
+    onRight: useCallback((e) => {
+      if (swipeBlocked(e)) return;
       if (storyStepRef.current(-1)) return;
       if (slideIndex > 0) {
         storyEnterBack();
@@ -894,6 +1009,10 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       // (editor nav keeps reaching them so they can be edited/unhidden).
       const nextVisible = (from) => { for (let i = from + 1; i < navSlides.length; i++) if (!fullscreen || !navSlides[i].hidden) return i; return -1; };
       const prevVisible = (from) => { for (let i = from - 1; i >= 0; i--) if (!fullscreen || !navSlides[i].hidden) return i; return -1; };
+      // Present detour: any step key returns to the slide the detour left.
+      if (fullscreen && detourRef.current && ["ArrowRight", "ArrowDown", " ", "ArrowLeft", "ArrowUp"].includes(e.key)) {
+        e.preventDefault(); stopAlternatives(); detourBackRef.current(); return;
+      }
       // CR07: editor review cycle — step through unreviewed slides across modules.
       // The current slide stays in the order (even if reviewed) only to anchor the step.
       const reviewNav = !fullscreen && reviewCycle;
@@ -983,6 +1102,26 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       if (e.key === "g" && !e.metaKey && !e.ctrlKey && !e.shiftKey && !["INPUT", "TEXTAREA"].includes(document.activeElement?.tagName)) {
         e.preventDefault(); setGallery((v) => !v);
       }
+      // T → hide/show the session edge bar (Present only; no modifiers; not
+      // in a text field; not while a dialog is open). Memory only (v13.80).
+      // A held key (e.repeat) toggles once. No action while the Presenter View or
+      // the gallery covers the slide (the bar is hidden there: no feedback).
+      if (fullscreen && (e.key === "t" || e.key === "T") && !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey && VELA_OPEN_CHROME.modals.size === 0 && !sessionDialogOpenRef.current && !showPresenterViewRef.current && !showGalleryRef.current) {
+        const ae = document.activeElement;
+        if (!(ae && (["INPUT", "TEXTAREA", "SELECT"].includes(ae.tagName) || ae.isContentEditable))) {
+          e.preventDefault(); if (e.repeat) return; setSessionBarHidden((v) => { VELA_SESSION_BAR.hidden = !v; return !v; }); return;
+        }
+      }
+      // C → show/hide the clock chip (Present only). No modifiers, so Ctrl/Cmd+C
+      // (slide copy) keeps working; not in a text field; not while a dialog is open.
+      // A held key (e.repeat) toggles once. No action while the Presenter View or
+      // the gallery covers the slide (the chip is hidden there: no feedback).
+      if (fullscreen && (e.key === "c" || e.key === "C") && !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey && VELA_OPEN_CHROME.modals.size === 0 && !sessionDialogOpenRef.current && !showPresenterViewRef.current && !showGalleryRef.current) {
+        const ae = document.activeElement;
+        if (!(ae && (["INPUT", "TEXTAREA", "SELECT"].includes(ae.tagName) || ae.isContentEditable))) {
+          e.preventDefault(); if (!e.repeat) toggleClock(); return;
+        }
+      }
       // S → presenter view toggle (Present mode only)
       if (fullscreen && e.key === "s" && !e.metaKey && !e.ctrlKey && !e.shiftKey && !["INPUT", "TEXTAREA"].includes(document.activeElement?.tagName)) {
         e.preventDefault(); setPresenterView((v) => !v);
@@ -1001,6 +1140,8 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       // sandboxed iframe (Claude.ai artifact) requestFullscreen fails, so the key lands here.
       // An open modal takes Esc first (it closes on the same keydown).
       // A story slide zoomed on an image: Esc zooms out to the grid first and Present stays.
+      // A Present detour: Esc returns to the slide it left, and Present stays.
+      if (e.key === "Escape" && fullscreen && VELA_OPEN_CHROME.modals.size === 0 && detourBackRef.current()) { e.preventDefault(); return; }
       if (e.key === "Escape" && fullscreen && VELA_OPEN_CHROME.modals.size === 0 && storyEscRef.current()) { e.preventDefault(); return; }
       if (e.key === "Escape" && fullscreen && VELA_OPEN_CHROME.modals.size === 0) { e.preventDefault(); stopAlternatives(); dispatch({ type: "SET_FULLSCREEN", value: false }); return; }
       // Ctrl+C → copy ALL selected slides (multi-select) to system clipboard,
@@ -1070,6 +1211,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
     // layering here: a zoom, gallery or presenter view closes first and Present stays.
     const onFsChange = () => {
       if (document.fullscreenElement || !fullscreen) return;
+      if (sessionDialogOpenRef.current) { setSessionDialogOpen(false); return; } // browser Esc: the session dialog closes first
       if (VELA_OPEN_CHROME.zooms.size > 0) { window.dispatchEvent(new Event("vela-close-zoom")); return; }
       if (VELA_OPEN_CHROME.panels.size > 0) { window.dispatchEvent(new Event("vela-close-panel")); return; }
       if (showGalleryRef.current) { setGallery(false); return; }
@@ -1090,7 +1232,12 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
     if (!el || slides.length === 0) return;
     const handler = (e) => {
       if (["INPUT", "TEXTAREA"].includes(document.activeElement?.tagName)) return;
+      // A modal over the slide (session dialog, any ModalBackdrop) owns the wheel.
+      if (sessionDialogOpenRef.current || e.target.closest?.("[data-vela-modal]")) return;
       if (!fullscreen && e.target.closest?.("[data-scroll-container]")) return;
+      // Present: a scroll area of an overlay (Presenter View column, notes)
+      // scrolls when it can; elsewhere the wheel changes slides.
+      if (fullscreen) { const sc = e.target.closest?.("[data-scroll-container]"); if (sc && sc.scrollHeight > sc.clientHeight + 1) return; }
       if (e.target.closest?.("[data-teacher-panel]")) return;
       e.preventDefault();
       scrollAccum.current += e.deltaY;
@@ -1099,6 +1246,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       if (Math.abs(scrollAccum.current) >= SCROLL_THRESHOLD) {
         const dir = scrollAccum.current > 0 ? 1 : -1;
         scrollAccum.current = 0;
+        if (fullscreen && detourBackRef.current()) return; // a detour returns first
         if (storyStepRef.current(dir)) return; // one story step per notch
         const navSlides = fullscreen ? presSlides : slides;
         if (dir > 0) {
@@ -1478,9 +1626,40 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
             .slide-transition-fade (part-imports.jsx). Independent of the per-block
             .stg-N stagger reveal inside SlideContent, which keeps working as-is. */}
         <div key={slideIndex} className="slide-transition-fade" style={{ position: "relative", width: "100%", height: "100%" }}>
-          <FullscreenSlide key={`deck-${state._deckEpoch}`} slide={presSlides[slideIndex]} index={slideIndex} total={presSlides.length} innerRef={slideRef} branding={presSlides[slideIndex]?._virtual ? null : branding} editable={!isStudent && !presSlides[slideIndex]?._virtual} onEdit={isStudent || presSlides[slideIndex]?._virtual ? undefined : handleSlideEdit} onBlockEdit={isStudent || presSlides[slideIndex]?._virtual ? undefined : runBlockEdit} blockEditing={isStudent ? null : blockEditing} fontScale={fontScale} mode="fill" forceEdit={presentEdit && !isStudent} displayIndex={globalSlideIndex - presOffset} displayTotal={globalSlideTotal} story={story} onStoryJump={story ? onStoryJump : undefined} onStoryZoomOut={story ? onStoryZoomOut : undefined} />
+          <FullscreenSlide key={`deck-${state._deckEpoch}`} slide={presSlides[slideIndex]} index={slideIndex} total={presSlides.length} innerRef={slideRef} branding={presSlides[slideIndex]?._virtual ? null : branding} editable={!isStudent && !presSlides[slideIndex]?._virtual} onEdit={isStudent || presSlides[slideIndex]?._virtual ? undefined : handleSlideEdit} onBlockEdit={isStudent || presSlides[slideIndex]?._virtual ? undefined : runBlockEdit} blockEditing={isStudent ? null : blockEditing} fontScale={fontScale} mode="fill" forceEdit={presentEdit && !isStudent} displayIndex={globalSlideIndex - presOffset} displayTotal={globalSlideTotal} hideSlideNumber={!!detour} story={story} onStoryJump={story ? onStoryJump : undefined} onStoryZoomOut={story ? onStoryZoomOut : undefined} />
         </div>
-        {!isMobile && <PresenterTOC slides={presSlides} slideIndex={slideIndex} onJump={(i) => dispatch({ type: "SET_SLIDE_INDEX", index: i })} lanes={lanes} currentConceptId={concept.id} dispatch={dispatch} />}
+        {/* Session edge bar (v13.80): neutral fill up to the first of YOU / SHOULD
+            BE, pace-colour gap between them, white tick = YOU (sessionBarGeom).
+            Numbers are clamped percents; colours are static. It
+            takes no clicks and hides under the presenter view and the gallery. */}
+        {sessionPace && !sessionBarHidden && !showPresenterView && !showGallery && (() => {
+          // sessionBarGeom: clamped percent numbers + a static colour key. A dark
+          // backing keeps the neutral parts visible on light and dark slides.
+          const g = sessionBarGeom(sessionPace);
+          if (!g) return null;
+          return <div data-testid="present-session-bar" data-pace={g.key} aria-hidden="true" style={{ position: "absolute", left: 0, right: 0, bottom: 0, height: 5, zIndex: 15, pointerEvents: "none", background: "rgba(0,0,0,0.35)" }}>
+            <div style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: `${g.lo}%`, background: "rgba(255,255,255,0.45)", pointerEvents: "none" }} />
+            <div data-testid="present-session-gap" style={{ position: "absolute", top: 0, bottom: 0, left: `min(${g.lo}%, calc(100% - 6px))`, width: `max(6px, ${g.gap}%)`, background: SESSION_PACE_COLORS[g.key], pointerEvents: "none" }} />
+            <div data-testid="present-session-you" style={{ position: "absolute", bottom: 0, height: 12, width: 4, boxSizing: "border-box", left: `${g.you}%`, transform: `translateX(-${g.you}%)`, background: "#fff", border: "1px solid rgba(0,0,0,0.75)", pointerEvents: "none" }} />
+          </div>;
+        })()}
+        {/* Clock chip (v13.80, C key): bottom-left twin of the slide-number
+            chip. Static colours only; the text is built from numbers by
+            fmtClock / fmtCountdown (no deck string). With branding on, it sits
+            above the footer strip and a bottom-left logo (presentClockBottom:
+            booleans and clamped numbers only; no branding string reaches the
+            chip). */}
+        {clockOn && !showPresenterView && !showGallery && (() => {
+          const branded = !!branding?.enabled && !presSlides[slideIndex]?._virtual;
+          const p = sessionPace;
+          const tk = p ? (Object.prototype.hasOwnProperty.call(SESSION_PACE_COLORS, p.timeLeftKey) ? p.timeLeftKey : "white") : null;
+          const rest = !p ? "" : p.over ? `+${fmtCountdown(p.timeLeftSec)} over` : p.before ? `starts in ${fmtCountdown((sessionLive.start - nowMs) / 1000)}` : `${fmtCountdown(p.timeLeftSec)} left`;
+          return <div data-testid="present-clock-chip" data-time-key={tk || undefined} aria-hidden="true" style={{ position: "absolute", left: 24, bottom: presentClockBottom(branded ? branding : null), zIndex: 15, pointerEvents: "none", fontFamily: FONT.mono, fontSize: 15, fontWeight: 600, letterSpacing: "0.04em", lineHeight: 1.3, whiteSpace: "nowrap", color: "#e2e8f0", background: "rgba(0,0,0,0.4)", padding: "4px 12px", borderRadius: 20, opacity: 0.85 }}>
+            <span data-testid="present-clock-time">{fmtClock(nowMs)}</span>
+            {p && <><span style={{ color: "#94a3b8" }}>{" · "}</span><span data-testid="present-clock-left" style={{ color: SESSION_PACE_COLORS[tk] }}>{rest}</span></>}
+          </div>;
+        })()}
+        {!isMobile && <PresenterTOC slides={presSlides} slideIndex={slideIndex} onJump={(i) => dispatch({ type: "SET_SLIDE_INDEX", index: i })} lanes={lanes} currentConceptId={concept.id} dispatch={dispatch} onDetour={onDetour} />}
                 {fontScale !== 1 && <div style={{ position: "absolute", top: 12, right: 16, fontFamily: FONT.mono, fontSize: 13, fontWeight: 700, color: T.accent, background: T.bgPanel + "e0", padding: "3px 10px", borderRadius: 4, border: `1px solid ${T.accent}40`, zIndex: 20, letterSpacing: "0.05em", pointerEvents: "none" }}>FONT {Math.round(fontScale * 100)}%</div>}
         {improving && <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, padding: "10px 20px", background: "rgba(0,0,0,0.82)", backdropFilter: "blur(6px)", display: "flex", alignItems: "center", gap: 12, zIndex: 20 }}>
           <div style={{ fontSize: 18, animation: "spin 1.5s linear infinite", display: "inline-block" }}>✨</div>
@@ -1500,16 +1679,23 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
         {!isMobile && <div data-testid="student-toggle" className="slide-nav-btn" onClick={() => dispatch({ type: "SET_VERA_MODE", mode: isStudent ? "editor" : "student" })} title={isStudent ? "Exit student mode" : "Student mode — Vera teaches"} style={{ position: "absolute", top: 16, right: 52, padding: 8, background: isStudent ? T.accent + "30" : undefined, borderRadius: 6 }}><span style={{ fontSize: 16, color: "#fff" }}>🎓</span></div>}
         {/* Gallery is reached through the view switch (fs-view-switch), so it has no separate icon here. */}
         {!isMobile && <div data-testid="presenter-toggle" className="slide-nav-btn" onClick={() => setPresenterView((v) => !v)} title={showPresenterView ? "Exit presenter view (S)" : "Presenter view — notes, next slide, timer (S)"} style={{ position: "absolute", top: 16, right: 88, padding: 8, background: showPresenterView ? T.accent + "30" : undefined, borderRadius: 6 }}><span style={{ fontSize: 16, color: "#fff" }}>{"\u{1F5D2}\uFE0F"}</span></div>}
+        {/* Clock chip toggle (C). A real button; mousedown keeps focus on the
+            Present root, so after a click Space / Enter still go to slide
+            navigation. With keyboard focus on the button, Space / Enter toggle
+            the chip here and stop at the button: the window key handler would
+            change the slide and cancel the click. preventDefault: no second
+            toggle from the native click. A held key toggles once. */}
+        {!isMobile && <button type="button" data-testid="present-clock-toggle" className="slide-nav-btn" aria-pressed={clockOn} aria-label="Clock on slide (C)" title="Clock on slide (C)" onMouseDown={(e) => e.preventDefault()} onClick={toggleClock} onKeyDown={(e) => { if (e.key === " " || e.key === "Enter") { e.preventDefault(); e.stopPropagation(); if (!e.repeat) toggleClock(); } }} style={{ position: "absolute", top: 16, right: 124, padding: 8, border: "none", borderRadius: 6, display: "flex", background: clockOn ? T.accent + "30" : undefined }}>{getIcon("Clock", { size: 18, color: "#fff" })}</button>}
         {/* Present Edit toggle (Shift+E): restore inline click-to-edit while
             presenting. Uses the Lucide pencil (SVG), NOT the ✏ emoji, so the
             CR-03 "no edit chrome" test still passes when edit mode is off.
             Hidden in student mode, where editing is disabled by design. */}
-        {!isMobile && !isStudent && <div data-testid="present-edit-toggle" className="slide-nav-btn" onClick={() => setPresentEdit((v) => !v)} title={presentEdit ? "Editing on — click text/icons to edit (Shift+E)" : "Edit mode — click text/icons to edit while presenting (Shift+E)"} style={{ position: "absolute", top: 16, right: 124, padding: 8, background: presentEdit ? T.accent + "30" : undefined, borderRadius: 6 }}>{getIcon("edit", { size: 18, color: "#fff" })}</div>}
+        {!isMobile && !isStudent && <div data-testid="present-edit-toggle" className="slide-nav-btn" onClick={() => setPresentEdit((v) => !v)} title={presentEdit ? "Editing on — click text/icons to edit (Shift+E)" : "Edit mode — click text/icons to edit while presenting (Shift+E)"} style={{ position: "absolute", top: 16, right: 160, padding: 8, background: presentEdit ? T.accent + "30" : undefined, borderRadius: 6 }}>{getIcon("edit", { size: 18, color: "#fff" })}</div>}
         {/* CR13: the same view switch as the top bar, left of the icon row. */}
-        {!isMobile && <ViewSwitch testid="fs-view-switch" mode={viewMode} onSet={setView} compact onDark style={{ position: "absolute", top: 16, right: VELA_LOCAL_MODE ? 164 : 200 }} />}
+        {!isMobile && <ViewSwitch testid="fs-view-switch" mode={viewMode} onSet={setView} compact onDark style={{ position: "absolute", top: 16, right: VELA_LOCAL_MODE ? 200 : 236 }} />}
         {/* Browser fullscreen toggle removed — Vela fullscreen (F key / minimize button) is sufficient */}
         {!isMobile && !VELA_LOCAL_MODE && <>
-          <div className="slide-nav-btn" onClick={() => setShowCinemaTip((v) => !v)} title="Cinema mode — fullscreen in browser" style={{ position: "absolute", top: 16, right: 160, padding: 8 }}><VelaIcon size={18} /></div>
+          <div className="slide-nav-btn" onClick={() => setShowCinemaTip((v) => !v)} title="Cinema mode — fullscreen in browser" style={{ position: "absolute", top: 16, right: 196, padding: 8 }}><VelaIcon size={18} /></div>
         </>}
         </div>
         {!isMobile && !VELA_LOCAL_MODE && showCinemaTip && <CinemaTip onClose={() => setShowCinemaTip(false)} />}
@@ -1535,8 +1721,15 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
         for (let i = slideIndex + 1; i < presSlides.length; i++) if (!presSlides[i].hidden) { nextIdx = i; break; }
         // NEXT on a story slide is its next step; after the last step, the next slide.
         const nextStory = story ? storyNext(story, storyN) : null;
-        return <PresenterView current={presSlides[slideIndex]} next={nextStory ? presSlides[slideIndex] : nextIdx >= 0 ? presSlides[nextIdx] : null} currentStory={story} nextStory={nextStory || undefined} index={globalSlideIndex - presOffset} total={globalSlideTotal} duration={presSlides[slideIndex]?.duration || 0} elapsed={presentElapsed} branding={branding} onClose={() => setPresenterView(false)} />;
+        return <PresenterView current={presSlides[slideIndex]} next={nextStory ? presSlides[slideIndex] : nextIdx >= 0 ? presSlides[nextIdx] : null} currentStory={story} nextStory={nextStory || undefined} index={globalSlideIndex - presOffset} total={globalSlideTotal} duration={presSlides[slideIndex]?.duration || 0} elapsed={presentElapsed} branding={branding} onClose={() => setPresenterView(false)} detourReturn={detour ? detourReturnTitle(lanes, detour.ret) : null}
+          sessionCard={{ nowMs, session: sessionLive, pace: sessionPace, estimated: sessionSeq.est.estimated, youNum: sessionSeq.seq[paceIdx]?.num, shouldNum: sessionPace ? sessionSeq.seq[sessionPace.shouldIdx]?.num : undefined, onEditSession: () => setSessionDialogOpen(true) }} />;
       })()}
+      {/* Session dialog INSIDE the Present root: App-level modals are outside the
+          browser-fullscreen element and would be invisible here. */}
+      {sessionDialogOpen && <SessionEndDialog session={sessionLive} stored={!!sanitizeSession(state.session)} lanes={lanes}
+        onSet={(s) => { const v = sanitizeSession(s); if (v) dispatch({ type: "SET_SESSION", session: v }); closeSessionDialog(); }}
+        onClear={() => { dispatch({ type: "SET_SESSION", session: null }); closeSessionDialog(); }}
+        onClose={closeSessionDialog} />}
     </div>
   );
 
@@ -1603,7 +1796,8 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
                       default "auto"/Fit ratio) so the editor viewport height is
                       content-independent and the toolbar below stays put. Elastic
                       container-shaped "fill" is reserved for fullscreen/present. */}
-                  <VirtualSlide key={`deck-${state._deckEpoch}`} slide={displaySlide} index={slideIndex} total={slides.length} innerRef={slideRef} branding={branding} editable onEdit={handleSlideEdit} mode="fit-viewport" onBlockEdit={runBlockEdit} blockEditing={blockEditing} virtualW={isAuto ? VIRTUAL_W : vw} virtualH={isAuto ? VIRTUAL_H : vh} bordered reviewMode={state.reviewMode} itemId={concept.id} dispatch={dispatch} displayIndex={globalSlideIndex} displayTotal={globalSlideTotal} />
+                  <VirtualSlide key={`deck-${state._deckEpoch}`} slide={displaySlide} index={slideIndex} total={slides.length} innerRef={slideRef} branding={branding} editable onEdit={handleSlideEdit} mode="fit-viewport" onBlockEdit={runBlockEdit} blockEditing={blockEditing} virtualW={isAuto ? VIRTUAL_W : vw} virtualH={isAuto ? VIRTUAL_H : vh} bordered reviewMode={state.reviewMode} itemId={concept.id} dispatch={dispatch} displayIndex={globalSlideIndex} displayTotal={globalSlideTotal}
+                    flashBlock={searchFlash && !fullscreen && !showGallery && displaySlide === slides[slideIndex] && searchFlash.id === concept.id && searchFlash.index === slideIndex ? searchFlash.block : -1} />
                   {/* Comment badge overlay (top-right) — hidden when comments panel or popover is open */}
                   {!fullscreen && !state.commentsPanelOpen && !showCommentPopover && (() => {
                     const sc = (slides[slideIndex]?.comments || []).filter((c) => c.status === "open");

@@ -34,6 +34,10 @@ export default function App() {
     try { return sessionStorage.getItem("vela-storage-warning-dismissed") === "1"; } catch { return false; }
   });
   const [newDeckDialog, setNewDeckDialog] = useState(false);
+  // Session end (v13.80): editor dialog. Present has its own instance inside
+  // the fullscreen root (SlidePanel), so this one closes on Present entry.
+  const [sessionDialog, setSessionDialog] = useState(false);
+  const [sessionTick, setSessionTick] = useState(0);
   const [pdfExport, setPdfExport] = useState(false);
   const [pptxExport, setPptxExport] = useState(false);
   const [standaloneExport, setStandaloneExport] = useState(false);
@@ -339,6 +343,7 @@ export default function App() {
         return s ? {
           deckTitle: s.deckTitle,
           guidelines: s.guidelines,
+          session: s.session ?? null,
           firstLaneTitle: firstLane?.title || null,
           firstItemId: firstItem?.id || null,
           firstItemTitle: firstItem?.title || null,
@@ -395,6 +400,8 @@ export default function App() {
       newDeckForTest: () => dispatch({ type: "NEW_DECK", title: "Tour interruption", prompt: "", images: [] }),
       getGuidelinesForTest: () => _localSyncState.current?.guidelines || "",
       setGuidelinesForTest: (value) => dispatch({ type: "SET_GUIDELINES", guidelines: value }),
+      getSessionForTest: () => _localSyncState.current?.session ?? null,
+      setSessionForTest: (v) => dispatch({ type: "SET_SESSION", session: v }),
       capturePostDemoFlushForTest: () => {
         const current = _localSyncState.current;
         return current ? {
@@ -438,7 +445,7 @@ export default function App() {
         document.documentElement.dataset.velaDemoRunning === "true") return;
     localSyncTimer.current = setTimeout(() => flushLocalStateRef.current?.(null), 600);
     return () => clearTimeout(localSyncTimer.current);
-  }, [state.lanes, state.branding, state.deckTitle, state.guidelines]);
+  }, [state.lanes, state.branding, state.deckTitle, state.guidelines, state.session]);
 
   // Receive deck updates from local server (file → browser)
   useEffect(() => {
@@ -468,6 +475,8 @@ export default function App() {
           // raw deck.guidelines: it goes into the Vera system prompt, and a
           // non-string would make every AI call throw.
           guidelines: deck.guidelines !== undefined ? sanitized.guidelines : cur.guidelines,
+          // The file is authoritative: sanitized value, or null when the file has none.
+          session: sanitized.session,
           // Reset selection when switching to a different deck so auto-select picks the first module
           ...(isDifferentDeck ? { selectedId: null, slideIndex: 0 } : {}),
         };
@@ -553,7 +562,7 @@ export default function App() {
   // that fits wins. No memory of past widths, so a window that grows gets its
   // labels back at once, and the same width always gives the same level.
   const HDR_TITLE_MIN = 120, HDR_TOP = 4, HDR_LABEL_GAP = 4;
-  const hdrGap = (lvl) => (lvl < 3 ? 8 : 10);
+  const hdrGap = (lvl) => (lvl < 3 ? 6 : 7);
   const [hdrSize, setHdrSize] = useState(1);
   const hdrSizeRef = useRef(1);
   hdrSizeRef.current = hdrSize;
@@ -595,6 +604,18 @@ export default function App() {
     if (next !== lvl) { hdrSizeRef.current = next; setHdrSize(next); }
   }, []);
   useLayoutEffect(() => { fitHeader(); });
+  // Session end button expiry: no interval. One timeout re-renders the editor
+  // when the live session becomes stale (end + 3 h), so the button goes back to
+  // "Set session end". The delay is capped at the setTimeout maximum; an early fire
+  // bumps sessionTick, which re-arms the effect.
+  useEffect(() => {
+    const s = liveSession(state.session, Date.now());
+    if (!s) return undefined;
+    const ms = Math.max(0, Math.min(2147483647, s.end + SESSION_STALE_MS - Date.now() + 1000));
+    const t = setTimeout(() => setSessionTick((n) => n + 1), ms);
+    return () => clearTimeout(t);
+  }, [state.session, sessionTick]);
+  useEffect(() => { if (state.fullscreen) setSessionDialog(false); }, [state.fullscreen]);
   useEffect(() => {
     if (typeof ResizeObserver === "undefined") return;
     // Web fonts change label widths without resizing the bar: measure again.
@@ -614,6 +635,10 @@ export default function App() {
   const [tocWidth, setTocWidth] = useState(() => { try { const v = parseInt(localStorage.getItem("vela-toc-width")); return v >= 160 && v <= 600 ? v : 270; } catch { return 270; } });
   const tocDragRef = useRef(null);
   const prevSelectedRef = useRef(null);
+  // Editor search focus request (Ctrl+E or "/"): EditorSearch reads the ref when
+  // it mounts (list opened) or when the tick changes (list already open).
+  const searchFocusReq = useRef(false);
+  const [searchFocusTick, setSearchFocusTick] = useState(0);
 
   // Auto-switch tabs on select/deselect
   useEffect(() => {
@@ -623,20 +648,36 @@ export default function App() {
     prevSelectedRef.current = state.selectedId;
   }, [state.selectedId, isMobile]);
 
-  // TOC toggle shortcuts: [ (not while typing) and Ctrl/Cmd+E (editor only —
-  // in fullscreen, PresenterTOC owns Ctrl+E). AltGr arrives as Ctrl+Alt, and
-  // PT/ES/DE layouts need AltGr for "[", so Ctrl+Alt+[ still counts as "[".
+  // TOC shortcuts: [ (not while typing) toggles the list. Ctrl/Cmd+E and "/"
+  // (editor only — in fullscreen, PresenterTOC owns Ctrl+E) open the list if it
+  // is collapsed and focus the search field; Ctrl+E in the field collapses the
+  // list (EditorSearch handles it there, the event does not reach this handler).
+  // AltGr arrives as Ctrl+Alt, and PT/ES/DE layouts need AltGr for "[", so
+  // Ctrl+Alt+[ still counts as "[".
+  const hasSections = state.lanes.some((l) => l.items.length > 0);
   useEffect(() => {
     if (isMobile) return;
     const h = (e) => {
+      // An open modal dialog (ModalBackdrop marks it) owns the keys: the list
+      // and its search field sit under the backdrop, so a key here must not
+      // move focus there or toggle the list. Static selector, no deck value.
+      if (document.querySelector("[data-vela-modal]")) return;
       const typing = ["INPUT","TEXTAREA","SELECT"].includes(e.target.tagName) || e.target.isContentEditable;
       const bracket = e.key === "[" && !e.metaKey && (!e.ctrlKey || e.altKey) && !typing;
       const ctrlE = (e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && (e.key === "e" || e.key === "E") && !state.fullscreen && !typing;
-      if (bracket || ctrlE) { e.preventDefault(); setTocCollapsed((c) => !c); }
+      const slash = e.key === "/" && !e.ctrlKey && !e.metaKey && !e.altKey && !state.fullscreen && !typing && hasSections;
+      if (bracket) { e.preventDefault(); setTocCollapsed((c) => !c); return; }
+      if (ctrlE || slash) {
+        e.preventDefault();
+        if (!hasSections) return; // no list, no field
+        searchFocusReq.current = true;
+        setTocCollapsed(false);
+        setSearchFocusTick((t) => t + 1);
+      }
     };
     window.addEventListener("keydown", h);
     return () => window.removeEventListener("keydown", h);
-  }, [isMobile, state.fullscreen]);
+  }, [isMobile, state.fullscreen, hasSections]);
 
   // Theme toggle shortcut: D
   useEffect(() => {
@@ -723,6 +764,7 @@ export default function App() {
           // that exact shape through the LOAD spread. (v13.26 / v13.27)
           data.lanes = resanitizeLoadedLanes(data.lanes);
           if ("branding" in data) data.branding = resanitizeLoadedBranding(data.branding);
+          resanitizeLoadedSession(data);
           dispatch({ type: "LOAD", payload: data });
           loadedDeck = data;
         } else if (data && data._version === 2) {
@@ -752,6 +794,7 @@ export default function App() {
           // that exact shape through the LOAD spread. (v13.26 / v13.27)
           payload.lanes = resanitizeLoadedLanes(payload.lanes);
           if ("branding" in payload) payload.branding = resanitizeLoadedBranding(payload.branding);
+          resanitizeLoadedSession(payload);
           dispatch({ type: "LOAD", payload });
           loadedDeck = payload;
           // Clean up old distributed keys in background
@@ -768,6 +811,7 @@ export default function App() {
           // that exact shape through the LOAD spread. (v13.26 / v13.27)
           data.lanes = resanitizeLoadedLanes(data.lanes);
           if ("branding" in data) data.branding = resanitizeLoadedBranding(data.branding);
+          resanitizeLoadedSession(data);
           dispatch({ type: "LOAD", payload: data });
           loadedDeck = data;
         }
@@ -892,7 +936,7 @@ export default function App() {
         document.documentElement.dataset.velaDemoRunning === "true") return;
     saveTimer.current = setTimeout(() => flushStorageStateRef.current?.(null), 1500);
     return () => clearTimeout(saveTimer.current);
-  }, [state.lanes, state.chatMessages, state.branding, state.deckTitle, state.guidelines]);
+  }, [state.lanes, state.chatMessages, state.branding, state.deckTitle, state.guidelines, state.session]);
 
   // Sync browser tab title with deck title
   React.useEffect(() => {
@@ -912,6 +956,7 @@ export default function App() {
     const deck = { deckTitle: title, lanes: save.lanes || [] };
     if (save.branding) deck.branding = save.branding;
     if (save.guidelines) deck.guidelines = save.guidelines;
+    if (save.session) deck.session = save.session;
     const blob = new Blob([JSON.stringify(deck, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a"); a.href = url;
@@ -997,6 +1042,18 @@ export default function App() {
   let selectedConcept = null;
   for (const l of state.lanes) { const f = l.items.find((i) => i.id === state.selectedId); if (f) { selectedConcept = f; break; } }
   const total = state.lanes.reduce((s, l) => s + l.items.length, 0);
+  // Open an editor search result: select its section and slide; unfold the
+  // section if it is folded, so the slide row shows when the query is cleared.
+  // All three actions are in NO_HISTORY: no undo step, no deck change. The
+  // matched block's render index goes to SlidePanel (flashBlock), which may
+  // outline that block; -1 = title / notes / section match, no block.
+  const openSearchResult = (row) => {
+    if (Array.isArray(state.collapsedSections) && state.collapsedSections.includes(row.sectionId))
+      dispatch({ type: "SET_SECTION_COLLAPSED", id: row.sectionId, collapsed: false });
+    if (row.sectionId !== state.selectedId) dispatch({ type: "SELECT", id: row.sectionId, slideIndex: row.slideIdx });
+    else dispatch({ type: "SET_SLIDE_INDEX", index: row.slideIdx });
+    if (row.renderIdx >= 0) slideActionsRef.current?.flashBlock?.(row.sectionId, row.slideIdx, row.renderIdx);
+  };
   // Presentation totals exclude hidden slides; "…All" variants include them (for the stats dialog).
   const deckTime = state.lanes.reduce((s, l) => s + l.items.reduce((a, i) => a + sumVisibleDurations(i.slides), 0), 0);
   const deckTimeAll = state.lanes.reduce((s, l) => s + l.items.reduce((a, i) => a + sumDurations(i.slides), 0), 0);
@@ -1124,6 +1181,14 @@ export default function App() {
                   gallery is no longer reachable only from the Overview button below
                   the slide. */}
               <ViewSwitch mode={sa?.viewMode || "editor"} onSet={(m) => sa?.setView?.(m)} disabled={!has} compact={hdrSize < HDR_TOP} />
+              {(() => {
+                // Session end (v13.80): icon only; the state is in title and
+                // aria-label (fmtClock of a sanitized number). A stale session
+                // (end + 3 h) shows as not set.
+                const live = liveSession(state.session, Date.now());
+                const tip = live ? `Session ends ${fmtClock(live.end)} — click to change` : "Set session end";
+                return <button data-testid="session-end-btn" data-live={live ? "1" : "0"} onClick={() => setSessionDialog(true)} disabled={!has} title={tip} aria-label={tip} style={S.btn({ padding: "4px 6px", fontSize: 14, color: live ? T.accent : T.textDim, background: live ? T.accent + "20" : "transparent", borderRadius: 4, opacity: has ? 1 : 0.4, display: "flex", alignItems: "center" })}>{"🕒"}</button>;
+              })()}
               <button data-testid="present-btn" onClick={() => sa?.present?.()} disabled={!has} style={{ display: "flex", alignItems: "center", gap: 5, padding: "5px 14px", background: has ? T.green : T.border, color: has ? "#fff" : T.textDim, border: "none", borderRadius: 6, cursor: has ? "pointer" : "default", opacity: has ? 1 : 0.5, fontFamily: FONT.mono, fontSize: 14, fontWeight: 700 }} title="Present">{"▶"}{hdrLabel(" Present", 2)}</button>
             </>;
           })()}
@@ -1227,7 +1292,9 @@ export default function App() {
               </div>
             </div>
           )}
-          {total > 0 && <ModuleList lanes={state.lanes} selectedId={state.selectedId} slideIndex={state.slideIndex} selectedSlideIndices={state.selectedSlideIndices} collapsedSections={state.collapsedSections} dispatch={dispatch} maxModuleTime={maxModuleTime} guidelines={state.guidelines} reviewMode={state.reviewMode} deckEpoch={state._deckEpoch} />}
+          {total > 0 && <EditorSearch lanes={state.lanes} selectedId={state.selectedId} slideIndex={state.slideIndex} fullscreen={state.fullscreen} isMobile={isMobile} focusReq={searchFocusReq} focusTick={searchFocusTick} onCollapse={() => setTocCollapsed(true)} onOpenResult={openSearchResult}>
+            <ModuleList lanes={state.lanes} selectedId={state.selectedId} slideIndex={state.slideIndex} selectedSlideIndices={state.selectedSlideIndices} collapsedSections={state.collapsedSections} dispatch={dispatch} maxModuleTime={maxModuleTime} guidelines={state.guidelines} reviewMode={state.reviewMode} deckEpoch={state._deckEpoch} />
+          </EditorSearch>}
         </div>}
 
         {/* TOC toggle */}
@@ -1311,6 +1378,10 @@ export default function App() {
       {!isMobile && showShortcuts && <ShortcutHelp onClose={() => setShowShortcuts(false)} />}
       {showChangelog && <ChangelogDialog onClose={() => setShowChangelog(false)} />}
       {showStats && <StatsDialog state={state} onClose={() => setShowStats(false)} />}
+      {sessionDialog && !state.fullscreen && <SessionEndDialog session={liveSession(state.session, Date.now())} stored={!!sanitizeSession(state.session)} lanes={state.lanes}
+        onSet={(s) => { const v = sanitizeSession(s); if (v) dispatch({ type: "SET_SESSION", session: v }); setSessionDialog(false); }}
+        onClear={() => { dispatch({ type: "SET_SESSION", session: null }); setSessionDialog(false); }}
+        onClose={() => setSessionDialog(false)} />}
       {newDeckDialog && <NewDeckDialog onClose={() => setNewDeckDialog(false)} onSubmit={async ({ title, prompt, images }) => {
         // Desktop: allocate a NEW file in the same folder first, so creating a
         // deck never overwrites the one currently open (CR). If allocation FAILS

@@ -121,7 +121,7 @@ function computeSlideLayoutStats(slideEl) {
 }
 
 // ━━━ Virtual Slide ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-function VirtualSlide({ slide, index, total, innerRef, branding, editable, onEdit, mode = "fit-width", onBlockEdit, blockEditing, fontScale, virtualW, virtualH, bordered, reviewMode, itemId, dispatch: externalDispatch, displayIndex, displayTotal, forceEdit, story, storyAnimate, onStoryJump, onStoryZoomOut }) {
+function VirtualSlide({ slide, index, total, innerRef, branding, editable, onEdit, mode = "fit-width", onBlockEdit, blockEditing, fontScale, virtualW, virtualH, bordered, reviewMode, itemId, dispatch: externalDispatch, displayIndex, displayTotal, hideSlideNumber, forceEdit, story, storyAnimate, onStoryJump, onStoryZoomOut, flashBlock = -1 }) {
   const outerRef = useRef(null);
   const isFill = mode === "fill";
 
@@ -198,7 +198,7 @@ function VirtualSlide({ slide, index, total, innerRef, branding, editable, onEdi
         transform: isFullscreen ? `translate(${offset.x}px, ${offset.y}px) scale(${scale})` : `scale(${scale})`,
         transformOrigin: "top left", background: bg, position: "absolute", top: 0, left: 0,
       }}>
-        {slide && <SlideContent key={`${index}-${vw}-${vh}`} slide={slide} index={index} total={total} branding={branding} editable={editable} onEdit={onEdit} presenting={((mode === "fit-viewport" || isFill) && !bordered) && !forceEdit} onBlockEdit={onBlockEdit} blockEditing={blockEditing} fontScale={fontScale} reviewMode={reviewMode} itemId={itemId} dispatch={externalDispatch} displayIndex={displayIndex} displayTotal={displayTotal}
+        {slide && <SlideContent key={`${index}-${vw}-${vh}`} slide={slide} index={index} total={total} branding={branding} editable={editable} onEdit={onEdit} presenting={((mode === "fit-viewport" || isFill) && !bordered) && !forceEdit} onBlockEdit={onBlockEdit} blockEditing={blockEditing} fontScale={fontScale} reviewMode={reviewMode} itemId={itemId} dispatch={externalDispatch} displayIndex={displayIndex} displayTotal={displayTotal} hideSlideNumber={hideSlideNumber} flashBlock={flashBlock}
           story={story} storyAnimate={storyAnimate === undefined ? presentSurface : !!storyAnimate} onStoryJump={onStoryJump} onStoryZoomOut={onStoryZoomOut} presentSurface={presentSurface} />}
       </div>
     </div>
@@ -390,7 +390,280 @@ function getSlideSource(slide, idx) {
 }
 function getSlideTitle(slide, idx) { return getSlideSource(slide, idx).text; }
 
-function PresenterTOC({ slides, slideIndex, onJump, lanes, currentConceptId, dispatch }) {
+// Search text of one slide (shared by Present and the editor): every string in
+// the slide's blocks and in the column areas L / R (nested layouts too), each
+// flagged when it sits in a hidden block. Each entry: { text, hidden, area, block }
+// where area is "blocks" | "L" | "R" and block the TOP-LEVEL index in that area
+// (area null, block -1 for slide.title). Styling, media and id keys are skipped
+// so colours and data URIs never match. The walk only reads: own enumerable keys
+// (Object.keys), prototype-named keys skipped, depth cap 8 (a read walk emits
+// nothing at the cap, so returning there is correct). The text is only compared
+// and rendered as React text children, never as markup or a style/URL value.
+//
+// Key classes (search reads prose only). Every key of SAFE_BLOCK_KEYS is in
+// exactly one of SEARCH_PROSE_KEYS (text written to be read: searched) and
+// PRESENT_SEARCH_SKIP (markup, colours, sizes, enums, icon names, ids, media,
+// flags: never searched); the search-engine suite (SE9) fails on a key in
+// neither set, so a new allowlisted field must get a class. Sub-objects (list
+// items, grid cells, sides, quadrants) keep any key (no allowlist at ingress),
+// so the walk skips by PRESENT_SEARCH_SKIP, which also lists the non-prose item
+// keys the renderers read (iconBg, status, gate, highlight, borderRadius).
+// Ambiguous keys: `alt` (not on the slide, but reader-facing text: searched);
+// `name` (the icon block's icon name: skipped); `lang` (code language: skipped).
+const SEARCH_PROSE_KEYS = new Set([
+  "text", "content", "title", "label", "value", "caption", "author", "alt", "items", "quadrants", "headers", "rows",
+  "gateLabel", "loopLabel", "centerLabel", "centerSub", "annotation", "leftLabel", "rightLabel",
+  "dividerLabel", "xLeft", "xRight", "yTop", "yBottom",
+  // sub-object prose keys: flow/steps sublabel, timeline date, funnel drop, grid cell blocks
+  "sublabel", "date", "drop", "blocks",
+]);
+const PRESENT_SEARCH_SKIP = new Set([
+  "type", "hidden", "style", "link", "markup", "src", "fit", "lang", "copy", "name", "cols",
+  "size", "align", "weight", "bold", "italic", "titleSize", "textSize", "labelSize", "sublabelSize", "captionSize",
+  "color", "bg", "border", "borderColor", "titleColor", "textColor", "labelColor", "sublabelColor", "captionColor",
+  "dateColor", "dotColor", "lineColor", "numberColor", "trackColor", "cellColor", "headerBg", "headerColor",
+  "arrowColor", "gateColor", "loopColor", "annotationColor", "iconColor", "iconBg",
+  "gap", "padding", "spacing", "maxWidth", "maxHeight", "height", "h", "rounded", "shadow", "bordered", "compact", "striped", "hideDivider",
+  "icon", "iconShape", "circle", "strokeWidth", "direction", "connectorStyle", "activeStep", "gateIcon", "loop", "loopStyle",
+  "showValue", "showIcons", "showLabels", "leftIcon", "rightIcon", "variant", "reveal",
+  // sub-object and legacy non-prose keys
+  "id", "image", "images", "svg", "bgGradient", "accent", "href", "url", "layout", "font", "comments",
+  "status", "gate", "highlight", "borderRadius",
+]);
+// Slide keys: the walk reads only title, blocks / L / R and (editor) notes.
+// Skipped: theme, layout, timing and flags; the legacy pre-block text fields
+// (subtitle, quote, author, bullets: not rendered on the slide); speakerNotes
+// and studyNotes (not in the search scope).
+const SEARCH_SLIDE_KEYS = {
+  prose: new Set(["title", "blocks", "L", "R", "notes"]),
+  skip: new Set(["layout", "subtitle", "quote", "author", "bullets", "bg", "bgGradient", "bgImage", "color", "mutedColor", "accent",
+    "align", "verticalAlign", "padding", "gap", "splitGap", "contentFlex", "imageFlex", "imageCols",
+    "duration", "timeLock", "hidden", "reviewed", "story", "speakerNotes", "studyNotes", "comments", "image"]),
+};
+function slideSearchTexts(slide) {
+  const out = [];
+  if (typeof slide?.title === "string" && slide.title) out.push({ text: slide.title, hidden: false, area: null, block: -1 });
+  const walk = (v, hidden, depth, area, block) => {
+    if (v == null || depth > 8) return;
+    if (typeof v === "string") { if (v && !v.startsWith("data:")) out.push({ text: v, hidden, area, block }); return; }
+    if (Array.isArray(v)) { for (const x of v) walk(x, hidden, depth + 1, area, block); return; }
+    if (typeof v === "object") {
+      const h = hidden || v.hidden === true;
+      for (const k of Object.keys(v)) {
+        if (PRESENT_SEARCH_SKIP.has(k) || k === "__proto__" || k === "constructor" || k === "prototype") continue;
+        walk(v[k], h, depth + 1, area, block);
+      }
+    }
+  };
+  // Depth 1 for each top-level block: the same depth the old walk over the
+  // blocks array gave its items, so the depth cap does not change.
+  for (const area of ["blocks", "L", "R"]) {
+    const arr = Array.isArray(slide?.[area]) ? slide[area] : [];
+    arr.forEach((b, i) => walk(b, false, 1, area, i));
+  }
+  return out;
+}
+// Render index of a matched top-level block: the `i` that the editor canvas
+// (SlideContent → renderBlockItem) gives it. blocks → i; column L → after the
+// blocks; column R → after blocks + L. Column areas render only on a "cols"
+// slide; else (or when the index is not exact) -1 = no block.
+function searchRenderIndex(slide, area, idx) {
+  if (typeof idx !== "number" || idx < 0) return -1;
+  const nB = Array.isArray(slide?.blocks) ? slide.blocks.length : 0;
+  if (area === "blocks") return idx;
+  const isCols = slide?.layout === "cols" && (Array.isArray(slide.L) || Array.isArray(slide.R));
+  if (!isCols || (area !== "L" && area !== "R")) return -1;
+  const nL = Array.isArray(slide.L) ? slide.L.length : 0;
+  return area === "L" ? nB + idx : nB + nL + idx;
+}
+// Snippet around the first hit (indexOf on lower-case text; no regex from the
+// query). A UTF-16 surrogate pair (emoji) is never cut at either end.
+// toLowerCase() can change the length (U+0130 "İ" -> 2 units): then an offset
+// in the lower-case text is not an offset in `flat`. In that case map the hit
+// [at, at + q.length) back to `flat` one code point at a time (per code point
+// the lower-case length is the same as in the whole string), start rounded
+// down and end rounded up to a code-point boundary, so the cut holds the hit.
+function searchSnippet(text, q) {
+  const flat = text.replace(/\s+/g, " ");
+  const lower = flat.toLowerCase();
+  const at = lower.indexOf(q);
+  let hitFrom = at, hitTo = at + q.length;
+  if (at >= 0 && lower.length !== flat.length) {
+    let o = 0, lo = 0;
+    hitFrom = -1;
+    while (o < flat.length) {
+      const ch = String.fromCodePoint(flat.codePointAt(o));
+      const n = ch.toLowerCase().length;
+      if (hitFrom < 0 && lo + n > at) hitFrom = o;
+      lo += n; o += ch.length;
+      if (lo >= at + q.length) break;
+    }
+    if (hitFrom < 0) hitFrom = o;
+    hitTo = o;
+  }
+  const low = (i) => { const c = flat.charCodeAt(i); return c >= 0xDC00 && c <= 0xDFFF; };
+  let from = Math.max(0, hitFrom - 24), to = Math.min(flat.length, hitTo + 36);
+  if (from > 0 && low(from)) from--;
+  if (to < flat.length && low(to)) to++;
+  return (from > 0 ? "…" : "") + flat.slice(from, to) + (to < flat.length ? "…" : "");
+}
+// One slide against a trimmed lower-case query: title first, then visible block
+// text, then hidden block text, then (opts.notes, editor only) slide.notes.
+// Returns null on no match, else { title, snippet, kind, area, block, hiddenBlock }.
+// kind: "title" | "block" | "hidden-block" | "notes". A title match carries no
+// block (no outline).
+function matchSlide(slide, idx, q, opts) {
+  const title = getSlideTitle(slide, idx);
+  if (!q || title.toLowerCase().includes(q)) return { title, snippet: null, kind: "title", area: null, block: -1, hiddenBlock: false };
+  const texts = slideSearchTexts(slide);
+  const has = (t) => t.text.toLowerCase().includes(q);
+  const hit = texts.find((t) => !t.hidden && has(t)) || texts.find((t) => t.hidden && has(t));
+  if (hit) return { title, snippet: searchSnippet(hit.text, q), kind: hit.hidden ? "hidden-block" : "block", area: hit.area, block: hit.block, hiddenBlock: hit.hidden };
+  if (opts?.notes && typeof slide?.notes === "string" && slide.notes.toLowerCase().includes(q))
+    return { title, snippet: searchSnippet(slide.notes, q), kind: "notes", area: null, block: -1, hiddenBlock: false };
+  return null;
+}
+// Present scope: no notes.
+function matchPresentSlide(slide, idx, q) { return matchSlide(slide, idx, q, null); }
+// Flat result list over all lanes (editor). One row per matching slide, in tree
+// order (lane order, then item `order`, as ModuleList). opts.notes: also search
+// slide notes. opts.sections: a section whose NAME matches with no matching
+// slide gives one row for its first slide (kind "section"); an empty section
+// gives no row. renderIdx: canvas render index of the matched block, or -1.
+function searchDeck(lanes, query, opts) {
+  const q = String(query || "").toLowerCase().trim();
+  if (!q) return [];
+  const rows = [];
+  for (const lane of (Array.isArray(lanes) ? lanes : [])) {
+    const items = [...(Array.isArray(lane?.items) ? lane.items : [])].sort((a, b) => (a.order ?? 999) - (b.order ?? 999));
+    for (const item of items) {
+      const slides = Array.isArray(item?.slides) ? item.slides : [];
+      const before = rows.length;
+      slides.forEach((s, i) => {
+        const m = matchSlide(s, i, q, opts);
+        if (m) rows.push({ key: item.id + ":" + i, sectionId: item.id, sectionTitle: item.title, laneId: lane.id, slideIdx: i,
+          title: m.title, snippet: m.snippet, kind: m.kind, block: m.block, renderIdx: m.area ? searchRenderIndex(s, m.area, m.block) : -1,
+          hiddenSlide: !!s?.hidden, collapsedLane: !!lane.collapsed });
+      });
+      if (opts?.sections && rows.length === before && slides.length && typeof item.title === "string" && item.title.toLowerCase().includes(q))
+        rows.push({ key: item.id + ":0", sectionId: item.id, sectionTitle: item.title, laneId: lane.id, slideIdx: 0,
+          title: getSlideTitle(slides[0], 0), snippet: searchSnippet(item.title, q), kind: "section", block: -1, renderIdx: -1,
+          hiddenSlide: !!slides[0]?.hidden, collapsedLane: !!lane.collapsed });
+    }
+  }
+  return rows;
+}
+// Split text into [{ t, hit }] at each case-insensitive occurrence of q (already
+// lower-case + trimmed). indexOf only, never a RegExp from the query.
+// Non-overlapping, left to right, at most maxHits hits. toLowerCase() can change
+// the length of a string (for example U+0130): then lower-case offsets do not
+// map to the original, so that string gets no highlight (the match still
+// counts). A hit that would cut a surrogate pair is not highlighted.
+function splitHighlight(text, q, maxHits = 50) {
+  const s = typeof text === "string" ? text : "";
+  if (!q || typeof q !== "string" || !s) return [{ t: s, hit: false }];
+  const lower = s.toLowerCase();
+  if (lower.length !== s.length) return [{ t: s, hit: false }];
+  const hi = (i) => { const c = s.charCodeAt(i); return c >= 0xD800 && c <= 0xDBFF; };
+  const lo = (i) => { const c = s.charCodeAt(i); return c >= 0xDC00 && c <= 0xDFFF; };
+  const out = [];
+  let pos = 0, from = 0, n = 0;
+  while (n < maxHits) {
+    const at = lower.indexOf(q, from);
+    if (at < 0) break;
+    const end = at + q.length;
+    if ((at > 0 && lo(at) && hi(at - 1)) || (end < s.length && lo(end) && hi(end - 1))) { from = at + 1; continue; }
+    if (at > pos) out.push({ t: s.slice(pos, at), hit: false });
+    out.push({ t: s.slice(at, end), hit: true });
+    pos = from = end; n++;
+  }
+  if (pos < s.length || !out.length) out.push({ t: s.slice(pos), hit: false });
+  return out;
+}
+// Highlighted text: React text children + a <span> with a static, code-authored
+// style (no deck value in any style). Min 13 px for the hit.
+function HighlightText({ text, q }) {
+  return <>{splitHighlight(text, q).map((p, i) => p.hit
+    ? <span key={i} data-testid="search-hit" style={{ background: T.amber + "55", color: "inherit", borderRadius: 2, fontSize: "max(13px, 1em)" }}>{p.t}</span>
+    : <React.Fragment key={i}>{p.t}</React.Fragment>)}</>;
+}
+// Keyboard selection over a flat result list. Up/Down stop at the ends (no wrap)
+// and act only when there are results (else the caret moves as usual). The
+// selection resets to the first result when resetKey (the query) changes.
+function useSearchNav(count, resetKey, { onOpen, onEscape }) {
+  const [sel, setSel] = useState(0);
+  useEffect(() => { setSel(0); }, [resetKey]);
+  const selRef = useRef(null); // DOM node of the selected row
+  useEffect(() => { selRef.current?.scrollIntoView?.({ block: "nearest" }); }, [sel, resetKey]);
+  const cur = Math.min(sel, Math.max(0, count - 1));
+  const onKey = (e) => { // from the input's onKeyDown; true when handled
+    if ((e.key === "ArrowDown" || e.key === "ArrowUp") && count > 0) {
+      e.preventDefault();
+      setSel(e.key === "ArrowDown" ? Math.min(count - 1, cur + 1) : Math.max(0, cur - 1));
+      return true;
+    }
+    if (e.key === "Enter") { e.preventDefault(); if (count > 0) onOpen(cur); return true; }
+    if (e.key === "Escape") { e.preventDefault(); onEscape(); return true; }
+    return false;
+  };
+  return { sel: cur, setSel, onKey, selRef };
+}
+// One search / TOC result row (PresenterTOC; the editor search reuses it).
+// selected = keyboard selection (accent outline, aria-selected); active = the
+// current slide (accent tint + left bar). The two looks differ on purpose.
+// size "present" keeps the Present panel sizes; "editor" uses 13 px text.
+function SearchResultRow({ title, snippet, kind, hiddenBlock, hiddenSlide, q, selected, active, dim, muted, num, onClick, rowRef, testid, size = "present" }) {
+  const ed = size === "editor";
+  const badge = (label, color, id) => <span data-testid={id} style={{ fontFamily: FONT.mono, fontSize: ed ? 13 : 8, fontWeight: 700, color, border: `1px solid ${color}60`, borderRadius: 3, padding: "0 3px", marginRight: 5, letterSpacing: "0.04em" }}>{label}</span>;
+  return (
+    <div
+      ref={rowRef}
+      data-testid={testid}
+      data-search-row={q ? "1" : undefined}
+      role={q ? "option" : undefined}
+      aria-selected={q ? !!selected : undefined}
+      onClick={onClick}
+      style={{
+        padding: "6px 16px 6px 24px", cursor: "pointer",
+        display: "flex", alignItems: "baseline", gap: 10,
+        background: active ? `${T.accent}18` : "transparent",
+        borderLeft: active ? `3px solid ${T.accent}` : "3px solid transparent",
+        outline: selected ? `2px solid ${T.accent}` : "none", outlineOffset: -2,
+        transition: "background 0.15s", opacity: dim && !active ? 0.6 : 1,
+      }}
+      onMouseEnter={(e) => { if (!active) e.currentTarget.style.background = T.isDark ? "rgba(255,255,255,0.04)" : "rgba(0,0,0,0.04)"; }}
+      onMouseLeave={(e) => { if (!active) e.currentTarget.style.background = "transparent"; }}
+    >
+      <span style={{ fontFamily: FONT.mono, fontSize: ed ? 13 : 9, color: active ? T.accent : T.textDim, minWidth: 14, textAlign: "right", flexShrink: 0 }}>{num}</span>
+      <span style={{ display: "flex", flexDirection: "column", minWidth: 0, gap: 2 }}>
+        <span style={{
+          fontFamily: FONT.display, fontSize: 13, fontWeight: active ? 600 : 400,
+          color: active ? T.text : muted ? T.textMuted : T.textDim,
+          lineHeight: 1.4, overflow: "hidden", textOverflow: "ellipsis",
+          display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical",
+        }}>{hiddenSlide && badge("HIDDEN", T.amber, "search-hidden-slide")}<HighlightText text={title} q={q} /></span>
+        {snippet && <span data-testid="toc-snippet" style={{ fontFamily: FONT.body, fontSize: ed ? 13 : 11, color: T.textDim, lineHeight: 1.35, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {hiddenBlock && badge("HIDDEN BLOCK", T.amber, "toc-hidden-block")}
+          {kind === "notes" && badge("NOTES", T.textMuted, "search-notes-badge")}
+          {kind === "section" && badge("SECTION", T.textMuted, "search-section-badge")}
+          <HighlightText text={snippet} q={q} />
+        </span>}
+      </span>
+    </div>
+  );
+}
+// "Module · slide title" for a detour's return point (Present index → raw slide).
+function detourReturnTitle(lanes, ret) {
+  for (const l of (lanes || [])) {
+    const it = (l.items || []).find((i) => i.id === ret.id);
+    if (!it) continue;
+    const raw = ret.index - (it.presentCard ? 1 : 0);
+    return raw < 0 ? it.title : `${it.title} · ${getSlideTitle((it.slides || [])[raw], raw)}`;
+  }
+  return "";
+}
+
+function PresenterTOC({ slides, slideIndex, onJump, lanes, currentConceptId, dispatch, onDetour }) {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [pinned, setPinned] = useState(false);
@@ -448,11 +721,31 @@ function PresenterTOC({ slides, slideIndex, onJump, lanes, currentConceptId, dis
         // Hidden slides are not part of the presentation, so keep them out of the
         // presenter TOC/search entirely (but preserve their real slide index).
         const itemSlides = (item.slides || []).map((s, i) => {
-          const title = getSlideTitle(s, i);
-          return { title, slideIdx: i, hidden: !!s.hidden, visible: !s.hidden && (!q || title.toLowerCase().includes(q)) };
-        }).filter((s) => !s.hidden);
+          if (s.hidden) return null;
+          const m = matchPresentSlide(s, i, q);
+          return { title: m ? m.title : getSlideTitle(s, i), snippet: m?.snippet, hiddenBlock: !!m?.hiddenBlock, slideIdx: i, visible: !!m };
+        }).filter(Boolean);
         if (q && !itemSlides.some((s) => s.visible) && !item.title.toLowerCase().includes(q)) continue;
         groups.push({ id: item.id, title: item.title, laneTitle: lane.title, slides: itemSlides, isCurrent: item.id === currentConceptId });
+      }
+    }
+    return groups;
+  }, [lanes, search, currentConceptId]);
+  // Detour results: while a query is typed, matching hidden slides and slides
+  // in collapsed lanes, listed after the presentation's own matches.
+  const detourGroups = useMemo(() => {
+    const q = search.toLowerCase().trim();
+    if (!q) return [];
+    const groups = [];
+    for (const lane of (lanes || [])) {
+      for (const item of lane.items) {
+        const hits = [];
+        (item.slides || []).forEach((s, i) => {
+          if (!s.hidden && !lane.collapsed) return;
+          const m = matchPresentSlide(s, i, q);
+          if (m) hits.push({ ...m, slideIdx: i, visible: true });
+        });
+        if (hits.length) groups.push({ id: item.id, title: item.title, slides: hits, isCurrent: item.id === currentConceptId });
       }
     }
     return groups;
@@ -482,10 +775,12 @@ function PresenterTOC({ slides, slideIndex, onJump, lanes, currentConceptId, dis
   const activeRef = useRef(null);
   useEffect(() => { if (open) requestAnimationFrame(() => { activeRef.current?.scrollIntoView({ block: "nearest", behavior: "smooth" }); }); }, [slideIndex, open, currentConceptId]);
 
-  const handleJump = (moduleId, slideIdx) => {
+  const handleJump = (moduleId, slideIdx, detour = false) => {
     // Add the target module's title-card offset so the jump lands on the intended
     // slide (not one early) in presentCard modules.
     const idx = slideIdx + (presentCardOf(moduleId) ? 1 : 0);
+    // A detour jump records where to return; a normal jump ends any detour.
+    onDetour?.(detour, { id: moduleId, index: idx });
     if (moduleId === currentConceptId) {
       onJump(idx);
     } else {
@@ -498,12 +793,37 @@ function PresenterTOC({ slides, slideIndex, onJump, lanes, currentConceptId, dis
     setOpen(false);
   };
 
-  // Enter in the search box jumps to the first slide that matches (CR: theme jump).
-  const jumpFirstMatch = () => {
-    for (const g of grouped) {
-      const first = g.slides.find((s) => s.visible);
-      if (first) { handleJump(g.id, first.slideIdx); return; }
-    }
+  // Search results in one keyboard order: the presentation's own matches, then
+  // the detour matches (hidden slides / collapsed lanes). Enter opens the
+  // selected one (the first by default, CR: theme jump); a detour row starts the
+  // detour as a click does.
+  const q = search.toLowerCase().trim();
+  const flat = q ? [
+    ...grouped.flatMap((g) => g.slides.filter((s) => s.visible).map((s) => ({ g, s, detour: false }))),
+    ...detourGroups.flatMap((g) => g.slides.map((s) => ({ g, s, detour: true }))),
+  ] : [];
+  const nav = useSearchNav(flat.length, q, {
+    onOpen: (i) => handleJump(flat[i].g.id, flat[i].s.slideIdx, flat[i].detour),
+    onEscape: () => { if (search) setSearch(""); else { setOpen(false); setPinned(false); } },
+  });
+  const selItem = flat[nav.sel];
+
+  const renderRow = (group, s, detour) => {
+    const { title, slideIdx, visible, snippet, hiddenBlock } = s;
+    if (!visible) return null;
+    const active = group.isCurrent && slideIdx === slideIndex - currentOffset;
+    const selected = !!selItem && selItem.g === group && selItem.s === s;
+    return (
+      <SearchResultRow
+        key={slideIdx}
+        rowRef={(el) => { if (active) activeRef.current = el; if (selected) nav.selRef.current = el; }}
+        testid={detour ? "toc-detour-row" : undefined}
+        onClick={() => handleJump(group.id, slideIdx, detour)}
+        title={title} snippet={snippet} hiddenBlock={hiddenBlock} q={q}
+        selected={selected} active={active} dim={detour} muted={group.isCurrent}
+        num={detour ? "🙈" : slideIdx + 1}
+      />
+    );
   };
 
   return (
@@ -542,8 +862,7 @@ function PresenterTOC({ slides, slideIndex, onJump, lanes, currentConceptId, dis
               // Ctrl/Cmd+E must still bubble to the global toggle so it closes the pane.
               if ((e.ctrlKey || e.metaKey) && (e.key === "e" || e.key === "E")) return;
               e.stopPropagation();
-              if (e.key === "Enter") { e.preventDefault(); jumpFirstMatch(); }
-              if (e.key === "Escape") { if (search) setSearch(""); else { setOpen(false); setPinned(false); } }
+              nav.onKey(e);
             }}
             placeholder="Search slides… (Enter jumps)"
             style={{
@@ -553,9 +872,13 @@ function PresenterTOC({ slides, slideIndex, onJump, lanes, currentConceptId, dis
             }}
           />
         </div>
+        {q && <div data-testid="search-count" style={{ display: "flex", justifyContent: "space-between", padding: "0 14px 6px", fontFamily: FONT.mono, fontSize: 13, color: T.textDim }}>
+          <span data-testid="search-count-pos">{flat.length ? nav.sel + 1 : 0} / {flat.length}</span>
+          <span data-testid="search-count-total">{flat.length} {flat.length === 1 ? "slide" : "slides"}</span>
+        </div>}
 
         {/* Grouped slide list */}
-        <div data-scroll-container style={{ flex: 1, overflowY: "auto", padding: "4px 0" }}>
+        <div data-scroll-container role={q ? "listbox" : undefined} aria-label={q ? "Search results" : undefined} style={{ flex: 1, overflowY: "auto", padding: "4px 0" }}>
           {grouped.map((group) => (
             <div key={group.id}>
               {/* Module header */}
@@ -571,38 +894,24 @@ function PresenterTOC({ slides, slideIndex, onJump, lanes, currentConceptId, dis
                 <span style={{ fontFamily: FONT.mono, fontSize: 9, color: T.textDim }}>{group.slides.length}</span>
               </div>
               {/* Slides */}
-              {group.slides.map(({ title, slideIdx, visible }) => {
-                if (!visible) return null;
-                const active = group.isCurrent && slideIdx === slideIndex - currentOffset;
-                return (
-                  <div
-                    key={slideIdx}
-                    ref={active ? activeRef : null}
-                    onClick={() => handleJump(group.id, slideIdx)}
-                    style={{
-                      padding: "6px 16px 6px 24px", cursor: "pointer",
-                      display: "flex", alignItems: "baseline", gap: 10,
-                      background: active ? `${T.accent}18` : "transparent",
-                      borderLeft: active ? `3px solid ${T.accent}` : "3px solid transparent",
-                      transition: "background 0.15s",
-                    }}
-                    onMouseEnter={(e) => { if (!active) e.currentTarget.style.background = T.isDark ? "rgba(255,255,255,0.04)" : "rgba(0,0,0,0.04)"; }}
-                    onMouseLeave={(e) => { if (!active) e.currentTarget.style.background = "transparent"; }}
-                  >
-                    <span style={{ fontFamily: FONT.mono, fontSize: 9, color: active ? T.accent : T.textDim, minWidth: 14, textAlign: "right", flexShrink: 0 }}>{slideIdx + 1}</span>
-                    <span style={{
-                      fontFamily: FONT.display, fontSize: 13, fontWeight: active ? 600 : 400,
-                      color: active ? T.text : group.isCurrent ? T.textMuted : T.textDim,
-                      lineHeight: 1.4, overflow: "hidden", textOverflow: "ellipsis",
-                      display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical",
-                    }}>{title}</span>
-                  </div>
-                );
-              })}
+              {group.slides.map((s) => renderRow(group, s, false))}
             </div>
           ))}
-          {grouped.length === 0 && search && (
-            <div style={{ padding: "20px 16px", fontFamily: FONT.body, fontSize: 13, color: T.textDim, textAlign: "center" }}>No matches</div>
+          {detourGroups.length > 0 && (
+            <div data-testid="toc-detour-section" style={{ marginTop: 6, borderTop: `1px dashed ${T.border}` }}>
+              <div style={{ padding: "8px 16px 2px", display: "flex", alignItems: "center", gap: 6, fontFamily: FONT.mono, fontSize: 9, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: T.textDim }}>
+                🙈 Hidden · detour
+              </div>
+              {detourGroups.map((group) => (
+                <div key={group.id}>
+                  <div style={{ padding: "6px 16px 2px", fontFamily: FONT.mono, fontSize: 9, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: T.textDim, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{group.title}</div>
+                  {group.slides.map((s) => renderRow(group, s, true))}
+                </div>
+              ))}
+            </div>
+          )}
+          {grouped.length === 0 && detourGroups.length === 0 && search && (
+            <div data-testid="search-no-matches" style={{ padding: "20px 16px", fontFamily: FONT.body, fontSize: 13, color: T.textDim, textAlign: "center" }}>No matches</div>
           )}
         </div>
 
@@ -698,7 +1007,67 @@ function fmtElapsed(totalSeconds) {
   const r = s % 60;
   return `${m}:${String(r).padStart(2, "0")}`;
 }
-function PresenterView({ current, next, index, total, duration, elapsed, branding, onClose, currentStory, nextStory }) {
+// Session card (v13.80, layout "C"): NOW clock; with a live session also time
+// left, time bar, pace verdict and pace track. Every value is a number or a
+// code-built string from the pace helpers; colours come from the static
+// SESSION_PACE_COLORS map; widths/lefts are clamped fractions. A label on the
+// pace track uses left:X% + translateX(-X%), so it stays inside the track at
+// 0 % and 100 %. YOU sits above and SHOULD BE below, so they never overlap.
+function PresenterSessionCard({ nowMs, session, pace, estimated, youNum, shouldNum, onEditSession }) {
+  const lab = { display: "block", fontFamily: FONT.mono, fontSize: 13, color: "#94a3b8", letterSpacing: "0.06em" };
+  const clock = <span data-testid="presenter-clock" style={{ display: "block", fontFamily: FONT.mono, fontSize: 56, fontWeight: 700, color: "#fff", lineHeight: 1.05 }}>{fmtClock(nowMs)}</span>;
+  const card = { flexShrink: 0, background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 10 };
+  if (!session || !pace) return (
+    <div data-testid="presenter-session-panel" style={{ ...card, padding: "14px 18px" }}>
+      <span style={lab}>NOW</span>
+      {clock}
+      <button type="button" data-testid="presenter-session-set" onClick={onEditSession} title="Set session end" aria-label="Set session end" style={{ marginTop: 12, width: "100%", padding: "8px 12px", fontFamily: FONT.mono, fontSize: 14, fontWeight: 600, color: "#e2e8f0", background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.2)", borderRadius: 6, cursor: "pointer" }}>{"🕒"} Set session end</button>
+    </div>
+  );
+  const pc = (f) => `${(Math.max(0, Math.min(1, f)) * 100).toFixed(2)}%`;
+  const paceColor = SESSION_PACE_COLORS[pace.paceKey] || SESSION_PACE_COLORS.white;
+  const leftColor = SESSION_PACE_COLORS[pace.timeLeftKey] || SESSION_PACE_COLORS.white;
+  const leftText = `${pace.over ? "+" : ""}${fmtCountdown(pace.timeLeftSec)}`;
+  // Pace track: same geometry as the fullscreen edge bar (sessionBarGeom).
+  const geom = sessionBarGeom(pace);
+  const barColor = SESSION_PACE_COLORS[geom.key];
+  const you = `${geom.you}%`, should = `${geom.should}%`;
+  const tag = (frac, extra) => ({ position: "absolute", left: frac, transform: `translateX(-${frac})`, whiteSpace: "nowrap", fontFamily: FONT.mono, fontSize: 13, fontWeight: 700, ...extra });
+  return (
+    <div data-testid="presenter-session-panel" style={card}>
+      <button type="button" onClick={onEditSession} title="Edit session end" aria-label={`Session: ${leftText} ${pace.over ? "over" : "left"}, ${pace.verdict}. Edit session end`}
+        style={{ display: "block", width: "100%", textAlign: "left", padding: "14px 18px", background: "none", border: "none", color: "#e2e8f0", cursor: "pointer", font: "inherit" }}>
+        <span style={lab}>NOW</span>
+        {clock}
+        <span style={{ ...lab, marginTop: 10 }}>TIME LEFT</span>
+        <span data-testid="presenter-time-left" style={{ display: "block", fontFamily: FONT.mono, fontSize: 34, fontWeight: 700, color: leftColor, lineHeight: 1.15 }}>{leftText}</span>
+        <span data-testid="presenter-time-bar" style={{ display: "block", position: "relative", height: 8, marginTop: 8, borderRadius: 4, background: "rgba(255,255,255,0.12)", overflow: "hidden" }}>
+          <span style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: pace.over ? "100%" : pc(pace.elapsedFrac), background: leftColor, borderRadius: 4 }} />
+        </span>
+        <span style={{ display: "flex", justifyContent: "space-between", marginTop: 6, fontFamily: FONT.mono, fontSize: 13, color: "#94a3b8" }}>
+          <span>started {fmtClock(session.start)}</span><span>ends {fmtClock(session.end)}</span>
+        </span>
+        <span style={{ ...lab, marginTop: 12 }}>PACE</span>
+        <span data-testid="presenter-pace" style={{ display: "block", fontFamily: FONT.mono, fontSize: 22, fontWeight: 700, color: paceColor, lineHeight: 1.25 }}>{pace.verdict}</span>
+        <span style={{ display: "block", position: "relative", height: 18, marginTop: 8 }}>
+          <span style={tag(you, { top: 0, color: "#fff" })}>YOU · slide {youNum ?? "–"}</span>
+        </span>
+        <span data-testid="presenter-pace-track" style={{ display: "block", position: "relative", height: 8, marginTop: 4, borderRadius: 4, background: "rgba(255,255,255,0.12)" }}>
+          <span style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: `${geom.lo}%`, background: "rgba(255,255,255,0.45)", borderRadius: 4 }} />
+          <span data-testid="presenter-pace-gap" style={{ position: "absolute", top: 0, bottom: 0, left: `min(${geom.lo}%, calc(100% - 6px))`, width: `max(6px, ${geom.gap}%)`, background: barColor, borderRadius: 4 }} />
+          <span data-testid="presenter-pace-should" style={{ position: "absolute", top: -5, bottom: -5, width: 3, left: should, transform: `translateX(-${should})`, background: barColor, borderRadius: 1 }} />
+          <span data-testid="presenter-pace-you" style={{ position: "absolute", top: -5, bottom: -5, width: 3, left: you, transform: `translateX(-${you})`, background: "#fff", borderRadius: 1 }} />
+        </span>
+        <span style={{ display: "block", position: "relative", height: 18, marginTop: 6 }}>
+          <span style={tag(should, { top: 0, color: paceColor })}>SHOULD BE · slide {shouldNum ?? "–"}</span>
+        </span>
+        <span style={{ display: "block", marginTop: 8, fontFamily: FONT.mono, fontSize: 13, color: "#94a3b8", lineHeight: 1.4 }}>slides left need {fmtCountdown(pace.need)} · you have {fmtCountdown(Math.max(0, pace.have))}</span>
+        {estimated > 0 && <span style={{ display: "block", marginTop: 4, fontFamily: FONT.mono, fontSize: 13, color: "#64748b", fontStyle: "italic" }}>~ {estimated} slides estimated (no duration)</span>}
+      </button>
+    </div>
+  );
+}
+function PresenterView({ current, next, index, total, duration, elapsed, branding, onClose, currentStory, nextStory, detourReturn, sessionCard }) {
   const notes = (current?.notes || "").trim();
   // Story slide: the NEXT step can still be on this slide (nextStory set), so
   // NEXT then shows the current slide at that step, labelled "image k/N" or
@@ -713,7 +1082,9 @@ function PresenterView({ current, next, index, total, duration, elapsed, brandin
         <span style={{ fontSize: 16 }}>🗒️</span>
         <span style={{ fontFamily: FONT.mono, fontSize: 13, fontWeight: 700, color: "#60a5fa", letterSpacing: "0.05em" }}>PRESENTER VIEW</span>
         <span data-testid="presenter-timer" style={{ fontFamily: FONT.mono, fontSize: 15, fontWeight: 700, color: "#fff", background: "rgba(255,255,255,0.08)", padding: "3px 12px", borderRadius: 6 }}>⏱ {fmtElapsed(elapsed)}</span>
-        <span style={{ fontFamily: FONT.mono, fontSize: 12, color: "#94a3b8" }}>Slide {index + 1} / {total}</span>
+        {detourReturn != null
+          ? <span data-testid="presenter-detour" style={{ fontFamily: FONT.mono, fontSize: 12, fontWeight: 700, color: "#0a0d14", background: "#f59e0b", padding: "3px 10px", borderRadius: 6, maxWidth: "40%", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>↪ DETOUR · hidden slide · ← → Esc return to {detourReturn}</span>
+          : <span style={{ fontFamily: FONT.mono, fontSize: 12, color: "#94a3b8" }}>Slide {index + 1} / {total}</span>}
         {duration > 0 && <span style={{ fontFamily: FONT.mono, fontSize: 12, color: "#facc15" }}>budget {fmtElapsed(duration)}</span>}
         <span style={{ marginLeft: "auto", fontFamily: FONT.mono, fontSize: 11, color: "#64748b" }}>← → to advance · S or Esc to close</span>
         <button onClick={onClose} title="Close presenter view" style={{ background: "none", border: "none", color: "#94a3b8", cursor: "pointer", fontSize: 18, padding: 4 }}>✕</button>
@@ -724,7 +1095,7 @@ function PresenterView({ current, next, index, total, duration, elapsed, brandin
           <div style={{ flex: 1, minHeight: 0, borderRadius: 10, overflow: "hidden", border: "2px solid #3b82f6", boxShadow: "0 0 24px rgba(59,130,246,0.25)", display: "flex", alignItems: "center" }}>
             {current ? <GalleryThumb slide={current} slideIdx={index} total={total} branding={branding} story={currentStory} /> : <div style={{ width: "100%", padding: 40, textAlign: "center", color: "#64748b" }}>No slide</div>}
           </div>
-          <div data-testid="presenter-notes" style={{ flexShrink: 0, maxHeight: "38%", overflowY: "auto", background: "rgba(255,255,255,0.05)", borderRadius: 8, padding: 14 }}>
+          <div data-testid="presenter-notes" data-scroll-container style={{ flexShrink: 0, maxHeight: "38%", overflowY: "auto", background: "rgba(255,255,255,0.05)", borderRadius: 8, padding: 14 }}>
             <div style={{ fontFamily: FONT.mono, fontSize: 10, color: "#64748b", letterSpacing: "0.05em", marginBottom: 6 }}>📝 SPEAKER NOTES</div>
             {notes ? <div style={{ fontSize: 14, lineHeight: 1.6, whiteSpace: "pre-wrap" }}>{notes}</div> : <div style={{ fontSize: 13, color: "#64748b", fontStyle: "italic" }}>No notes</div>}
             {studyNotes && <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px solid rgba(255,255,255,0.08)" }}>
@@ -733,13 +1104,14 @@ function PresenterView({ current, next, index, total, duration, elapsed, brandin
             </div>}
           </div>
         </div>
-        <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 8, minWidth: 180, maxWidth: 320 }}>
+        <div data-scroll-container style={{ flex: 1, display: "flex", flexDirection: "column", gap: 8, minWidth: 180, maxWidth: 320, minHeight: 0, overflowY: "auto" }}>
           <div style={{ fontFamily: FONT.mono, fontSize: 10, color: "#64748b", letterSpacing: "0.05em" }}>NEXT ▸{nextInSlide && <span data-testid="presenter-next-story"> {nextStoryLabel}</span>}</div>
-          <div data-testid="presenter-next" style={{ borderRadius: 8, overflow: "hidden", border: "1px solid rgba(255,255,255,0.15)", opacity: 0.85 }}>
+          <div data-testid="presenter-next" style={{ flexShrink: 0, borderRadius: 8, overflow: "hidden", border: "1px solid rgba(255,255,255,0.15)", opacity: 0.85 }}>
             {/* One key for both NEXT thumbs: no remount (shimmer) when the story ends. */}
             {nextInSlide ? <GalleryThumb key="next" slide={current} slideIdx={index} total={total} branding={branding} story={nextStory} />
               : next ? <GalleryThumb key="next" slide={next} slideIdx={index + 1} total={total} branding={branding} /> : <div style={{ aspectRatio: "16/9", display: "flex", alignItems: "center", justifyContent: "center", color: "#64748b", fontFamily: FONT.mono, fontSize: 13, background: "rgba(255,255,255,0.03)", borderRadius: 8 }}>End</div>}
           </div>
+          {sessionCard && <PresenterSessionCard {...sessionCard} />}
         </div>
       </div>
     </div>

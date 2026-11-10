@@ -3736,6 +3736,95 @@ def test_study_notes():
         fail("sanitizeStudyNotes not wired into sanitizeSlide")
 
 
+# ━━━ Deck-level session (v13.80) ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# validate.py warns (exit 0) on a session the app would drop (sanitizeSession).
+def test_deck_session():
+    print("\n── Deck Session ──")
+    T0 = 1700000000000
+
+    def deck_with(extra):
+        s = {"title": "S", "bg": "#0f172a", "color": "#e2e8f0", "accent": "#3b82f6",
+             "duration": 60, "blocks": [{"type": "heading", "text": "Hi", "size": "2xl"}]}
+        d = {"deckTitle": "Session Test",
+             "lanes": [{"title": "Main", "items": [{"title": "T", "status": "done", "slides": [s]}]}]}
+        d.update(extra)
+        return d
+
+    def run_validate(deck):
+        tmpdir = tempfile.mkdtemp()
+        try:
+            p = os.path.join(tmpdir, "s.vela")
+            with open(p, "w", encoding="utf-8") as f:
+                json.dump(deck, f)
+            return subprocess.run([sys.executable, os.path.join(SCRIPTS, "validate.py"), p],
+                                  capture_output=True, text=True)
+        finally:
+            shutil.rmtree(tmpdir, ignore_errors=True)
+
+    for extra, label in [
+        ({}, "absent"),
+        ({"session": {"start": T0, "end": T0 + 60000}}, "1 min"),
+        ({"session": {"start": T0, "end": T0 + 86400000}}, "24 h"),
+    ]:
+        r = run_validate(deck_with(extra))
+        if r.returncode == 0 and "session ignored" not in r.stdout:
+            ok(f"validate.py accepts session {label} without warning")
+        else:
+            fail(f"validate.py accepts session {label} without warning", r.stdout + r.stderr)
+
+    # Each warning states the real reason (static text, never deck text).
+    OBJ, TYPE, RANGE = "must be an object", "whole-number epoch milliseconds", "out of range"
+    ORDER, LEN = "end must be after start", "length must be 1 min to 24 h"
+    for val, label, why in [
+        ("x", "string", OBJ), (None, "null", OBJ), ([T0, T0 + 60000], "array", OBJ),
+        ({"start": str(T0), "end": T0 + 60000}, "numeric string", TYPE),
+        ({"start": T0 + 0.5, "end": T0 + 60000}, "float", TYPE),
+        ({"start": True, "end": T0 + 60000}, "bool", TYPE),
+        ({"start": T0, "end": T0}, "end == start", ORDER),
+        ({"start": T0, "end": T0 - 60000}, "end < start", ORDER),
+        ({"start": T0, "end": T0 + 59999}, "< 1 min", LEN),
+        ({"start": T0, "end": T0 + 86400001}, "> 24 h", LEN),
+        ({"start": 946684799999, "end": 946684799999 + 60000}, "before 2000", RANGE),
+        ({"start": 4102444800001 - 60000, "end": 4102444800001}, "after 2100", RANGE),
+        ({"start": 4102444800001, "end": T0}, "start after 2100, end in range", RANGE),
+        ({"start": T0, "end": 946684799999}, "end before 2000", RANGE),
+        ({"start": T0}, "missing end", TYPE),
+    ]:
+        r = run_validate(deck_with({"session": val}))
+        if r.returncode == 0 and "session ignored by the app" in r.stdout and why in r.stdout:
+            ok(f"validate.py warns (exit 0) on session {label}: {why}")
+        else:
+            fail(f"validate.py warns (exit 0) on session {label}", f"rc={r.returncode} " + r.stdout + r.stderr)
+
+    try:
+        with open(TEMPLATE, encoding="utf-8") as f:
+            mono = f.read()
+    except Exception as e:
+        fail("read monolith for session wiring", str(e))
+        return
+    for needle, label in [
+        ("function sanitizeSession(", "sanitizeSession in monolith"),
+        ('case "SET_SESSION"', "SET_SESSION reducer case in monolith"),
+        ("session: sanitizeSession(raw.session)", "validateAndSanitizeDeck always sets session"),
+        ("session: sanitized.session,", "local live update uses sanitized session"),
+        ("...(s.session ? { session: s.session } : {})", "local file payload carries session only when set"),
+    ]:
+        if needle in mono:
+            ok(label)
+        else:
+            fail(label)
+    n = mono.count("if (save.session) deck.session = save.session;")
+    if n == 2:
+        ok(".vela and standalone exports carry session only when set")
+    else:
+        fail(".vela and standalone exports carry session only when set", f"found {n}")
+    n = mono.count("resanitizeLoadedSession(data);") + mono.count("resanitizeLoadedSession(payload);")
+    if n == 3:
+        ok("storage reload re-sanitizes session on all 3 paths")
+    else:
+        fail("storage reload re-sanitizes session on all 3 paths", f"found {n}")
+
+
 # ━━━ Slide Numeric Layout Fields (imageCols & friends) ━━━━━━━━━━━━
 # The app clamps these at deck ingress (SLIDE_NUMERIC_BOUNDS in
 # part-imports.jsx). validate.py must flag the same bad values at author time so
@@ -5118,6 +5207,7 @@ if __name__ == "__main__":
         test_checklist_label_roundtrip()
         test_study_notes()
         test_slide_numeric_fields()
+        test_deck_session()
         test_story_slide_fields()
         test_bg_gradient_validation()
         test_deck_key_allowlist_structure()
