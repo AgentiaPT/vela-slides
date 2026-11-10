@@ -5481,6 +5481,104 @@ uiSuite("editor-search", [
   }},
 ], { setup: _selectFirstModule });
 
+// ── Editor search: amber outline on the matched block (flashBlock) ──
+const _esfFlashed = () => _$$("[data-search-flash='1']");
+// Slide 0 of the first module: heading + two text blocks; slide 1: a "cols"
+// slide with L / R column blocks. Returns { past, s0, s1 } (past = undo mark).
+const _esfPrep = async () => {
+  const past = _esPast();
+  _hooks().injectBlocks([_seH("ESF title zqxfltitle"), { type: "text", text: "plain first" }, { type: "text", text: "second zqxflblk" }]);
+  await _wait(150);
+  const s0 = _pdSel();
+  _key("ArrowRight"); await _wait(150);
+  _hooks().injectBlocks([_seH("ESF cols")], { layout: "cols", L: [{ type: "text", text: "left zqxflleft" }], R: [{ type: "text", text: "right first" }, { type: "text", text: "right zqxflright" }] });
+  await _wait(150);
+  const s1 = _pdSel();
+  if (!s0 || !s1 || s0.itemId !== s1.itemId || s0.slideIdx + 1 !== s1.slideIdx) throw new Error("prep: the first module needs 2+ slides");
+  document.activeElement?.blur?.();
+  return { past, s0, s1 };
+};
+const _esfOpen = async (q, want) => {
+  _type(_esInput(), q); await _wait(120);
+  await _waitFor(() => _esRows().length === 1, 1500).catch(() => { throw new Error(`no single row for ${q}`); });
+  _key("Enter");
+  await _waitFor(() => _pdSame(_pdSel(), want), 1500).catch(() => { throw new Error(`Enter did not open ${q}`); });
+};
+uiSuite("editor-search-flash", [
+  { name: "ESF1: Enter on a block match outlines that block; the outline goes within 2.5 s; no undo step, no deck change", fn: async () => {
+    let p = null;
+    try {
+      await _esStart();
+      p = await _esfPrep();
+      const mark = _esPast(), fut = _hooks().getHistoryCounts().future;
+      const epoch0 = _hooks().getDeckStateForTest().epoch;
+      _key("ArrowLeft"); await _wait(150);
+      const slide0 = JSON.stringify(_hooks().getCurrentSlideForTest());
+      _key("ArrowRight"); await _wait(150); document.activeElement?.blur?.();
+      await _esfOpen("zqxflblk", p.s0);
+      const f = await _waitFor(() => _esfFlashed().length === 1 && _esfFlashed()[0], 400).catch(() => { throw new Error("no outline within 400 ms"); });
+      if (!(f.textContent || "").includes("second zqxflblk")) throw new Error("outline on the wrong block: " + f.textContent);
+      if (f.getAttribute("data-block-type") !== "text") throw new Error("outline not on a top-level block wrapper");
+      const ov = f.querySelector("[data-testid='search-flash']");
+      if (!ov || getComputedStyle(ov).pointerEvents !== "none") throw new Error("outline overlay missing or blocks clicks");
+      await _waitFor(() => _esfFlashed().length === 0 && !_$("[data-testid='search-flash']"), 2500).catch(() => { throw new Error("outline still shown after 2.5 s"); });
+      if (_esPast() !== mark || _hooks().getHistoryCounts().future !== fut) throw new Error("the flash made an undo step");
+      if (JSON.stringify(_hooks().getCurrentSlideForTest()) !== slide0) throw new Error("the flash changed the slide");
+      if (_hooks().getDeckStateForTest().epoch !== epoch0) throw new Error("the flash changed the deck epoch");
+    } finally { await _esEnd(p && p.past); }
+  }},
+  { name: "ESF2: a title match gives no outline", fn: async () => {
+    let p = null;
+    try {
+      await _esStart();
+      p = await _esfPrep();
+      await _esfOpen("zqxfltitle", p.s0);
+      await _wait(400);
+      if (_esfFlashed().length || _$("[data-testid='search-flash']")) throw new Error("a title match outlined a block");
+    } finally { await _esEnd(p && p.past); }
+  }},
+  { name: "ESF3: a right-column match on a cols slide outlines that column block", fn: async () => {
+    let p = null;
+    try {
+      await _esStart();
+      p = await _esfPrep();
+      _key("ArrowLeft"); await _wait(150); document.activeElement?.blur?.();
+      await _esfOpen("zqxflright", p.s1);
+      const f = await _waitFor(() => _esfFlashed().length === 1 && _esfFlashed()[0], 400).catch(() => { throw new Error("no outline on the column block"); });
+      if (!(f.textContent || "").includes("right zqxflright")) throw new Error("outline on the wrong block: " + f.textContent);
+      if (!f.closest("[data-cols-side='right']")) throw new Error("outlined block is not in the right column");
+    } finally { await _esEnd(p && p.past); }
+  }},
+  { name: "ESF4: a second result within 1.5 s moves the outline; the old one clears", fn: async () => {
+    let p = null;
+    try {
+      await _esStart();
+      p = await _esfPrep();
+      await _esfOpen("zqxflblk", p.s0);
+      await _waitFor(() => _esfFlashed().length === 1, 400).catch(() => { throw new Error("no first outline"); });
+      await _esfOpen("zqxflleft", p.s1);
+      const f = await _waitFor(() => _esfFlashed().length === 1 && (_esfFlashed()[0].textContent || "").includes("left zqxflleft") && _esfFlashed()[0], 400).catch(() => { throw new Error("outline did not move: " + _esfFlashed().map((e) => e.textContent).join(" | ")); });
+      if (!f.closest("[data-cols-side='left']")) throw new Error("second outline not in the left column");
+      if (_$$("[data-testid='search-flash']").length !== 1) throw new Error("more than one outline");
+      await _waitFor(() => _esfFlashed().length === 0, 2500).catch(() => { throw new Error("second outline did not clear"); });
+    } finally { await _esEnd(p && p.past); }
+  }},
+  { name: "ESF5: entering Present clears the outline; it does not come back on exit", fn: async () => {
+    let p = null;
+    try {
+      await _esStart();
+      p = await _esfPrep();
+      await _esfOpen("zqxflblk", p.s0);
+      await _waitFor(() => _esfFlashed().length === 1, 400).catch(() => { throw new Error("no outline"); });
+      await _pdEnterPresent();
+      if (_esfFlashed().length || _$("[data-testid='search-flash']")) throw new Error("outline shown in Present");
+      await _exitFullscreen();
+      await _wait(100);
+      if (_esfFlashed().length || _$("[data-testid='search-flash']")) throw new Error("outline came back after Present");
+    } finally { await _esEnd(p && p.past); }
+  }},
+], { setup: _selectFirstModule });
+
 // ━━━ Session end (v13.80): sanitizer, pace math, deck ingress ━━━━━━━
 const _SS_T0 = 1700000000000;
 const _ssEq = (got, want, what) => { const g = JSON.stringify(got), w = JSON.stringify(want); if (g !== w) throw new Error(`${what}: got ${g}, want ${w}`); };
@@ -6035,7 +6133,7 @@ uiSuite("session-editor-dialog", [
       _sesUiSet(_$("[data-testid='session-end-input']"), "10:15");
       await _wait(80);
       if (_$("[data-testid='session-minutes-input']").value !== "75") throw new Error("minutes not 75: " + _$("[data-testid='session-minutes-input']").value);
-      if (!/ends 10:15 \(75 min\)/.test(_$("[data-testid='session-summary']").textContent)) throw new Error("summary: " + _$("[data-testid='session-summary']").textContent);
+      if (!/^09:00 → 10:15 \(75 min\) · /.test(_$("[data-testid='session-summary']").textContent)) throw new Error("summary: " + _$("[data-testid='session-summary']").textContent);
       if (_$("[data-testid='session-set']").disabled) throw new Error("Set disabled for a valid End");
       _click("[data-testid='session-set']");
       await _waitFor(() => !_$("[data-testid='session-dialog']"), 1500);
@@ -6093,6 +6191,68 @@ uiSuite("session-editor-dialog", [
       _click("[data-testid='session-cancel']");
       await _waitFor(() => !_$("[data-testid='session-dialog']"), 1500);
       if (hooks.getSessionForTest() !== null) throw new Error("Cancel stored a session");
+    } finally { await _sesUiLeave(); }
+  }},
+  // Summary wording: "<start> → <end> (<N> min) · <state>". The state comes
+  // from the resolved times against now (the same rule the dialog uses), so a
+  // run near midnight (day roll) checks the state the dialog really has.
+  { name: "SD-W1: summary before the start says 'starts in'", fn: async () => {
+    try {
+      _sesUiNeedHooks().setSessionForTest(null);
+      await _editorSetup();
+      await _sesTbOpen();
+      const t = Date.now(), st = fmtClock(t + 3600000), en = fmtClock(t + 7200000);
+      _sesUiSet(_$("[data-testid='session-start-input']"), st);
+      _sesUiSet(_$("[data-testid='session-end-input']"), en);
+      await _wait(80);
+      const txt = _$("[data-testid='session-summary']").textContent;
+      if (!new RegExp(`^${st} → ${en} \\(60 min\\) · starts in \\d+:\\d\\d(:\\d\\d)?$`).test(txt)) throw new Error("summary: " + txt);
+      if (!/^Deck needs ~\d+ min · session is 60 min$/.test(_$("[data-testid='session-precheck']").textContent)) throw new Error("precheck: " + _$("[data-testid='session-precheck']").textContent);
+    } finally { await _sesUiLeave(); }
+  }},
+  { name: "SD-W2: summary of a running session says '<countdown> left'; after the end it says 'ended … ago'", fn: async () => {
+    const realNow = Date.now;
+    try {
+      _sesUiNeedHooks().setSessionForTest(null);
+      await _editorSetup();
+      await _sesTbOpen();
+      const t = Date.now(), st = fmtClock(t - 3600000), en = fmtClock(t + 3600000);
+      _sesUiSet(_$("[data-testid='session-start-input']"), st);
+      _sesUiSet(_$("[data-testid='session-end-input']"), en);
+      await _wait(80);
+      const r = resolveSessionTimes(st, en, sessionDialogBase(null, t), t);
+      const now = Date.now();
+      const want = now < r.start ? "starts in \\d+:\\d\\d(:\\d\\d)?" : now < r.end ? "\\d+:\\d\\d(:\\d\\d)? left" : "ended \\d+:\\d\\d(:\\d\\d)? ago";
+      let txt = _$("[data-testid='session-summary']").textContent;
+      if (!new RegExp(`^${st} → ${en} \\(120 min\\) · ${want}$`).test(txt)) throw new Error("running summary: " + txt);
+      if (now >= r.start && now < r.end && !/ left$/.test(txt)) throw new Error("running session does not say left: " + txt);
+      // After the end: move the clock past it for one render (restored in finally).
+      const late = r.end + 125000;
+      Date.now = () => late;
+      _sesUiSet(_$("[data-testid='session-minutes-input']"), "119");
+      await _wait(80);
+      txt = _$("[data-testid='session-summary']").textContent;
+      Date.now = realNow;
+      const r2 = resolveSessionTimes(st, fmtClock(r.start + 119 * 60000), sessionDialogBase(null, t), t);
+      const ago = fmtCountdown((late - r2.end) / 1000);
+      if (txt !== `${st} → ${fmtClock(r2.end)} (119 min) · ended ${ago} ago`) throw new Error("ended summary: " + txt);
+    } finally { Date.now = realNow; await _sesUiLeave(); }
+  }},
+  { name: "SD-W3: Minutes 0 gives no valid session: no summary times and no stale 'session is N min'", fn: async () => {
+    try {
+      _sesUiNeedHooks().setSessionForTest(null);
+      await _editorSetup();
+      await _sesTbOpen();
+      _sesUiSet(_$("[data-testid='session-start-input']"), "09:00");
+      _sesUiSet(_$("[data-testid='session-end-input']"), "10:00");
+      await _wait(80);
+      if (!/ · session is 60 min$/.test(_$("[data-testid='session-precheck']").textContent)) throw new Error("valid precheck: " + _$("[data-testid='session-precheck']").textContent);
+      _sesUiSet(_$("[data-testid='session-minutes-input']"), "0");
+      await _wait(80);
+      const pre = _$("[data-testid='session-precheck']").textContent;
+      if (!/^Deck needs ~\d+ min$/.test(pre)) throw new Error("invalid precheck: " + pre);
+      if (_$("[data-testid='session-summary']").textContent !== "Enter a start and an end (1 min to 24 h)") throw new Error("invalid summary: " + _$("[data-testid='session-summary']").textContent);
+      if (!_$("[data-testid='session-set']").disabled) throw new Error("Set enabled for Minutes 0");
     } finally { await _sesUiLeave(); }
   }},
 ]);

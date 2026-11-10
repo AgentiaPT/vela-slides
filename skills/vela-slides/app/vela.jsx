@@ -5534,7 +5534,7 @@ function InlineCommentCard({ comment, itemId, slideIndex, dispatch }) {
   );
 }
 
-function SlideContent({ slide, index, total, branding, editable, onEdit, presenting, onBlockEdit, blockEditing, fontScale = 1, reviewMode, itemId, dispatch: externalDispatch, displayIndex, displayTotal, hideSlideNumber, story, storyAnimate, onStoryJump, onStoryZoomOut, presentSurface }) {
+function SlideContent({ slide, index, total, branding, editable, onEdit, presenting, onBlockEdit, blockEditing, fontScale = 1, reviewMode, itemId, dispatch: externalDispatch, displayIndex, displayTotal, hideSlideNumber, story, storyAnimate, onStoryJump, onStoryZoomOut, presentSurface, flashBlock = -1 }) {
   const st = { text: slide.color || T.text, muted: slide.mutedColor || T.textMuted, textDim: T.textDim, accent: slide.accent || T.accent, border: T.border, codeBg: T.codeBg };
   // Hidden elements (CR: hide any element). In presentation they are removed
   // entirely — no render, no layout — so a slide can carry a title that only
@@ -6108,12 +6108,17 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
   // Render a single block with all editable chrome (hover, edit popup, link, etc.)
   // ── Per-block editor chrome: hover toolbar, AI/link/comment popups, badges ──
   const renderBlockItem = (b, i) => editable && onEdit ? (
-    <div key={i} data-block-type={b.type} style={{ position: "relative", ...(b.link ? { cursor: "pointer" } : {}), ...(b.hidden && !presenting ? { opacity: 0.4 } : {}) }}
+    <div key={i} data-block-type={b.type} data-search-flash={flashBlock === i && !presenting ? "1" : undefined} style={{ position: "relative", ...(b.link ? { cursor: "pointer" } : {}), ...(b.hidden && !presenting ? { opacity: 0.4 } : {}) }}
       title={b.link ? linkPreview(b.link, b.text || b.value || b.title) : undefined}
       data-pdf-link={b.link || undefined}
       onClick={b.link ? (e) => { e.stopPropagation(); openExternalLink(b.link); } : undefined}
       onMouseEnter={(e) => { setHoveredBlock(i); measureChromeRoom(e.currentTarget, i); }} onMouseLeave={() => { setHoveredBlock(null); setItemHovered(false); }}>
       {b.hidden && !presenting && <div style={{ position: "absolute", top: -6, left: -6, zIndex: 11, fontSize: 9, fontFamily: FONT.mono, fontWeight: 700, background: st.accent, color: "#fff", borderRadius: 4, padding: "0 4px", lineHeight: "14px", pointerEvents: "none" }} title="Hidden in presentation">🙈 hidden</div>}
+      {/* Editor search: brief outline on the matched block (SlidePanel flashBlock).
+          Static code-authored style, absolute + pointer-events none: no layout
+          change, no click or hover-toolbar block. Never in Present. The
+          outline sits inside the block box: a column wrapper clips overflow. */}
+      {flashBlock === i && !presenting && <div data-testid="search-flash" aria-hidden="true" style={{ position: "absolute", inset: 0, outline: "3px solid #f59e0b", outlineOffset: -3, borderRadius: 6, boxShadow: "0 0 12px rgba(245,158,11,0.45)", pointerEvents: "none", zIndex: 10 }} />}
       {editingBlockIdx === i && !presenting && <div style={{ position: "absolute", inset: -3, border: `2px solid ${st.accent}`, borderRadius: 6, pointerEvents: "none", zIndex: 10, boxShadow: `0 0 12px ${st.accent}40` }} />}
       {hoveredBlock === i && editingBlockIdx !== i && !presenting && <div style={{ position: "absolute", inset: -2, border: `1.5px dashed ${T.red}60`, borderRadius: 4, pointerEvents: "none", zIndex: 10 }} />}
       {hoveredBlock === i && !itemHovered && !presenting && <div data-testid="block-hover-toolbar" data-chrome-inside={chromeFlip[i]?.bar ? "true" : undefined} style={{ position: "absolute", ...(chromeFlip[i]?.bar ? { top: 6, right: 6 + (chromeFlip[i]?.shift || 0) } : { top: -8, right: -8 + (chromeFlip[i]?.shift || 0) }), display: "flex", gap: 3, zIndex: 11 }}>
@@ -8356,7 +8361,7 @@ function computeSlideLayoutStats(slideEl) {
 }
 
 // ━━━ Virtual Slide ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-function VirtualSlide({ slide, index, total, innerRef, branding, editable, onEdit, mode = "fit-width", onBlockEdit, blockEditing, fontScale, virtualW, virtualH, bordered, reviewMode, itemId, dispatch: externalDispatch, displayIndex, displayTotal, hideSlideNumber, forceEdit, story, storyAnimate, onStoryJump, onStoryZoomOut }) {
+function VirtualSlide({ slide, index, total, innerRef, branding, editable, onEdit, mode = "fit-width", onBlockEdit, blockEditing, fontScale, virtualW, virtualH, bordered, reviewMode, itemId, dispatch: externalDispatch, displayIndex, displayTotal, hideSlideNumber, forceEdit, story, storyAnimate, onStoryJump, onStoryZoomOut, flashBlock = -1 }) {
   const outerRef = useRef(null);
   const isFill = mode === "fill";
 
@@ -8433,7 +8438,7 @@ function VirtualSlide({ slide, index, total, innerRef, branding, editable, onEdi
         transform: isFullscreen ? `translate(${offset.x}px, ${offset.y}px) scale(${scale})` : `scale(${scale})`,
         transformOrigin: "top left", background: bg, position: "absolute", top: 0, left: 0,
       }}>
-        {slide && <SlideContent key={`${index}-${vw}-${vh}`} slide={slide} index={index} total={total} branding={branding} editable={editable} onEdit={onEdit} presenting={((mode === "fit-viewport" || isFill) && !bordered) && !forceEdit} onBlockEdit={onBlockEdit} blockEditing={blockEditing} fontScale={fontScale} reviewMode={reviewMode} itemId={itemId} dispatch={externalDispatch} displayIndex={displayIndex} displayTotal={displayTotal} hideSlideNumber={hideSlideNumber}
+        {slide && <SlideContent key={`${index}-${vw}-${vh}`} slide={slide} index={index} total={total} branding={branding} editable={editable} onEdit={onEdit} presenting={((mode === "fit-viewport" || isFill) && !bordered) && !forceEdit} onBlockEdit={onBlockEdit} blockEditing={blockEditing} fontScale={fontScale} reviewMode={reviewMode} itemId={itemId} dispatch={externalDispatch} displayIndex={displayIndex} displayTotal={displayTotal} hideSlideNumber={hideSlideNumber} flashBlock={flashBlock}
           story={story} storyAnimate={storyAnimate === undefined ? presentSurface : !!storyAnimate} onStoryJump={onStoryJump} onStoryZoomOut={onStoryZoomOut} presentSurface={presentSurface} />}
       </div>
     </div>
@@ -10563,6 +10568,28 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
     else if (mode === "presenter") { setGallery(false); if (!fullscreen) { stopAll(); dispatch({ type: "SET_FULLSCREEN", value: true }); } }
   };
 
+  // Editor search: a short amber outline on the matched top-level block
+  // ({ id, index, block } = section id, slide index, canvas render index).
+  // UI state only: no deck change, no undo step, no save. The outline shows
+  // only while that exact slide is on the editor canvas (checked at render);
+  // the effect below drops it when the slide or section changes, or when
+  // Present or the gallery opens. Only code-authored values are stored.
+  const [searchFlash, setSearchFlash] = useState(null);
+  const searchFlashTimer = useRef(null);
+  const flashSearchBlock = (id, index, block) => {
+    clearTimeout(searchFlashTimer.current);
+    if (typeof id !== "string" || !Number.isInteger(index) || index < 0 || !Number.isInteger(block) || block < 0) { setSearchFlash(null); return; }
+    setSearchFlash({ id, index, block });
+    searchFlashTimer.current = setTimeout(() => setSearchFlash(null), 1500);
+  };
+  useEffect(() => () => clearTimeout(searchFlashTimer.current), []);
+  useEffect(() => {
+    if (searchFlash && (fullscreen || showGallery || searchFlash.id !== concept.id || searchFlash.index !== slideIndex)) {
+      clearTimeout(searchFlashTimer.current);
+      setSearchFlash(null);
+    }
+  }, [searchFlash, fullscreen, showGallery, concept.id, slideIndex]);
+
   // Expose slide panel state + actions to app ribbon via ref
   useEffect(() => {
     if (!actionsRef) return;
@@ -10581,6 +10608,8 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       getLayoutStats: () => computeSlideLayoutStats(slideRef.current),
       // CR13: view state read by the top-bar view switcher (editor|presenter|gallery).
       viewMode, setView,
+      // Editor search: outline the matched block for a moment (UI state only).
+      flashBlock: flashSearchBlock,
     };
     onRibbonUpdate?.();
   }, [slides.length, moduleTime, previewRatio, showBranding, showTimingScope, estimating, showImproveInput, improving, fullscreen, showGallery]);
@@ -11723,7 +11752,8 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
                       default "auto"/Fit ratio) so the editor viewport height is
                       content-independent and the toolbar below stays put. Elastic
                       container-shaped "fill" is reserved for fullscreen/present. */}
-                  <VirtualSlide key={`deck-${state._deckEpoch}`} slide={displaySlide} index={slideIndex} total={slides.length} innerRef={slideRef} branding={branding} editable onEdit={handleSlideEdit} mode="fit-viewport" onBlockEdit={runBlockEdit} blockEditing={blockEditing} virtualW={isAuto ? VIRTUAL_W : vw} virtualH={isAuto ? VIRTUAL_H : vh} bordered reviewMode={state.reviewMode} itemId={concept.id} dispatch={dispatch} displayIndex={globalSlideIndex} displayTotal={globalSlideTotal} />
+                  <VirtualSlide key={`deck-${state._deckEpoch}`} slide={displaySlide} index={slideIndex} total={slides.length} innerRef={slideRef} branding={branding} editable onEdit={handleSlideEdit} mode="fit-viewport" onBlockEdit={runBlockEdit} blockEditing={blockEditing} virtualW={isAuto ? VIRTUAL_W : vw} virtualH={isAuto ? VIRTUAL_H : vh} bordered reviewMode={state.reviewMode} itemId={concept.id} dispatch={dispatch} displayIndex={globalSlideIndex} displayTotal={globalSlideTotal}
+                    flashBlock={searchFlash && !fullscreen && !showGallery && displaySlide === slides[slideIndex] && searchFlash.id === concept.id && searchFlash.index === slideIndex ? searchFlash.block : -1} />
                   {/* Comment badge overlay (top-right) — hidden when comments panel or popover is open */}
                   {!fullscreen && !state.commentsPanelOpen && !showCommentPopover && (() => {
                     const sc = (slides[slideIndex]?.comments || []).filter((c) => c.status === "open");
@@ -21790,6 +21820,104 @@ uiSuite("editor-search", [
   }},
 ], { setup: _selectFirstModule });
 
+// ── Editor search: amber outline on the matched block (flashBlock) ──
+const _esfFlashed = () => _$$("[data-search-flash='1']");
+// Slide 0 of the first module: heading + two text blocks; slide 1: a "cols"
+// slide with L / R column blocks. Returns { past, s0, s1 } (past = undo mark).
+const _esfPrep = async () => {
+  const past = _esPast();
+  _hooks().injectBlocks([_seH("ESF title zqxfltitle"), { type: "text", text: "plain first" }, { type: "text", text: "second zqxflblk" }]);
+  await _wait(150);
+  const s0 = _pdSel();
+  _key("ArrowRight"); await _wait(150);
+  _hooks().injectBlocks([_seH("ESF cols")], { layout: "cols", L: [{ type: "text", text: "left zqxflleft" }], R: [{ type: "text", text: "right first" }, { type: "text", text: "right zqxflright" }] });
+  await _wait(150);
+  const s1 = _pdSel();
+  if (!s0 || !s1 || s0.itemId !== s1.itemId || s0.slideIdx + 1 !== s1.slideIdx) throw new Error("prep: the first module needs 2+ slides");
+  document.activeElement?.blur?.();
+  return { past, s0, s1 };
+};
+const _esfOpen = async (q, want) => {
+  _type(_esInput(), q); await _wait(120);
+  await _waitFor(() => _esRows().length === 1, 1500).catch(() => { throw new Error(`no single row for ${q}`); });
+  _key("Enter");
+  await _waitFor(() => _pdSame(_pdSel(), want), 1500).catch(() => { throw new Error(`Enter did not open ${q}`); });
+};
+uiSuite("editor-search-flash", [
+  { name: "ESF1: Enter on a block match outlines that block; the outline goes within 2.5 s; no undo step, no deck change", fn: async () => {
+    let p = null;
+    try {
+      await _esStart();
+      p = await _esfPrep();
+      const mark = _esPast(), fut = _hooks().getHistoryCounts().future;
+      const epoch0 = _hooks().getDeckStateForTest().epoch;
+      _key("ArrowLeft"); await _wait(150);
+      const slide0 = JSON.stringify(_hooks().getCurrentSlideForTest());
+      _key("ArrowRight"); await _wait(150); document.activeElement?.blur?.();
+      await _esfOpen("zqxflblk", p.s0);
+      const f = await _waitFor(() => _esfFlashed().length === 1 && _esfFlashed()[0], 400).catch(() => { throw new Error("no outline within 400 ms"); });
+      if (!(f.textContent || "").includes("second zqxflblk")) throw new Error("outline on the wrong block: " + f.textContent);
+      if (f.getAttribute("data-block-type") !== "text") throw new Error("outline not on a top-level block wrapper");
+      const ov = f.querySelector("[data-testid='search-flash']");
+      if (!ov || getComputedStyle(ov).pointerEvents !== "none") throw new Error("outline overlay missing or blocks clicks");
+      await _waitFor(() => _esfFlashed().length === 0 && !_$("[data-testid='search-flash']"), 2500).catch(() => { throw new Error("outline still shown after 2.5 s"); });
+      if (_esPast() !== mark || _hooks().getHistoryCounts().future !== fut) throw new Error("the flash made an undo step");
+      if (JSON.stringify(_hooks().getCurrentSlideForTest()) !== slide0) throw new Error("the flash changed the slide");
+      if (_hooks().getDeckStateForTest().epoch !== epoch0) throw new Error("the flash changed the deck epoch");
+    } finally { await _esEnd(p && p.past); }
+  }},
+  { name: "ESF2: a title match gives no outline", fn: async () => {
+    let p = null;
+    try {
+      await _esStart();
+      p = await _esfPrep();
+      await _esfOpen("zqxfltitle", p.s0);
+      await _wait(400);
+      if (_esfFlashed().length || _$("[data-testid='search-flash']")) throw new Error("a title match outlined a block");
+    } finally { await _esEnd(p && p.past); }
+  }},
+  { name: "ESF3: a right-column match on a cols slide outlines that column block", fn: async () => {
+    let p = null;
+    try {
+      await _esStart();
+      p = await _esfPrep();
+      _key("ArrowLeft"); await _wait(150); document.activeElement?.blur?.();
+      await _esfOpen("zqxflright", p.s1);
+      const f = await _waitFor(() => _esfFlashed().length === 1 && _esfFlashed()[0], 400).catch(() => { throw new Error("no outline on the column block"); });
+      if (!(f.textContent || "").includes("right zqxflright")) throw new Error("outline on the wrong block: " + f.textContent);
+      if (!f.closest("[data-cols-side='right']")) throw new Error("outlined block is not in the right column");
+    } finally { await _esEnd(p && p.past); }
+  }},
+  { name: "ESF4: a second result within 1.5 s moves the outline; the old one clears", fn: async () => {
+    let p = null;
+    try {
+      await _esStart();
+      p = await _esfPrep();
+      await _esfOpen("zqxflblk", p.s0);
+      await _waitFor(() => _esfFlashed().length === 1, 400).catch(() => { throw new Error("no first outline"); });
+      await _esfOpen("zqxflleft", p.s1);
+      const f = await _waitFor(() => _esfFlashed().length === 1 && (_esfFlashed()[0].textContent || "").includes("left zqxflleft") && _esfFlashed()[0], 400).catch(() => { throw new Error("outline did not move: " + _esfFlashed().map((e) => e.textContent).join(" | ")); });
+      if (!f.closest("[data-cols-side='left']")) throw new Error("second outline not in the left column");
+      if (_$$("[data-testid='search-flash']").length !== 1) throw new Error("more than one outline");
+      await _waitFor(() => _esfFlashed().length === 0, 2500).catch(() => { throw new Error("second outline did not clear"); });
+    } finally { await _esEnd(p && p.past); }
+  }},
+  { name: "ESF5: entering Present clears the outline; it does not come back on exit", fn: async () => {
+    let p = null;
+    try {
+      await _esStart();
+      p = await _esfPrep();
+      await _esfOpen("zqxflblk", p.s0);
+      await _waitFor(() => _esfFlashed().length === 1, 400).catch(() => { throw new Error("no outline"); });
+      await _pdEnterPresent();
+      if (_esfFlashed().length || _$("[data-testid='search-flash']")) throw new Error("outline shown in Present");
+      await _exitFullscreen();
+      await _wait(100);
+      if (_esfFlashed().length || _$("[data-testid='search-flash']")) throw new Error("outline came back after Present");
+    } finally { await _esEnd(p && p.past); }
+  }},
+], { setup: _selectFirstModule });
+
 // ━━━ Session end (v13.80): sanitizer, pace math, deck ingress ━━━━━━━
 const _SS_T0 = 1700000000000;
 const _ssEq = (got, want, what) => { const g = JSON.stringify(got), w = JSON.stringify(want); if (g !== w) throw new Error(`${what}: got ${g}, want ${w}`); };
@@ -22344,7 +22472,7 @@ uiSuite("session-editor-dialog", [
       _sesUiSet(_$("[data-testid='session-end-input']"), "10:15");
       await _wait(80);
       if (_$("[data-testid='session-minutes-input']").value !== "75") throw new Error("minutes not 75: " + _$("[data-testid='session-minutes-input']").value);
-      if (!/ends 10:15 \(75 min\)/.test(_$("[data-testid='session-summary']").textContent)) throw new Error("summary: " + _$("[data-testid='session-summary']").textContent);
+      if (!/^09:00 → 10:15 \(75 min\) · /.test(_$("[data-testid='session-summary']").textContent)) throw new Error("summary: " + _$("[data-testid='session-summary']").textContent);
       if (_$("[data-testid='session-set']").disabled) throw new Error("Set disabled for a valid End");
       _click("[data-testid='session-set']");
       await _waitFor(() => !_$("[data-testid='session-dialog']"), 1500);
@@ -22402,6 +22530,68 @@ uiSuite("session-editor-dialog", [
       _click("[data-testid='session-cancel']");
       await _waitFor(() => !_$("[data-testid='session-dialog']"), 1500);
       if (hooks.getSessionForTest() !== null) throw new Error("Cancel stored a session");
+    } finally { await _sesUiLeave(); }
+  }},
+  // Summary wording: "<start> → <end> (<N> min) · <state>". The state comes
+  // from the resolved times against now (the same rule the dialog uses), so a
+  // run near midnight (day roll) checks the state the dialog really has.
+  { name: "SD-W1: summary before the start says 'starts in'", fn: async () => {
+    try {
+      _sesUiNeedHooks().setSessionForTest(null);
+      await _editorSetup();
+      await _sesTbOpen();
+      const t = Date.now(), st = fmtClock(t + 3600000), en = fmtClock(t + 7200000);
+      _sesUiSet(_$("[data-testid='session-start-input']"), st);
+      _sesUiSet(_$("[data-testid='session-end-input']"), en);
+      await _wait(80);
+      const txt = _$("[data-testid='session-summary']").textContent;
+      if (!new RegExp(`^${st} → ${en} \\(60 min\\) · starts in \\d+:\\d\\d(:\\d\\d)?$`).test(txt)) throw new Error("summary: " + txt);
+      if (!/^Deck needs ~\d+ min · session is 60 min$/.test(_$("[data-testid='session-precheck']").textContent)) throw new Error("precheck: " + _$("[data-testid='session-precheck']").textContent);
+    } finally { await _sesUiLeave(); }
+  }},
+  { name: "SD-W2: summary of a running session says '<countdown> left'; after the end it says 'ended … ago'", fn: async () => {
+    const realNow = Date.now;
+    try {
+      _sesUiNeedHooks().setSessionForTest(null);
+      await _editorSetup();
+      await _sesTbOpen();
+      const t = Date.now(), st = fmtClock(t - 3600000), en = fmtClock(t + 3600000);
+      _sesUiSet(_$("[data-testid='session-start-input']"), st);
+      _sesUiSet(_$("[data-testid='session-end-input']"), en);
+      await _wait(80);
+      const r = resolveSessionTimes(st, en, sessionDialogBase(null, t), t);
+      const now = Date.now();
+      const want = now < r.start ? "starts in \\d+:\\d\\d(:\\d\\d)?" : now < r.end ? "\\d+:\\d\\d(:\\d\\d)? left" : "ended \\d+:\\d\\d(:\\d\\d)? ago";
+      let txt = _$("[data-testid='session-summary']").textContent;
+      if (!new RegExp(`^${st} → ${en} \\(120 min\\) · ${want}$`).test(txt)) throw new Error("running summary: " + txt);
+      if (now >= r.start && now < r.end && !/ left$/.test(txt)) throw new Error("running session does not say left: " + txt);
+      // After the end: move the clock past it for one render (restored in finally).
+      const late = r.end + 125000;
+      Date.now = () => late;
+      _sesUiSet(_$("[data-testid='session-minutes-input']"), "119");
+      await _wait(80);
+      txt = _$("[data-testid='session-summary']").textContent;
+      Date.now = realNow;
+      const r2 = resolveSessionTimes(st, fmtClock(r.start + 119 * 60000), sessionDialogBase(null, t), t);
+      const ago = fmtCountdown((late - r2.end) / 1000);
+      if (txt !== `${st} → ${fmtClock(r2.end)} (119 min) · ended ${ago} ago`) throw new Error("ended summary: " + txt);
+    } finally { Date.now = realNow; await _sesUiLeave(); }
+  }},
+  { name: "SD-W3: Minutes 0 gives no valid session: no summary times and no stale 'session is N min'", fn: async () => {
+    try {
+      _sesUiNeedHooks().setSessionForTest(null);
+      await _editorSetup();
+      await _sesTbOpen();
+      _sesUiSet(_$("[data-testid='session-start-input']"), "09:00");
+      _sesUiSet(_$("[data-testid='session-end-input']"), "10:00");
+      await _wait(80);
+      if (!/ · session is 60 min$/.test(_$("[data-testid='session-precheck']").textContent)) throw new Error("valid precheck: " + _$("[data-testid='session-precheck']").textContent);
+      _sesUiSet(_$("[data-testid='session-minutes-input']"), "0");
+      await _wait(80);
+      const pre = _$("[data-testid='session-precheck']").textContent;
+      if (!/^Deck needs ~\d+ min$/.test(pre)) throw new Error("invalid precheck: " + pre);
+      if (_$("[data-testid='session-summary']").textContent !== "Enter a start and an end (1 min to 24 h)") throw new Error("invalid summary: " + _$("[data-testid='session-summary']").textContent);
+      if (!_$("[data-testid='session-set']").disabled) throw new Error("Set enabled for Minutes 0");
     } finally { await _sesUiLeave(); }
   }},
 ]);
@@ -30533,6 +30723,10 @@ function SessionEndDialog({ session, stored, lanes, onSet, onClear, onClose }) {
   const set = () => { const r = resolveSessionDialogSet(start, end, base, openNow, live); if (!r || parseMin(minutes) == null) return; if (r.keep) onClose(); else onSet(r.session); };
   const needMin = Math.round(sessionEstimates(presentSequence(lanes)).total / 60);
   const lenMin = resolved ? Math.round((resolved.end - resolved.start) / 60000) : null;
+  // Summary state of the session against now: before, during or after it.
+  const sessionWhen = (r, now) => now < r.start ? `starts in ${fmtCountdown((r.start - now) / 1000)}`
+    : now < r.end ? `${fmtCountdown((r.end - now) / 1000)} left`
+    : `ended ${fmtCountdown((now - r.end) / 1000)} ago`;
   useEffect(() => {
     const prev = document.activeElement;
     endRef.current?.focus();
@@ -30581,11 +30775,11 @@ function SessionEndDialog({ session, stored, lanes, onSet, onClear, onClose }) {
           ))}
         </div>
         <div data-testid="session-summary" style={{ fontFamily: FONT.mono, fontSize: 13, color: canSet ? T.text : T.red, marginBottom: 6 }}>
-          {canSet ? `Now ${fmtClock(Date.now())}${resolved.start > Date.now() ? ` · starts in ${fmtCountdown((resolved.start - Date.now()) / 1000)}` : ""} → ends ${fmtClock(resolved.end)} (${lenMin} min)` : "Enter a start and an end (1 min to 24 h)"}
+          {canSet ? `${fmtClock(resolved.start)} → ${fmtClock(resolved.end)} (${lenMin} min) · ${sessionWhen(resolved, Date.now())}` : "Enter a start and an end (1 min to 24 h)"}
         </div>
         <div data-testid="session-file-note" style={{ fontFamily: FONT.mono, fontSize: 13, color: T.textMuted, marginBottom: 6 }}>Saved in the deck file (also in exports of the deck).</div>
         <div data-testid="session-precheck" style={{ fontFamily: FONT.mono, fontSize: 13, color: T.textMuted, marginBottom: 18 }}>
-          {`Deck needs ~${needMin} min`}{lenMin != null ? ` · session is ${lenMin} min` : ""}
+          {`Deck needs ~${needMin} min`}{canSet ? ` · session is ${lenMin} min` : ""}
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
           {hasStored && <button type="button" data-testid="session-clear" onClick={onClear} style={S.btn({ padding: "8px 14px", fontSize: 14, color: T.red, borderRadius: 6 })}>Clear</button>}

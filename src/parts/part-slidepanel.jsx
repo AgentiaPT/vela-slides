@@ -612,6 +612,28 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
     else if (mode === "presenter") { setGallery(false); if (!fullscreen) { stopAll(); dispatch({ type: "SET_FULLSCREEN", value: true }); } }
   };
 
+  // Editor search: a short amber outline on the matched top-level block
+  // ({ id, index, block } = section id, slide index, canvas render index).
+  // UI state only: no deck change, no undo step, no save. The outline shows
+  // only while that exact slide is on the editor canvas (checked at render);
+  // the effect below drops it when the slide or section changes, or when
+  // Present or the gallery opens. Only code-authored values are stored.
+  const [searchFlash, setSearchFlash] = useState(null);
+  const searchFlashTimer = useRef(null);
+  const flashSearchBlock = (id, index, block) => {
+    clearTimeout(searchFlashTimer.current);
+    if (typeof id !== "string" || !Number.isInteger(index) || index < 0 || !Number.isInteger(block) || block < 0) { setSearchFlash(null); return; }
+    setSearchFlash({ id, index, block });
+    searchFlashTimer.current = setTimeout(() => setSearchFlash(null), 1500);
+  };
+  useEffect(() => () => clearTimeout(searchFlashTimer.current), []);
+  useEffect(() => {
+    if (searchFlash && (fullscreen || showGallery || searchFlash.id !== concept.id || searchFlash.index !== slideIndex)) {
+      clearTimeout(searchFlashTimer.current);
+      setSearchFlash(null);
+    }
+  }, [searchFlash, fullscreen, showGallery, concept.id, slideIndex]);
+
   // Expose slide panel state + actions to app ribbon via ref
   useEffect(() => {
     if (!actionsRef) return;
@@ -630,6 +652,8 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       getLayoutStats: () => computeSlideLayoutStats(slideRef.current),
       // CR13: view state read by the top-bar view switcher (editor|presenter|gallery).
       viewMode, setView,
+      // Editor search: outline the matched block for a moment (UI state only).
+      flashBlock: flashSearchBlock,
     };
     onRibbonUpdate?.();
   }, [slides.length, moduleTime, previewRatio, showBranding, showTimingScope, estimating, showImproveInput, improving, fullscreen, showGallery]);
@@ -1772,7 +1796,8 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
                       default "auto"/Fit ratio) so the editor viewport height is
                       content-independent and the toolbar below stays put. Elastic
                       container-shaped "fill" is reserved for fullscreen/present. */}
-                  <VirtualSlide key={`deck-${state._deckEpoch}`} slide={displaySlide} index={slideIndex} total={slides.length} innerRef={slideRef} branding={branding} editable onEdit={handleSlideEdit} mode="fit-viewport" onBlockEdit={runBlockEdit} blockEditing={blockEditing} virtualW={isAuto ? VIRTUAL_W : vw} virtualH={isAuto ? VIRTUAL_H : vh} bordered reviewMode={state.reviewMode} itemId={concept.id} dispatch={dispatch} displayIndex={globalSlideIndex} displayTotal={globalSlideTotal} />
+                  <VirtualSlide key={`deck-${state._deckEpoch}`} slide={displaySlide} index={slideIndex} total={slides.length} innerRef={slideRef} branding={branding} editable onEdit={handleSlideEdit} mode="fit-viewport" onBlockEdit={runBlockEdit} blockEditing={blockEditing} virtualW={isAuto ? VIRTUAL_W : vw} virtualH={isAuto ? VIRTUAL_H : vh} bordered reviewMode={state.reviewMode} itemId={concept.id} dispatch={dispatch} displayIndex={globalSlideIndex} displayTotal={globalSlideTotal}
+                    flashBlock={searchFlash && !fullscreen && !showGallery && displaySlide === slides[slideIndex] && searchFlash.id === concept.id && searchFlash.index === slideIndex ? searchFlash.block : -1} />
                   {/* Comment badge overlay (top-right) — hidden when comments panel or popover is open */}
                   {!fullscreen && !state.commentsPanelOpen && !showCommentPopover && (() => {
                     const sc = (slides[slideIndex]?.comments || []).filter((c) => c.status === "open");

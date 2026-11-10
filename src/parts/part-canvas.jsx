@@ -164,7 +164,7 @@ function InlineCommentCard({ comment, itemId, slideIndex, dispatch }) {
   );
 }
 
-function SlideContent({ slide, index, total, branding, editable, onEdit, presenting, onBlockEdit, blockEditing, fontScale = 1, reviewMode, itemId, dispatch: externalDispatch, displayIndex, displayTotal, hideSlideNumber, story, storyAnimate, onStoryJump, onStoryZoomOut, presentSurface }) {
+function SlideContent({ slide, index, total, branding, editable, onEdit, presenting, onBlockEdit, blockEditing, fontScale = 1, reviewMode, itemId, dispatch: externalDispatch, displayIndex, displayTotal, hideSlideNumber, story, storyAnimate, onStoryJump, onStoryZoomOut, presentSurface, flashBlock = -1 }) {
   const st = { text: slide.color || T.text, muted: slide.mutedColor || T.textMuted, textDim: T.textDim, accent: slide.accent || T.accent, border: T.border, codeBg: T.codeBg };
   // Hidden elements (CR: hide any element). In presentation they are removed
   // entirely — no render, no layout — so a slide can carry a title that only
@@ -738,12 +738,17 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
   // Render a single block with all editable chrome (hover, edit popup, link, etc.)
   // ── Per-block editor chrome: hover toolbar, AI/link/comment popups, badges ──
   const renderBlockItem = (b, i) => editable && onEdit ? (
-    <div key={i} data-block-type={b.type} style={{ position: "relative", ...(b.link ? { cursor: "pointer" } : {}), ...(b.hidden && !presenting ? { opacity: 0.4 } : {}) }}
+    <div key={i} data-block-type={b.type} data-search-flash={flashBlock === i && !presenting ? "1" : undefined} style={{ position: "relative", ...(b.link ? { cursor: "pointer" } : {}), ...(b.hidden && !presenting ? { opacity: 0.4 } : {}) }}
       title={b.link ? linkPreview(b.link, b.text || b.value || b.title) : undefined}
       data-pdf-link={b.link || undefined}
       onClick={b.link ? (e) => { e.stopPropagation(); openExternalLink(b.link); } : undefined}
       onMouseEnter={(e) => { setHoveredBlock(i); measureChromeRoom(e.currentTarget, i); }} onMouseLeave={() => { setHoveredBlock(null); setItemHovered(false); }}>
       {b.hidden && !presenting && <div style={{ position: "absolute", top: -6, left: -6, zIndex: 11, fontSize: 9, fontFamily: FONT.mono, fontWeight: 700, background: st.accent, color: "#fff", borderRadius: 4, padding: "0 4px", lineHeight: "14px", pointerEvents: "none" }} title="Hidden in presentation">🙈 hidden</div>}
+      {/* Editor search: brief outline on the matched block (SlidePanel flashBlock).
+          Static code-authored style, absolute + pointer-events none: no layout
+          change, no click or hover-toolbar block. Never in Present. The
+          outline sits inside the block box: a column wrapper clips overflow. */}
+      {flashBlock === i && !presenting && <div data-testid="search-flash" aria-hidden="true" style={{ position: "absolute", inset: 0, outline: "3px solid #f59e0b", outlineOffset: -3, borderRadius: 6, boxShadow: "0 0 12px rgba(245,158,11,0.45)", pointerEvents: "none", zIndex: 10 }} />}
       {editingBlockIdx === i && !presenting && <div style={{ position: "absolute", inset: -3, border: `2px solid ${st.accent}`, borderRadius: 6, pointerEvents: "none", zIndex: 10, boxShadow: `0 0 12px ${st.accent}40` }} />}
       {hoveredBlock === i && editingBlockIdx !== i && !presenting && <div style={{ position: "absolute", inset: -2, border: `1.5px dashed ${T.red}60`, borderRadius: 4, pointerEvents: "none", zIndex: 10 }} />}
       {hoveredBlock === i && !itemHovered && !presenting && <div data-testid="block-hover-toolbar" data-chrome-inside={chromeFlip[i]?.bar ? "true" : undefined} style={{ position: "absolute", ...(chromeFlip[i]?.bar ? { top: 6, right: 6 + (chromeFlip[i]?.shift || 0) } : { top: -8, right: -8 + (chromeFlip[i]?.shift || 0) }), display: "flex", gap: 3, zIndex: 11 }}>

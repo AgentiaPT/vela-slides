@@ -634,6 +634,10 @@ function SessionEndDialog({ session, stored, lanes, onSet, onClear, onClose }) {
   const set = () => { const r = resolveSessionDialogSet(start, end, base, openNow, live); if (!r || parseMin(minutes) == null) return; if (r.keep) onClose(); else onSet(r.session); };
   const needMin = Math.round(sessionEstimates(presentSequence(lanes)).total / 60);
   const lenMin = resolved ? Math.round((resolved.end - resolved.start) / 60000) : null;
+  // Summary state of the session against now: before, during or after it.
+  const sessionWhen = (r, now) => now < r.start ? `starts in ${fmtCountdown((r.start - now) / 1000)}`
+    : now < r.end ? `${fmtCountdown((r.end - now) / 1000)} left`
+    : `ended ${fmtCountdown((now - r.end) / 1000)} ago`;
   useEffect(() => {
     const prev = document.activeElement;
     endRef.current?.focus();
@@ -682,11 +686,11 @@ function SessionEndDialog({ session, stored, lanes, onSet, onClear, onClose }) {
           ))}
         </div>
         <div data-testid="session-summary" style={{ fontFamily: FONT.mono, fontSize: 13, color: canSet ? T.text : T.red, marginBottom: 6 }}>
-          {canSet ? `Now ${fmtClock(Date.now())}${resolved.start > Date.now() ? ` · starts in ${fmtCountdown((resolved.start - Date.now()) / 1000)}` : ""} → ends ${fmtClock(resolved.end)} (${lenMin} min)` : "Enter a start and an end (1 min to 24 h)"}
+          {canSet ? `${fmtClock(resolved.start)} → ${fmtClock(resolved.end)} (${lenMin} min) · ${sessionWhen(resolved, Date.now())}` : "Enter a start and an end (1 min to 24 h)"}
         </div>
         <div data-testid="session-file-note" style={{ fontFamily: FONT.mono, fontSize: 13, color: T.textMuted, marginBottom: 6 }}>Saved in the deck file (also in exports of the deck).</div>
         <div data-testid="session-precheck" style={{ fontFamily: FONT.mono, fontSize: 13, color: T.textMuted, marginBottom: 18 }}>
-          {`Deck needs ~${needMin} min`}{lenMin != null ? ` · session is ${lenMin} min` : ""}
+          {`Deck needs ~${needMin} min`}{canSet ? ` · session is ${lenMin} min` : ""}
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
           {hasStored && <button type="button" data-testid="session-clear" onClick={onClear} style={S.btn({ padding: "8px 14px", fontSize: 14, color: T.red, borderRadius: 6 })}>Clear</button>}
