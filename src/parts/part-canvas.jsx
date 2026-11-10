@@ -967,7 +967,7 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
     const storyRow = storyActive && runLen >= 2 && idxs.some((bi) => storyNumOf.has(bi));
     const maxW = seq.map((bi) => { const z = IMAGE_NATURAL_SIZE.get(allBlocks[bi].src); return z && z.w > 0 ? z.w * GRID_IMG_MAX_UPSCALE : 0; });
     const aspects = seq.map((bi) => IMAGE_ASPECT_CACHE.get(allBlocks[bi].src));
-    const plan = imageGridPlan(aspects, box?.[0], box?.[1], gap, gridColsFor(runLen, region), slide.imageCols ? Math.min(6, Math.max(1, slide.imageCols | 0)) : 0, maxW);
+    const plan = imageGridPlan(aspects, box?.[0], box?.[1], gap, gridColsFor(runLen, region), slide.imageCols ? Math.min(6, Math.max(1, slide.imageCols | 0)) : 0, maxW, narrow);
     const rows = plan.rows.length;
     const gapsH = gap * (rows - 1);
     // Narrow: a row gets the height its images need at full cell width (plus a

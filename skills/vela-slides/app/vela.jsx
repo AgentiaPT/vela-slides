@@ -140,7 +140,7 @@ const velaClipboardReadSlides = async () => {
 
 const VELA_VERSION = "13.82";
 const VELA_CHANGELOG = [
-  { v: "13.82", d: ["Phone (portrait): slides use a one-column layout that fills the screen; text stays near real size.", "Phone: side-by-side columns, split images and grids stack; short cards stay two per row.", "Phone: flows and timelines run top to bottom; stat rows and tables fit the width.", "Phone: images take the full width and shrink before text does; a slide does not run off the screen.", "Phone: story mode shows each image at full width, with the index row under it.", "Phone Present: a bar under the slide has previous, next, slide count and exit; nothing covers the slide.", "Phone editor: the slide tab shows the portrait layout, not a small 16:9 box.", "Wide (desktop) view: no layout change."] },
+  { v: "13.82", d: ["Phone (portrait): slides use a one-column layout that fills the screen; text stays near real size.", "Phone: side-by-side columns, split images and grids stack; short cards stay two per row.", "Phone: flows and timelines run top to bottom; stat rows and tables fit the width.", "Phone: images take the full width and shrink before text does; a slide does not run off the screen.", "Phone: a portrait first image keeps the lead position in an image group.", "Phone: story mode shows each image at full width, with the index row under it.", "Phone Present: a bar under the slide has previous, next, slide count and exit; nothing covers the slide.", "Phone editor: the slide tab shows the portrait layout, not a small 16:9 box.", "Wide (desktop) view: no layout change."] },
   { v: "13.81", d: ["Editor: search in the slide list (Ctrl+E or /), same engine as Present", "Search: ↑↓ + Enter, highlighted matches, match count; finds text in column layouts, notes and section names (editor)", "Editor: short outline on the matched block when a result opens"] },
   { v: "13.80", d: ["Session end time: set it from the toolbar or the Presenter View.", "Presenter View: clock, time left and pace guidance (ahead / on pace / behind).", "Present: thin pace bar on the slide edge (T hides it).", "Present: optional clock on the slide (C key)."] },
   { v: "13.79", d: ["Present: Ctrl+E search also matches slide text, with a snippet.", "Present: while typing, search also lists hidden slides and slides in collapsed lanes (a detour).", "Present: after a detour, arrows, wheel or Esc return to the slide you left.", "Present: a detour slide shows no slide number; Presenter view shows where you will return."] },
@@ -2245,7 +2245,12 @@ function gridColsFor(n, region) {
 // (the author's imageCols) forces a uniform grid. Unknown aspects or box → the
 // fallback grid with area 0. aspects = width / height of each image, in order;
 // maxW (optional) = the widest each image may be drawn (the upscale cap).
-function imageGridPlan(aspects, boxW, boxH, gap, fallback, pinned, maxW) {
+// lead (optional, the narrow portrait canvas): a portrait first image keeps the
+// lead position (a row of its own) when that plan has at least
+// IMAGE_LEAD_AREA_SHARE of the best plan's area. A portrait image is the one
+// that the area rule moves out of the first row, and it is the author's opener.
+const IMAGE_LEAD_AREA_SHARE = 0.85;
+function imageGridPlan(aspects, boxW, boxH, gap, fallback, pinned, maxW, lead) {
   const n = Array.isArray(aspects) ? aspects.length : 0;
   const g = Math.max(0, Number(gap) || 0);
   const valid = n > 0 && boxW > 0 && boxH > 0 && aspects.every((a) => typeof a === "number" && a > 0 && Number.isFinite(a));
@@ -2297,7 +2302,7 @@ function imageGridPlan(aspects, boxW, boxH, gap, fallback, pinned, maxW) {
     }
     return true;
   };
-  let best = base;
+  let best = base, leadBest = null;
   const consider = (p, justified) => { const q = pack(p); if (q.area > base.area * 1.05 && q.area > best.area && (!justified || fair(p.rows))) best = q; };
   for (let c = 1; c <= Math.min(n, 6); c++) consider(uniform(c));
   // Justified rows only help a mixed set; equal aspects keep uniform cells.
@@ -2312,9 +2317,15 @@ function imageGridPlan(aspects, boxW, boxH, gap, fallback, pinned, maxW) {
           run = [i];
         } else run.push(i);
       }
-      consider({ rows, cols: Math.max(...rows.map((r) => r.cells.length)) }, true);
+      const plan = { rows, cols: Math.max(...rows.map((r) => r.cells.length)) };
+      consider(plan, true);
+      if (lead && aspects[0] < 1 && rows.length > 1 && rows[0].cells.length === 1) {
+        const q = pack(plan);
+        if ((!leadBest || q.area > leadBest.area) && fair(rows)) leadBest = q;
+      }
     }
   }
+  if (leadBest && best.rows[0].cells.length > 1 && leadBest.area >= best.area * IMAGE_LEAD_AREA_SHARE) return leadBest;
   return best;
 }
 // Column count of the chosen plan (the longest row).
@@ -6500,7 +6511,7 @@ function SlideContent({ slide, index, total, branding, editable, onEdit, present
     const storyRow = storyActive && runLen >= 2 && idxs.some((bi) => storyNumOf.has(bi));
     const maxW = seq.map((bi) => { const z = IMAGE_NATURAL_SIZE.get(allBlocks[bi].src); return z && z.w > 0 ? z.w * GRID_IMG_MAX_UPSCALE : 0; });
     const aspects = seq.map((bi) => IMAGE_ASPECT_CACHE.get(allBlocks[bi].src));
-    const plan = imageGridPlan(aspects, box?.[0], box?.[1], gap, gridColsFor(runLen, region), slide.imageCols ? Math.min(6, Math.max(1, slide.imageCols | 0)) : 0, maxW);
+    const plan = imageGridPlan(aspects, box?.[0], box?.[1], gap, gridColsFor(runLen, region), slide.imageCols ? Math.min(6, Math.max(1, slide.imageCols | 0)) : 0, maxW, narrow);
     const rows = plan.rows.length;
     const gapsH = gap * (rows - 1);
     // Narrow: a row gets the height its images need at full cell width (plus a
