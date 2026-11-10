@@ -141,7 +141,7 @@ const velaClipboardReadSlides = async () => {
 const VELA_VERSION = "13.81";
 const VELA_CHANGELOG = [
   { v: "13.81", d: ["Editor: search in the slide list (Ctrl+E or /), same engine as Present", "Search: ↑↓ + Enter, highlighted matches, match count; finds text in column layouts, notes and section names (editor)", "Editor: short outline on the matched block when a result opens"] },
-  { v: "13.80", d: ["Session end time: set it from the toolbar or the Presenter View.", "Presenter View: clock, time left and pace guidance (ahead / on pace / behind).", "Present: thin pace bar on the slide edge (T hides it).", "Present: optional clock on the slide (C key)"] },
+  { v: "13.80", d: ["Session end time: set it from the toolbar or the Presenter View.", "Presenter View: clock, time left and pace guidance (ahead / on pace / behind).", "Present: thin pace bar on the slide edge (T hides it).", "Present: optional clock on the slide (C key)."] },
   { v: "13.79", d: ["Present: Ctrl+E search also matches slide text, with a snippet.", "Present: while typing, search also lists hidden slides and slides in collapsed lanes (a detour).", "Present: after a detour, arrows, wheel or Esc return to the slide you left.", "Present: a detour slide shows no slide number; Presenter view shows where you will return."] },
   { v: "13.78", d: ["Images: up to 10 per slide; overflow goes to a new slide.", "Images: drag image files from your computer onto a slide.", "Images: drag tiles to reorder.", "Story mode: present a slide's images one by one.", "Export: expand story slides to one page per image (PDF/PPTX).", "Text: Ctrl+U underline is saved and shows everywhere (++text++).", "Images: dropped files use the same ordered, safe queue as pasted images.", "Story mode: grid tiles keep a one-line title row, so tiles align.", "Vector PDF: text after bold/italic/underline/link keeps its space and letter spacing.", "Drop: images dropped outside a slide show a hint; a deck file dropped with images still loads.", "Slide toolbar stays on one row; labels change to icons when space is short."] },
   { v: "13.77", d: ["Two-column slides: edits to a column block (link, text, hide, delete) are saved; before, they were lost.", "Link boxes accept a bare domain (example.com) or an email address; before, these were saved as an empty link.", "Desktop: outside edits to decks up to 50 MB now reload live (was 5 MB).", "Present: Esc exits fullscreen, also inside Claude.ai artifacts.", "Esc closes the gallery, presenter view, image zoom or an open dialog first.", "Present toolbar: removed the duplicate gallery icon; presenter view uses a notes icon.", "Image zoom fills the window again (it was limited to the scaled slide).", "Zoom: arrow keys step through the images on the slide; past the first or last image they close the zoom.", "Present toolbar stays faint until you point at it.", "Editor: Ctrl+E toggles the TOC (as in present mode); [ also works with AltGr keyboards."] },
@@ -10042,6 +10042,23 @@ const VELA_SESSION_BAR = { hidden: false };
 // Present clock chip (v13.80): the C-key show choice, kept on this device only
 // (not in the deck). Stored as "1" or absent; a read compares with "1" only.
 const VELA_PRESENT_CLOCK_KEY = "vela-present-clock";
+// Clock chip bottom offset (CSS) in Present. `branding` is the sanitized
+// branding state, or null when the slide shows no branding. Only booleans and
+// clamped numbers come from it: no branding string reaches the style.
+// Fill mode: slide scale s <= max(vw/960, vh/540) (computeFillDims: the zoom is
+// never above the height ratio), so K virtual px are at most
+// max(K/960 vw, K/540 vh) on screen. Branding on: clear the 28 px footer strip.
+// Logo at the bottom left (same position test as BrandingOverlay): clear the
+// logo box too (bottom 36 + height, then 8 px). Height as BrandingOverlay
+// draws it (logoSize || 56), capped at the 120 px limit of the import sanitizer.
+function presentClockBottom(branding) {
+  if (!branding?.enabled) return 24;
+  const pos = typeof branding.logoPosition === "string" && branding.logoPosition ? branding.logoPosition : "top-left";
+  const logoBottomLeft = !!branding.logo && !pos.startsWith("top") && pos.endsWith("left");
+  const h = Number.isFinite(branding.logoSize) && branding.logoSize > 0 ? Math.min(branding.logoSize, 120) : 56;
+  const k = logoBottomLeft ? 36 + h + 8 : 28;
+  return `calc(max(${(k * 100 / VIRTUAL_W).toFixed(4)}vw, ${(k * 100 / VIRTUAL_H).toFixed(4)}vh) + 10px)`;
+}
 
 function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, branding, guidelines, isMobile, fontScale, actionsRef, onRibbonUpdate }) {
   const deckEpochRef = useRef(state._deckEpoch);
@@ -11014,18 +11031,22 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       }
       // T → hide/show the session edge bar (Present only; no modifiers; not
       // in a text field; not while a dialog is open). Memory only (v13.80).
-      if (fullscreen && (e.key === "t" || e.key === "T") && !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey && VELA_OPEN_CHROME.modals.size === 0 && !sessionDialogOpenRef.current) {
+      // A held key (e.repeat) toggles once. No action while the Presenter View or
+      // the gallery covers the slide (the bar is hidden there: no feedback).
+      if (fullscreen && (e.key === "t" || e.key === "T") && !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey && VELA_OPEN_CHROME.modals.size === 0 && !sessionDialogOpenRef.current && !showPresenterViewRef.current && !showGalleryRef.current) {
         const ae = document.activeElement;
         if (!(ae && (["INPUT", "TEXTAREA", "SELECT"].includes(ae.tagName) || ae.isContentEditable))) {
-          e.preventDefault(); setSessionBarHidden((v) => { VELA_SESSION_BAR.hidden = !v; return !v; }); return;
+          e.preventDefault(); if (e.repeat) return; setSessionBarHidden((v) => { VELA_SESSION_BAR.hidden = !v; return !v; }); return;
         }
       }
       // C → show/hide the clock chip (Present only). No modifiers, so Ctrl/Cmd+C
       // (slide copy) keeps working; not in a text field; not while a dialog is open.
-      if (fullscreen && (e.key === "c" || e.key === "C") && !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey && VELA_OPEN_CHROME.modals.size === 0 && !sessionDialogOpenRef.current) {
+      // A held key (e.repeat) toggles once. No action while the Presenter View or
+      // the gallery covers the slide (the chip is hidden there: no feedback).
+      if (fullscreen && (e.key === "c" || e.key === "C") && !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey && VELA_OPEN_CHROME.modals.size === 0 && !sessionDialogOpenRef.current && !showPresenterViewRef.current && !showGalleryRef.current) {
         const ae = document.activeElement;
         if (!(ae && (["INPUT", "TEXTAREA", "SELECT"].includes(ae.tagName) || ae.isContentEditable))) {
-          e.preventDefault(); toggleClock(); return;
+          e.preventDefault(); if (!e.repeat) toggleClock(); return;
         }
       }
       // S → presenter view toggle (Present mode only)
@@ -11552,15 +11573,15 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
         {/* Clock chip (v13.80, C key): bottom-left twin of the slide-number
             chip. Static colours only; the text is built from numbers by
             fmtClock / fmtCountdown (no deck string). With branding on, it sits
-            above the 28 px (virtual) footer strip: in fill mode that strip is
-            at most max(28/960 vw, 28/540 vh) tall. branding.enabled is used as a
-            boolean only; no branding value reaches the chip. */}
+            above the footer strip and a bottom-left logo (presentClockBottom:
+            booleans and clamped numbers only; no branding string reaches the
+            chip). */}
         {clockOn && !showPresenterView && !showGallery && (() => {
           const branded = !!branding?.enabled && !presSlides[slideIndex]?._virtual;
           const p = sessionPace;
           const tk = p ? (Object.prototype.hasOwnProperty.call(SESSION_PACE_COLORS, p.timeLeftKey) ? p.timeLeftKey : "white") : null;
           const rest = !p ? "" : p.over ? `+${fmtCountdown(p.timeLeftSec)} over` : p.before ? `starts in ${fmtCountdown((sessionLive.start - nowMs) / 1000)}` : `${fmtCountdown(p.timeLeftSec)} left`;
-          return <div data-testid="present-clock-chip" data-time-key={tk || undefined} aria-hidden="true" style={{ position: "absolute", left: 24, bottom: branded ? `calc(max(${(2800 / VIRTUAL_W).toFixed(4)}vw, ${(2800 / VIRTUAL_H).toFixed(4)}vh) + 10px)` : 24, zIndex: 15, pointerEvents: "none", fontFamily: FONT.mono, fontSize: 15, fontWeight: 600, letterSpacing: "0.04em", lineHeight: 1.3, whiteSpace: "nowrap", color: "#e2e8f0", background: "rgba(0,0,0,0.4)", padding: "4px 12px", borderRadius: 20, opacity: 0.85 }}>
+          return <div data-testid="present-clock-chip" data-time-key={tk || undefined} aria-hidden="true" style={{ position: "absolute", left: 24, bottom: presentClockBottom(branded ? branding : null), zIndex: 15, pointerEvents: "none", fontFamily: FONT.mono, fontSize: 15, fontWeight: 600, letterSpacing: "0.04em", lineHeight: 1.3, whiteSpace: "nowrap", color: "#e2e8f0", background: "rgba(0,0,0,0.4)", padding: "4px 12px", borderRadius: 20, opacity: 0.85 }}>
             <span data-testid="present-clock-time">{fmtClock(nowMs)}</span>
             {p && <><span style={{ color: "#94a3b8" }}>{" · "}</span><span data-testid="present-clock-left" style={{ color: SESSION_PACE_COLORS[tk] }}>{rest}</span></>}
           </div>;
@@ -11586,8 +11607,12 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
         {/* Gallery is reached through the view switch (fs-view-switch), so it has no separate icon here. */}
         {!isMobile && <div data-testid="presenter-toggle" className="slide-nav-btn" onClick={() => setPresenterView((v) => !v)} title={showPresenterView ? "Exit presenter view (S)" : "Presenter view — notes, next slide, timer (S)"} style={{ position: "absolute", top: 16, right: 88, padding: 8, background: showPresenterView ? T.accent + "30" : undefined, borderRadius: 6 }}><span style={{ fontSize: 16, color: "#fff" }}>{"\u{1F5D2}\uFE0F"}</span></div>}
         {/* Clock chip toggle (C). A real button; mousedown keeps focus on the
-            Present root, so Space / Enter still go to slide navigation. */}
-        {!isMobile && <button type="button" data-testid="present-clock-toggle" className="slide-nav-btn" aria-pressed={clockOn} aria-label="Clock on slide (C)" title="Clock on slide (C)" onMouseDown={(e) => e.preventDefault()} onClick={toggleClock} style={{ position: "absolute", top: 16, right: 124, padding: 8, border: "none", borderRadius: 6, display: "flex", background: clockOn ? T.accent + "30" : undefined }}>{getIcon("Clock", { size: 18, color: "#fff" })}</button>}
+            Present root, so after a click Space / Enter still go to slide
+            navigation. With keyboard focus on the button, Space / Enter toggle
+            the chip here and stop at the button: the window key handler would
+            change the slide and cancel the click. preventDefault: no second
+            toggle from the native click. A held key toggles once. */}
+        {!isMobile && <button type="button" data-testid="present-clock-toggle" className="slide-nav-btn" aria-pressed={clockOn} aria-label="Clock on slide (C)" title="Clock on slide (C)" onMouseDown={(e) => e.preventDefault()} onClick={toggleClock} onKeyDown={(e) => { if (e.key === " " || e.key === "Enter") { e.preventDefault(); e.stopPropagation(); if (!e.repeat) toggleClock(); } }} style={{ position: "absolute", top: 16, right: 124, padding: 8, border: "none", borderRadius: 6, display: "flex", background: clockOn ? T.accent + "30" : undefined }}>{getIcon("Clock", { size: 18, color: "#fff" })}</button>}
         {/* Present Edit toggle (Shift+E): restore inline click-to-edit while
             presenting. Uses the Lucide pencil (SVG), NOT the ✏ emoji, so the
             CR-03 "no edit chrome" test still passes when edit mode is off.
@@ -22325,7 +22350,7 @@ uiSuite("session-clock-chip", [
       if (_clkChip()) throw new Error("chip in the editor");
     } finally { await _clkLeave(); }
   }},
-  { name: "CK2: Ctrl+C, Cmd+C, Shift+C, Alt+C and C typed in an input do not toggle", fn: async () => {
+  { name: "CK2: Ctrl+C, Cmd+C, Shift+C, Alt+C and C with focus in a text field do not toggle", fn: async () => {
     const hooks = _sesUiNeedHooks();
     let inp = null;
     try {
@@ -22335,12 +22360,20 @@ uiSuite("session-clock-chip", [
         await _clkKey(o);
         if (_clkChip()) throw new Error("a modified C toggled the chip: " + JSON.stringify(o));
       }
-      inp = document.createElement("input");
-      _sesUiRoot().appendChild(inp);
-      inp.focus(); await _wait(50);
-      _key("c"); await _wait(150);
-      if (_clkChip()) throw new Error("C typed in an input toggled the chip");
-      inp.remove(); inp = null;
+      // The top of the Present key handler already returns for an INPUT /
+      // TEXTAREA target. To prove the C guard on document.activeElement, the
+      // event goes to window (target is not the field) while the field has focus.
+      for (const tag of ["input", "textarea", "select", "contenteditable"]) {
+        inp = document.createElement(tag === "contenteditable" ? "div" : tag);
+        if (tag === "contenteditable") { inp.contentEditable = "true"; inp.tabIndex = 0; }
+        _sesUiRoot().appendChild(inp);
+        inp.focus(); await _wait(50);
+        if (document.activeElement !== inp) throw new Error(tag + " did not take focus");
+        window.dispatchEvent(new KeyboardEvent("keydown", { key: "c", bubbles: true, cancelable: true }));
+        await _wait(150);
+        if (_clkChip()) throw new Error("C with focus in a " + tag + " toggled the chip");
+        inp.remove(); inp = null;
+      }
       await _clkOn();
     } finally { if (inp) inp.remove(); await _clkLeave(); }
   }},
@@ -22417,6 +22450,116 @@ uiSuite("session-clock-chip", [
       await _waitFor(() => !_clkChip(), 1500).catch(() => { throw new Error("C did not hide the chip with blocked storage"); });
       if (errs.length) throw new Error("errors: " + errs.join(" | "));
     } finally { P.setItem = set0; P.removeItem = rm0; window.removeEventListener("error", onErr); await _clkLeave(); }
+  }},
+  { name: "CK7: Space and Enter on the focused clock button toggle the chip and do not change the slide", fn: async () => {
+    const hooks = _sesUiNeedHooks();
+    try {
+      hooks.setSessionForTest(null);
+      await _sesUiPresent();
+      const b = await _waitFor(() => _clkBtn(), 1500);
+      const pos0 = _slidePos();
+      if (pos0 == null) throw new Error("no slide position");
+      b.focus(); await _wait(50);
+      if (document.activeElement !== b) throw new Error("button did not take focus");
+      _key(" "); await _wait(200);
+      if (_slidePos() !== pos0) throw new Error(`Space changed the slide: ${pos0} -> ${_slidePos()}`);
+      if (!_clkChip() || _clkBtn().getAttribute("aria-pressed") !== "true") throw new Error("Space did not show the chip");
+      _clkBtn().focus(); await _wait(50);
+      _key("Enter"); await _wait(200);
+      if (_slidePos() !== pos0) throw new Error(`Enter changed the slide: ${pos0} -> ${_slidePos()}`);
+      if (_clkChip() || _clkBtn().getAttribute("aria-pressed") !== "false") throw new Error("Enter did not hide the chip");
+    } finally { await _clkLeave(); }
+  }},
+  { name: "CK8: chip bottom clears the footer, and a bottom-left logo box at every window size; numbers only", fn: async () => {
+    if (typeof presentClockBottom !== "function") throw new Error("no chip-bottom helper: the chip does not know the logo");
+    const re = /^calc\(max\(([\d.]+)vw, ([\d.]+)vh\) \+ 10px\)$/;
+    // K = virtual px the chip clears (0 = the plain 24 px place).
+    const parse = (b) => {
+      const v = presentClockBottom(b);
+      if (v === 24) return null;
+      const m = re.exec(v);
+      if (!m) throw new Error("bottom is not a numbers-only calc: " + v);
+      const kw = +m[1] * VIRTUAL_W / 100, kh = +m[2] * VIRTUAL_H / 100;
+      if (Math.abs(kw - kh) > 0.01) throw new Error("vw and vh parts differ: " + v);
+      return { k: Math.round(kw), vwP: +m[1], vhP: +m[2] };
+    };
+    const L = "data:image/png;base64,iVBORw0KGgo=";
+    const k = (b) => { const r = parse(b); return r ? r.k : 0; };
+    const BL = { enabled: true, logo: L, logoPosition: "bottom-left" };
+    _ssEq([null, undefined, { enabled: false, logo: L, logoPosition: "bottom-left", logoSize: 56 }].map(k), [0, 0, 0], "branding off");
+    _ssEq([{ enabled: true }, { ...BL, logo: null }, { ...BL, logoPosition: "bottom-right" }, { ...BL, logoPosition: "top-left" }, { ...BL, logoPosition: "top-right" }].map(k), [28, 28, 28, 28, 28], "footer only");
+    _ssEq([56, 20, 120, undefined, 0, NaN, -5, 500, Infinity, "80"].map((s) => k({ ...BL, logoSize: s })), [100, 64, 164, 100, 100, 100, 100, 164, 100, 100], "bottom-left logo heights");
+    // Screen check: fill-mode scale (computeFillDims) at real window sizes;
+    // the chip bottom must be above the logo top (36 + height) and the footer.
+    const fillScale = (W, H) => { const rh0 = Math.round(VIRTUAL_W * H / W); const hr = rh0 / VIRTUAL_H; const z = hr <= 1.05 ? 1 : Math.pow(hr, 0.45); return Math.min(W / Math.round(VIRTUAL_W / z), H / Math.round(rh0 / z)); };
+    const bad = [];
+    for (const [W, H] of [[1920, 1080], [1280, 800], [1024, 768], [1440, 810], [2560, 1080], [1920, 1200], [800, 1000]]) {
+      const s = fillScale(W, H);
+      for (const h of [20, 56, 120]) {
+        const r = parse({ ...BL, logoSize: h });
+        const bottom = Math.max(r.vwP * W / 100, r.vhP * H / 100) + 10;
+        if (bottom < (36 + h) * s + 4) bad.push(`${W}x${H} h${h}: chip ${bottom.toFixed(1)} logo top ${((36 + h) * s).toFixed(1)}`);
+      }
+      const f = parse({ enabled: true });
+      if (Math.max(f.vwP * W / 100, f.vhP * H / 100) + 10 < 28 * s + 4) bad.push(`${W}x${H}: footer`);
+    }
+    if (bad.length) throw new Error(bad.slice(0, 4).join(" | "));
+  }},
+  { name: "CK9: a held C or T key (auto-repeat) toggles once", fn: async () => {
+    const hooks = _sesUiNeedHooks();
+    try {
+      hooks.setSessionForTest(null);
+      await _sesUiPresent();
+      document.activeElement?.blur(); await _wait(50);
+      const h0 = VELA_SESSION_BAR.hidden;
+      for (let i = 0; i < 5; i++) {
+        _key("c", i ? { repeat: true } : {}); _key("t", i ? { repeat: true } : {});
+        await _wait(80);
+        if (!_clkChip() || _clkStored() !== "1") throw new Error(`C keydown ${i + 1}: chip ${!!_clkChip()}, stored ${_clkStored()}`);
+        if (VELA_SESSION_BAR.hidden !== !h0) throw new Error(`T keydown ${i + 1}: pace bar hidden ${VELA_SESSION_BAR.hidden}`);
+      }
+    } finally { await _clkLeave(); }
+  }},
+  { name: "CK10: C and T do nothing in the Presenter View; C does nothing in the gallery", fn: async () => {
+    const hooks = _sesUiNeedHooks();
+    try {
+      hooks.setSessionForTest({ start: Date.now() - 10 * 60000, end: Date.now() + 20 * 60000 });
+      await _sesUiPresent();
+      await _sesUiOpenPresenter();
+      document.activeElement?.blur(); await _wait(50);
+      const h0 = VELA_SESSION_BAR.hidden;
+      _key("c"); await _wait(150);
+      _key("t"); await _wait(150);
+      if (_clkStored() !== null) throw new Error("C in the Presenter View wrote storage: " + _clkStored());
+      if (VELA_SESSION_BAR.hidden !== h0) throw new Error("T in the Presenter View changed the pace bar");
+      _key("s");
+      await _waitFor(() => !_$("[data-testid='presenter-view']"), 1500);
+      await _wait(150);
+      if (_clkChip()) throw new Error("chip on after C in the Presenter View");
+      document.activeElement?.blur(); await _wait(50);
+      _key("g");
+      await _waitFor(() => _$text("GALLERY"), 5000);
+      _key("c"); await _wait(150);
+      if (_clkStored() !== null) throw new Error("C in the gallery wrote storage: " + _clkStored());
+      _key("g");
+      await _waitFor(() => !_$text("GALLERY"), 2000);
+      await _wait(150);
+      if (_clkChip()) throw new Error("chip on after C in the gallery");
+    } finally { await _clkLeave(); }
+  }},
+  { name: "CK11: last 5 min is red; Caps Lock C (no Shift) toggles", fn: async () => {
+    const hooks = _sesUiNeedHooks();
+    try {
+      hooks.setSessionForTest({ start: Date.now() - 26 * 60000, end: Date.now() + 4 * 60000 });
+      await _sesUiPresent();
+      document.activeElement?.blur(); await _wait(50);
+      _key("C"); await _wait(150);
+      const left = await _waitFor(() => _$("[data-testid='present-clock-left']"), 1500).catch(() => { throw new Error("Caps Lock C did not show the chip"); });
+      if (!/^\d+:\d\d left$/.test(left.textContent)) throw new Error("text: " + left.textContent);
+      if (_clkChip().dataset.timeKey !== "red" || getComputedStyle(left).color !== _sesRgb(SESSION_PACE_COLORS.red)) throw new Error("last 5 min colour: " + _clkChip().dataset.timeKey);
+      _key("C");
+      await _waitFor(() => !_clkChip(), 1500).catch(() => { throw new Error("Caps Lock C did not hide the chip"); });
+    } finally { await _clkLeave(); }
   }},
 ]);
 

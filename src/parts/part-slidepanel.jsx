@@ -91,6 +91,23 @@ const VELA_SESSION_BAR = { hidden: false };
 // Present clock chip (v13.80): the C-key show choice, kept on this device only
 // (not in the deck). Stored as "1" or absent; a read compares with "1" only.
 const VELA_PRESENT_CLOCK_KEY = "vela-present-clock";
+// Clock chip bottom offset (CSS) in Present. `branding` is the sanitized
+// branding state, or null when the slide shows no branding. Only booleans and
+// clamped numbers come from it: no branding string reaches the style.
+// Fill mode: slide scale s <= max(vw/960, vh/540) (computeFillDims: the zoom is
+// never above the height ratio), so K virtual px are at most
+// max(K/960 vw, K/540 vh) on screen. Branding on: clear the 28 px footer strip.
+// Logo at the bottom left (same position test as BrandingOverlay): clear the
+// logo box too (bottom 36 + height, then 8 px). Height as BrandingOverlay
+// draws it (logoSize || 56), capped at the 120 px limit of the import sanitizer.
+function presentClockBottom(branding) {
+  if (!branding?.enabled) return 24;
+  const pos = typeof branding.logoPosition === "string" && branding.logoPosition ? branding.logoPosition : "top-left";
+  const logoBottomLeft = !!branding.logo && !pos.startsWith("top") && pos.endsWith("left");
+  const h = Number.isFinite(branding.logoSize) && branding.logoSize > 0 ? Math.min(branding.logoSize, 120) : 56;
+  const k = logoBottomLeft ? 36 + h + 8 : 28;
+  return `calc(max(${(k * 100 / VIRTUAL_W).toFixed(4)}vw, ${(k * 100 / VIRTUAL_H).toFixed(4)}vh) + 10px)`;
+}
 
 function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, branding, guidelines, isMobile, fontScale, actionsRef, onRibbonUpdate }) {
   const deckEpochRef = useRef(state._deckEpoch);
@@ -1063,18 +1080,22 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       }
       // T → hide/show the session edge bar (Present only; no modifiers; not
       // in a text field; not while a dialog is open). Memory only (v13.80).
-      if (fullscreen && (e.key === "t" || e.key === "T") && !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey && VELA_OPEN_CHROME.modals.size === 0 && !sessionDialogOpenRef.current) {
+      // A held key (e.repeat) toggles once. No action while the Presenter View or
+      // the gallery covers the slide (the bar is hidden there: no feedback).
+      if (fullscreen && (e.key === "t" || e.key === "T") && !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey && VELA_OPEN_CHROME.modals.size === 0 && !sessionDialogOpenRef.current && !showPresenterViewRef.current && !showGalleryRef.current) {
         const ae = document.activeElement;
         if (!(ae && (["INPUT", "TEXTAREA", "SELECT"].includes(ae.tagName) || ae.isContentEditable))) {
-          e.preventDefault(); setSessionBarHidden((v) => { VELA_SESSION_BAR.hidden = !v; return !v; }); return;
+          e.preventDefault(); if (e.repeat) return; setSessionBarHidden((v) => { VELA_SESSION_BAR.hidden = !v; return !v; }); return;
         }
       }
       // C → show/hide the clock chip (Present only). No modifiers, so Ctrl/Cmd+C
       // (slide copy) keeps working; not in a text field; not while a dialog is open.
-      if (fullscreen && (e.key === "c" || e.key === "C") && !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey && VELA_OPEN_CHROME.modals.size === 0 && !sessionDialogOpenRef.current) {
+      // A held key (e.repeat) toggles once. No action while the Presenter View or
+      // the gallery covers the slide (the chip is hidden there: no feedback).
+      if (fullscreen && (e.key === "c" || e.key === "C") && !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey && VELA_OPEN_CHROME.modals.size === 0 && !sessionDialogOpenRef.current && !showPresenterViewRef.current && !showGalleryRef.current) {
         const ae = document.activeElement;
         if (!(ae && (["INPUT", "TEXTAREA", "SELECT"].includes(ae.tagName) || ae.isContentEditable))) {
-          e.preventDefault(); toggleClock(); return;
+          e.preventDefault(); if (!e.repeat) toggleClock(); return;
         }
       }
       // S → presenter view toggle (Present mode only)
@@ -1601,15 +1622,15 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
         {/* Clock chip (v13.80, C key): bottom-left twin of the slide-number
             chip. Static colours only; the text is built from numbers by
             fmtClock / fmtCountdown (no deck string). With branding on, it sits
-            above the 28 px (virtual) footer strip: in fill mode that strip is
-            at most max(28/960 vw, 28/540 vh) tall. branding.enabled is used as a
-            boolean only; no branding value reaches the chip. */}
+            above the footer strip and a bottom-left logo (presentClockBottom:
+            booleans and clamped numbers only; no branding string reaches the
+            chip). */}
         {clockOn && !showPresenterView && !showGallery && (() => {
           const branded = !!branding?.enabled && !presSlides[slideIndex]?._virtual;
           const p = sessionPace;
           const tk = p ? (Object.prototype.hasOwnProperty.call(SESSION_PACE_COLORS, p.timeLeftKey) ? p.timeLeftKey : "white") : null;
           const rest = !p ? "" : p.over ? `+${fmtCountdown(p.timeLeftSec)} over` : p.before ? `starts in ${fmtCountdown((sessionLive.start - nowMs) / 1000)}` : `${fmtCountdown(p.timeLeftSec)} left`;
-          return <div data-testid="present-clock-chip" data-time-key={tk || undefined} aria-hidden="true" style={{ position: "absolute", left: 24, bottom: branded ? `calc(max(${(2800 / VIRTUAL_W).toFixed(4)}vw, ${(2800 / VIRTUAL_H).toFixed(4)}vh) + 10px)` : 24, zIndex: 15, pointerEvents: "none", fontFamily: FONT.mono, fontSize: 15, fontWeight: 600, letterSpacing: "0.04em", lineHeight: 1.3, whiteSpace: "nowrap", color: "#e2e8f0", background: "rgba(0,0,0,0.4)", padding: "4px 12px", borderRadius: 20, opacity: 0.85 }}>
+          return <div data-testid="present-clock-chip" data-time-key={tk || undefined} aria-hidden="true" style={{ position: "absolute", left: 24, bottom: presentClockBottom(branded ? branding : null), zIndex: 15, pointerEvents: "none", fontFamily: FONT.mono, fontSize: 15, fontWeight: 600, letterSpacing: "0.04em", lineHeight: 1.3, whiteSpace: "nowrap", color: "#e2e8f0", background: "rgba(0,0,0,0.4)", padding: "4px 12px", borderRadius: 20, opacity: 0.85 }}>
             <span data-testid="present-clock-time">{fmtClock(nowMs)}</span>
             {p && <><span style={{ color: "#94a3b8" }}>{" · "}</span><span data-testid="present-clock-left" style={{ color: SESSION_PACE_COLORS[tk] }}>{rest}</span></>}
           </div>;
@@ -1635,8 +1656,12 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
         {/* Gallery is reached through the view switch (fs-view-switch), so it has no separate icon here. */}
         {!isMobile && <div data-testid="presenter-toggle" className="slide-nav-btn" onClick={() => setPresenterView((v) => !v)} title={showPresenterView ? "Exit presenter view (S)" : "Presenter view — notes, next slide, timer (S)"} style={{ position: "absolute", top: 16, right: 88, padding: 8, background: showPresenterView ? T.accent + "30" : undefined, borderRadius: 6 }}><span style={{ fontSize: 16, color: "#fff" }}>{"\u{1F5D2}\uFE0F"}</span></div>}
         {/* Clock chip toggle (C). A real button; mousedown keeps focus on the
-            Present root, so Space / Enter still go to slide navigation. */}
-        {!isMobile && <button type="button" data-testid="present-clock-toggle" className="slide-nav-btn" aria-pressed={clockOn} aria-label="Clock on slide (C)" title="Clock on slide (C)" onMouseDown={(e) => e.preventDefault()} onClick={toggleClock} style={{ position: "absolute", top: 16, right: 124, padding: 8, border: "none", borderRadius: 6, display: "flex", background: clockOn ? T.accent + "30" : undefined }}>{getIcon("Clock", { size: 18, color: "#fff" })}</button>}
+            Present root, so after a click Space / Enter still go to slide
+            navigation. With keyboard focus on the button, Space / Enter toggle
+            the chip here and stop at the button: the window key handler would
+            change the slide and cancel the click. preventDefault: no second
+            toggle from the native click. A held key toggles once. */}
+        {!isMobile && <button type="button" data-testid="present-clock-toggle" className="slide-nav-btn" aria-pressed={clockOn} aria-label="Clock on slide (C)" title="Clock on slide (C)" onMouseDown={(e) => e.preventDefault()} onClick={toggleClock} onKeyDown={(e) => { if (e.key === " " || e.key === "Enter") { e.preventDefault(); e.stopPropagation(); if (!e.repeat) toggleClock(); } }} style={{ position: "absolute", top: 16, right: 124, padding: 8, border: "none", borderRadius: 6, display: "flex", background: clockOn ? T.accent + "30" : undefined }}>{getIcon("Clock", { size: 18, color: "#fff" })}</button>}
         {/* Present Edit toggle (Shift+E): restore inline click-to-edit while
             presenting. Uses the Lucide pencil (SVG), NOT the ✏ emoji, so the
             CR-03 "no edit chrome" test still passes when edit mode is off.

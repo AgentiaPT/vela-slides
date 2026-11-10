@@ -87,7 +87,7 @@ that symbol in the named part for the line. No line numbers here — they rot.
 - StudentPanel — dispatcher: static studyNotes first, else live Vera: StudentPanel TeacherPanel SectionPicker
 
 ### part-slidepanel.jsx
-- Slide Panel — editor slide view, fullscreen/presenter nav, per-slide AI actions: VIEW_SWITCH_SEGMENTS VIEW_SWITCH_PAD VIEW_SWITCH_LABEL_EXTRA ViewSwitch dragHasOnlyImageFiles TB_COMPACT_PAD_X useToolbarCompact VELA_SESSION_BAR VELA_PRESENT_CLOCK_KEY SlidePanel
+- Slide Panel — editor slide view, fullscreen/presenter nav, per-slide AI actions: VIEW_SWITCH_SEGMENTS VIEW_SWITCH_PAD VIEW_SWITCH_LABEL_EXTRA ViewSwitch dragHasOnlyImageFiles TB_COMPACT_PAD_X useToolbarCompact VELA_SESSION_BAR VELA_PRESENT_CLOCK_KEY presentClockBottom SlidePanel
 
 ### part-list.jsx
 - (file preamble): _velaDrag _setDrag _clearDrag
@@ -342,7 +342,7 @@ add_lane add_item batch_add_items remove_item remove_lane rename_item rename_lan
 - part-blocks.jsx: 806-line unbannered stretch after line 1265
 - part-canvas.jsx: 581-line unbannered stretch after line 150
 - part-slides.jsx: 488-line unbannered stretch after line 380
-- part-slidepanel.jsx: 478-line unbannered stretch after line 1470
+- part-slidepanel.jsx: 482-line unbannered stretch after line 1491
 - part-uitest.jsx: 616-line unbannered stretch after line 1230
 - part-uitest2.jsx: 448-line unbannered stretch after line 2
 - part-uitest2.jsx: 593-line unbannered stretch after line 1457

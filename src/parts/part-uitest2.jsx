@@ -6182,7 +6182,7 @@ uiSuite("session-clock-chip", [
       if (_clkChip()) throw new Error("chip in the editor");
     } finally { await _clkLeave(); }
   }},
-  { name: "CK2: Ctrl+C, Cmd+C, Shift+C, Alt+C and C typed in an input do not toggle", fn: async () => {
+  { name: "CK2: Ctrl+C, Cmd+C, Shift+C, Alt+C and C with focus in a text field do not toggle", fn: async () => {
     const hooks = _sesUiNeedHooks();
     let inp = null;
     try {
@@ -6192,12 +6192,20 @@ uiSuite("session-clock-chip", [
         await _clkKey(o);
         if (_clkChip()) throw new Error("a modified C toggled the chip: " + JSON.stringify(o));
       }
-      inp = document.createElement("input");
-      _sesUiRoot().appendChild(inp);
-      inp.focus(); await _wait(50);
-      _key("c"); await _wait(150);
-      if (_clkChip()) throw new Error("C typed in an input toggled the chip");
-      inp.remove(); inp = null;
+      // The top of the Present key handler already returns for an INPUT /
+      // TEXTAREA target. To prove the C guard on document.activeElement, the
+      // event goes to window (target is not the field) while the field has focus.
+      for (const tag of ["input", "textarea", "select", "contenteditable"]) {
+        inp = document.createElement(tag === "contenteditable" ? "div" : tag);
+        if (tag === "contenteditable") { inp.contentEditable = "true"; inp.tabIndex = 0; }
+        _sesUiRoot().appendChild(inp);
+        inp.focus(); await _wait(50);
+        if (document.activeElement !== inp) throw new Error(tag + " did not take focus");
+        window.dispatchEvent(new KeyboardEvent("keydown", { key: "c", bubbles: true, cancelable: true }));
+        await _wait(150);
+        if (_clkChip()) throw new Error("C with focus in a " + tag + " toggled the chip");
+        inp.remove(); inp = null;
+      }
       await _clkOn();
     } finally { if (inp) inp.remove(); await _clkLeave(); }
   }},
@@ -6274,6 +6282,116 @@ uiSuite("session-clock-chip", [
       await _waitFor(() => !_clkChip(), 1500).catch(() => { throw new Error("C did not hide the chip with blocked storage"); });
       if (errs.length) throw new Error("errors: " + errs.join(" | "));
     } finally { P.setItem = set0; P.removeItem = rm0; window.removeEventListener("error", onErr); await _clkLeave(); }
+  }},
+  { name: "CK7: Space and Enter on the focused clock button toggle the chip and do not change the slide", fn: async () => {
+    const hooks = _sesUiNeedHooks();
+    try {
+      hooks.setSessionForTest(null);
+      await _sesUiPresent();
+      const b = await _waitFor(() => _clkBtn(), 1500);
+      const pos0 = _slidePos();
+      if (pos0 == null) throw new Error("no slide position");
+      b.focus(); await _wait(50);
+      if (document.activeElement !== b) throw new Error("button did not take focus");
+      _key(" "); await _wait(200);
+      if (_slidePos() !== pos0) throw new Error(`Space changed the slide: ${pos0} -> ${_slidePos()}`);
+      if (!_clkChip() || _clkBtn().getAttribute("aria-pressed") !== "true") throw new Error("Space did not show the chip");
+      _clkBtn().focus(); await _wait(50);
+      _key("Enter"); await _wait(200);
+      if (_slidePos() !== pos0) throw new Error(`Enter changed the slide: ${pos0} -> ${_slidePos()}`);
+      if (_clkChip() || _clkBtn().getAttribute("aria-pressed") !== "false") throw new Error("Enter did not hide the chip");
+    } finally { await _clkLeave(); }
+  }},
+  { name: "CK8: chip bottom clears the footer, and a bottom-left logo box at every window size; numbers only", fn: async () => {
+    if (typeof presentClockBottom !== "function") throw new Error("no chip-bottom helper: the chip does not know the logo");
+    const re = /^calc\(max\(([\d.]+)vw, ([\d.]+)vh\) \+ 10px\)$/;
+    // K = virtual px the chip clears (0 = the plain 24 px place).
+    const parse = (b) => {
+      const v = presentClockBottom(b);
+      if (v === 24) return null;
+      const m = re.exec(v);
+      if (!m) throw new Error("bottom is not a numbers-only calc: " + v);
+      const kw = +m[1] * VIRTUAL_W / 100, kh = +m[2] * VIRTUAL_H / 100;
+      if (Math.abs(kw - kh) > 0.01) throw new Error("vw and vh parts differ: " + v);
+      return { k: Math.round(kw), vwP: +m[1], vhP: +m[2] };
+    };
+    const L = "data:image/png;base64,iVBORw0KGgo=";
+    const k = (b) => { const r = parse(b); return r ? r.k : 0; };
+    const BL = { enabled: true, logo: L, logoPosition: "bottom-left" };
+    _ssEq([null, undefined, { enabled: false, logo: L, logoPosition: "bottom-left", logoSize: 56 }].map(k), [0, 0, 0], "branding off");
+    _ssEq([{ enabled: true }, { ...BL, logo: null }, { ...BL, logoPosition: "bottom-right" }, { ...BL, logoPosition: "top-left" }, { ...BL, logoPosition: "top-right" }].map(k), [28, 28, 28, 28, 28], "footer only");
+    _ssEq([56, 20, 120, undefined, 0, NaN, -5, 500, Infinity, "80"].map((s) => k({ ...BL, logoSize: s })), [100, 64, 164, 100, 100, 100, 100, 164, 100, 100], "bottom-left logo heights");
+    // Screen check: fill-mode scale (computeFillDims) at real window sizes;
+    // the chip bottom must be above the logo top (36 + height) and the footer.
+    const fillScale = (W, H) => { const rh0 = Math.round(VIRTUAL_W * H / W); const hr = rh0 / VIRTUAL_H; const z = hr <= 1.05 ? 1 : Math.pow(hr, 0.45); return Math.min(W / Math.round(VIRTUAL_W / z), H / Math.round(rh0 / z)); };
+    const bad = [];
+    for (const [W, H] of [[1920, 1080], [1280, 800], [1024, 768], [1440, 810], [2560, 1080], [1920, 1200], [800, 1000]]) {
+      const s = fillScale(W, H);
+      for (const h of [20, 56, 120]) {
+        const r = parse({ ...BL, logoSize: h });
+        const bottom = Math.max(r.vwP * W / 100, r.vhP * H / 100) + 10;
+        if (bottom < (36 + h) * s + 4) bad.push(`${W}x${H} h${h}: chip ${bottom.toFixed(1)} logo top ${((36 + h) * s).toFixed(1)}`);
+      }
+      const f = parse({ enabled: true });
+      if (Math.max(f.vwP * W / 100, f.vhP * H / 100) + 10 < 28 * s + 4) bad.push(`${W}x${H}: footer`);
+    }
+    if (bad.length) throw new Error(bad.slice(0, 4).join(" | "));
+  }},
+  { name: "CK9: a held C or T key (auto-repeat) toggles once", fn: async () => {
+    const hooks = _sesUiNeedHooks();
+    try {
+      hooks.setSessionForTest(null);
+      await _sesUiPresent();
+      document.activeElement?.blur(); await _wait(50);
+      const h0 = VELA_SESSION_BAR.hidden;
+      for (let i = 0; i < 5; i++) {
+        _key("c", i ? { repeat: true } : {}); _key("t", i ? { repeat: true } : {});
+        await _wait(80);
+        if (!_clkChip() || _clkStored() !== "1") throw new Error(`C keydown ${i + 1}: chip ${!!_clkChip()}, stored ${_clkStored()}`);
+        if (VELA_SESSION_BAR.hidden !== !h0) throw new Error(`T keydown ${i + 1}: pace bar hidden ${VELA_SESSION_BAR.hidden}`);
+      }
+    } finally { await _clkLeave(); }
+  }},
+  { name: "CK10: C and T do nothing in the Presenter View; C does nothing in the gallery", fn: async () => {
+    const hooks = _sesUiNeedHooks();
+    try {
+      hooks.setSessionForTest({ start: Date.now() - 10 * 60000, end: Date.now() + 20 * 60000 });
+      await _sesUiPresent();
+      await _sesUiOpenPresenter();
+      document.activeElement?.blur(); await _wait(50);
+      const h0 = VELA_SESSION_BAR.hidden;
+      _key("c"); await _wait(150);
+      _key("t"); await _wait(150);
+      if (_clkStored() !== null) throw new Error("C in the Presenter View wrote storage: " + _clkStored());
+      if (VELA_SESSION_BAR.hidden !== h0) throw new Error("T in the Presenter View changed the pace bar");
+      _key("s");
+      await _waitFor(() => !_$("[data-testid='presenter-view']"), 1500);
+      await _wait(150);
+      if (_clkChip()) throw new Error("chip on after C in the Presenter View");
+      document.activeElement?.blur(); await _wait(50);
+      _key("g");
+      await _waitFor(() => _$text("GALLERY"), 5000);
+      _key("c"); await _wait(150);
+      if (_clkStored() !== null) throw new Error("C in the gallery wrote storage: " + _clkStored());
+      _key("g");
+      await _waitFor(() => !_$text("GALLERY"), 2000);
+      await _wait(150);
+      if (_clkChip()) throw new Error("chip on after C in the gallery");
+    } finally { await _clkLeave(); }
+  }},
+  { name: "CK11: last 5 min is red; Caps Lock C (no Shift) toggles", fn: async () => {
+    const hooks = _sesUiNeedHooks();
+    try {
+      hooks.setSessionForTest({ start: Date.now() - 26 * 60000, end: Date.now() + 4 * 60000 });
+      await _sesUiPresent();
+      document.activeElement?.blur(); await _wait(50);
+      _key("C"); await _wait(150);
+      const left = await _waitFor(() => _$("[data-testid='present-clock-left']"), 1500).catch(() => { throw new Error("Caps Lock C did not show the chip"); });
+      if (!/^\d+:\d\d left$/.test(left.textContent)) throw new Error("text: " + left.textContent);
+      if (_clkChip().dataset.timeKey !== "red" || getComputedStyle(left).color !== _sesRgb(SESSION_PACE_COLORS.red)) throw new Error("last 5 min colour: " + _clkChip().dataset.timeKey);
+      _key("C");
+      await _waitFor(() => !_clkChip(), 1500).catch(() => { throw new Error("Caps Lock C did not hide the chip"); });
+    } finally { await _clkLeave(); }
   }},
 ]);
 
