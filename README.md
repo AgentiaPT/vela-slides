@@ -153,6 +153,11 @@ Decks use the `.vela` extension — a standard JSON file with a dedicated identi
 ### Presenter Mode
 Fullscreen presentation with arrow keys (Up/Down/Left/Right), Space, and Escape — PowerPoint-style navigation across slides and modules. Designed for 16:9 projection.
 
+Set a session end time (a clock button before **Present**, or the Presenter View panel) and Present shows the current time, the time left, and whether you are ahead of or behind your slides — with a thin pace bar on the slide's bottom edge (`T` hides it) and an optional clock chip (`C`). The times are saved in the deck as an optional `session` field.
+
+### Slide Search
+Search slide titles and content from the editor's slide list or in Present (`Ctrl+E` or `/`, then ↑ ↓ Enter). Opening a result outlines the matched block on the slide.
+
 ### Vector PDF Export
 Canvas-rendered PDF output with clickable links, branding overlays, and watermarks. Every slide exports as a crisp vector page.
 
