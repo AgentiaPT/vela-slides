@@ -562,14 +562,7 @@ export default function App() {
   // that fits wins. No memory of past widths, so a window that grows gets its
   // labels back at once, and the same width always gives the same level.
   const HDR_TITLE_MIN = 120, HDR_TOP = 4, HDR_LABEL_GAP = 4;
-  // The session end button shows only from this header width (px). The rule
-  // reads only the header's own width (set by the window, not by its content),
-  // so the button cannot make the bar oscillate.
-  const HDR_SESSION_MIN = 1100;
-  const [hdrWide, setHdrWide] = useState(true);
-  const hdrWideRef = useRef(true);
-  hdrWideRef.current = hdrWide;
-  const hdrGap = (lvl) => (lvl < 3 ? 8 : 10);
+  const hdrGap = (lvl) => (lvl < 3 ? 6 : 7);
   const [hdrSize, setHdrSize] = useState(1);
   const hdrSizeRef = useRef(1);
   hdrSizeRef.current = hdrSize;
@@ -579,9 +572,6 @@ export default function App() {
     const h = hdrRef.current, box = hdrBoxRef.current, sp = hdrSpacerRef.current;
     if (!h || !box || !sp) return;
     const ti = hdrTitleRef.current, lvl = hdrSizeRef.current;
-    // Before the signature check, so the button always follows the width.
-    const wide = h.getBoundingClientRect().width >= HDR_SESSION_MIN;
-    if (wide !== hdrWideRef.current) { hdrWideRef.current = wide; setHdrWide(wide); }
     // Skip the measurement when nothing that decides the level has changed.
     const sig = [h.clientWidth, h.scrollWidth, box.scrollWidth, sp.offsetWidth, ti ? ti.scrollWidth : -1, ti ? ti.offsetWidth : -1, lvl].join("|");
     if (hdrSigRef.current === sig) return;
@@ -615,8 +605,8 @@ export default function App() {
   }, []);
   useLayoutEffect(() => { fitHeader(); });
   // Session end button expiry: no interval. One timeout re-renders the editor
-  // when the live session becomes stale (end + 3 h), so the label goes back to
-  // "Set end". The delay is capped at the setTimeout maximum; an early fire
+  // when the live session becomes stale (end + 3 h), so the button goes back to
+  // "Set session end". The delay is capped at the setTimeout maximum; an early fire
   // bumps sessionTick, which re-arms the effect.
   useEffect(() => {
     const s = liveSession(state.session, Date.now());
@@ -1159,12 +1149,13 @@ export default function App() {
                   gallery is no longer reachable only from the Overview button below
                   the slide. */}
               <ViewSwitch mode={sa?.viewMode || "editor"} onSet={(m) => sa?.setView?.(m)} disabled={!has} compact={hdrSize < HDR_TOP} />
-              {hdrWide && (() => {
-                // Session end (v13.80): the label is fmtClock of a sanitized
-                // number; a stale session (end + 3 h) shows as not set.
+              {(() => {
+                // Session end (v13.80): icon only; the state is in title and
+                // aria-label (fmtClock of a sanitized number). A stale session
+                // (end + 3 h) shows as not set.
                 const live = liveSession(state.session, Date.now());
                 const tip = live ? `Session ends ${fmtClock(live.end)} — click to change` : "Set session end";
-                return <button data-testid="session-end-btn" onClick={() => setSessionDialog(true)} disabled={!has} title={tip} aria-label={tip} style={S.btn({ padding: "4px 10px", fontSize: 14, color: live ? T.accent : T.textDim, background: live ? T.accent + "20" : "transparent", borderRadius: 4, opacity: has ? 1 : 0.4, display: "flex", alignItems: "center", gap: 4 })}>{"🕒"}{hdrLabel(live ? ` ends ${fmtClock(live.end)}` : " Set end")}</button>;
+                return <button data-testid="session-end-btn" data-live={live ? "1" : "0"} onClick={() => setSessionDialog(true)} disabled={!has} title={tip} aria-label={tip} style={S.btn({ padding: "4px 6px", fontSize: 14, color: live ? T.accent : T.textDim, background: live ? T.accent + "20" : "transparent", borderRadius: 4, opacity: has ? 1 : 0.4, display: "flex", alignItems: "center" })}>{"🕒"}</button>;
               })()}
               <button data-testid="present-btn" onClick={() => sa?.present?.()} disabled={!has} style={{ display: "flex", alignItems: "center", gap: 5, padding: "5px 14px", background: has ? T.green : T.border, color: has ? "#fff" : T.textDim, border: "none", borderRadius: 6, cursor: has ? "pointer" : "default", opacity: has ? 1 : 0.5, fontFamily: FONT.mono, fontSize: 14, fontWeight: 700 }} title="Present">{"▶"}{hdrLabel(" Present", 2)}</button>
             </>;

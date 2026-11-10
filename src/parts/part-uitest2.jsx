@@ -5433,6 +5433,15 @@ uiSuite("session-edge-bar", [
 
 // ── Session end: editor toolbar, dialog, live ingress, bar geometry (v13.80, P3)
 const _sesTbBtn = () => _$("[data-testid='session-end-btn']");
+// The icon-only button carries its state in data-live, title and aria-label.
+// end = null: "Set session end"; end = a number: the live session end.
+const _sesTbIs = (end) => {
+  const b = _sesTbBtn();
+  if (!b) return false;
+  const tip = end == null ? "Set session end" : `Session ends ${fmtClock(end)} — click to change`;
+  return b.dataset.live === (end == null ? "0" : "1") && b.title === tip && b.getAttribute("aria-label") === tip && b.textContent === "🕒";
+};
+const _sesTbDesc = () => { const b = _sesTbBtn(); return b ? `${b.dataset.live} | ${b.title} | ${b.textContent}` : "no button"; };
 const _sesTbOpen = async () => {
   _click(_sesTbBtn());
   return _waitFor(() => _$("[data-testid='session-dialog']"), 1500);
@@ -5586,7 +5595,7 @@ uiSuite("session-ingress-live", [
 ]);
 
 uiSuite("session-toolbar", [
-  { name: "ST1: label: Set end without a session, ends HH:MM when live, Set end when stale; timer flips it at end + 3 h", fn: async () => {
+  { name: "ST1: icon only; state in title/aria-label: not set without a session, ends HH:MM when live, not set when stale; timer flips it at end + 3 h", fn: async () => {
     const hooks = _sesUiNeedHooks();
     try {
       hooks.setSessionForTest(null);
@@ -5595,18 +5604,18 @@ uiSuite("session-toolbar", [
       if (btn.tagName !== "BUTTON" || !btn.getAttribute("aria-label") || !btn.title) throw new Error("session-end-btn is not a labelled button");
       const present = _$("[data-testid='present-btn']");
       if (btn.nextElementSibling !== present) throw new Error("session-end-btn is not immediately before present-btn");
-      if (!/Set end/.test(btn.textContent)) throw new Error("no-session label: " + btn.textContent);
+      if (!_sesTbIs(null)) throw new Error("no-session state: " + _sesTbDesc());
       const live = { start: Date.now() - 60000, end: Date.now() + 1800000 };
       hooks.setSessionForTest(live);
-      await _waitFor(() => _sesTbBtn().textContent.includes(`ends ${fmtClock(live.end)}`), 1500).catch(() => { throw new Error("live label: " + _sesTbBtn().textContent); });
+      await _waitFor(() => _sesTbIs(live.end), 1500).catch(() => { throw new Error("live state: " + _sesTbDesc()); });
       const stale = { start: Date.now() - SESSION_STALE_MS - 1000 - 1800000, end: Date.now() - SESSION_STALE_MS - 1000 };
       hooks.setSessionForTest(stale);
-      await _waitFor(() => /Set end/.test(_sesTbBtn().textContent), 1500).catch(() => { throw new Error("stale label: " + _sesTbBtn().textContent); });
+      await _waitFor(() => _sesTbIs(null), 1500).catch(() => { throw new Error("stale state: " + _sesTbDesc()); });
       if (hooks.getSessionForTest() === null) throw new Error("stale session not kept in state");
       const soon = { start: Date.now() - SESSION_STALE_MS - 1800000 + 1500, end: Date.now() - SESSION_STALE_MS + 1500 };
       hooks.setSessionForTest(soon);
-      await _waitFor(() => /ends /.test(_sesTbBtn().textContent), 1500).catch(() => { throw new Error("nearly stale label: " + _sesTbBtn().textContent); });
-      await _waitFor(() => /Set end/.test(_sesTbBtn().textContent), 5000).catch(() => { throw new Error("label did not go back to Set end at end + 3 h"); });
+      await _waitFor(() => _sesTbIs(soon.end), 1500).catch(() => { throw new Error("nearly stale state: " + _sesTbDesc()); });
+      await _waitFor(() => _sesTbIs(null), 5000).catch(() => { throw new Error("state did not go back to not set at end + 3 h: " + _sesTbDesc()); });
     } finally { await _sesUiLeave(); }
   }},
   { name: "ST2: click opens one dialog; ArrowRight / Delete / f do nothing while it is open", fn: async () => {
@@ -5642,11 +5651,11 @@ uiSuite("session-toolbar", [
       await _waitFor(() => !_$("[data-testid='session-dialog']"), 1500);
       const s1 = hooks.getSessionForTest();
       if (!s1 || s1.end - s1.start !== 1800000) throw new Error("Set did not store 30 min: " + JSON.stringify(s1));
-      await _waitFor(() => _sesTbBtn().textContent.includes(`ends ${fmtClock(s1.end)}`), 1500);
+      await _waitFor(() => _sesTbIs(s1.end), 1500);
       document.activeElement?.blur(); await _wait(80);
       _key("z", { ctrlKey: true });
       await _waitFor(() => hooks.getSessionForTest() === null, 1500).catch(() => { throw new Error("undo did not restore the empty session"); });
-      await _waitFor(() => /Set end/.test(_sesTbBtn().textContent), 1500);
+      await _waitFor(() => _sesTbIs(null), 1500);
       hooks.setSessionForTest(s1);
       await _waitFor(() => hooks.getSessionForTest() !== null, 1500);
       await _sesTbOpen();
@@ -5657,7 +5666,7 @@ uiSuite("session-toolbar", [
       await _waitFor(() => JSON.stringify(hooks.getSessionForTest()) === JSON.stringify(s1), 1500).catch(() => { throw new Error("undo did not restore the cleared session"); });
     } finally { await _sesUiLeave(); }
   }},
-  { name: "ST4: button only from a 1100 px header; the top bar stays on one line below and above", fn: async () => {
+  { name: "ST4: button at every desktop header width (1024-1440 px); the top bar stays on one line", fn: async () => {
     // Forcing the header width stands in for a window resize (as meridian-CR13).
     await _editorSetup();
     const h = await _waitFor(() => _$("header"), 2000);
@@ -5665,13 +5674,14 @@ uiSuite("session-toolbar", [
     const prev = h.style.width;
     const bad = [];
     try {
-      for (const w of [1024, 1099, 1100, 1280, 1099, 1100]) {
+      for (const w of [1024, 1100, 1280, 1440, 1100, 1024]) {
         h.style.width = `${w}px`;
         for (let f = 0; f < 3; f++) await frames();
         const btns = _$$("button", h).filter((b) => b.offsetParent && !b.closest("[role='group']"));
         const minH = Math.min(...btns.map((b) => b.offsetHeight));
         const wrapped = btns.filter((b) => b.offsetHeight > minH + 8).map((b) => b.title || b.textContent.trim());
-        if (!!_sesTbBtn() !== (w >= 1100)) bad.push(`${w}px: button ${_sesTbBtn() ? "present" : "absent"}`);
+        const sb = _sesTbBtn();
+        if (!sb || !sb.offsetParent || sb.getBoundingClientRect().width < 1) bad.push(`${w}px: button absent`);
         if (h.scrollWidth > h.clientWidth + 1) bad.push(`${w}px: overflow ${h.scrollWidth}>${h.clientWidth}`);
         if (wrapped.length) bad.push(`${w}px: wrapped ${wrapped.join(", ")}`);
       }
