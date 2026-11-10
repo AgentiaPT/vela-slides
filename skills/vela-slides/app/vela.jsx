@@ -8639,7 +8639,47 @@ function getSlideTitle(slide, idx) { return getSlideSource(slide, idx).text; }
 // (Object.keys), prototype-named keys skipped, depth cap 8 (a read walk emits
 // nothing at the cap, so returning there is correct). The text is only compared
 // and rendered as React text children, never as markup or a style/URL value.
-const PRESENT_SEARCH_SKIP = new Set(["type", "id", "src", "image", "images", "svg", "icon", "bg", "bgGradient", "color", "accent", "style", "href", "link", "url", "layout", "align", "variant", "size", "font", "comments"]);
+//
+// Key classes (search reads prose only). Every key of SAFE_BLOCK_KEYS is in
+// exactly one of SEARCH_PROSE_KEYS (text written to be read: searched) and
+// PRESENT_SEARCH_SKIP (markup, colours, sizes, enums, icon names, ids, media,
+// flags: never searched); the search-engine suite (SE9) fails on a key in
+// neither set, so a new allowlisted field must get a class. Sub-objects (list
+// items, grid cells, sides, quadrants) keep any key (no allowlist at ingress),
+// so the walk skips by PRESENT_SEARCH_SKIP, which also lists the non-prose item
+// keys the renderers read (iconBg, status, gate, highlight, borderRadius).
+// Ambiguous keys: `alt` (not on the slide, but reader-facing text: searched);
+// `name` (the icon block's icon name: skipped); `lang` (code language: skipped).
+const SEARCH_PROSE_KEYS = new Set([
+  "text", "content", "title", "label", "value", "caption", "author", "alt", "items", "quadrants", "headers", "rows",
+  "gateLabel", "loopLabel", "centerLabel", "centerSub", "annotation", "leftLabel", "rightLabel",
+  "dividerLabel", "xLeft", "xRight", "yTop", "yBottom",
+  // sub-object prose keys: flow/steps sublabel, timeline date, funnel drop, grid cell blocks
+  "sublabel", "date", "drop", "blocks",
+]);
+const PRESENT_SEARCH_SKIP = new Set([
+  "type", "hidden", "style", "link", "markup", "src", "fit", "lang", "copy", "name", "cols",
+  "size", "align", "weight", "bold", "italic", "titleSize", "textSize", "labelSize", "sublabelSize", "captionSize",
+  "color", "bg", "border", "borderColor", "titleColor", "textColor", "labelColor", "sublabelColor", "captionColor",
+  "dateColor", "dotColor", "lineColor", "numberColor", "trackColor", "cellColor", "headerBg", "headerColor",
+  "arrowColor", "gateColor", "loopColor", "annotationColor", "iconColor", "iconBg",
+  "gap", "padding", "spacing", "maxWidth", "maxHeight", "height", "h", "rounded", "shadow", "bordered", "compact", "striped", "hideDivider",
+  "icon", "iconShape", "circle", "strokeWidth", "direction", "connectorStyle", "activeStep", "gateIcon", "loop", "loopStyle",
+  "showValue", "showIcons", "showLabels", "leftIcon", "rightIcon", "variant", "reveal",
+  // sub-object and legacy non-prose keys
+  "id", "image", "images", "svg", "bgGradient", "accent", "href", "url", "layout", "font", "comments",
+  "status", "gate", "highlight", "borderRadius",
+]);
+// Slide keys: the walk reads only title, blocks / L / R and (editor) notes.
+// Skipped: theme, layout, timing and flags; the legacy pre-block text fields
+// (subtitle, quote, author, bullets: not rendered on the slide); speakerNotes
+// and studyNotes (not in the search scope).
+const SEARCH_SLIDE_KEYS = {
+  prose: new Set(["title", "blocks", "L", "R", "notes"]),
+  skip: new Set(["layout", "subtitle", "quote", "author", "bullets", "bg", "bgGradient", "bgImage", "color", "mutedColor", "accent",
+    "align", "verticalAlign", "padding", "gap", "splitGap", "contentFlex", "imageFlex", "imageCols",
+    "duration", "timeLock", "hidden", "reviewed", "story", "speakerNotes", "studyNotes", "comments", "image"]),
+};
 function slideSearchTexts(slide) {
   const out = [];
   if (typeof slide?.title === "string" && slide.title) out.push({ text: slide.title, hidden: false, area: null, block: -1 });
@@ -8678,11 +8718,31 @@ function searchRenderIndex(slide, area, idx) {
 }
 // Snippet around the first hit (indexOf on lower-case text; no regex from the
 // query). A UTF-16 surrogate pair (emoji) is never cut at either end.
+// toLowerCase() can change the length (U+0130 "İ" -> 2 units): then an offset
+// in the lower-case text is not an offset in `flat`. In that case map the hit
+// [at, at + q.length) back to `flat` one code point at a time (per code point
+// the lower-case length is the same as in the whole string), start rounded
+// down and end rounded up to a code-point boundary, so the cut holds the hit.
 function searchSnippet(text, q) {
   const flat = text.replace(/\s+/g, " ");
-  const at = flat.toLowerCase().indexOf(q);
+  const lower = flat.toLowerCase();
+  const at = lower.indexOf(q);
+  let hitFrom = at, hitTo = at + q.length;
+  if (at >= 0 && lower.length !== flat.length) {
+    let o = 0, lo = 0;
+    hitFrom = -1;
+    while (o < flat.length) {
+      const ch = String.fromCodePoint(flat.codePointAt(o));
+      const n = ch.toLowerCase().length;
+      if (hitFrom < 0 && lo + n > at) hitFrom = o;
+      lo += n; o += ch.length;
+      if (lo >= at + q.length) break;
+    }
+    if (hitFrom < 0) hitFrom = o;
+    hitTo = o;
+  }
   const low = (i) => { const c = flat.charCodeAt(i); return c >= 0xDC00 && c <= 0xDFFF; };
-  let from = Math.max(0, at - 24), to = Math.min(flat.length, at + q.length + 36);
+  let from = Math.max(0, hitFrom - 24), to = Math.min(flat.length, hitTo + 36);
   if (from > 0 && low(from)) from--;
   if (to < flat.length && low(to)) to++;
   return (from > 0 ? "…" : "") + flat.slice(from, to) + (to < flat.length ? "…" : "");
@@ -21421,6 +21481,69 @@ uiSuite("search-engine", [
     _seEq(rare.map((r) => r.key), ["i4-9:9"], "rare word");
     if (worst > 50) throw new Error(`500-slide search took ${worst.toFixed(1)} ms (bound 50 ms)`);
   }},
+  // Review fix F1: search reads prose only. Every key of the block and slide
+  // allowlists has a class (prose = searched, else skipped), so a new field
+  // fails here until it gets one.
+  { name: "SE9: every SAFE_BLOCK_KEYS / SAFE_SLIDE_KEYS key is classified as prose or skipped, and the walk obeys it", fn: async () => {
+    const both = [...SEARCH_PROSE_KEYS].filter((k) => PRESENT_SEARCH_SKIP.has(k));
+    if (both.length) throw new Error("keys in both the prose set and the skip set: " + both.join(", "));
+    const nb = [...SAFE_BLOCK_KEYS].filter((k) => !SEARCH_PROSE_KEYS.has(k) && !PRESENT_SEARCH_SKIP.has(k));
+    if (nb.length) throw new Error("unclassified block keys (add each to SEARCH_PROSE_KEYS or PRESENT_SEARCH_SKIP): " + nb.join(", "));
+    const ns = [...SAFE_SLIDE_KEYS].filter((k) => SEARCH_SLIDE_KEYS.prose.has(k) === SEARCH_SLIDE_KEYS.skip.has(k));
+    if (ns.length) throw new Error("slide keys with no class or two classes (SEARCH_SLIDE_KEYS): " + ns.join(", "));
+    for (const k of SAFE_BLOCK_KEYS) {
+      const m = matchSlide({ blocks: [_seH("H"), { type: "text", [k]: "zqxkeyval" }] }, 0, "zqxkeyval", null);
+      if (PRESENT_SEARCH_SKIP.has(k) ? m !== null : !m) throw new Error(`block key ${k}: ${m ? "matched" : "not found"}`);
+    }
+  }},
+  { name: "SE10: SVG markup, colour and icon values never match; prose of every block type is found", fn: async () => {
+    const svg = { blocks: [_seH("Logo"), { type: "svg", markup: "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 48 48\"><path d=\"M0 0\" stroke=\"#fff\"/></svg>", caption: "zqxcap" }] };
+    for (const q of ["viewbox", "path", "stroke", "svg", "xmlns", "www.w3.org", "48 48"]) if (matchSlide(svg, 0, q, null) !== null) throw new Error(`SVG markup matched: ${q}`);
+    if (!matchSlide(svg, 0, "zqxcap", null)) throw new Error("SVG caption not found");
+    const paint = { blocks: [_seH("C"), { type: "callout", text: "note", border: "#818cf850", borderColor: "#818cf8", bg: "#818cf820", iconColor: "#818cf8", titleSize: "zqxsize" }] };
+    for (const q of ["#818cf8", "818cf8", "zqxsize"]) if (matchSlide(paint, 0, q, null) !== null) throw new Error(`style value matched: ${q}`);
+    const nested = { blocks: [_seH("N"), { type: "flow", items: [{ icon: "zqxicon", color: "#123abc", iconBg: "#123abc", label: "go" }] }, { type: "icon", name: "zqxname", label: "lbl" }] };
+    for (const q of ["zqxicon", "#123abc", "zqxname"]) if (matchSlide(nested, 0, q, null) !== null) throw new Error(`non-prose value matched: ${q}`);
+    const w = "zqxprose";
+    const cases = [
+      ["heading", { text: w }], ["text", { text: w }], ["bullets", { items: ["a", { text: w, icon: "Zap" }] }], ["image", { caption: w }],
+      ["code", { text: w }], ["grid", { cols: 2, items: [{ blocks: [{ type: "text", text: w }] }] }], ["callout", { title: w }],
+      ["metric", { value: w }], ["quote", { author: w }], ["badge", { text: w }], ["icon", { name: "Zap", label: w }],
+      ["icon-row", { items: [{ icon: "Zap", title: w }] }], ["flow", { items: [{ label: "x", sublabel: w }], gateLabel: "g" }],
+      ["table", { headers: ["h"], rows: [["a", w]] }], ["progress", { items: [{ label: w, value: 50 }] }], ["steps", { items: [{ title: w }] }],
+      ["tag-group", { items: [{ text: w }] }], ["timeline", { items: [{ date: w }] }], ["svg", { markup: "<svg viewBox=\"0 0 1 1\"/>", caption: w }],
+      ["comparison", { items: [{ title: "a", items: [w] }, { title: "b", items: [] }] }], ["funnel", { items: [{ label: "x", drop: w }] }],
+      ["cycle", { centerSub: w }], ["number-row", { items: [{ value: w }] }], ["matrix", { quadrants: [{ title: "q", items: [w] }] }],
+      ["checklist", { items: [{ text: w, status: "done" }] }],
+    ];
+    for (const [type, f] of cases) {
+      const m = matchSlide({ blocks: [_seH("H"), { type, ...f }] }, 0, w, null);
+      if (!m || m.kind !== "block" || m.block !== 1) throw new Error(`prose of a ${type} block not found`);
+    }
+  }},
+  // Review fix F2: toLowerCase can change the length (U+0130 -> 2 units), so
+  // an offset in the lower-case text is not an offset in the original.
+  { name: "SE11: the snippet keeps the match when lower case changes the length, before or after the hit; no throw, no cut pair", fn: async () => {
+    const snip = (t, q) => matchSlide({ blocks: [_seH("H"), _seT(t)] }, 0, q, null).snippet;
+    const a = snip("İ".repeat(60) + " qqz " + "x".repeat(60), "qqz");
+    if (!a.includes("qqz")) throw new Error("length change before the hit: " + JSON.stringify(a));
+    const b = snip("x".repeat(60) + " qqz " + "İ".repeat(60), "qqz");
+    if (!b.includes("qqz")) throw new Error("length change after the hit: " + JSON.stringify(b));
+    const c = snip("a".repeat(50) + "İ".repeat(10) + "İQQZ" + "b".repeat(50), "i̇qqz");
+    if (!c.includes("İQQZ")) throw new Error("hit that holds the long char: " + JSON.stringify(c));
+    const d = snip("🚀İ".repeat(30) + "qqz" + "İ🚀".repeat(30), "qqz");
+    if (!d.includes("qqz") || _seLoneSurrogate.test(d)) throw new Error("emoji + long char: " + JSON.stringify(d));
+    let seed = 7; const rnd = (n) => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed % n; };
+    const parts = ["İ", "🚀", "a", "B", " ", "ß", "Σ", "ǅ", "x"];
+    for (let i = 0; i < 300; i++) {
+      let t = ""; const n = 1 + rnd(120); for (let j = 0; j < n; j++) t += parts[rnd(parts.length)];
+      const cps = Array.from(t), s = rnd(cps.length), q = cps.slice(s, s + 1 + rnd(4)).join("").toLowerCase().trim();
+      if (!q || !t.replace(/\s+/g, " ").toLowerCase().includes(q)) continue; // only inputs that match (as matchSlide checks first)
+      const out = searchSnippet(t, q);
+      if (!out.toLowerCase().includes(q)) throw new Error(`snippet lost ${JSON.stringify(q)} in ${JSON.stringify(t)}: ${JSON.stringify(out)}`);
+      if (_seLoneSurrogate.test(out)) throw new Error("cut surrogate pair: " + JSON.stringify(out));
+    }
+  }},
 ]);
 
 // v13.81 Present search keyboard model: first result selected, Up/Down stop at
@@ -21818,6 +21941,29 @@ uiSuite("editor-search", [
       const t0 = performance.now(); await _esType("e".repeat(2000)); if (performance.now() - t0 > 1000) throw new Error("2000-char query too slow");
     } finally { await _esEnd(null); }
   }},
+  // Review fix F5: the field sits under the modal backdrop, so a key must not
+  // move focus there (typed text would go into a hidden field).
+  { name: "ES13: / , Ctrl+E and [ do nothing while a modal dialog (Keyboard Shortcuts) is open", fn: async () => {
+    try {
+      await _esStart();
+      document.activeElement?.blur?.();
+      _esPress("?");
+      await _waitFor(() => _$("[data-vela-modal]"), 1500).catch(() => { throw new Error("Keyboard Shortcuts dialog did not open"); });
+      const focus0 = document.activeElement;
+      for (const [k, o] of [["/", null], ["e", { ctrlKey: true }], ["e", { metaKey: true }], ["[", null]]) {
+        const ev = _esPress(k, o);
+        await _wait(120);
+        if (_esFocused() || document.activeElement !== focus0) throw new Error(`${k} moved focus behind the modal`);
+        if (ev.defaultPrevented) throw new Error(`${k} acted behind the modal`);
+        if (!_esTreeShown()) throw new Error(`${k} collapsed the list behind the modal`);
+      }
+      _esPress("a"); _esPress("b"); await _wait(80);
+      if (_esInput().value !== "") throw new Error("typed text went into the search field");
+    } finally {
+      if (_$("[data-vela-modal]")) { _click("[data-vela-modal]"); await _waitFor(() => !_$("[data-vela-modal]"), 1500).catch(() => {}); }
+      await _esEnd(null);
+    }
+  }},
 ], { setup: _selectFirstModule });
 
 // ── Editor search: amber outline on the matched block (flashBlock) ──
@@ -21915,6 +22061,26 @@ uiSuite("editor-search-flash", [
       await _wait(100);
       if (_esfFlashed().length || _$("[data-testid='search-flash']")) throw new Error("outline came back after Present");
     } finally { await _esEnd(p && p.past); }
+  }},
+  // Review F6: split layouts render the image in its own column; the outline
+  // must still land on the text block that holds the match.
+  { name: "ESF6: a block match on an image-right and an image-left slide outlines that block", fn: async () => {
+    const past = _esPast();
+    const png = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+    try {
+      await _esStart();
+      const s0 = _pdSel();
+      for (const layout of ["image-right", "image-left"]) {
+        await _esClear();
+        _hooks().injectBlocks([_seH("Split head"), { type: "image", src: png }, { type: "text", text: "split zqxflsplit body" }], { layout });
+        await _wait(150); document.activeElement?.blur?.();
+        await _esfOpen("zqxflsplit", s0);
+        const f = await _waitFor(() => _esfFlashed().length === 1 && _esfFlashed()[0], 400).catch(() => { throw new Error(`${layout}: no outline`); });
+        if (!(f.textContent || "").includes("split zqxflsplit body")) throw new Error(`${layout}: outline on the wrong block: ` + f.textContent);
+        if (f.getAttribute("data-block-type") !== "text") throw new Error(`${layout}: outline not on the text block`);
+        await _waitFor(() => _esfFlashed().length === 0, 2500).catch(() => { throw new Error(`${layout}: outline still shown after 2.5 s`); });
+      }
+    } finally { await _esEnd(past); }
   }},
 ], { setup: _selectFirstModule });
 
@@ -22592,6 +22758,54 @@ uiSuite("session-editor-dialog", [
       if (!/^Deck needs ~\d+ min$/.test(pre)) throw new Error("invalid precheck: " + pre);
       if (_$("[data-testid='session-summary']").textContent !== "Enter a start and an end (1 min to 24 h)") throw new Error("invalid summary: " + _$("[data-testid='session-summary']").textContent);
       if (!_$("[data-testid='session-set']").disabled) throw new Error("Set enabled for Minutes 0");
+    } finally { await _sesUiLeave(); }
+  }},
+  // Review fix F3: the summary describes the session that Set would store
+  // (resolveSessionDialogSet): unchanged fields keep the ended session.
+  { name: "SD-W4: an unchanged ended session says 'ended … ago'; a changed one shows the day-shifted session", fn: async () => {
+    try {
+      const t = Date.now(), live = { start: t - 3600000, end: t - 1200000 };
+      _sesUiNeedHooks().setSessionForTest(live);
+      await _editorSetup();
+      await _sesTbOpen();
+      await _wait(80);
+      let txt = _$("[data-testid='session-summary']").textContent;
+      const m = new RegExp(`^${fmtClock(live.start)} → ${fmtClock(live.end)} \\(40 min\\) · ended (\\d+:\\d\\d(?::\\d\\d)?) ago$`).exec(txt);
+      if (!m) throw new Error("unchanged ended summary: " + txt);
+      const ago = _sesSecs(m[1])[0];
+      if (ago < 1195 || ago > 1270) throw new Error(`ended ${ago} s ago, want about 1200`);
+      _sesUiSet(_$("[data-testid='session-minutes-input']"), "39");
+      await _wait(80);
+      txt = _$("[data-testid='session-summary']").textContent;
+      const st = _$("[data-testid='session-start-input']").value, en = _$("[data-testid='session-end-input']").value;
+      const m2 = new RegExp(`^${st} → ${en} \\(39 min\\) · starts in (\\d+:\\d\\d:\\d\\d)$`).exec(txt);
+      if (!m2) throw new Error("changed summary: " + txt);
+      const r = resolveSessionDialogSet(st, en, sessionDialogBase(live, t), Date.now(), live);
+      if (!r || r.keep || r.session.start <= Date.now()) throw new Error("Set would not store a day-shifted session");
+      const secs = _sesSecs(m2[1])[0], want = (r.session.start - Date.now()) / 1000;
+      if (Math.abs(secs - want) > 5) throw new Error(`starts in ${secs} s, Set stores a start in ${Math.round(want)} s`);
+    } finally { await _sesUiLeave(); }
+  }},
+  // Review fix F4: a 1 s tick re-renders the summary; it must not reset the
+  // fields or move focus.
+  { name: "SD-W5: the countdown updates while the dialog is open; typed values and focus stay", fn: async () => {
+    try {
+      const t = Date.now();
+      _sesUiNeedHooks().setSessionForTest({ start: t - 600000, end: t + 1200000 });
+      await _editorSetup();
+      await _sesTbOpen();
+      await _wait(80);
+      const endIn = _$("[data-testid='session-end-input']"), minIn = _$("[data-testid='session-minutes-input']");
+      const en = fmtClock(t + 25 * 60000);
+      _sesUiSet(endIn, en);
+      await _wait(80);
+      const min0 = minIn.value, focus0 = document.activeElement;
+      const s1 = _$("[data-testid='session-summary']").textContent;
+      if (!/ left$/.test(s1)) throw new Error("running summary: " + s1);
+      await _waitFor(() => _$("[data-testid='session-summary']")?.textContent !== s1, 2500).catch(() => { throw new Error("summary did not change in 2.5 s: " + s1); });
+      if (endIn.value !== en || minIn.value !== min0) throw new Error(`fields reset: end ${endIn.value} (want ${en}), minutes ${minIn.value} (want ${min0})`);
+      if (document.activeElement !== focus0) throw new Error("the tick moved focus");
+      if (!/ left$/.test(_$("[data-testid='session-summary']").textContent)) throw new Error("summary after tick: " + _$("[data-testid='session-summary']").textContent);
     } finally { await _sesUiLeave(); }
   }},
 ]);
@@ -30693,6 +30907,11 @@ function SessionEndDialog({ session, stored, lanes, onSet, onClear, onClose }) {
   const live = sanitizeSession(session);
   const hasStored = stored === undefined ? !!live : !!stored;
   const [openNow] = useState(() => Date.now());
+  // 1 s tick while the dialog is open: it re-renders the summary countdown
+  // (the render reads the clock). It sets only this state, so the fields the
+  // user edits and the focus do not change. Cleared on unmount.
+  const [, setNow] = useState(openNow);
+  useEffect(() => { const id = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(id); }, []);
   const [start, setStart] = useState(() => fmtClock(live ? live.start : openNow));
   const [end, setEnd] = useState(() => (live ? fmtClock(live.end) : ""));
   const [minutes, setMinutes] = useState(() => (live ? String(Math.round((live.end - live.start) / 60000)) : ""));
@@ -30721,6 +30940,10 @@ function SessionEndDialog({ session, stored, lanes, onSet, onClear, onClose }) {
   const canSet = !!resolved && parseMin(minutes) != null;
   // Fields unchanged from the live session: keep it (no day shift, no state change).
   const set = () => { const r = resolveSessionDialogSet(start, end, base, openNow, live); if (!r || parseMin(minutes) == null) return; if (r.keep) onClose(); else onSet(r.session); };
+  // Summary: the session that Set would store (the same pure function), so
+  // unchanged fields of a live session show it as it is, also after its end.
+  const shown = canSet ? resolveSessionDialogSet(start, end, base, openNow, live) : null;
+  const shownSes = shown ? shown.session : null;
   const needMin = Math.round(sessionEstimates(presentSequence(lanes)).total / 60);
   const lenMin = resolved ? Math.round((resolved.end - resolved.start) / 60000) : null;
   // Summary state of the session against now: before, during or after it.
@@ -30775,7 +30998,7 @@ function SessionEndDialog({ session, stored, lanes, onSet, onClear, onClose }) {
           ))}
         </div>
         <div data-testid="session-summary" style={{ fontFamily: FONT.mono, fontSize: 13, color: canSet ? T.text : T.red, marginBottom: 6 }}>
-          {canSet ? `${fmtClock(resolved.start)} → ${fmtClock(resolved.end)} (${lenMin} min) · ${sessionWhen(resolved, Date.now())}` : "Enter a start and an end (1 min to 24 h)"}
+          {shownSes ? `${fmtClock(shownSes.start)} → ${fmtClock(shownSes.end)} (${Math.round((shownSes.end - shownSes.start) / 60000)} min) · ${sessionWhen(shownSes, Date.now())}` : "Enter a start and an end (1 min to 24 h)"}
         </div>
         <div data-testid="session-file-note" style={{ fontFamily: FONT.mono, fontSize: 13, color: T.textMuted, marginBottom: 6 }}>Saved in the deck file (also in exports of the deck).</div>
         <div data-testid="session-precheck" style={{ fontFamily: FONT.mono, fontSize: 13, color: T.textMuted, marginBottom: 18 }}>
@@ -31994,6 +32217,10 @@ export default function App() {
   useEffect(() => {
     if (isMobile) return;
     const h = (e) => {
+      // An open modal dialog (ModalBackdrop marks it) owns the keys: the list
+      // and its search field sit under the backdrop, so a key here must not
+      // move focus there or toggle the list. Static selector, no deck value.
+      if (document.querySelector("[data-vela-modal]")) return;
       const typing = ["INPUT","TEXTAREA","SELECT"].includes(e.target.tagName) || e.target.isContentEditable;
       const bracket = e.key === "[" && !e.metaKey && (!e.ctrlKey || e.altKey) && !typing;
       const ctrlE = (e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && (e.key === "e" || e.key === "E") && !state.fullscreen && !typing;

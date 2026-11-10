@@ -658,6 +658,10 @@ export default function App() {
   useEffect(() => {
     if (isMobile) return;
     const h = (e) => {
+      // An open modal dialog (ModalBackdrop marks it) owns the keys: the list
+      // and its search field sit under the backdrop, so a key here must not
+      // move focus there or toggle the list. Static selector, no deck value.
+      if (document.querySelector("[data-vela-modal]")) return;
       const typing = ["INPUT","TEXTAREA","SELECT"].includes(e.target.tagName) || e.target.isContentEditable;
       const bracket = e.key === "[" && !e.metaKey && (!e.ctrlKey || e.altKey) && !typing;
       const ctrlE = (e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && (e.key === "e" || e.key === "E") && !state.fullscreen && !typing;

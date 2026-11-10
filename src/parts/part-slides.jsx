@@ -399,7 +399,47 @@ function getSlideTitle(slide, idx) { return getSlideSource(slide, idx).text; }
 // (Object.keys), prototype-named keys skipped, depth cap 8 (a read walk emits
 // nothing at the cap, so returning there is correct). The text is only compared
 // and rendered as React text children, never as markup or a style/URL value.
-const PRESENT_SEARCH_SKIP = new Set(["type", "id", "src", "image", "images", "svg", "icon", "bg", "bgGradient", "color", "accent", "style", "href", "link", "url", "layout", "align", "variant", "size", "font", "comments"]);
+//
+// Key classes (search reads prose only). Every key of SAFE_BLOCK_KEYS is in
+// exactly one of SEARCH_PROSE_KEYS (text written to be read: searched) and
+// PRESENT_SEARCH_SKIP (markup, colours, sizes, enums, icon names, ids, media,
+// flags: never searched); the search-engine suite (SE9) fails on a key in
+// neither set, so a new allowlisted field must get a class. Sub-objects (list
+// items, grid cells, sides, quadrants) keep any key (no allowlist at ingress),
+// so the walk skips by PRESENT_SEARCH_SKIP, which also lists the non-prose item
+// keys the renderers read (iconBg, status, gate, highlight, borderRadius).
+// Ambiguous keys: `alt` (not on the slide, but reader-facing text: searched);
+// `name` (the icon block's icon name: skipped); `lang` (code language: skipped).
+const SEARCH_PROSE_KEYS = new Set([
+  "text", "content", "title", "label", "value", "caption", "author", "alt", "items", "quadrants", "headers", "rows",
+  "gateLabel", "loopLabel", "centerLabel", "centerSub", "annotation", "leftLabel", "rightLabel",
+  "dividerLabel", "xLeft", "xRight", "yTop", "yBottom",
+  // sub-object prose keys: flow/steps sublabel, timeline date, funnel drop, grid cell blocks
+  "sublabel", "date", "drop", "blocks",
+]);
+const PRESENT_SEARCH_SKIP = new Set([
+  "type", "hidden", "style", "link", "markup", "src", "fit", "lang", "copy", "name", "cols",
+  "size", "align", "weight", "bold", "italic", "titleSize", "textSize", "labelSize", "sublabelSize", "captionSize",
+  "color", "bg", "border", "borderColor", "titleColor", "textColor", "labelColor", "sublabelColor", "captionColor",
+  "dateColor", "dotColor", "lineColor", "numberColor", "trackColor", "cellColor", "headerBg", "headerColor",
+  "arrowColor", "gateColor", "loopColor", "annotationColor", "iconColor", "iconBg",
+  "gap", "padding", "spacing", "maxWidth", "maxHeight", "height", "h", "rounded", "shadow", "bordered", "compact", "striped", "hideDivider",
+  "icon", "iconShape", "circle", "strokeWidth", "direction", "connectorStyle", "activeStep", "gateIcon", "loop", "loopStyle",
+  "showValue", "showIcons", "showLabels", "leftIcon", "rightIcon", "variant", "reveal",
+  // sub-object and legacy non-prose keys
+  "id", "image", "images", "svg", "bgGradient", "accent", "href", "url", "layout", "font", "comments",
+  "status", "gate", "highlight", "borderRadius",
+]);
+// Slide keys: the walk reads only title, blocks / L / R and (editor) notes.
+// Skipped: theme, layout, timing and flags; the legacy pre-block text fields
+// (subtitle, quote, author, bullets: not rendered on the slide); speakerNotes
+// and studyNotes (not in the search scope).
+const SEARCH_SLIDE_KEYS = {
+  prose: new Set(["title", "blocks", "L", "R", "notes"]),
+  skip: new Set(["layout", "subtitle", "quote", "author", "bullets", "bg", "bgGradient", "bgImage", "color", "mutedColor", "accent",
+    "align", "verticalAlign", "padding", "gap", "splitGap", "contentFlex", "imageFlex", "imageCols",
+    "duration", "timeLock", "hidden", "reviewed", "story", "speakerNotes", "studyNotes", "comments", "image"]),
+};
 function slideSearchTexts(slide) {
   const out = [];
   if (typeof slide?.title === "string" && slide.title) out.push({ text: slide.title, hidden: false, area: null, block: -1 });
@@ -438,11 +478,31 @@ function searchRenderIndex(slide, area, idx) {
 }
 // Snippet around the first hit (indexOf on lower-case text; no regex from the
 // query). A UTF-16 surrogate pair (emoji) is never cut at either end.
+// toLowerCase() can change the length (U+0130 "İ" -> 2 units): then an offset
+// in the lower-case text is not an offset in `flat`. In that case map the hit
+// [at, at + q.length) back to `flat` one code point at a time (per code point
+// the lower-case length is the same as in the whole string), start rounded
+// down and end rounded up to a code-point boundary, so the cut holds the hit.
 function searchSnippet(text, q) {
   const flat = text.replace(/\s+/g, " ");
-  const at = flat.toLowerCase().indexOf(q);
+  const lower = flat.toLowerCase();
+  const at = lower.indexOf(q);
+  let hitFrom = at, hitTo = at + q.length;
+  if (at >= 0 && lower.length !== flat.length) {
+    let o = 0, lo = 0;
+    hitFrom = -1;
+    while (o < flat.length) {
+      const ch = String.fromCodePoint(flat.codePointAt(o));
+      const n = ch.toLowerCase().length;
+      if (hitFrom < 0 && lo + n > at) hitFrom = o;
+      lo += n; o += ch.length;
+      if (lo >= at + q.length) break;
+    }
+    if (hitFrom < 0) hitFrom = o;
+    hitTo = o;
+  }
   const low = (i) => { const c = flat.charCodeAt(i); return c >= 0xDC00 && c <= 0xDFFF; };
-  let from = Math.max(0, at - 24), to = Math.min(flat.length, at + q.length + 36);
+  let from = Math.max(0, hitFrom - 24), to = Math.min(flat.length, hitTo + 36);
   if (from > 0 && low(from)) from--;
   if (to < flat.length && low(to)) to++;
   return (from > 0 ? "…" : "") + flat.slice(from, to) + (to < flat.length ? "…" : "");

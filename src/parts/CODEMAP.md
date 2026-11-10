@@ -78,7 +78,7 @@ that symbol in the named part for the line. No line numbers here — they rot.
 - Virtual Slide: VirtualSlide FullscreenSlide
 - Scope Selector (shared by improve + timing): ScopeSelector BrandingPanel
 - Cinema Tip — bookmarklet helper for browser fullscreen in artifacts: CINEMA_BOOKMARKLET CinemaTip
-- Presenter TOC — slide-out panel on left edge in fullscreen: getSlideSource getSlideTitle PRESENT_SEARCH_SKIP slideSearchTexts searchRenderIndex searchSnippet matchSlide matchPresentSlide searchDeck splitHighlight HighlightText useSearchNav SearchResultRow detourReturnTitle PresenterTOC
+- Presenter TOC — slide-out panel on left edge in fullscreen: getSlideSource getSlideTitle SEARCH_PROSE_KEYS PRESENT_SEARCH_SKIP SEARCH_SLIDE_KEYS slideSearchTexts searchRenderIndex searchSnippet matchSlide matchPresentSlide searchDeck splitHighlight HighlightText useSearchNav SearchResultRow detourReturnTitle PresenterTOC
 - Gallery Thumbnail — shimmer loading overlay until slide renders: GALLERY_SHIMMER_ID _ensureGalleryShimmer GalleryThumb
 - Comment Popover (review mode): CommentPopover
 - PresenterView — CR-08: single-screen speaker dashboard shown from: fmtElapsed PresenterSessionCard PresenterView GALLERY_MODULE_COLORS GalleryView
@@ -343,14 +343,14 @@ add_lane add_item batch_add_items remove_item remove_lane rename_item rename_lan
 - part-imports.jsx: 929-line unbannered stretch after line 519
 - part-blocks.jsx: 806-line unbannered stretch after line 1265
 - part-canvas.jsx: 581-line unbannered stretch after line 150
-- part-slides.jsx: 488-line unbannered stretch after line 380
+- part-slides.jsx: 548-line unbannered stretch after line 380
 - part-slidepanel.jsx: 483-line unbannered stretch after line 1515
 - part-uitest.jsx: 616-line unbannered stretch after line 1230
 - part-uitest2.jsx: 448-line unbannered stretch after line 2
 - part-uitest2.jsx: 593-line unbannered stretch after line 1457
 - part-uitest2.jsx: 853-line unbannered stretch after line 2323
 - part-uitest2.jsx: 376-line unbannered stretch after line 4104
-- part-uitest2.jsx: 1004-line unbannered stretch after line 4480
+- part-uitest2.jsx: 1090-line unbannered stretch after line 4480
 - part-demo.jsx: 407-line unbannered stretch after line 510
 - part-demo.jsx: 373-line unbannered stretch after line 917
 - part-pdf.jsx: 414-line unbannered stretch after line 582
@@ -358,4 +358,4 @@ add_lane add_item batch_add_items remove_item remove_lane rename_item rename_lan
 - part-pdf-vector.jsx: 490-line unbannered stretch after line 459
 - part-pdf-vector.jsx: 551-line unbannered stretch after line 1214
 - part-pptx.jsx: no level-1 banners (1191 lines)
-- part-app.jsx: 358-line unbannered stretch after line 1061
+- part-app.jsx: 358-line unbannered stretch after line 1065

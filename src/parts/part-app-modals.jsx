@@ -604,6 +604,11 @@ function SessionEndDialog({ session, stored, lanes, onSet, onClear, onClose }) {
   const live = sanitizeSession(session);
   const hasStored = stored === undefined ? !!live : !!stored;
   const [openNow] = useState(() => Date.now());
+  // 1 s tick while the dialog is open: it re-renders the summary countdown
+  // (the render reads the clock). It sets only this state, so the fields the
+  // user edits and the focus do not change. Cleared on unmount.
+  const [, setNow] = useState(openNow);
+  useEffect(() => { const id = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(id); }, []);
   const [start, setStart] = useState(() => fmtClock(live ? live.start : openNow));
   const [end, setEnd] = useState(() => (live ? fmtClock(live.end) : ""));
   const [minutes, setMinutes] = useState(() => (live ? String(Math.round((live.end - live.start) / 60000)) : ""));
@@ -632,6 +637,10 @@ function SessionEndDialog({ session, stored, lanes, onSet, onClear, onClose }) {
   const canSet = !!resolved && parseMin(minutes) != null;
   // Fields unchanged from the live session: keep it (no day shift, no state change).
   const set = () => { const r = resolveSessionDialogSet(start, end, base, openNow, live); if (!r || parseMin(minutes) == null) return; if (r.keep) onClose(); else onSet(r.session); };
+  // Summary: the session that Set would store (the same pure function), so
+  // unchanged fields of a live session show it as it is, also after its end.
+  const shown = canSet ? resolveSessionDialogSet(start, end, base, openNow, live) : null;
+  const shownSes = shown ? shown.session : null;
   const needMin = Math.round(sessionEstimates(presentSequence(lanes)).total / 60);
   const lenMin = resolved ? Math.round((resolved.end - resolved.start) / 60000) : null;
   // Summary state of the session against now: before, during or after it.
@@ -686,7 +695,7 @@ function SessionEndDialog({ session, stored, lanes, onSet, onClear, onClose }) {
           ))}
         </div>
         <div data-testid="session-summary" style={{ fontFamily: FONT.mono, fontSize: 13, color: canSet ? T.text : T.red, marginBottom: 6 }}>
-          {canSet ? `${fmtClock(resolved.start)} → ${fmtClock(resolved.end)} (${lenMin} min) · ${sessionWhen(resolved, Date.now())}` : "Enter a start and an end (1 min to 24 h)"}
+          {shownSes ? `${fmtClock(shownSes.start)} → ${fmtClock(shownSes.end)} (${Math.round((shownSes.end - shownSes.start) / 60000)} min) · ${sessionWhen(shownSes, Date.now())}` : "Enter a start and an end (1 min to 24 h)"}
         </div>
         <div data-testid="session-file-note" style={{ fontFamily: FONT.mono, fontSize: 13, color: T.textMuted, marginBottom: 6 }}>Saved in the deck file (also in exports of the deck).</div>
         <div data-testid="session-precheck" style={{ fontFamily: FONT.mono, fontSize: 13, color: T.textMuted, marginBottom: 18 }}>
