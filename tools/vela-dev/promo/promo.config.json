@@ -41,8 +41,12 @@
         104
       ],
       [
-        131,
-        142
+        126,
+        134
+      ],
+      [
+        139,
+        147
       ],
       [
         320,
@@ -54,11 +58,11 @@
     "colors": 80
   },
   "footage": {
-    "_note": "Showcase decks in promo/decks. tour = the 10-slide deck of the build scene. phone = slides of the tour deck shown on phones. search = query typed in Present.",
+    "_note": "Showcase decks are examples/*.vela. tour = the 10-slide deck of the build scene. phone = slides of the tour deck shown on phones. search = query typed in Present. inlineAsk = text typed in the AI Edit box; inlineEdit = the text change that stands in for the AI result (made with the vela CLI).",
     "decks": [
       "vela-tour",
       "startup-pitch",
-      "course",
+      "course-training",
       "business-report",
       "tech-talk"
     ],
@@ -68,6 +72,11 @@
       5,
       9
     ],
-    "search": "json"
+    "search": "json",
+    "inlineAsk": "Growth is 31% now. Update the slide.",
+    "inlineEdit": [
+      "22%",
+      "31%"
+    ]
   }
 }

@@ -2,7 +2,7 @@
 // ─────────────────────────────────────────────────────────────────────────
 // capture-assets.js — capture real Vela footage for the promo composition.
 //
-// Builds an offline render of each showcase deck (promo/decks), opens it
+// Builds an offline render of each showcase deck (examples/*.vela), opens it
 // in the pinned Chromium and saves stills: every slide at 2x, the editor,
 // the gallery, the phone (portrait) layout. Also writes manifest.json with
 // the pixel rectangle of every block (from the app's data-block-type nodes).
@@ -21,7 +21,7 @@ const REPO = path.resolve(__dirname, '..', '..', '..');
 const { chromium } = require(path.join(REPO, 'node_modules', 'playwright'));
 
 const CFG = JSON.parse(fs.readFileSync(path.join(__dirname, 'promo.config.json'), 'utf8')).footage;
-const DECKS = CFG.decks, TOUR = CFG.tour, DECK_DIR = path.join(__dirname, 'decks');
+const DECKS = CFG.decks, TOUR = CFG.tour, DECK_DIR = path.join(REPO, 'examples');
 const outDir = path.resolve(process.argv[2] || '');
 if (!process.argv[2]) { console.error('usage: node capture-assets.js <outDir> [--fonts <dir>]'); process.exit(2); }
 const fi = process.argv.indexOf('--fonts');
@@ -30,7 +30,7 @@ const oi = process.argv.indexOf('--only');
 const ONLY = oi > 0 ? process.argv[oi + 1].split(',') : null;
 const want = part => !ONLY || ONLY.includes(part);
 const VELA = path.join(REPO, 'skills/vela-slides/scripts/vela.py');
-const renderDeck = (file, name) => execFileSync('node', [path.join(REPO, 'tools/vela-dev/scripts/render-offline.js'), file, path.join(outDir, 'render', name)], { stdio: 'ignore' });
+const renderDeck = (file, name, extra = []) => execFileSync('node', [path.join(REPO, 'tools/vela-dev/scripts/render-offline.js'), file, path.join(outDir, 'render', name), ...extra], { stdio: 'ignore' });
 
 const FONT_FILES = [
   ['Sora', 'fontsource-sora', 'sora', [400, 600, 700, 800]],
@@ -98,7 +98,7 @@ async function extras(open, manifest) {
   // 4c. Story mode: one slide, four images (stills of real slides), shown one by one.
   {
     const img = n => 'data:image/jpeg;base64,' + fs.readFileSync(path.join(outDir, 'story', `src-${n}.jpg`)).toString('base64');
-    const src = [['startup-pitch', 1], ['tech-talk', 1], ['course', 1], ['business-report', 1]];
+    const src = [['startup-pitch', 1], ['tech-talk', 1], ['course-training', 1], ['business-report', 1]];
     src.forEach(([d, n], i) => execFileSync('ffmpeg', ['-loglevel', 'error', '-y', '-i', path.join(outDir, 'slides', `${d}-${String(n).padStart(2, '0')}.jpg`), '-vf', 'scale=1120:630', '-q:v', '4', path.join(outDir, 'story', `src-${i}.jpg`)]));
     const deck = { deckTitle: 'Story mode', lanes: [{ title: 'Story', items: [{ title: 'Story', status: 'done', slides: [{ title: 'Four decks, one story', bg: '#0f172a', color: '#f1f5f9', accent: '#818cf8', padding: '32px 44px', story: true,
       blocks: [{ type: 'heading', text: 'Four decks, one story', size: 'xl' }, ...['Pitch', 'Tech talk', 'Course', 'Report'].map((c, i) => ({ type: 'image', src: img(i), caption: c }))] }] }] }] };
@@ -131,6 +131,26 @@ async function extras(open, manifest) {
       manifest.agent.steps.push({ cmd: 'vela ' + c.map(a => (/[ $]/.test(a) ? JSON.stringify(a) : a)).join(' '), out: out.slice(0, i === 0 ? 5 : 1), shot });
     }
     manifest.agent.start = 'agent/0.jpg';
+    // 4e. The other direction: the user asks inside Vela (AI Edit, key E). This render
+    //     has the AI channel port set, so the Quick Edit box opens; no backend runs and
+    //     nothing is sent. The edit itself is then made with the vela CLI, and rendered.
+    const ask = CFG.inlineAsk, [from, to] = CFG.inlineEdit;
+    renderDeck(work, 'agent-ai', ['--channel-port', '8787']);
+    const { ctx, page } = await open('agent-ai', { width: 1600, height: 900 }, 1.2);
+    await page.keyboard.press('d'); await page.waitForTimeout(600);
+    for (let i = 0; i < 3; i++) { await page.keyboard.press('ArrowRight'); await page.waitForTimeout(350); }
+    await page.waitForTimeout(2400);
+    await page.keyboard.press('e'); await page.waitForSelector('[data-testid="quick-edit-input"]', { timeout: 5000 }); await page.waitForTimeout(500);
+    manifest.agent.inline = { ask, frames: [] };
+    const cuts = [0, Math.ceil(ask.length / 3), Math.ceil(ask.length * 2 / 3), ask.length];
+    for (let k = 0; k < cuts.length; k++) {
+      if (k) await page.keyboard.type(ask.slice(cuts[k - 1], cuts[k]), { delay: 15 });
+      await page.waitForTimeout(350); const f = `agent/q-${k}.jpg`; await jpg(page, f); manifest.agent.inline.frames.push(f);
+    }
+    await ctx.close();
+    const r = spawnSync('python3', [VELA, 'deck', 'replace-text', 'pitch.vela', from, to], { cwd: path.dirname(work), encoding: 'utf8' });
+    if (r.status !== 0) throw new Error('vela CLI failed: replace-text');
+    manifest.agent.inline.shot = await state('3');
     console.log('agent ok');
   }
 }

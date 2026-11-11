@@ -15,9 +15,10 @@ here ships in the skill.
 | 4. Frames | `render.js` | Seeks the page frame by frame in Chromium and saves each frame. |
 | 5. Encode | `render.js` | Mixes the soundtrack and writes an H.264 + AAC `.mp4`, a GIF loop, or one standalone `.html` (with `comp/player.js`). |
 
-All footage is real: the current build of the app renders the showcase decks
-in `decks/`. These decks are made for the promo: each slide is designed and
-checked by eye (`shoot-deck.js`). The numbers on screen come from the repository, not from
+All footage is real: the current build of the app renders the sample decks in
+`examples/` (`vela-tour`, `startup-pitch`, `course-training`,
+`business-report`, `tech-talk`). Each slide is designed and checked by eye
+(`shoot-deck.js`). The numbers on screen come from the repository, not from
 the storyboard.
 
 ## Build
@@ -92,7 +93,8 @@ more (single big words excepted).
 | 64–73 | `themes` | Showcase decks |
 | 73–80 | `lead` | Now run the show |
 | 80–120 | `f-*` | Two bars each: present, edit live, search, story mode, phone |
-| 120–152 | `agent` | Claude Code + the vela CLI; the browser follows (simulated terminal, real output) |
+| 120–138 | `agent` | Claude Code + the vela CLI; the browser follows (simulated terminal, real output) |
+| 138–152 | `inline` | The other direction: AI Edit inside Vela; the app calls the agent CLI (real UI, real arguments) |
 | 152–169 | `skill` | Ships as a skill |
 | 169–184 | `json` | A deck is JSON; format sizes measured by the CLI |
 | 184–193 | `export` | Export formats |
@@ -107,10 +109,11 @@ more (single big words excepted).
 
 ### Showcase decks
 
-`decks/*.vela` are the slides that the video shows. To change or add one:
+The video shows the sample decks in `examples/`. They are also the public
+gallery decks, so a better slide improves both. To change or add one:
 
 ```bash
-node tools/vela-dev/promo/shoot-deck.js tools/vela-dev/promo/decks/course.vela /tmp/shots --fonts $W/fonts --portrait
+node tools/vela-dev/promo/shoot-deck.js examples/course-training.vela /tmp/shots --fonts $W/fonts --portrait
 # read /tmp/shots/sheet.jpg (and sheet-p.jpg), fix the deck, shoot again
 ```
 
@@ -118,8 +121,10 @@ Quality bar: balanced, one focal point, no text below about 13px on the
 960×540 canvas, no clipping, natural content height below about 430px (above
 that the app scales the slide down and aligns it to the top). `footage` in the
 config names the decks, the tour deck, the phone slides and the search query.
-The agent scene edits slide 4 of `startup-pitch.vela`: keep `blocks[0]` a
-heading with the text `Traction` and keep `$480K` on that slide.
+The agent scenes edit slide 4 of `startup-pitch.vela` (on a copy): keep
+`blocks[0]` a heading with the text `Traction`, and keep `$480K` and `22%` on
+that slide. `tests/test_pptx_export.cjs` needs 5 or more slides in
+`tech-talk.vela`.
 
 ## Change the soundtrack
 

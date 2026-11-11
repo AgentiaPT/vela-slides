@@ -1,412 +1,351 @@
 {
-  "deckTitle": "Q1 2026 — Product & Engineering Review",
+  "deckTitle": "Q1 2026 Review",
   "lanes": [
     {
-      "id": "9ed2f6b0",
-      "title": "Business Review",
+      "id": "br-lane-01",
+      "title": "Q1 2026 Review",
       "collapsed": false,
       "items": [
         {
-          "id": "53432343",
-          "title": "Q1 Overview",
+          "id": "br-item-01",
+          "title": "Quarterly Business Review",
           "notes": "",
           "comments": [],
           "status": "done",
-          "importance": "should",
+          "importance": "must",
           "order": 0,
           "slides": [
             {
+              "title": "Q1 2026 Review",
+              "duration": 20,
+              "bg": "#1e1b4b",
+              "bgGradient": "linear-gradient(135deg, #1e1b4b 0%, #4c1d95 45%, #7e22ce 80%, #86198f 100%)",
+              "color": "#faf5ff",
+              "accent": "#c4b5fd",
+              "mutedColor": "#e9d5ff",
+              "padding": "48px 80px",
+              "align": "center",
+              "verticalAlign": "center",
               "blocks": [
                 {
                   "type": "badge",
                   "text": "CONFIDENTIAL",
-                  "color": "#c4b5fd",
-                  "bg": "#a78bfa20",
-                  "border": "#a78bfa50",
-                  "icon": "Lock"
+                  "icon": "Lock",
+                  "color": "#1e1b4b",
+                  "bg": "#c4b5fd"
+                },
+                {
+                  "type": "spacer",
+                  "h": 14
+                },
+                {
+                  "type": "heading",
+                  "text": "Q1 2026 Review",
+                  "size": "4xl",
+                  "align": "center",
+                  "color": "#faf5ff"
+                },
+                {
+                  "type": "text",
+                  "text": "Product & Engineering — Quarterly Business Review",
+                  "size": "xl",
+                  "color": "#e9d5ff",
+                  "align": "center"
+                },
+                {
+                  "type": "spacer",
+                  "h": 30
+                },
+                {
+                  "type": "icon-row",
+                  "cols": 3,
+                  "gap": 40,
+                  "iconShape": "circle",
+                  "iconColor": "#faf5ff",
+                  "iconBg": "rgba(250,245,255,0.14)",
+                  "titleSize": "lg",
+                  "textSize": "sm",
+                  "textColor": "#e9d5ff",
+                  "style": {
+                    "padding": "20px 36px",
+                    "backgroundColor": "rgba(19,10,36,0.28)",
+                    "borderRadius": "16px",
+                    "borderWidth": "1px",
+                    "borderStyle": "solid",
+                    "borderColor": "rgba(196,181,253,0.35)"
+                  },
+                  "items": [
+                    {
+                      "icon": "Rocket",
+                      "title": "12 releases",
+                      "text": "Shipped to production"
+                    },
+                    {
+                      "icon": "Activity",
+                      "title": "99.97% uptime",
+                      "text": "Across all regions"
+                    },
+                    {
+                      "icon": "TrendingUp",
+                      "title": "+19% ARR",
+                      "text": "Quarter over quarter"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "title": "Key metrics",
+              "duration": 40,
+              "bg": "#130a24",
+              "bgGradient": "linear-gradient(160deg, #130a24 0%, #1e1038 60%, #2a1650 100%)",
+              "color": "#faf5ff",
+              "accent": "#a78bfa",
+              "mutedColor": "#b9a8dc",
+              "padding": "40px 56px",
+              "align": "left",
+              "verticalAlign": "center",
+              "blocks": [
+                {
+                  "type": "badge",
+                  "text": "Q1 results",
+                  "color": "#a78bfa"
+                },
+                {
+                  "type": "heading",
+                  "text": "Key metrics",
+                  "size": "2xl",
+                  "color": "#faf5ff"
                 },
                 {
                   "type": "spacer",
                   "h": 12
                 },
                 {
-                  "type": "heading",
-                  "text": "Q1 2026 Review",
-                  "size": "3xl",
-                  "weight": "bold"
-                },
-                {
-                  "type": "text",
-                  "text": "Product & Engineering — Quarterly Business Review",
-                  "size": "lg",
-                  "color": "#a5b4fc"
-                },
-                {
-                  "type": "spacer",
-                  "h": 20
-                },
-                {
-                  "type": "icon-row",
-                  "items": [
-                    {
-                      "icon": "Rocket",
-                      "text": "12 Releases"
-                    },
-                    {
-                      "icon": "Server",
-                      "text": "99.7% Uptime"
-                    },
-                    {
-                      "icon": "TrendingUp",
-                      "text": "+18% ARR"
-                    }
-                  ],
-                  "iconColor": "#c4b5fd",
-                  "iconBg": "#a78bfa20"
-                }
-              ],
-              "title": "Title",
-              "bg": "#1e1b4b",
-              "bgGradient": "linear-gradient(140deg, #1e1b4b 0%, #312e81 40%, #3b0764 100%)",
-              "color": "#e0e7ff",
-              "accent": "#a78bfa",
-              "verticalAlign": "center",
-              "padding": "48px 60px",
-              "duration": 60
-            },
-            {
-              "blocks": [
-                {
-                  "type": "heading",
-                  "text": "Key Metrics",
-                  "size": "lg"
-                },
-                {
                   "type": "number-row",
+                  "size": "4xl",
+                  "bordered": true,
                   "items": [
                     {
                       "value": "$4.2M",
-                      "label": "Annual Recurring Revenue",
+                      "label": "Annual recurring revenue",
                       "icon": "DollarSign",
-                      "color": "#a78bfa"
+                      "color": "#c4b5fd"
                     },
                     {
                       "value": "52K",
-                      "label": "Monthly Active Users",
+                      "label": "Monthly active users",
                       "icon": "Users",
-                      "color": "#818cf8"
+                      "color": "#f0abfc"
                     },
                     {
                       "value": "72",
-                      "label": "Net Promoter Score",
-                      "icon": "ThumbsUp",
+                      "label": "Net promoter score",
+                      "icon": "Heart",
                       "color": "#34d399"
                     }
-                  ]
+                  ],
+                  "style": {
+                    "borderColor": "rgba(167,139,250,0.38)",
+                    "backgroundColor": "rgba(167,139,250,0.06)"
+                  }
+                },
+                {
+                  "type": "spacer",
+                  "h": 16
                 },
                 {
                   "type": "progress",
-                  "label": "OKR Completion — Q1 2026",
-                  "value": "78"
+                  "size": "md",
+                  "height": 10,
+                  "gap": 16,
+                  "trackColor": "rgba(167,139,250,0.16)",
+                  "labelColor": "#faf5ff",
+                  "items": [
+                    {
+                      "label": "Annual plan",
+                      "value": 78,
+                      "color": "#a78bfa"
+                    },
+                    {
+                      "label": "Enterprise pipeline",
+                      "value": 64,
+                      "color": "#f0abfc"
+                    },
+                    {
+                      "label": "Hiring plan",
+                      "value": 85,
+                      "color": "#34d399"
+                    }
+                  ]
                 }
-              ],
-              "title": "Key Metrics",
-              "bg": "#1e293b",
-              "color": "#e2e8f0",
-              "accent": "#818cf8",
-              "padding": "36px 48px",
-              "duration": 60
+              ]
             },
             {
+              "title": "Roadmap",
+              "duration": 60,
+              "bg": "#130a24",
+              "bgGradient": "linear-gradient(160deg, #130a24 0%, #1e1038 60%, #2a1650 100%)",
+              "color": "#faf5ff",
+              "accent": "#a78bfa",
+              "mutedColor": "#b9a8dc",
+              "padding": "40px 56px",
+              "align": "left",
+              "verticalAlign": "center",
               "blocks": [
                 {
+                  "type": "badge",
+                  "text": "Delivery",
+                  "color": "#a78bfa"
+                },
+                {
                   "type": "heading",
-                  "text": "Roadmap Progress",
-                  "size": "lg"
+                  "text": "Roadmap",
+                  "size": "2xl",
+                  "color": "#faf5ff"
+                },
+                {
+                  "type": "spacer",
+                  "h": 38
                 },
                 {
                   "type": "timeline",
+                  "direction": "horizontal",
+                  "titleSize": "lg",
+                  "lineColor": "rgba(167,139,250,0.45)",
+                  "dotColor": "#f0abfc",
+                  "dateColor": "#c4b5fd",
+                  "titleColor": "#faf5ff",
                   "items": [
                     {
                       "date": "Jan 15",
-                      "title": "v3.0 Platform Launch",
-                      "text": "New API gateway and dashboard shipped to GA"
+                      "title": "v3.0 platform"
                     },
                     {
                       "date": "Feb 3",
-                      "title": "SSO & RBAC",
-                      "text": "Enterprise auth rolled out to all paid tiers"
+                      "title": "SSO & RBAC"
                     },
                     {
                       "date": "Feb 28",
-                      "title": "Mobile SDK Beta",
-                      "text": "iOS and Android SDKs released to design partners"
+                      "title": "Mobile SDK beta"
                     },
                     {
                       "date": "Mar 20",
-                      "title": "Data Pipeline v2",
-                      "text": "Real-time analytics pipeline in staging"
+                      "title": "Data pipeline v2"
                     }
                   ]
                 },
                 {
+                  "type": "spacer",
+                  "h": 42
+                },
+                {
                   "type": "comparison",
+                  "titleSize": "lg",
+                  "size": "md",
+                  "dividerLabel": "VS",
                   "items": [
                     {
                       "title": "Planned",
-                      "icon": "Calendar",
-                      "color": "#6366f1",
+                      "icon": "Target",
+                      "color": "#a78bfa",
                       "items": [
-                        "v3.0 Platform — Jan 15",
-                        "Data Pipeline v2 — Feb 28",
-                        "Mobile SDK — Mar 15"
+                        "v3.0 platform, Jan 15",
+                        "Mobile SDK beta, Feb 7",
+                        "Data pipeline v2, Mar 20"
                       ]
                     },
                     {
                       "title": "Actual",
                       "icon": "CheckCircle",
-                      "color": "#818cf8",
+                      "color": "#34d399",
                       "items": [
-                        "v3.0 Platform — Jan 15 ✓",
-                        "Data Pipeline v2 — Mar 20 (3wk slip)",
-                        "Mobile SDK — On track"
+                        "Shipped on time",
+                        "Slipped 3 weeks",
+                        "Shipped on time"
                       ]
                     }
-                  ],
-                  "dividerLabel": "VS"
-                },
-                {
-                  "type": "callout",
-                  "text": "Data Pipeline v2 delivery slipped 3 weeks due to upstream Kafka migration. GA now targeted for April 10.",
-                  "icon": "alert-triangle"
+                  ]
                 }
-              ],
-              "title": "Roadmap Progress",
-              "bg": "#0f172a",
-              "color": "#e2e8f0",
-              "accent": "#6366f1",
-              "padding": "36px 48px",
-              "duration": 60
+              ]
             },
             {
+              "title": "Q2 priorities",
+              "duration": 60,
+              "bg": "#130a24",
+              "bgGradient": "linear-gradient(160deg, #130a24 0%, #1e1038 60%, #2a1650 100%)",
+              "color": "#faf5ff",
+              "accent": "#a78bfa",
+              "mutedColor": "#b9a8dc",
+              "padding": "40px 56px",
+              "align": "left",
+              "verticalAlign": "center",
               "blocks": [
                 {
-                  "type": "heading",
-                  "text": "Team & Resources",
-                  "size": "lg"
+                  "type": "badge",
+                  "text": "Looking ahead",
+                  "color": "#a78bfa"
                 },
-                {
-                  "type": "grid",
-                  "items": [
-                    {
-                      "blocks": [
-                        {
-                          "type": "table",
-                          "headers": [
-                            "Team",
-                            "HC",
-                            "Velocity",
-                            "Status"
-                          ],
-                          "rows": [
-                            [
-                              "Platform",
-                              "14",
-                              "68 pts",
-                              "On Track"
-                            ],
-                            [
-                              "Growth",
-                              "8",
-                              "42 pts",
-                              "On Track"
-                            ],
-                            [
-                              "Mobile",
-                              "6",
-                              "31 pts",
-                              "At Risk"
-                            ],
-                            [
-                              "Data / ML",
-                              "5",
-                              "24 pts",
-                              "Behind"
-                            ]
-                          ]
-                        }
-                      ]
-                    },
-                    {
-                      "blocks": [
-                        {
-                          "type": "funnel",
-                          "items": [
-                            {
-                              "label": "Leads",
-                              "value": "3,200"
-                            },
-                            {
-                              "label": "Qualified",
-                              "value": "1,100"
-                            },
-                            {
-                              "label": "Trial",
-                              "value": "420",
-                              "drop": "−62%"
-                            },
-                            {
-                              "label": "Paid",
-                              "value": "86",
-                              "highlight": true
-                            }
-                          ]
-                        }
-                      ]
-                    }
-                  ],
-                  "gap": 16
-                },
-                {
-                  "type": "matrix",
-                  "quadrants": [
-                    {
-                      "title": "On Track + Full Staff",
-                      "color": "#818cf8",
-                      "items": [
-                        "Platform (14 HC, 68 pts)",
-                        "Growth (8 HC, 42 pts)"
-                      ]
-                    },
-                    {
-                      "title": "At Risk + Full Staff",
-                      "color": "#f87171",
-                      "items": [
-                        "Mobile (6 HC, 31 pts)"
-                      ]
-                    },
-                    {
-                      "title": "On Track + Understaffed",
-                      "color": "#fbbf24",
-                      "items": []
-                    },
-                    {
-                      "title": "Behind + Understaffed",
-                      "color": "#f87171",
-                      "items": [
-                        "Data/ML (5 HC, 24 pts)"
-                      ]
-                    }
-                  ],
-                  "xLeft": "ON TRACK",
-                  "xRight": "BEHIND",
-                  "yTop": "FULL STAFF",
-                  "yBottom": "UNDERSTAFFED"
-                },
-                {
-                  "type": "text",
-                  "text": "Hiring: 4 open reqs (2 Senior Backend, 1 ML Engineer, 1 Mobile Lead). Mobile Lead role open 60+ days — escalated to exec recruiting.",
-                  "size": "sm"
-                }
-              ],
-              "title": "Team & Resources",
-              "bg": "#1e293b",
-              "color": "#e2e8f0",
-              "accent": "#818cf8",
-              "padding": "36px 48px",
-              "duration": 60
-            },
-            {
-              "blocks": [
                 {
                   "type": "heading",
-                  "text": "Q2 Priorities",
-                  "size": "lg"
+                  "text": "Q2 priorities",
+                  "size": "2xl",
+                  "color": "#faf5ff"
+                },
+                {
+                  "type": "spacer",
+                  "h": 30
                 },
                 {
                   "type": "steps",
+                  "titleSize": "lg",
+                  "textSize": "md",
+                  "numberColor": "#7c3aed",
+                  "lineColor": "transparent",
+                  "titleColor": "#faf5ff",
+                  "textColor": "#b9a8dc",
                   "items": [
                     {
-                      "title": "Ship Data Pipeline v2 to GA",
-                      "text": "Complete migration, onboard top-10 accounts by April 30"
+                      "title": "Enterprise-ready",
+                      "text": "Audit logs and SCIM provisioning by May"
                     },
                     {
-                      "title": "Launch Self-Serve Enterprise Tier",
-                      "text": "Automated provisioning, billing integration, SOC 2 compliance"
+                      "title": "Mobile SDK 1.0",
+                      "text": "Stable APIs, offline sync, 99.9% crash-free"
                     },
                     {
-                      "title": "Expand Mobile to Android GA",
-                      "text": "Feature parity with iOS, target 5K beta users by end of Q2"
-                    }
-                  ]
-                },
-                {
-                  "type": "checklist",
-                  "items": [
-                    {
-                      "text": "Ship Data Pipeline v2 to GA",
-                      "status": "partial"
-                    },
-                    {
-                      "text": "Launch Self-Serve Enterprise Tier",
-                      "status": "pending"
-                    },
-                    {
-                      "text": "Expand Mobile to Android GA",
-                      "status": "pending"
-                    },
-                    {
-                      "text": "Kafka vendor contract renewal (May 1)",
-                      "status": "blocked"
-                    },
-                    {
-                      "text": "SOC 2 audit — depends on infra remediation",
-                      "status": "pending"
+                      "title": "Faster onboarding",
+                      "text": "Guided setup gets new teams live in a day"
                     }
                   ],
-                  "showLabels": true
+                  "style": {
+                    "display": "grid",
+                    "gridTemplateColumns": "repeat(3, 1fr)",
+                    "gap": "28px"
+                  }
                 },
                 {
-                  "type": "callout",
-                  "text": "Executive ask: Approve $180K incremental cloud spend for Data Pipeline scaling and authorize contractor backfill for Mobile.",
-                  "icon": "message-circle"
+                  "type": "spacer",
+                  "h": 10
+                },
+                {
+                  "type": "quote",
+                  "text": "The v3.0 platform cut our release cycle from weeks to days.",
+                  "author": "Maya Okafor, VP Engineering, Northwind Labs",
+                  "size": "2xl",
+                  "color": "#faf5ff",
+                  "style": {
+                    "padding": "30px 28px",
+                    "backgroundColor": "rgba(167,139,250,0.08)",
+                    "borderRadius": "14px",
+                    "borderLeft": "4px solid #f0abfc"
+                  }
                 }
-              ],
-              "title": "Q2 Priorities",
-              "bg": "#0f172a",
-              "color": "#e2e8f0",
-              "accent": "#6366f1",
-              "padding": "36px 48px",
-              "duration": 60
+              ]
             }
-          ],
-          "createdAt": "2026-06-01T01:08:24.399Z"
+          ]
         }
       ]
-    },
-    {
-      "id": "44d68c89",
-      "title": "Main",
-      "collapsed": false,
-      "items": []
     }
-  ],
-  "branding": {
-    "enabled": false,
-    "accentBar": true,
-    "accentColor": "#3B82F6",
-    "accentHeight": 4,
-    "logo": null,
-    "logoPosition": "top-left",
-    "logoSize": 56,
-    "footerLeft": "",
-    "footerCenter": "",
-    "footerRight": "auto",
-    "footerBg": "rgba(0,0,0,0.35)",
-    "footerColor": "#94a3b8",
-    "footerSize": 9,
-    "imgMaxWidth": 600,
-    "imgQuality": 0.45
-  },
-  "guidelines": ""
+  ]
 }

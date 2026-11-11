@@ -192,7 +192,7 @@
   bgTo(32, 1, 0.9, 0, 0.2);
 
   // 4 · One real slide per beat.
-  const BLITZ = [[TOUR, 3], ['startup-pitch', 1], [TOUR, 5], ['business-report', 2], ['course', 1], ['tech-talk', 2], ['startup-pitch', 4], [TOUR, 7]];
+  const BLITZ = [[TOUR, 3], ['startup-pitch', 1], [TOUR, 5], ['business-report', 2], ['course-training', 1], ['tech-talk', 2], ['startup-pitch', 4], [TOUR, 7]];
   tl.scene('blitz', B(36), B(44), R => BLITZ.forEach(([deck, n], i) => {
     const s = full(R, deck, n), t0 = B(36 + i);
     tl.cut(s, t0, B(37 + i)); tl.fromTo(s, { s: 1.17, r: i % 2 ? 1.3 : -1.3 }, { s: 1.03, r: 0 }, t0, BEAT, E.expo);
@@ -229,8 +229,8 @@
 
   // 7 · Stabs: the showcase decks, one per hit.
   chapter(64, 'Any theme');
-  const THEMES = [[64, 'business-report', 1, 'REPORTS.'], [65, 'course', 1, 'COURSES.'], [66, 'startup-pitch', 1, 'PITCHES.'], [68, 'tech-talk', 1, 'TECH TALKS.'],
-    [69, 'startup-pitch', 2, 'ANY THEME.'], [70, 'course', 3, 'ANY THEME.'], [71, 'business-report', 3, 'ANY THEME.'], [72, 'tech-talk', 4, 'ANY THEME.']];
+  const THEMES = [[64, 'business-report', 1, 'REPORTS.'], [65, 'course-training', 1, 'COURSES.'], [66, 'startup-pitch', 1, 'PITCHES.'], [68, 'tech-talk', 1, 'TECH TALKS.'],
+    [69, 'startup-pitch', 2, 'ANY THEME.'], [70, 'course-training', 3, 'ANY THEME.'], [71, 'business-report', 3, 'ANY THEME.'], [72, 'tech-talk', 4, 'ANY THEME.']];
   tl.scene('themes', B(64), B(73), R => {
     THEMES.forEach(([g, deck, n], i) => { const s = full(R, deck, n), t1 = B(i + 1 < THEMES.length ? THEMES[i + 1][0] : 73);
       tl.cut(s, B(g), t1); tl.fromTo(s, { s: 1.15 }, { s: 1.03 }, B(g), BEAT, E.expo); });
@@ -290,38 +290,51 @@
 
   // ═══ PASS 2 — the agent ═════════════════════════════════════════════════
   const P2 = G0[1];
-  // 10 · A coding agent edits the deck file with the vela CLI; the browser follows.
-  //      The terminal is a simulation. The commands, their output and the three
-  //      screens are real (capture-assets.js runs the CLI and renders each state).
-  chapter(P2, 'Hand it to your agent');
-  tl.scene('agent', B(P2), B(P2 + 32), R => {
-    const AG = D.manifest.agent, st = AG.steps;
-    const top = el('div', 'abs d', R, 'Now hand it to <span class="grad">your agent.</span>'); top.style.cssText = 'left:0;right:0;top:22px;text-align:center;font-size:76px;letter-spacing:-.03em;line-height:1.25'; tl.in(top, B(P2 + 0.3), { y: -30, s: 1.15, dur: 0.5 });
+  // 10 · The agent and Vela, in the two directions, on the same split screen.
+  //      The terminals are simulations. The commands, their output, the spawn
+  //      arguments and each screen are real (capture-assets.js runs the CLI and
+  //      renders each deck state; the arguments are those in agent_backend.py).
+  const esc = x => x.replace(/&/g, '&amp;').replace(/</g, '&lt;');
+  function duo(R, g, title, termTitle, capHtml, capAt) {
+    const top = el('div', 'abs d', R, title); top.style.cssText = 'left:0;right:0;top:22px;text-align:center;font-size:76px;letter-spacing:-.03em;line-height:1.25'; tl.in(top, B(g + 0.3), { y: -30, s: 1.15, dur: 0.5 });
     const p3 = el('div', 'fill p3d', R), w = el('div', 'win', p3); w.style.cssText = 'left:50px;top:150px;width:1090px';
     el('div', 'bar', w, '<i></i><i></i><i></i><span>localhost:3030 — Vela Slides</span>');
     const sh = el('div', 'shot', w); sh.style.cssText = 'height:613px;position:relative';
-    const hit = [0, 13.4, 20.4];
-    [AG.start, st[1].shot, st[2].shot].forEach((f, k) => { const i = el('div', 'fill', sh); i.style.cssText = `background:${U(f)} center/cover no-repeat`; tl.cut(i, B(P2 + hit[k]), null);
-      if (k) { const fl = el('div', 'fill', sh); fl.style.background = '#a5b4fc'; tl.fromTo(fl, { o: 0 }, { o: 0.55 }, B(P2 + hit[k]), 0.05, E.out).to(fl, { o: 0 }, B(P2 + hit[k]) + 0.05, 0.7, E.out); } });
-    const live = el('div', 'abs chip', R, '● live reload'); live.style.cssText = 'left:60px;top:826px;border-color:#34d399;color:#a7f3d0';
-    tl.set(live, { o: 0 }); hit.slice(1).forEach(g => tl.fromTo(live, { o: 0, s: 1.25 }, { o: 1, s: 1 }, B(P2 + g), 0.3, E.expo));
-    tl.fromTo(w, { o: 0, x: -200, ry: 14 }, { o: 1, x: 0, ry: 4 }, B(P2 + 1), 0.7, E.expo);
-    const t = el('div', 'term', R); t.style.cssText += ';left:1180px;top:150px;width:690px;height:657px;font-size:24px;line-height:1.45;padding:66px 26px 20px;white-space:pre-wrap;word-break:break-word';
-    tl.fromTo(t, { o: 0, x: 200 }, { o: 1, x: 0 }, B(P2 + 1.4), 0.7, E.expo);
-    el('div', '', t, '<span style="color:#fbbf24">✻</span> <span style="color:#fff">Claude Code</span>').style.cssText = 'position:absolute;left:120px;top:13px;font-size:22px';
-    const pr = el('div', '', t); pr.style.cssText = 'color:#fff;border:1px solid #3b4070;border-radius:10px;padding:10px 14px;margin-bottom:16px;min-height:86px';
+    const t = el('div', 'term', R); t.style.cssText += ';left:1180px;top:150px;width:690px;height:657px;font-size:25px;line-height:1.45;padding:66px 26px 20px;white-space:pre-wrap;word-break:break-word';
+    el('div', '', t, termTitle).style.cssText = 'position:absolute;left:120px;top:13px;font-size:22px;color:#fff';
+    const cap = el('div', 'abs d', R, capHtml); cap.style.cssText = 'left:0;right:0;top:906px;text-align:center;font-size:72px;letter-spacing:-.03em;line-height:1.2'; tl.in(cap, B(capAt), { y: 40, dur: 0.5 });
+    const live = el('div', 'abs chip', R, ''); live.style.cssText = 'left:60px;top:826px;border-color:#34d399;color:#a7f3d0'; tl.set(live, { o: 0 });
+    const sim = el('div', 'abs mono', R, 'simulated session · real commands · real renders'); sim.style.cssText = 'right:54px;top:832px;font-size:22px;color:#7c86c8;letter-spacing:.05em';
+    const shot = (file, at, flash, zoom) => { const i = el('div', 'fill', sh); i.style.cssText = `background:${U(file)} ${zoom || 'center/cover'} no-repeat`; tl.cut(i, B(at), null);
+      if (flash) { const fl = el('div', 'fill', sh); fl.style.background = '#a5b4fc'; tl.fromTo(fl, { o: 0 }, { o: 0.55 }, B(at), 0.05, E.out).to(fl, { o: 0 }, B(at) + 0.05, 0.7, E.out); tl.fromTo(live, { o: 0, s: 1.25 }, { o: 1, s: 1 }, B(at), 0.3, E.expo); } };
+    const line = (html, at) => { const row = el('div', '', t, html); row.style.marginBottom = '14px'; tl.fromTo(row, { o: 0, y: 16 }, { o: 1, y: 0 }, B(at), 0.25, E.expo); return row; };
+    return { top, w, t, cap, live, sim, shot, line };
+  }
+  chapter(P2, 'Hand it to your agent');
+  tl.scene('agent', B(P2), B(P2 + 18), R => {
+    const AG = D.manifest.agent, st = AG.steps, g = P2;
+    const d = duo(R, g, 'Now hand it to <span class="grad">your agent.</span>', '<span style="color:#fbbf24">✻</span> Claude Code', 'The agent edits the file. <span class="grad">The browser follows.</span>', g + 8);
+    d.live.textContent = '● live reload';
+    tl.fromTo(d.w, { o: 0, x: -200, ry: 14 }, { o: 1, x: 0, ry: 4 }, B(g + 0.8), 0.6, E.expo); tl.fromTo(d.t, { o: 0, x: 200 }, { o: 1, x: 0 }, B(g + 1.1), 0.6, E.expo); tl.in(d.sim, B(g + 2), { dur: 0.6 });
+    d.shot(AG.start, g, false); d.shot(st[1].shot, g + 7.3, true); d.shot(st[2].shot, g + 10.9, true);
+    const pr = el('div', '', d.t); pr.style.cssText = 'color:#fff;border:1px solid #3b4070;border-radius:10px;padding:10px 14px;margin-bottom:16px;min-height:90px';
     const ask = "> New title: 'Traction: Q3 update'. MRR is now $612K.";
-    tl.tick(tt => { const n = Math.floor(clamp((tt - B(P2 + 2.6)) / (B(P2 + 7.6) - B(P2 + 2.6))) * ask.length); const h = ask.slice(0, n) + (tt < B(P2 + 8.2) ? '▍' : ''); if (pr.textContent !== h) pr.textContent = h; });
-    const esc = x => x.replace(/&/g, '&amp;').replace(/</g, '&lt;');
-    [[8.8, 0], [12.6, 1], [19.6, 2]].forEach(([g, k]) => {
-      const row = el('div', '', t, `<span class="p">●</span> Bash(${esc(st[k].cmd)})\n<span style="color:#8a93c9">  ⎿ ${esc(st[k].out[0] || 'ok')}</span>`); row.style.marginBottom = '14px';
-      tl.fromTo(row, { o: 0, y: 16 }, { o: 1, y: 0 }, B(P2 + g), 0.25, E.expo);
-    });
-    const done = el('div', '', t, '<span class="p">●</span> Done. Two edits saved to pitch.vela.'); tl.fromTo(done, { o: 0, y: 16 }, { o: 1, y: 0 }, B(P2 + 23.5), 0.25, E.expo);
-    const cap = el('div', 'abs d', R, 'The agent edits the file. <span class="grad">The browser follows.</span>'); cap.style.cssText = 'left:0;right:0;top:906px;text-align:center;font-size:72px;letter-spacing:-.03em;line-height:1.2';
-    tl.in(cap, B(P2 + 14), { y: 40, dur: 0.5 });
-    const sim = el('div', 'abs mono', R, 'simulated session · real CLI output · real renders'); sim.style.cssText = 'right:54px;top:832px;font-size:22px;color:#7c86c8;letter-spacing:.05em'; tl.in(sim, B(P2 + 3), { dur: 0.6 });
-    [w, t, top, cap, live, sim].forEach(n => tl.to(n, { s: 1.5, o: 0, blur: 14 }, B(P2 + 30.5), BEAT * 1.5, E.in));
+    tl.tick(tt => { const n = Math.floor(clamp((tt - B(g + 1.8)) / (B(g + 5.6) - B(g + 1.8))) * ask.length); const h = ask.slice(0, n) + (tt < B(g + 6) ? '▍' : ''); if (pr.textContent !== h) pr.textContent = h; });
+    [[6.5, 1], [10.1, 2]].forEach(([at, k]) => d.line(`<span class="p">●</span> Bash(${esc(st[k].cmd)})\n<span style="color:#8a93c9">  ⎿ ${esc(st[k].out[0] || 'ok')}</span>`, g + at));
+    d.line('<span class="p">●</span> Done. Two edits saved to pitch.vela.', g + 13.4);
+  });
+  chapter(P2 + 18, 'Or ask inside Vela');
+  tl.scene('inline', B(P2 + 18), B(P2 + 32), R => {
+    const IN = D.manifest.agent.inline, g = P2 + 18;
+    const d = duo(R, g, 'Or ask <span class="grad">inside Vela.</span>', 'Terminal', 'Vela calls <span class="grad">your local agent CLI.</span>', g + 5);
+    d.live.textContent = '● AI edit applied'; tl.set(d.sim, { o: 1 });
+    tl.set(d.w, { ry: 4 });
+    [0, 1.1, 2.0, 2.9].forEach((at, k) => d.shot(IN.frames[k], g + at, false, '60% 100%/140%')); // zoom on the AI Edit box d.shot(IN.shot, g + 7.6, true);
+    d.line('<span class="p">$</span> python3 tools/vela-dev/scripts/serve.py decks/ --ai', g + 0.2);
+    d.line('<span style="color:#8a93c9">▸ AI Edit request from the browser</span>', g + 4.2);
+    d.line(`<span class="p">▸</span> ${esc(D.agentArgv)}`, g + 4.9);
+    d.line('<span style="color:#8a93c9">◂ reply applied to slide 4</span>', g + 7.4);
+    [d.w, d.t, d.top, d.cap, d.live, d.sim].forEach(n => tl.to(n, { s: 1.5, o: 0, blur: 14 }, B(g + 12.5), BEAT * 1.5, E.in));
   });
   bgTo(P2, 0.4, 0.06, 40, 0.3); bgTo(P2 + 16, 0.55, 0.15, 20); bgTo(P2 + 28, 1, 2.4, 0, BEAT * 4);
 

@@ -1,510 +1,423 @@
 {
-  "deckTitle": "Building Resilient APIs with Edge Computing",
+  "deckTitle": "Resilient APIs at the Edge",
   "lanes": [
     {
-      "id": "ff9e9def",
-      "title": "Main Talk",
+      "id": "tt-lane-1",
+      "title": "Talk",
       "collapsed": false,
       "items": [
         {
-          "id": "9af73e65",
-          "title": "Introduction",
+          "id": "tt-item-1",
+          "title": "Resilient APIs at the Edge",
           "notes": "",
           "comments": [],
           "status": "done",
-          "importance": "should",
+          "importance": "must",
           "order": 0,
           "slides": [
             {
               "title": "Title",
-              "bg": "#0c4a6e",
-              "bgGradient": "linear-gradient(135deg, #0c4a6e 0%, #155e75 35%, #164e63 65%, #0e7490 100%)",
+              "duration": 25,
+              "bg": "#082f49",
+              "bgGradient": "linear-gradient(135deg, #082f49 0%, #0e7490 50%, #155e75 80%, #164e63 100%)",
               "color": "#ecfeff",
               "accent": "#22d3ee",
               "padding": "48px 80px",
-              "duration": 30,
-              "align": "left",
+              "align": "center",
               "verticalAlign": "center",
               "blocks": [
                 {
                   "type": "badge",
                   "text": "TECHCONF 2026",
-                  "icon": "Radio",
-                  "color": "#0c4a6e",
-                  "bg": "#22d3ee",
-                  "border": "#22d3ee"
+                  "icon": "Mic",
+                  "color": "#083344",
+                  "bg": "#22d3ee"
                 },
                 {
                   "type": "spacer",
-                  "h": 16
+                  "h": 10
                 },
                 {
                   "type": "heading",
                   "text": "Building Resilient APIs with Edge Computing",
-                  "size": "3xl"
-                },
-                {
-                  "type": "spacer",
-                  "h": 8
+                  "size": "4xl",
+                  "align": "center",
+                  "color": "#ecfeff",
+                  "maxWidth": "660px"
                 },
                 {
                   "type": "text",
                   "text": "Sarah Chen — Principal Engineer, Cloudfront Systems",
-                  "size": "lg",
-                  "color": "#a5f3fc"
+                  "size": "xl",
+                  "color": "#a5f3fc",
+                  "align": "center"
                 },
                 {
                   "type": "spacer",
-                  "h": 24
+                  "h": 22
                 },
                 {
                   "type": "icon-row",
+                  "cols": 3,
+                  "gap": 40,
                   "iconColor": "#67e8f9",
-                  "iconBg": "#22d3ee25",
+                  "iconBg": "#22d3ee38",
+                  "iconShape": "circle",
+                  "titleSize": "md",
+                  "textSize": "sm",
+                  "textColor": "#a5f3fc",
+                  "style": {
+                    "backgroundColor": "rgba(8,47,73,0.5)",
+                    "borderRadius": "16px",
+                    "borderWidth": "1px",
+                    "borderStyle": "solid",
+                    "borderColor": "rgba(103,232,249,0.28)",
+                    "padding": "16px 32px",
+                    "textAlign": "left"
+                  },
                   "items": [
                     {
                       "icon": "Clock",
-                      "text": "45 min"
+                      "title": "45 minutes",
+                      "text": "Session length"
                     },
                     {
-                      "icon": "Signal",
-                      "text": "Intermediate"
+                      "icon": "BarChart3",
+                      "title": "Intermediate",
+                      "text": "Audience level"
                     },
                     {
-                      "icon": "Play",
-                      "text": "Live Demo"
+                      "icon": "Terminal",
+                      "title": "Live demo",
+                      "text": "On real traffic"
                     }
                   ]
                 }
               ]
-            }
-          ],
-          "createdAt": "2026-06-01T01:08:11.742Z"
-        },
-        {
-          "id": "5615eb27",
-          "title": "Architecture",
-          "notes": "",
-          "comments": [],
-          "status": "done",
-          "importance": "should",
-          "order": 0,
-          "slides": [
+            },
             {
-              "title": "The Architecture",
-              "bg": "#0c1a2e",
-              "bgGradient": "linear-gradient(160deg, #0c1a2e 0%, #0f1d2e 100%)",
-              "color": "#e2e8f0",
-              "accent": "#06b6d4",
-              "padding": "36px 48px",
+              "title": "Edge-first request architecture",
               "duration": 90,
+              "bg": "#071824",
+              "bgGradient": "linear-gradient(160deg, #071824 0%, #0b2536 60%, #0e3247 100%)",
+              "color": "#ecfeff",
+              "accent": "#22d3ee",
+              "padding": "40px 56px",
+              "align": "left",
+              "verticalAlign": "center",
               "blocks": [
                 {
                   "type": "heading",
-                  "text": "Edge-First Request Architecture",
+                  "text": "Edge-first request architecture",
                   "size": "2xl",
-                  "icon": "Network"
+                  "icon": "Network",
+                  "iconColor": "#22d3ee"
                 },
                 {
                   "type": "spacer",
-                  "h": 8
+                  "h": 1
                 },
                 {
-                  "type": "grid",
-                  "columns": 2,
-                  "gap": 16,
-                  "items": [
-                    {
-                      "blocks": [
-                        {
-                          "type": "flow",
-                          "items": [
-                            {
-                              "icon": "Smartphone",
-                              "text": "Client"
-                            },
-                            {
-                              "icon": "Server",
-                              "text": "Edge Node"
-                            },
-                            {
-                              "icon": "Database",
-                              "text": "Cache / Origin"
-                            },
-                            {
-                              "icon": "ArrowLeft",
-                              "text": "Response"
-                            }
-                          ],
-                          "connector": "arrow"
-                        }
-                      ]
-                    },
-                    {
-                      "blocks": [
-                        {
-                          "type": "cycle",
-                          "items": [
-                            {
-                              "label": "Request",
-                              "icon": "📡"
-                            },
-                            {
-                              "label": "Cache",
-                              "icon": "💾"
-                            },
-                            {
-                              "label": "Validate",
-                              "icon": "✅"
-                            },
-                            {
-                              "label": "Replicate",
-                              "icon": "🔄"
-                            }
-                          ],
-                          "centerLabel": "Edge"
-                        }
-                      ]
-                    }
-                  ]
+                  "type": "svg",
+                  "maxWidth": "100%",
+                  "align": "center",
+                  "markup": "<svg viewBox='0 8 848 276' xmlns='http://www.w3.org/2000/svg'><path d='M388 204 V246 Q388 262 372 262 H116 Q100 262 100 246 V185' fill='none' stroke='#34d399' stroke-width='2.5' stroke-linecap='round'/><path d='M91 196 L100 183 L109 196' fill='none' stroke='#34d399' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'/><path d='M748 180 V246 Q748 262 732 262 H476 Q460 262 460 246 V209' fill='none' stroke='{{muted}}' stroke-opacity='0.6' stroke-width='2' stroke-dasharray='6 7' stroke-linecap='round'/><path d='M451 220 L460 207 L469 220' fill='none' stroke='{{muted}}' stroke-opacity='0.6' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/><rect x='154' y='244' width='180' height='36' rx='18' fill='{{bg}}' stroke='#34d399' stroke-width='1.5'/><text x='244' y='267' text-anchor='middle' fill='#34d399' font-size='14' font-weight='700' font-family='Space Mono, monospace'>cache hit · 47 ms</text><rect x='506' y='244' width='196' height='36' rx='18' fill='{{bg}}' stroke='{{muted}}' stroke-opacity='0.6' stroke-width='1.5'/><text x='604' y='267' text-anchor='middle' fill='{{color}}' fill-opacity='0.8' font-size='14' font-family='Space Mono, monospace'>cache miss · 820 ms</text><line x1='202' y1='108' x2='304' y2='108' stroke='{{accent}}' stroke-width='2.5' stroke-linecap='round'/><path d='M294 100 L306 108 L294 116' fill='none' stroke='{{accent}}' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'/><text x='254' y='92' text-anchor='middle' fill='{{color}}' font-size='14' font-family='Space Mono, monospace'>request</text><line x1='542' y1='108' x2='644' y2='108' stroke='{{muted}}' stroke-opacity='0.6' stroke-width='2' stroke-dasharray='6 7' stroke-linecap='round'/><path d='M634 100 L646 108 L634 116' fill='none' stroke='{{muted}}' stroke-opacity='0.6' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/><text x='594' y='92' text-anchor='middle' fill='{{color}}' fill-opacity='0.8' font-size='14' font-family='Space Mono, monospace'>on miss</text><rect x='8' y='40' width='184' height='136' rx='16' fill='{{color}}' fill-opacity='0.04' stroke='{{muted}}' stroke-opacity='0.6' stroke-width='1.5'/><circle cx='100' cy='70' r='9' fill='none' stroke='{{accent}}' stroke-width='2.2'/><path d='M82 100 a18 16 0 0 1 36 0' fill='none' stroke='{{accent}}' stroke-width='2.2' stroke-linecap='round'/><text x='100' y='134' text-anchor='middle' fill='{{color}}' font-size='21' font-weight='700' font-family='Sora, sans-serif'>User</text><text x='100' y='157' text-anchor='middle' fill='{{color}}' fill-opacity='0.72' font-size='14.5' font-family='DM Sans, sans-serif'>Browser or app</text><rect x='316' y='16' width='216' height='184' rx='20' fill='{{accent}}' fill-opacity='0.12' stroke='{{accent}}' stroke-width='2.5'/><path d='M428 36 L412 56 H424 L420 70 L436 50 H424 Z' fill='{{accent}}' fill-opacity='0.25' stroke='{{accent}}' stroke-width='2.2' stroke-linejoin='round'/><text x='424' y='108' text-anchor='middle' fill='{{color}}' font-size='23' font-weight='700' font-family='Sora, sans-serif'>Edge node</text><rect x='354' y='128' width='140' height='42' rx='21' fill='{{accent}}'/><text x='424' y='155' text-anchor='middle' fill='{{bg}}' font-size='16' font-weight='700' font-family='Sora, sans-serif'>KV cache</text><rect x='656' y='40' width='184' height='136' rx='16' fill='{{color}}' fill-opacity='0.04' stroke='{{muted}}' stroke-opacity='0.6' stroke-width='1.5'/><rect x='732' y='58' width='32' height='14' rx='4' fill='none' stroke='{{accent}}' stroke-width='2.2'/><rect x='732' y='78' width='32' height='14' rx='4' fill='none' stroke='{{accent}}' stroke-width='2.2'/><circle cx='740' cy='65' r='1.8' fill='{{accent}}'/><circle cx='740' cy='85' r='1.8' fill='{{accent}}'/><text x='748' y='134' text-anchor='middle' fill='{{color}}' font-size='21' font-weight='700' font-family='Sora, sans-serif'>Origin</text><text x='748' y='157' text-anchor='middle' fill='{{color}}' fill-opacity='0.72' font-size='14.5' font-family='DM Sans, sans-serif'>API and database</text></svg>"
                 },
                 {
                   "type": "spacer",
-                  "h": 8
+                  "h": 1
                 },
                 {
                   "type": "callout",
-                  "text": "Edge nodes intercept requests within 50ms of the user. Cache hits bypass origin entirely — reducing P99 latency from 820ms to 47ms in production.",
+                  "text": "Cache hits skip the origin: P99 latency falls from **820 ms** to **47 ms**.",
                   "icon": "Zap",
-                  "bg": "#06b6d415",
-                  "border": "#06b6d440"
+                  "bg": "rgba(34,211,238,0.10)",
+                  "border": "#22d3ee",
+                  "color": "#ecfeff",
+                  "size": "lg"
                 }
-              ]
-            }
-          ],
-          "createdAt": "2026-06-01T01:08:11.742Z"
-        },
-        {
-          "id": "7e474243",
-          "title": "Implementation",
-          "notes": "",
-          "comments": [],
-          "status": "done",
-          "importance": "should",
-          "order": 0,
-          "slides": [
+              ],
+              "mutedColor": "#8fbccd"
+            },
             {
-              "title": "Code Example",
-              "bg": "#0a1628",
-              "bgGradient": "linear-gradient(135deg, #0a1628 0%, #0d1f30 100%)",
-              "color": "#e2e8f0",
+              "title": "Edge function handler",
+              "duration": 120,
+              "bg": "#071824",
+              "bgGradient": "linear-gradient(160deg, #071824 0%, #0b2536 60%, #0e3247 100%)",
+              "color": "#ecfeff",
               "accent": "#22d3ee",
-              "padding": "36px 48px",
-              "duration": 90,
+              "padding": "40px 56px",
+              "align": "left",
+              "verticalAlign": "center",
               "blocks": [
                 {
                   "type": "heading",
-                  "text": "Edge Function Handler",
+                  "text": "Edge function handler",
                   "size": "2xl",
-                  "icon": "Code"
+                  "icon": "Code2",
+                  "iconColor": "#22d3ee"
                 },
                 {
                   "type": "spacer",
-                  "h": 8
+                  "h": 1
                 },
                 {
                   "type": "code",
-                  "language": "typescript",
-                  "text": "export default async function handler(req: Request) {\n  const cacheKey = `edge:${req.url}`;\n  const cached = await kv.get(cacheKey);\n\n  if (cached && !isStale(cached.timestamp)) {\n    return new Response(cached.body, {\n      headers: { 'X-Edge-Cache': 'HIT' }\n    });\n  }\n\n  const origin = await fetch(req.url, { cf: { cacheTtl: 300 } });\n  await kv.put(cacheKey, await origin.clone().text());\n  return origin;\n}"
-                },
-                {
-                  "type": "spacer",
-                  "h": 8
+                  "label": "TYPESCRIPT",
+                  "size": "md",
+                  "bg": "rgba(2,12,20,0.6)",
+                  "color": "#d5f3fa",
+                  "text": "export default {\n  async fetch(req: Request, env: Env) {\n    const key = new URL(req.url).pathname;\n    const hit = await env.CACHE.get(key);\n    if (hit) return new Response(hit, { headers: { \"x-cache\": \"HIT\" } });\n    const body = await (await fetch(env.ORIGIN + key)).text();\n    await env.CACHE.put(key, body, { expirationTtl: 60 });\n    return new Response(body, { headers: { \"x-cache\": \"MISS\" } });\n  },\n};"
                 },
                 {
                   "type": "text",
-                  "text": "Each edge function runs in an isolated V8 runtime with <5ms cold start. The KV store replicates across all 280+ edge locations within seconds.",
+                  "text": "One handler, deployed to 280+ locations. The origin only sees cache misses.",
                   "size": "md",
-                  "color": "#94a3b8"
+                  "color": "#a8d5e2"
                 }
-              ]
-            }
-          ],
-          "createdAt": "2026-06-01T01:08:11.742Z"
-        },
-        {
-          "id": "1a3d46a6",
-          "title": "Results",
-          "notes": "",
-          "comments": [],
-          "status": "done",
-          "importance": "should",
-          "order": 0,
-          "slides": [
+              ],
+              "mutedColor": "#8fbccd"
+            },
             {
-              "title": "Benchmarks",
-              "bg": "#0c1a2e",
-              "bgGradient": "linear-gradient(135deg, #0c1a2e 0%, #0f1d2e 100%)",
-              "color": "#e2e8f0",
-              "accent": "#06b6d4",
-              "padding": "36px 48px",
-              "duration": 60,
+              "title": "Performance benchmarks",
+              "duration": 75,
+              "bg": "#071824",
+              "bgGradient": "linear-gradient(160deg, #071824 0%, #0b2536 60%, #0e3247 100%)",
+              "color": "#ecfeff",
+              "accent": "#22d3ee",
+              "padding": "40px 56px",
+              "align": "left",
+              "verticalAlign": "center",
               "blocks": [
                 {
                   "type": "heading",
-                  "text": "Performance Benchmarks",
+                  "text": "Performance benchmarks",
                   "size": "2xl",
-                  "icon": "BarChart3"
-                },
-                {
-                  "type": "spacer",
-                  "h": 8
+                  "icon": "Gauge",
+                  "iconColor": "#22d3ee"
                 },
                 {
                   "type": "table",
                   "headers": [
                     "Metric",
-                    "Origin-Only",
-                    "Edge-First",
+                    "Origin only",
+                    "Edge-first",
                     "Improvement"
                   ],
                   "rows": [
                     [
-                      "P99 Latency",
+                      "P99 latency",
                       "820 ms",
                       "47 ms",
-                      "94% faster"
+                      "**94% faster**"
                     ],
                     [
                       "Throughput",
                       "1.2K rps",
                       "18K rps",
-                      "15x higher"
+                      "**15x higher**"
                     ],
                     [
-                      "Error Rate",
+                      "Error rate",
                       "0.8%",
                       "0.02%",
-                      "40x lower"
+                      "**40x lower**"
                     ]
-                  ]
-                },
-                {
-                  "type": "spacer",
-                  "h": 12
+                  ],
+                  "striped": true,
+                  "size": "sm",
+                  "headerBg": "rgba(34,211,238,0.14)",
+                  "headerColor": "#67e8f9",
+                  "cellColor": "#d3ecf3",
+                  "borderColor": "rgba(103,232,249,0.2)"
                 },
                 {
                   "type": "number-row",
+                  "size": "4xl",
+                  "bordered": true,
                   "items": [
                     {
-                      "value": "47ms",
-                      "label": "P99 Latency",
+                      "value": "47 ms",
+                      "label": "P99 latency",
                       "icon": "Timer",
                       "color": "#22d3ee"
                     },
                     {
                       "value": "99.98%",
                       "label": "Availability",
-                      "icon": "Shield",
-                      "color": "#06b6d4"
+                      "icon": "ShieldCheck",
+                      "color": "#34d399"
                     },
                     {
                       "value": "280+",
-                      "label": "Edge Locations",
+                      "label": "Edge locations",
                       "icon": "Globe",
-                      "color": "#22d3ee"
-                    }
-                  ]
-                },
-                {
-                  "type": "spacer",
-                  "h": 12
-                },
-                {
-                  "type": "comparison",
-                  "items": [
-                    {
-                      "title": "Origin-Only",
-                      "icon": "Server",
-                      "color": "#94a3b8",
-                      "items": [
-                        "P99: 820ms",
-                        "1.2K rps",
-                        "0.8% errors"
-                      ]
-                    },
-                    {
-                      "title": "Edge-First",
-                      "icon": "Zap",
-                      "color": "#22d3ee",
-                      "items": [
-                        "P99: 47ms",
-                        "18K rps",
-                        "0.02% errors"
-                      ]
+                      "color": "#a78bfa"
                     }
                   ],
-                  "dividerLabel": "VS"
+                  "style": {
+                    "borderColor": "rgba(103,232,249,0.2)",
+                    "backgroundColor": "rgba(34,211,238,0.05)",
+                    "padding": "4px 0",
+                    "boxSizing": "border-box"
+                  },
+                  "compact": true
                 }
-              ]
-            }
-          ],
-          "createdAt": "2026-06-01T01:08:11.742Z"
-        },
-        {
-          "id": "0c11716b",
-          "title": "Closing",
-          "notes": "",
-          "comments": [],
-          "status": "done",
-          "importance": "should",
-          "order": 0,
-          "slides": [
+              ],
+              "mutedColor": "#8fbccd",
+              "gap": 20
+            },
             {
-              "title": "Key Takeaways",
-              "bg": "#0a1628",
-              "bgGradient": "linear-gradient(135deg, #0a1628 0%, #0f2035 50%, #0a1628 100%)",
-              "color": "#e2e8f0",
-              "accent": "#22d3ee",
-              "padding": "36px 48px",
+              "title": "Key takeaways",
               "duration": 60,
+              "bg": "#071824",
+              "bgGradient": "linear-gradient(160deg, #071824 0%, #0b2536 60%, #0e3247 100%)",
+              "color": "#ecfeff",
+              "accent": "#22d3ee",
+              "padding": "40px 56px",
+              "align": "left",
+              "verticalAlign": "center",
               "blocks": [
                 {
                   "type": "heading",
-                  "text": "Key Takeaways",
+                  "text": "Key takeaways",
                   "size": "2xl",
-                  "icon": "Lightbulb"
+                  "icon": "Flag",
+                  "iconColor": "#22d3ee"
                 },
                 {
-                  "type": "spacer",
-                  "h": 8
-                },
-                {
-                  "type": "checklist",
+                  "type": "grid",
+                  "cols": 3,
+                  "gap": 18,
                   "items": [
                     {
-                      "text": "Edge computing eliminates the latency tax — serve from where your users are",
-                      "status": "done"
+                      "direction": "column",
+                      "blocks": [
+                        {
+                          "type": "icon",
+                          "name": "Zap",
+                          "size": "lg",
+                          "color": "#22d3ee",
+                          "bg": "#22d3ee24",
+                          "circle": true
+                        },
+                        {
+                          "type": "heading",
+                          "text": "Cache at the edge",
+                          "size": "lg",
+                          "align": "center",
+                          "color": "#ecfeff"
+                        },
+                        {
+                          "type": "text",
+                          "text": "Serve most requests without touching the origin.",
+                          "size": "md",
+                          "align": "center",
+                          "color": "#a8d5e2"
+                        }
+                      ],
+                      "style": {
+                        "padding": "22px 22px 20px",
+                        "backgroundColor": "rgba(34,211,238,0.05)",
+                        "borderRadius": "14px",
+                        "borderWidth": "1px",
+                        "borderStyle": "solid",
+                        "borderColor": "rgba(103,232,249,0.2)",
+                        "borderTop": "3px solid #22d3ee"
+                      }
                     },
                     {
-                      "text": "Cache-first architecture reduces origin load by 90%+ and improves resilience",
-                      "status": "done"
+                      "direction": "column",
+                      "blocks": [
+                        {
+                          "type": "icon",
+                          "name": "ShieldCheck",
+                          "size": "lg",
+                          "color": "#34d399",
+                          "bg": "#34d39924",
+                          "circle": true
+                        },
+                        {
+                          "type": "heading",
+                          "text": "Shield the origin",
+                          "size": "lg",
+                          "align": "center",
+                          "color": "#ecfeff"
+                        },
+                        {
+                          "type": "text",
+                          "text": "It sees only cache misses, even during spikes.",
+                          "size": "md",
+                          "align": "center",
+                          "color": "#a8d5e2"
+                        }
+                      ],
+                      "style": {
+                        "padding": "22px 22px 20px",
+                        "backgroundColor": "rgba(34,211,238,0.05)",
+                        "borderRadius": "14px",
+                        "borderWidth": "1px",
+                        "borderStyle": "solid",
+                        "borderColor": "rgba(103,232,249,0.2)",
+                        "borderTop": "3px solid #34d399"
+                      }
                     },
                     {
-                      "text": "Isolated V8 runtimes give you full programmability without cold start penalties",
-                      "status": "done"
-                    },
-                    {
-                      "text": "Graceful fallback patterns ensure availability even when origin is unreachable",
-                      "status": "partial"
-                    }
-                  ],
-                  "showLabels": true
-                },
-                {
-                  "type": "spacer",
-                  "h": 12
-                },
-                {
-                  "type": "steps",
-                  "items": [
-                    {
-                      "title": "Identify Hot Paths",
-                      "text": "Profile your API to find cacheable, latency-sensitive endpoints"
-                    },
-                    {
-                      "title": "Deploy Edge Functions",
-                      "text": "Start with read-heavy routes — cache invalidation is simpler there"
-                    },
-                    {
-                      "title": "Measure and Iterate",
-                      "text": "Track cache hit rates, tail latencies, and error budgets per region"
+                      "direction": "column",
+                      "blocks": [
+                        {
+                          "type": "icon",
+                          "name": "Timer",
+                          "size": "lg",
+                          "color": "#a78bfa",
+                          "bg": "#a78bfa24",
+                          "circle": true
+                        },
+                        {
+                          "type": "heading",
+                          "text": "Measure the tail",
+                          "size": "lg",
+                          "align": "center",
+                          "color": "#ecfeff"
+                        },
+                        {
+                          "type": "text",
+                          "text": "P99 latency matters more than the average.",
+                          "size": "md",
+                          "align": "center",
+                          "color": "#a8d5e2"
+                        }
+                      ],
+                      "style": {
+                        "padding": "22px 22px 20px",
+                        "backgroundColor": "rgba(34,211,238,0.05)",
+                        "borderRadius": "14px",
+                        "borderWidth": "1px",
+                        "borderStyle": "solid",
+                        "borderColor": "rgba(103,232,249,0.2)",
+                        "borderTop": "3px solid #a78bfa"
+                      }
                     }
                   ]
                 },
                 {
-                  "type": "spacer",
-                  "h": 10
-                },
-                {
-                  "type": "matrix",
-                  "quadrants": [
-                    {
-                      "title": "Design",
-                      "color": "#22d3ee",
-                      "items": [
-                        "Cache-first architecture",
-                        "Edge eliminates latency"
-                      ]
-                    },
-                    {
-                      "title": "Implementation",
-                      "color": "#06b6d4",
-                      "items": [
-                        "Isolated V8 runtimes",
-                        "Graceful fallback patterns"
-                      ]
-                    },
-                    {
-                      "title": "Operations",
-                      "color": "#22d3ee",
-                      "items": [
-                        "Multi-region deploy",
-                        "Real-time monitoring"
-                      ]
-                    },
-                    {
-                      "title": "Trade-offs",
-                      "color": "#94a3b8",
-                      "items": [
-                        "Consistency challenges",
-                        "Debug complexity"
-                      ]
-                    }
-                  ]
-                },
-                {
-                  "type": "spacer",
-                  "h": 10
-                },
-                {
-                  "type": "badge",
-                  "text": "github.com/example/edge-api",
-                  "icon": "Github",
-                  "color": "#22d3ee",
-                  "bg": "#22d3ee15",
-                  "border": "#22d3ee40"
+                  "type": "callout",
+                  "text": "Start small: move **one read-heavy route** to the edge.",
+                  "icon": "Rocket",
+                  "bg": "rgba(34,211,238,0.10)",
+                  "border": "#22d3ee",
+                  "color": "#ecfeff",
+                  "size": "lg"
                 }
-              ]
+              ],
+              "mutedColor": "#8fbccd",
+              "gap": 20
             }
           ],
-          "createdAt": "2026-06-01T01:08:11.742Z"
+          "createdAt": "2026-11-11T00:00:00.000Z"
         }
       ]
-    },
-    {
-      "id": "0b5f9847",
-      "title": "Main",
-      "collapsed": false,
-      "items": []
     }
   ],
-  "branding": {
-    "enabled": false,
-    "accentBar": true,
-    "accentColor": "#3B82F6",
-    "accentHeight": 4,
-    "logo": null,
-    "logoPosition": "top-left",
-    "logoSize": 56,
-    "footerLeft": "",
-    "footerCenter": "",
-    "footerRight": "auto",
-    "footerBg": "rgba(0,0,0,0.35)",
-    "footerColor": "#94a3b8",
-    "footerSize": 9,
-    "imgMaxWidth": 600,
-    "imgQuality": 0.45
-  },
   "guidelines": ""
 }

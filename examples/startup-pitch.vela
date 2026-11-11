@@ -1,14 +1,14 @@
 {
-  "deckTitle": "NovaPay — Series A Pitch",
+  "deckTitle": "NovaPlay — Series A Pitch",
   "lanes": [
     {
-      "id": "9e586ac7",
+      "id": "np-lane-1",
       "title": "Pitch",
       "collapsed": false,
       "items": [
         {
-          "id": "26098eb1",
-          "title": "Intro",
+          "id": "np-item-1",
+          "title": "Series A",
           "notes": "",
           "comments": [],
           "status": "done",
@@ -17,25 +17,25 @@
           "slides": [
             {
               "title": "Title",
-              "duration": 25,
+              "duration": 20,
               "bg": "#431407",
               "bgGradient": "linear-gradient(135deg, #431407 0%, #7c2d12 40%, #92400e 70%, #78350f 100%)",
               "color": "#fff7ed",
               "accent": "#fbbf24",
-              "padding": "48px 80px",
+              "padding": "48px 64px",
               "align": "center",
               "verticalAlign": "center",
               "blocks": [
                 {
                   "type": "badge",
                   "text": "SERIES A",
-                  "icon": "Rocket",
                   "color": "#431407",
-                  "bg": "#fbbf24"
+                  "bg": "#fbbf24",
+                  "size": "sm"
                 },
                 {
                   "type": "spacer",
-                  "h": 10
+                  "h": 20
                 },
                 {
                   "type": "heading",
@@ -44,7 +44,8 @@
                   "align": "center",
                   "color": "#fff7ed",
                   "icon": "Zap",
-                  "iconColor": "#fbbf24"
+                  "iconColor": "#fbbf24",
+                  "weight": 800
                 },
                 {
                   "type": "text",
@@ -55,440 +56,339 @@
                 },
                 {
                   "type": "spacer",
-                  "h": 28
+                  "h": 36
                 },
                 {
                   "type": "icon-row",
-                  "iconColor": "#fbbf24",
-                  "iconBg": "#fbbf2425",
+                  "cols": 4,
+                  "gap": 36,
                   "iconShape": "circle",
-                  "cols": 2,
-                  "gap": 20,
-                  "titleSize": "md",
+                  "iconColor": "#fbbf24",
+                  "iconBg": "rgba(251,191,36,0.16)",
+                  "titleSize": "xl",
                   "textSize": "sm",
+                  "color": "#fff7ed",
+                  "textColor": "#fed7aa",
+                  "style": {
+                    "borderTop": "1px solid rgba(251,191,36,0.3)",
+                    "paddingTop": "28px",
+                    "textAlign": "left"
+                  },
                   "items": [
                     {
                       "icon": "Globe",
-                      "title": "42 Countries",
-                      "text": "Global freelancer coverage",
-                      "iconColor": "#fbbf24"
+                      "title": "42",
+                      "text": "countries"
                     },
                     {
-                      "icon": "Zap",
-                      "title": "< 30s Settlement",
-                      "text": "Near-instant payouts",
-                      "iconColor": "#fb923c"
+                      "icon": "Timer",
+                      "title": "< 30s",
+                      "text": "settlement"
                     },
                     {
                       "icon": "Users",
-                      "title": "185K Users",
-                      "text": "Active gig workers",
-                      "iconColor": "#fbbf24"
+                      "title": "185K",
+                      "text": "users"
                     },
                     {
                       "icon": "TrendingUp",
-                      "title": "22% MoM Growth",
-                      "text": "Accelerating adoption",
-                      "iconColor": "#86efac"
+                      "title": "22%",
+                      "text": "MoM growth"
                     }
                   ]
                 }
               ]
-            }
-          ],
-          "createdAt": "2026-06-01T00:32:42.031Z"
-        },
-        {
-          "id": "d4922f9b",
-          "title": "Problem",
-          "notes": "",
-          "comments": [],
-          "status": "done",
-          "importance": "should",
-          "order": 0,
-          "slides": [
+            },
             {
-              "title": "The Problem",
+              "title": "The problem",
+              "duration": 45,
               "bg": "#1a0f00",
-              "bgGradient": "linear-gradient(160deg, #1a0f00 0%, #291500 100%)",
-              "color": "#fef3c7",
+              "bgGradient": "linear-gradient(160deg, #1a0f00 0%, #2a1602 60%, #3b1f04 100%)",
+              "color": "#fff7ed",
               "accent": "#f59e0b",
-              "padding": "36px 48px",
-              "duration": 60,
+              "padding": "40px 56px",
+              "align": "left",
+              "verticalAlign": "center",
+              "mutedColor": "#c9a57a",
               "blocks": [
                 {
                   "type": "heading",
-                  "text": "The Problem",
+                  "text": "The problem",
                   "size": "2xl",
-                  "icon": "AlertTriangle"
-                },
-                {
-                  "type": "text",
-                  "text": "Freelancers lose billions annually to broken cross-border payment infrastructure.",
-                  "size": "md",
-                  "color": "#fde68a"
+                  "icon": "AlertTriangle",
+                  "iconColor": "#f59e0b",
+                  "color": "#fff7ed"
                 },
                 {
                   "type": "spacer",
-                  "h": 12
+                  "h": 34
                 },
                 {
                   "type": "comparison",
+                  "hideDivider": true,
+                  "titleSize": "xl",
+                  "size": "lg",
+                  "style": {
+                    "flex": "0 0 auto"
+                  },
                   "items": [
                     {
-                      "title": "Traditional Rails",
-                      "icon": "Building",
-                      "color": "#ef4444",
+                      "title": "Traditional rails",
+                      "icon": "Landmark",
+                      "color": "#f87171",
                       "items": [
-                        "5-8% fees on small payments",
-                        "5-day average settlement",
-                        "$12B lost annually to failures"
+                        "5–8% fees",
+                        "5-day settlement",
+                        "Failed transfers"
                       ]
                     },
                     {
-                      "title": "NovaPay",
+                      "title": "NovaPlay",
                       "icon": "Zap",
-                      "color": "#22c55e",
+                      "color": "#34d399",
                       "items": [
                         "0.5% flat fee",
-                        "< 30 second settlement",
+                        "Under 30 seconds",
                         "Zero failed transfers"
                       ]
                     }
-                  ],
-                  "dividerLabel": "VS"
+                  ]
                 },
                 {
                   "type": "spacer",
-                  "h": 12
+                  "h": 34
                 },
                 {
-                  "type": "matrix",
-                  "quadrants": [
-                    {
-                      "title": "Fast + Cheap",
-                      "color": "#22c55e",
-                      "items": [
-                        "NovaPay"
-                      ]
-                    },
-                    {
-                      "title": "Fast + Expensive",
-                      "color": "#f59e0b",
-                      "items": [
-                        "Wise",
-                        "Payoneer"
-                      ]
-                    },
-                    {
-                      "title": "Slow + Cheap",
-                      "color": "#f59e0b",
-                      "items": [
-                        "Wire transfer",
-                        "ACH"
-                      ]
-                    },
-                    {
-                      "title": "Slow + Expensive",
-                      "color": "#ef4444",
-                      "items": [
-                        "Traditional banks",
-                        "PayPal cross-border"
-                      ]
-                    }
-                  ],
-                  "xLeft": "CHEAP",
-                  "xRight": "EXPENSIVE",
-                  "yTop": "FAST",
-                  "yBottom": "SLOW"
+                  "type": "callout",
+                  "icon": "Flame",
+                  "text": "Freelancers lose up to 8% and a full week on every cross-border payout.",
+                  "size": "lg",
+                  "bg": "rgba(245,158,11,0.10)",
+                  "border": "#f59e0b",
+                  "color": "#fff7ed",
+                  "style": {
+                    "padding": "24px 24px",
+                    "alignItems": "center"
+                  }
                 }
               ]
-            }
-          ],
-          "createdAt": "2026-06-01T00:32:42.031Z"
-        },
-        {
-          "id": "306d8ffd",
-          "title": "Solution",
-          "notes": "",
-          "comments": [],
-          "status": "done",
-          "importance": "should",
-          "order": 0,
-          "slides": [
+            },
             {
-              "title": "Our Solution",
+              "title": "How it works",
+              "duration": 60,
               "bg": "#1a0f00",
-              "bgGradient": "linear-gradient(135deg, #1a0f00 0%, #2d1b00 100%)",
-              "color": "#fef3c7",
-              "accent": "#fbbf24",
-              "padding": "36px 48px",
-              "duration": 90,
+              "bgGradient": "linear-gradient(160deg, #1a0f00 0%, #2a1602 60%, #3b1f04 100%)",
+              "color": "#fff7ed",
+              "accent": "#f59e0b",
+              "padding": "40px 56px",
+              "align": "left",
+              "verticalAlign": "center",
+              "mutedColor": "#c9a57a",
               "blocks": [
                 {
                   "type": "heading",
-                  "text": "Our Solution",
+                  "text": "How it works",
                   "size": "2xl",
-                  "icon": "Zap"
-                },
-                {
-                  "type": "spacer",
-                  "h": 8
-                },
-                {
-                  "type": "flow",
-                  "items": [
-                    {
-                      "icon": "User",
-                      "text": "Freelancer"
-                    },
-                    {
-                      "icon": "Send",
-                      "text": "NovaPay"
-                    },
-                    {
-                      "icon": "CheckCircle",
-                      "text": "Instant Settlement"
-                    },
-                    {
-                      "icon": "Building",
-                      "text": "Client"
-                    }
-                  ],
-                  "connector": "arrow"
+                  "icon": "Workflow",
+                  "iconColor": "#f59e0b",
+                  "color": "#fff7ed"
                 },
                 {
                   "type": "spacer",
                   "h": 16
                 },
                 {
-                  "type": "callout",
-                  "text": "NovaPay uses stablecoin rails with fiat on/off ramps — clients pay in local currency, freelancers receive in theirs. Settlement in under 30 seconds at 0.5% fees.",
-                  "icon": "Star",
-                  "bg": "#fbbf2415",
-                  "border": "#fbbf2440"
+                  "type": "flow",
+                  "direction": "horizontal",
+                  "connectorStyle": "arrow",
+                  "labelSize": "md",
+                  "arrowColor": "#f59e0b",
+                  "iconBg": "rgba(245,158,11,0.14)",
+                  "labelColor": "#fff7ed",
+                  "sublabelColor": "#c9a57a",
+                  "items": [
+                    {
+                      "icon": "CreditCard",
+                      "label": "Client pays",
+                      "sublabel": "Any currency"
+                    },
+                    {
+                      "icon": "Coins",
+                      "label": "Stablecoin rail",
+                      "sublabel": "Seconds on-chain"
+                    },
+                    {
+                      "icon": "Landmark",
+                      "label": "Local payout",
+                      "sublabel": "42 local networks"
+                    },
+                    {
+                      "icon": "Wallet",
+                      "label": "Freelancer paid",
+                      "sublabel": "Under 30 seconds"
+                    }
+                  ]
+                },
+                {
+                  "type": "spacer",
+                  "h": 16
+                },
+                {
+                  "type": "matrix",
+                  "style": {
+                    "flex": "0 0 auto",
+                    "paddingBottom": "12px"
+                  },
+                  "xLeft": "LOW COST",
+                  "xRight": "HIGH COST",
+                  "yTop": "FAST",
+                  "yBottom": "SLOW",
+                  "quadrants": [
+                    {
+                      "title": "NovaPlay",
+                      "icon": "Zap",
+                      "color": "#f59e0b",
+                      "items": [
+                        "Under 30 seconds · 0.5% flat fee"
+                      ]
+                    },
+                    {
+                      "title": "Card networks",
+                      "icon": "CreditCard",
+                      "color": "#d6b58a",
+                      "items": [
+                        "Minutes · 3–4% fees"
+                      ]
+                    },
+                    {
+                      "title": "Crypto off-ramps",
+                      "icon": "Coins",
+                      "color": "#d6b58a",
+                      "items": [
+                        "1–3 days · 1% fees"
+                      ]
+                    },
+                    {
+                      "title": "Bank wires",
+                      "icon": "Landmark",
+                      "color": "#f87171",
+                      "items": [
+                        "5 days · 5–8% fees"
+                      ]
+                    }
+                  ]
                 }
               ]
-            }
-          ],
-          "createdAt": "2026-06-01T00:32:42.031Z"
-        },
-        {
-          "id": "ee39f12a",
-          "title": "Traction",
-          "notes": "",
-          "comments": [],
-          "status": "done",
-          "importance": "should",
-          "order": 0,
-          "slides": [
+            },
             {
               "title": "Traction",
+              "duration": 45,
               "bg": "#1a0f00",
-              "bgGradient": "linear-gradient(135deg, #2d1b00 0%, #1a0f00 100%)",
-              "color": "#fef3c7",
+              "bgGradient": "linear-gradient(160deg, #1a0f00 0%, #2a1602 60%, #3b1f04 100%)",
+              "color": "#fff7ed",
               "accent": "#f59e0b",
-              "padding": "36px 48px",
-              "duration": 60,
+              "padding": "40px 56px",
+              "align": "left",
+              "verticalAlign": "center",
+              "mutedColor": "#c9a57a",
               "blocks": [
                 {
                   "type": "heading",
                   "text": "Traction",
                   "size": "2xl",
-                  "icon": "BarChart"
+                  "icon": "TrendingUp",
+                  "iconColor": "#f59e0b",
+                  "color": "#fff7ed"
                 },
                 {
                   "type": "spacer",
-                  "h": 8
+                  "h": 6
                 },
                 {
                   "type": "number-row",
+                  "size": "4xl",
+                  "style": {
+                    "backgroundColor": "rgba(255,247,237,0.03)",
+                    "borderWidth": "1px",
+                    "borderStyle": "solid",
+                    "borderColor": "rgba(245,158,11,0.22)",
+                    "borderRadius": "12px",
+                    "padding": "4px 0"
+                  },
                   "items": [
                     {
                       "value": "$480K",
-                      "label": "Monthly Recurring Revenue",
+                      "label": "Monthly recurring revenue",
                       "icon": "DollarSign",
                       "color": "#f59e0b"
                     },
                     {
                       "value": "185K",
-                      "label": "Active Users",
+                      "label": "Active users",
                       "icon": "Users",
-                      "color": "#fbbf24"
+                      "color": "#f59e0b"
                     },
                     {
                       "value": "22%",
-                      "label": "Month-over-Month Growth",
+                      "label": "Month-over-month growth",
                       "icon": "TrendingUp",
-                      "color": "#f59e0b"
+                      "color": "#34d399"
                     }
                   ]
                 },
                 {
                   "type": "spacer",
-                  "h": 12
+                  "h": 6
                 },
                 {
                   "type": "timeline",
+                  "direction": "horizontal",
+                  "lineColor": "rgba(245,158,11,0.35)",
+                  "dotColor": "#f59e0b",
+                  "dateColor": "#fbbf24",
+                  "titleColor": "#fff7ed",
+                  "textColor": "#c9a57a",
+                  "titleSize": "md",
+                  "style": {
+                    "backgroundColor": "rgba(255,247,237,0.03)",
+                    "borderWidth": "1px",
+                    "borderStyle": "solid",
+                    "borderColor": "rgba(245,158,11,0.22)",
+                    "borderRadius": "12px",
+                    "padding": "28px 12px 24px"
+                  },
                   "items": [
                     {
                       "date": "Q1 2025",
-                      "text": "Beta launch in 3 markets"
+                      "title": "Beta launch",
+                      "text": "3 markets"
                     },
                     {
                       "date": "Q3 2025",
-                      "text": "10K users, $50K MRR"
+                      "title": "10K users",
+                      "text": "Product-market fit"
                     },
                     {
                       "date": "Q1 2026",
-                      "text": "42 countries, $480K MRR"
+                      "title": "42 countries",
+                      "text": "$480K MRR"
                     },
                     {
                       "date": "Q3 2026",
-                      "text": "Target: 500K users, $2M MRR"
+                      "title": "500K users",
+                      "text": "Target"
                     }
                   ]
                 }
               ]
             }
-          ],
-          "createdAt": "2026-06-01T00:32:42.031Z"
-        },
-        {
-          "id": "975b9e55",
-          "title": "The Ask",
-          "notes": "",
-          "comments": [],
-          "status": "done",
-          "importance": "should",
-          "order": 0,
-          "slides": [
-            {
-              "title": "The Ask",
-              "bg": "#1a0f00",
-              "bgGradient": "linear-gradient(135deg, #1a0f00 0%, #2d1b00 50%, #1a0f00 100%)",
-              "color": "#fef3c7",
-              "accent": "#fbbf24",
-              "padding": "36px 48px",
-              "duration": 60,
-              "blocks": [
-                {
-                  "type": "heading",
-                  "text": "Raising $8M Series A",
-                  "size": "2xl",
-                  "icon": "Target"
-                },
-                {
-                  "type": "spacer",
-                  "h": 8
-                },
-                {
-                  "type": "number-row",
-                  "items": [
-                    {
-                      "value": "40%",
-                      "label": "Engineering & Product",
-                      "icon": "Code",
-                      "color": "#fbbf24"
-                    },
-                    {
-                      "value": "35%",
-                      "label": "Market Expansion",
-                      "icon": "Globe",
-                      "color": "#f59e0b"
-                    },
-                    {
-                      "value": "25%",
-                      "label": "Compliance & Licensing",
-                      "icon": "Shield",
-                      "color": "#d97706"
-                    }
-                  ],
-                  "compact": true
-                },
-                {
-                  "type": "spacer",
-                  "h": 8
-                },
-                {
-                  "type": "steps",
-                  "items": [
-                    {
-                      "title": "Q3 2026",
-                      "text": "Launch in 15 new markets across LATAM and Southeast Asia"
-                    },
-                    {
-                      "title": "Q4 2026",
-                      "text": "Enterprise API for marketplace platforms"
-                    },
-                    {
-                      "title": "Q1 2027",
-                      "text": "Path to profitability at $2.5M MRR"
-                    }
-                  ]
-                },
-                {
-                  "type": "checklist",
-                  "items": [
-                    {
-                      "text": "LATAM market launch (Brazil, Mexico, Colombia)",
-                      "status": "done"
-                    },
-                    {
-                      "text": "Southeast Asia expansion (Philippines, Vietnam)",
-                      "status": "partial"
-                    },
-                    {
-                      "text": "Enterprise API for marketplace platforms",
-                      "status": "pending"
-                    },
-                    {
-                      "text": "EU regulatory compliance & licensing",
-                      "status": "pending"
-                    }
-                  ]
-                },
-                {
-                  "type": "spacer",
-                  "h": 8
-                },
-                {
-                  "type": "callout",
-                  "text": "Contact: alex@novapay.io  |  novapay.io/investors",
-                  "icon": "Mail",
-                  "bg": "#fbbf2415",
-                  "border": "#fbbf2440"
-                }
-              ]
-            }
-          ],
-          "createdAt": "2026-06-01T00:32:42.031Z"
+          ]
         }
       ]
-    },
-    {
-      "id": "4547b989",
-      "title": "Main",
-      "collapsed": false,
-      "items": []
     }
   ],
   "branding": {
-    "enabled": false,
-    "accentBar": true,
-    "accentColor": "#3B82F6",
-    "accentHeight": 4,
-    "logo": null,
-    "logoPosition": "top-left",
-    "logoSize": 56,
-    "footerLeft": "",
-    "footerCenter": "",
-    "footerRight": "auto",
-    "footerBg": "rgba(0,0,0,0.35)",
-    "footerColor": "#94a3b8",
-    "footerSize": 9,
-    "imgMaxWidth": 600,
-    "imgQuality": 0.45
+    "enabled": false
   },
   "guidelines": ""
 }

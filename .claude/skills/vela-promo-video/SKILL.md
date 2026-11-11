@@ -54,8 +54,8 @@ presenting. Do not feature the built-in Vera chat.
 
 ### 2. Make the slides gorgeous
 
-The video shows the showcase decks in `tools/vela-dev/promo/decks/`, not the
-example decks. The owner's bar: each slide balanced, one focal point, readable,
+The video shows the sample decks in `examples/` (they are also the public
+gallery decks). The owner's bar: each slide balanced, one focal point, readable,
 no clipping. For a new or changed slide: edit the deck, run `shoot-deck.js`,
 read `sheet.jpg`, fix, shoot again. Give one deck to one subagent when you make
 many slides. Keep the natural content height below about 430px or the app
@@ -123,7 +123,7 @@ hear the soundtrack).
 |---|---|
 | `tools/vela-dev/promo/render.js` | All build modes; facts from the repository |
 | `tools/vela-dev/promo/capture-assets.js` | Real footage and `manifest.json` |
-| `tools/vela-dev/promo/decks/*.vela` | Showcase decks (the slides in the video) |
+| `examples/*.vela` | Sample decks (the slides in the video and in the gallery) |
 | `tools/vela-dev/promo/shoot-deck.js` | Stills and a contact sheet of one deck, for design review |
 | `tools/vela-dev/promo/comp/storyboard.js` | Scenes, copy, chapters |
 | `tools/vela-dev/promo/comp/engine.js` | Deterministic timeline |

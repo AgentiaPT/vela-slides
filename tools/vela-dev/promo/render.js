@@ -60,7 +60,7 @@ function buildData() {
   const demo = JSON.parse(read('examples/vela-demo.vela'));
   const logo = need(demo.lanes[0].items[0].slides[0].blocks.find(b => b.type === 'svg'), 'logo svg').markup;
   // Deck formats: sizes measured now with the real CLI, on one example deck.
-  const deckName = 'startup-pitch.vela', deckPath = path.join(__dirname, 'decks', deckName), tmp = path.join(WORK, 'tmp');
+  const deckName = 'startup-pitch.vela', deckPath = path.join(REPO, 'examples', deckName), tmp = path.join(WORK, 'tmp');
   fs.mkdirSync(tmp, { recursive: true });
   vela(['deck', 'compact', deckPath, path.join(tmp, 'c.vela')]); vela(['deck', 'turbo', deckPath, path.join(tmp, 't.vela')]);
   const pitch = JSON.parse(fs.readFileSync(deckPath, 'utf8'));
@@ -78,12 +78,17 @@ function buildData() {
       if (fs.existsSync(f)) fontCss += `@font-face{font-family:'${family}';font-weight:${w};font-style:normal;font-display:block;src:url('file://${f}') format('woff2');}`; }
   }
   const claims = Object.fromEntries(Object.entries(CFG.claims || {}).filter(([k]) => !k.startsWith('_')));
-  const data = { fps: CFG.fps, music: CFG.music, claims, fontCss, logo, code,
+  // The arguments that the local AI backend uses to start the agent CLI (read from its source).
+  const be = read('tools/vela-dev/scripts/agent_backend.py');
+  const lock = need(/CLAUDE_LOCKDOWN = (\[[^\]]+\])/.exec(be), 'CLAUDE_LOCKDOWN')[1], base = need(/args = (\[[^\]]+\]) \+ list\(CLAUDE_LOCKDOWN\)/.exec(be), 'agent args')[1];
+  need(/--system-prompt-file/.test(be), 'system prompt flag');
+  const agentArgv = ['claude', ...JSON.parse(base), ...JSON.parse(lock)].map(a => (a === '' ? '""' : a)).join(' ') + ' --system-prompt-file <tmp>';
+  const data = { fps: CFG.fps, music: CFG.music, claims, agentArgv, fontCss, logo, code,
     manifest: JSON.parse(fs.readFileSync(path.join(ASSETS, 'manifest.json'), 'utf8')),
     facts: { lines: app.split('\n').length - 1, bytes: Buffer.byteLength(app), version, blockTypes, changelog: versions.length, versions, formats, json, skill: { name: skillName, tree } } };
   fs.writeFileSync(path.join(ASSETS, 'data.js'), 'window.PROMO_DATA = ' + safeJson(data) + ';\n');
   const f = data.facts;
-  console.log(`facts: v${f.version} · ${f.lines} lines · ${f.blockTypes.length} block types · formats ${formats.full}/${formats.compact}/${formats.turbo} B · skill ${skillName}`);
+  console.log(`facts: v${f.version} · ${f.lines} lines · ${f.blockTypes.length} block types · formats ${formats.full}/${formats.compact}/${formats.turbo} B · skill ${skillName} · agent: ${agentArgv}`);
   return data;
 }
 function buildThumbs() {
