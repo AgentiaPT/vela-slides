@@ -153,6 +153,9 @@ Decks use the `.vela` extension — a standard JSON file with a dedicated identi
 ### Presenter Mode
 Fullscreen presentation with arrow keys (Up/Down/Left/Right), Space, and Escape — PowerPoint-style navigation across slides and modules. Designed for 16:9 projection.
 
+### Portrait / Phone Layout
+On a portrait screen (a phone, a tall window), each slide reflows into one readable column at about real size: columns stack in block order, grids pick 1–3 columns, and flows and timelines run top to bottom. The deck data does not change, so the 16:9 layout stays the same on wide screens and in exports. Phone Present mode puts previous / next / exit controls in one bar under the slide.
+
 ### Vector PDF Export
 Canvas-rendered PDF output with clickable links, branding overlays, and watermarks. Every slide exports as a crisp vector page.
 
