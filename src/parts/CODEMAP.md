@@ -17,7 +17,7 @@ that symbol in the named part for the line. No line numbers here — they rot.
 - Sanitizers: sanitizeString sanitizeDeckTitle SESSION_EPOCH_MIN SESSION_EPOCH_MAX SESSION_LEN_MIN SESSION_LEN_MAX SESSION_STALE_MS sanitizeSession resanitizeLoadedSession sanitizeUrl LINK_HOST_LABEL LINK_HOST LINK_BARE_EMAIL LINK_BARE_HOST linkFromInput openExternalLink SVG_ALLOWED_TAGS SVG_URL_REF_ATTRS CSS_FETCH_SCHEME SVG_VALUE_FNS SVG_STYLE_PROPS SVG_ROOT_BLOCKED isSvgStyleSafe isSvgInlineStyleSafe sanitizeSvgMarkup SAFE_RASTER_DATA_IMAGE sanitizeImageDataUri SAFE_STYLE_KEYS STYLE_VALUE_REJECT sanitizeStyle CSS_COLOR_KEY scrubCssFields scrubColorFields CSS_LAYOUT_KEY scrubLayoutFields CSS_PAINT_KEY cssKeyStem scrubPaintFields velaTestSurfaceEnabled MAX_SUBOBJECT_DEPTH scrubSubObject cssUrl CSS_COLOR_OK cssColor CSS_GRADIENT_OK cssGradient
 - Deck-ingress key allowlists: SAFE_SLIDE_KEYS SAFE_BLOCK_KEYS SLIDE_NUMERIC_BOUNDS clampDeckNumber MAX_BLOCK_DEPTH sanitizeBlock VALID_COMMENT_STATUSES MAX_COMMENTS sanitizeComment
 - Offline Study Notes sanitizer: sanitizeStudyNotes sanitizeSlide stableIdFrom sanitizeItem resanitizeLoadedLanes resanitizeLoadedBranding KEEPABLE_DECK_ID isKeepableDeckId adoptPriorDeckIds localDeckPayload validateAndSanitizeDeck
-- Image Compression: PNG_KEEP_MAX compressImage IMG_SETTINGS compressSlideImage imageAspect imageNaturalSize PASTE_TITLE_BLOCKS pasteImageLayout pasteSplitFlex PASTE_TEXT_METRICS pasteBodyEstimate pasteLayoutArea pasteBodyProbe gridColsFor imageGridPlan bestImageGridCols
+- Image Compression: PNG_KEEP_MAX compressImage IMG_SETTINGS compressSlideImage imageAspect imageNaturalSize PASTE_TITLE_BLOCKS pasteImageLayout pasteSplitFlex PASTE_TEXT_METRICS pasteBodyEstimate pasteLayoutArea pasteBodyProbe gridColsFor IMAGE_LEAD_AREA_SHARE imageGridPlan bestImageGridCols
 - Story images (present a slide's images one by one): PASTE_MAX_IMAGES IMAGE_DROP_MIME IMAGE_DROP_MAX_BYTES IMAGE_DROP_MAX_FILES IMAGE_MAX_PIXELS storyImageList storyIsActive storyEntry storyNext storyPrev storyEsc imageDropFiles deckSlideNumber IMAGE_ASPECT_CACHE rememberImageAspect PASTE_LAYOUT_OWNED pasteLayoutSig rememberPasteLayout PASTE_SLIDE_SUCC pasteResolveTarget pasteRecordSuccessor
 - Status & Importance Meta: STATUSES STATUS_META IMP
 - Themes: themes T statusColor FONT buildTitleCardSlide
@@ -39,7 +39,7 @@ that symbol in the named part for the line. No line numbers here — they rot.
 - Block Helpers: stg COL_TOOLBAR_PAD patchItemAt removeItemAt setItemLink itemLinkOf addItemAt moveItemAt _noPin reorderCtl itemReorder blankItemFor PLACEHOLDER_FIELDS cloneGridCell clonePoint newItemFor
 - Add-Item Affordance — "+ add" button shown only in edit mode: AddItem ItemText IconBubble
 - Link Badge — one placement rule for every link badge (CR17): linkBadgeTextEnd LinkBadge
-- Per-Item Chrome — hover toolbar (🔗 link + ✕ delete) for one item of a multi-item block: ItemHoverContext itemChromeBtn reorderArrowBtn placeItemCluster ItemChrome
+- Narrow (portrait) layout: SlideNarrowContext NARROW_SIZE_PX NARROW_SIZE_ORDER NARROW_LIGHT_TYPES NARROW_WIDE_TYPES narrowStr narrowPx narrowTextW narrowPadPx narrowTextLoad narrowTplCols narrowGap narrowGridCols NARROW_TABLE_MAX_COLS narrowTableCols narrowMaxWidth NARROW_VIEWS narrowBlockView ItemHoverContext itemChromeBtn reorderArrowBtn placeItemCluster ItemChrome
 - Icon Row Item (per-item link + delete): IconRowItem
 - Bullet Item (per-item link + delete): BulletItem
 - Grid Cell Block (with per-block link editing): GridCellBlock
@@ -54,7 +54,7 @@ that symbol in the named part for the line. No line numbers here — they rot.
 
 ### part-canvas.jsx
 - Story zoom layer (story images in Present): STORY_RAIL_W STORY_THUMB_H storyPrefersReducedMotion storyContainBox StoryZoomLayer
-- Inline Comment Card (review mode): InlineCommentCard SlideContent
+- Inline Comment Card (review mode): InlineCommentCard NARROW_PAD_X NARROW_PHONE_MAX_W SlideContent
 
 ### part-reducer.jsx
 - Reducer: init _activeDeckEpoch velaPrepareDeckReplacement velaSyncDeckEpoch velaDeckEpochIsCurrent nextDeckEpoch NO_HISTORY MAX_HISTORY innerReducer
@@ -75,7 +75,7 @@ that symbol in the named part for the line. No line numbers here — they rot.
 ### part-slides.jsx
 - Slide Panel: VIRTUAL_W PREVIEW_RATIOS computeVirtualDims loadHtml2Canvas captureSlide
 - Slide Layout Stats (DOM-measured): computeSlideLayoutStats
-- Virtual Slide: VirtualSlide FullscreenSlide
+- Virtual Slide: NARROW_FILL_RATIO VirtualSlide FullscreenSlide
 - Scope Selector (shared by improve + timing): ScopeSelector BrandingPanel
 - Cinema Tip — bookmarklet helper for browser fullscreen in artifacts: CINEMA_BOOKMARKLET CinemaTip
 - Presenter TOC — slide-out panel on left edge in fullscreen: getSlideSource getSlideTitle SEARCH_PROSE_KEYS PRESENT_SEARCH_SKIP SEARCH_SLIDE_KEYS slideSearchTexts searchRenderIndex searchSnippet matchSlide matchPresentSlide searchDeck splitHighlight HighlightText useSearchNav SearchResultRow detourReturnTitle PresenterTOC
@@ -143,6 +143,7 @@ that symbol in the named part for the line. No line numbers here — they rot.
 - Session end: editor toolbar, dialog, live ingress, bar geometry (v13.80, P3): _sesTbBtn _sesTbIs _sesTbDesc _sesTbOpen _sesSecs _sesShape _sesRgb _sesImport
 - Session end: review fixes (v13.80): _sesSig _sesWheel _sesSwipe
 - Present clock chip (v13.80, C key). Each test restores: chip off,: _clkChip _clkBtn _clkKey _clkStored _clkNowOk _clkLeave _clkOn
+- Narrow (portrait) layout: _nrwContent _nrwGrid _nrwTracks _nrwByText _nrwAllInside _nrwCard _nrwOnSlide _nrwEnter _nrwPhonePresent _nrwPhoneEditor
 - UI TEST RUNNER COMPONENT: computeDeckFingerprint DEMO_DECK_FP_TITLE VelaUITestRunner
 
 ### part-demo.jsx
@@ -340,17 +341,18 @@ add_lane add_item batch_add_items remove_item remove_lane rename_item rename_lan
 
 ## Navigability debt (WARN — candidates for banners or splits)
 
-- part-imports.jsx: 929-line unbannered stretch after line 519
-- part-blocks.jsx: 806-line unbannered stretch after line 1265
-- part-canvas.jsx: 581-line unbannered stretch after line 150
-- part-slides.jsx: 548-line unbannered stretch after line 380
-- part-slidepanel.jsx: 483-line unbannered stretch after line 1515
+- part-imports.jsx: 929-line unbannered stretch after line 520
+- part-blocks.jsx: 828-line unbannered stretch after line 1422
+- part-canvas.jsx: 688-line unbannered stretch after line 153
+- part-canvas.jsx: 358-line unbannered stretch after line 856
+- part-slides.jsx: 548-line unbannered stretch after line 396
+- part-slidepanel.jsx: 503-line unbannered stretch after line 1522
 - part-uitest.jsx: 616-line unbannered stretch after line 1230
 - part-uitest2.jsx: 448-line unbannered stretch after line 2
 - part-uitest2.jsx: 593-line unbannered stretch after line 1457
 - part-uitest2.jsx: 853-line unbannered stretch after line 2323
 - part-uitest2.jsx: 376-line unbannered stretch after line 4104
-- part-uitest2.jsx: 1090-line unbannered stretch after line 4480
+- part-uitest2.jsx: 1094-line unbannered stretch after line 4480
 - part-demo.jsx: 407-line unbannered stretch after line 510
 - part-demo.jsx: 373-line unbannered stretch after line 917
 - part-pdf.jsx: 414-line unbannered stretch after line 582

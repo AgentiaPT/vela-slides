@@ -140,6 +140,30 @@ for (const n of [2, 10]) {
     && new Set(mp.rows.flatMap((r) => r.cells.map((c) => c.i))).size === 9);
 }
 
+// ═══ imageGridPlan `lead` (narrow portrait canvas): a portrait first image keeps its own row ═══
+{
+  const shape = (p) => p.rows.map((r) => r.cells.map((c) => c.i));
+  const g3 = gridColsFor(3, "full");
+  // Portrait cover, landscape spread, portrait page in a phone column.
+  const book = [0.563, 1.5, 0.667];
+  eq("lead off: the area rule puts the first image in a shared row", shape(imageGridPlan(book, 402, 762, 12, g3)), [[0, 1], [2]]);
+  eq("lead on: the portrait first image gets its own row", shape(imageGridPlan(book, 402, 762, 12, g3, 0, undefined, true)), [[0], [1, 2]]);
+  eq("lead on: default call (no 8th argument) is unchanged", shape(imageGridPlan(book, 402, 762, 12, g3, 0, undefined)), [[0, 1], [2]]);
+  // A landscape first image: the rule does not apply.
+  const land = [1.5, 0.563, 0.667];
+  eq("lead on, landscape first image: same plan as lead off", shape(imageGridPlan(land, 402, 762, 12, g3, 0, undefined, true)), shape(imageGridPlan(land, 402, 762, 12, g3)));
+  // Equal aspects: no justified rows, so no lead plan.
+  const same = [0.6, 0.6, 0.6, 0.6];
+  eq("lead on, equal aspects: same plan as lead off", shape(imageGridPlan(same, 402, 762, 12, gridColsFor(4, "full"), 0, undefined, true)), shape(imageGridPlan(same, 402, 762, 12, gridColsFor(4, "full"))));
+  // Too costly: a short wide box, where a full row for the first image loses much more than 15% of the area.
+  eq("lead on, costly: same plan as lead off", shape(imageGridPlan(book, 864, 300, 12, g3, 0, undefined, true)), shape(imageGridPlan(book, 864, 300, 12, g3)));
+  // A pinned column count wins.
+  eq("lead on, pinned columns: uniform grid", shape(imageGridPlan(book, 402, 762, 12, g3, 1, undefined, true)), [[0], [1], [2]]);
+  // The lead plan never loses more than the stated share of the best area.
+  const off = imageGridPlan(book, 402, 762, 12, g3), on = imageGridPlan(book, 402, 762, 12, g3, 0, undefined, true);
+  assert("lead plan keeps at least 85% of the best area", on.area >= off.area * 0.85 && on.area <= off.area, `${on.area} vs ${off.area}`);
+}
+
 // ═══ imageDropFiles ═══
 {
   const f = (type, size, name) => ({ type, size: size === undefined ? 10 : size, get name() { throw new Error("name read"); } });

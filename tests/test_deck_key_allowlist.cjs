@@ -506,5 +506,22 @@ const baseSlide = (extra) => ({ duration: 60, blocks: [{ type: "heading", text: 
   assert("story: survives deck ingress", loaded.lanes[0].items[0].slides[0].story === true);
 }
 
+// ═════════════════════════════════════════════════════════════════
+// Table: headers / rows are arrays or absent (fail closed on type)
+// ═════════════════════════════════════════════════════════════════
+{
+  const ok = sanitizeBlock({ type: "table", headers: ["A", "B"], rows: [["1", "2"], "x"] });
+  assert("table: array headers / rows survive, a non-array row becomes empty", JSON.stringify([ok.headers, ok.rows]) === JSON.stringify([["A", "B"], [["1", "2"], []]]));
+  for (const [label, v] of [["object with length", { length: 5 }], ["string", "abc"], ["number", 7], ["true", true]]) {
+    const b = sanitizeBlock({ type: "table", headers: v, rows: v });
+    assert("table: headers that are " + label + " are dropped", !("headers" in b));
+    assert("table: rows that are " + label + " are dropped", !("rows" in b));
+  }
+  const capped = sanitizeBlock({ type: "table", headers: Array.from({ length: 40 }, (_, i) => "h" + i), rows: Array.from({ length: 90 }, () => Array.from({ length: 40 }, () => "c")) });
+  assert("table: caps stay (10 columns, 30 rows)", capped.headers.length === 10 && capped.rows.length === 30 && capped.rows[0].length === 10);
+  const re = resanitizeLoadedLanes([{ title: "L", items: [{ title: "M", slides: [baseSlide({ blocks: [{ type: "table", headers: { length: 5 }, rows: "abc" }] })] }] }])[0].items[0].slides[0].blocks[0];
+  assert("table: the storage reload path drops them too", !("headers" in re) && !("rows" in re));
+}
+
 console.log(`\n  ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

@@ -62,6 +62,9 @@ async function captureSlide(el, h2c) {
 // without screenshots. Returns a compact text report.
 function computeSlideLayoutStats(slideEl) {
   if (!slideEl) return null;
+  // A narrow (portrait) canvas is a view for a phone. The AI edits the 16:9
+  // slide, so it gets no layout data from that view.
+  if (slideEl.querySelector("[data-vela-narrow]")) return null;
   try {
     const canvasW = slideEl.offsetWidth || VIRTUAL_W;
     const canvasH = slideEl.offsetHeight || VIRTUAL_H;
@@ -121,15 +124,27 @@ function computeSlideLayoutStats(slideEl) {
 }
 
 // ━━━ Virtual Slide ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// A fill canvas at least this much taller than wide uses the narrow layout.
+const NARROW_FILL_RATIO = 1.2;
 function VirtualSlide({ slide, index, total, innerRef, branding, editable, onEdit, mode = "fit-width", onBlockEdit, blockEditing, fontScale, virtualW, virtualH, bordered, reviewMode, itemId, dispatch: externalDispatch, displayIndex, displayTotal, hideSlideNumber, forceEdit, story, storyAnimate, onStoryJump, onStoryZoomOut, flashBlock = -1 }) {
   const outerRef = useRef(null);
-  const isFill = mode === "fill";
+  // "fill-portrait" (the phone editor): the narrow canvas in a portrait
+  // container, and the fixed letterbox canvas (as fit-viewport) in any other.
+  const isFill = mode === "fill" || mode === "fill-portrait";
 
   // Compute fill dims eagerly from window size to avoid first-frame 16:9 flash
   // (fullscreen container is position:fixed inset:0, so window size = container size)
   const computeFillDims = (cw, ch) => {
     if (!cw || !ch) return null;
     const containerRatio = ch / cw;
+    // Portrait container (a phone): a narrow canvas close to real size (about
+    // 0.92 CSS px per virtual px). SlideContent stacks every layout in one
+    // column there (narrow), so text stays readable instead of one third size.
+    if (containerRatio >= NARROW_FILL_RATIO) {
+      const nw = Math.round(Math.min(620, Math.max(400, cw / 0.92)));
+      return { vw: nw, vh: Math.round(nw * containerRatio), narrow: true };
+    }
+    if (mode === "fill-portrait") return { vw: virtualW || VIRTUAL_W, vh: virtualH || VIRTUAL_H };
     const rh0 = Math.round(VIRTUAL_W * containerRatio);
     const heightRatio = rh0 / VIRTUAL_H;
     const zoom = heightRatio <= 1.05 ? 1 : Math.pow(heightRatio, 0.45);
@@ -198,7 +213,8 @@ function VirtualSlide({ slide, index, total, innerRef, branding, editable, onEdi
         transform: isFullscreen ? `translate(${offset.x}px, ${offset.y}px) scale(${scale})` : `scale(${scale})`,
         transformOrigin: "top left", background: bg, position: "absolute", top: 0, left: 0,
       }}>
-        {slide && <SlideContent key={`${index}-${vw}-${vh}`} slide={slide} index={index} total={total} branding={branding} editable={editable} onEdit={onEdit} presenting={((mode === "fit-viewport" || isFill) && !bordered) && !forceEdit} onBlockEdit={onBlockEdit} blockEditing={blockEditing} fontScale={fontScale} reviewMode={reviewMode} itemId={itemId} dispatch={externalDispatch} displayIndex={displayIndex} displayTotal={displayTotal} hideSlideNumber={hideSlideNumber} flashBlock={flashBlock}
+        {slide && <SlideContent key={`${index}-${vw}-${isFill && fillDims?.narrow ? "narrow" : vh}`} slide={slide} index={index} total={total} branding={branding} editable={editable} onEdit={onEdit} presenting={((mode === "fit-viewport" || isFill) && !bordered) && !forceEdit} onBlockEdit={onBlockEdit} blockEditing={blockEditing} fontScale={fontScale} reviewMode={reviewMode} itemId={itemId} dispatch={externalDispatch} displayIndex={displayIndex} displayTotal={displayTotal} hideSlideNumber={hideSlideNumber} flashBlock={flashBlock}
+          narrowW={isFill && fillDims?.narrow ? vw : 0}
           story={story} storyAnimate={storyAnimate === undefined ? presentSurface : !!storyAnimate} onStoryJump={onStoryJump} onStoryZoomOut={onStoryZoomOut} presentSurface={presentSurface} />}
       </div>
     </div>

@@ -4648,7 +4648,7 @@ uiSuite("wp5b-story-gaps", [
       await _waitFor(() => _$("[data-testid='story-preview']"), 2000).catch(() => { throw new Error("the editor toolbar did not come back"); });
     });
   }},
-  { name: "phone size: toolbar shows story icons only; zoomed rail stays on screen and clear of the image", fn: async () => {
+  { name: "phone size: toolbar shows story icons only; zoomed image takes the full width, index row sits under it", fn: async () => {
     await _wp5OnSlide("WP5b phone", 4, { story: true }, async () => {
       const here = _wp5Key();
       await _wp5bPhone(async (root) => {
@@ -4683,8 +4683,12 @@ uiSuite("wp5b-story-gaps", [
             if (!(t.width > 0 && t.height > 0)) throw new Error(`image ${k}: thumb ${i + 1} has no size`);
             if (!_wp5bInside(t, rail)) throw new Error(`image ${k}: thumb ${i + 1} ${_wp5bBox(t)} is outside the rail ${_wp5bBox(rail)}`);
             if (_wp5bOverlap(t, box) > 1) throw new Error(`image ${k}: thumb ${i + 1} overlaps the image box`);
-            if (i > 0 && t.top < thumbs[i - 1].bottom - 1) throw new Error(`image ${k}: thumbs ${i} and ${i + 1} overlap`);
+            if (i > 0 && t.left < thumbs[i - 1].right - 1) throw new Error(`image ${k}: thumbs ${i} and ${i + 1} overlap`);
           });
+          // Portrait canvas: the index is a row under the image (no side rail),
+          // so the image box keeps almost the full phone width.
+          if (rail.top < box.bottom - 1) throw new Error(`image ${k}: index row ${_wp5bBox(rail)} is not under the image box ${_wp5bBox(box)}`);
+          if (box.width < R.width - 24) throw new Error(`image ${k}: image box is ${Math.round(box.width)} px wide in a ${Math.round(R.width)} px phone`);
         }
         await _wp5Exit();
       });
@@ -6999,6 +7003,278 @@ uiSuite("session-clock-chip", [
       _key("C");
       await _waitFor(() => !_clkChip(), 1500).catch(() => { throw new Error("Caps Lock C did not hide the chip"); });
     } finally { await _clkLeave(); }
+  }},
+]);
+
+// ━━━ Narrow (portrait) layout ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// A portrait canvas (a phone) lays every slide out as one narrow column
+// (SlideContent narrowW, RenderBlock narrowBlockView). These run in the phone
+// box of _wp5bPhone and check real geometry: nothing leaves the canvas, the
+// layout really changes, and the deck data does not.
+const _nrwContent = () => _$$("[data-vela-slide-content]").filter((e) => e.getBoundingClientRect().width > 50).pop() || null;
+const _nrwGrid = (c) => _$$("div", c).find((d) => getComputedStyle(d).display === "grid") || null;
+const _nrwTracks = (g) => getComputedStyle(g).gridTemplateColumns.trim().split(/\s+/).length;
+const _nrwByText = (c, text) => _$$("*", c).filter((e) => e.children.length === 0 && (e.textContent || "").trim() === text).pop() || null;
+// Every block root, image and diagram of the slide lies inside the canvas box R.
+const _nrwAllInside = (c, R) => {
+  for (const e of _$$("[class^='stg-'], img, svg, pre", c)) {
+    if (e.closest("[data-no-pdf], [data-zoom-badge]") || e.ownerSVGElement) continue;
+    const r = e.getBoundingClientRect();
+    if (!(r.width > 0 && r.height > 0)) continue;
+    if (!_wp5bInside(r, R, 1.5)) throw new Error(`${e.tagName.toLowerCase()} ${_wp5bBox(r)} is outside the canvas ${_wp5bBox(R)} ("${(e.textContent || "").trim().slice(0, 24)}")`);
+  }
+};
+const _nrwCard = (title, text) => ({ blocks: [{ type: "heading", text: title, size: "lg" }, { type: "text", text, size: "sm" }] });
+// Put `blocks` on the second slide, run body(wide viewport), then undo.
+const _nrwOnSlide = async (blocks, extra, mark, body) => {
+  await _wp5Exit(); await _selectFirstModule();
+  const k0 = _wp5Key();
+  document.activeElement?.blur?.(); _key("ArrowRight");
+  await _waitFor(() => _wp5Key() && _wp5Key() !== k0, 2500).catch(() => { throw new Error("could not move to the second slide"); });
+  const past = _hooks().getHistoryCounts().past;
+  try {
+    await _mrdInject(blocks, { L: undefined, R: undefined, story: undefined, ...(extra || {}) }, (vp) => vp?.textContent.includes(mark) ? vp : null);
+    await body();
+  } finally {
+    await _wp5Exit().catch(() => {});
+    await _wp5UndoTo(past);
+  }
+};
+// Enter Present in the phone box; body(content element, canvas box).
+// The phone box of _wp5bPhone holds Present only while the browser itself is
+// not in fullscreen: a real browser fullscreen fills the screen and ignores
+// the box. A headless browser can grant that request to the first test of a
+// run. Then leave browser fullscreen (the app leaves Present with it) and
+// enter Present again: the second request has no user gesture and is refused.
+const _nrwEnter = async () => {
+  await _wp5Enter();
+  if (!document.fullscreenElement) return;
+  await document.exitFullscreen().catch(() => {});
+  await _waitFor(() => !document.fullscreenElement && !_wp5Fs(), 2500).catch(() => {});
+  await _wp5Exit().catch(() => {});
+  await _wp5Enter();
+  if (document.fullscreenElement) throw new Error("the browser is in fullscreen, so the phone box cannot hold Present");
+};
+const _nrwPhonePresent = (body) => _wp5bPhone(async (root) => {
+  await _nrwEnter();
+  await _wait(700); await _mrdFrame(); // entrance animations end
+  const c = _nrwContent();
+  if (!c) throw new Error("no slide content in phone Present");
+  // The canvas box is the slide itself: the phone box also holds the Present bar.
+  await body(c, c.getBoundingClientRect());
+  await _wp5Exit();
+});
+// The phone box of _wp5bPhone narrows Present only (the editor row keeps the
+// window width). Give the editor row the phone width, wait for the portrait
+// canvas, run body(viewport), then restore.
+const _nrwPhoneEditor = (body) => _wp5bPhone(async () => {
+  const row = _$("[data-testid='editor-main-row']"); if (!row) throw new Error("no editor row");
+  const css = row.getAttribute("style");
+  try {
+    row.style.width = "390px"; row.style.maxWidth = "390px"; row.style.flex = "1 1 auto";
+    const vp = await _waitFor(() => { const v = _mrdViewport(); return v && v.offsetHeight > v.offsetWidth * 1.2 && v.querySelector("[data-vela-narrow]") ? v : null; }, 2500)
+      .catch(() => { const v = _mrdViewport(); throw new Error(`phone editor canvas is ${v ? `${v.offsetWidth}x${v.offsetHeight}` : "missing"}, expected a portrait canvas`); });
+    await body(vp);
+  } finally {
+    if (css == null) row.removeAttribute("style"); else row.setAttribute("style", css);
+  }
+});
+
+uiSuite("narrow-layout", [
+  { name: "phone Present: a 4-up card grid becomes 2-up, stays on the canvas, deck data is unchanged", fn: async () => {
+    const grid = { type: "grid", cols: 4, gap: 16, items: [_nrwCard("NRW Scope", "only the project"), _nrwCard("Deps", "audit first"), _nrwCard("Secrets", "out of reach"), _nrwCard("Costly", "a human step")] };
+    await _nrwOnSlide([{ type: "heading", text: "NRW grid" }, grid], null, "NRW grid", async () => {
+      await _nrwPhonePresent(async (c, R) => {
+        const g = _nrwGrid(c);
+        if (!g) throw new Error("no grid on the slide");
+        if (_nrwTracks(g) !== 2) throw new Error(`grid has ${_nrwTracks(g)} column(s) on a phone, expected 2 (canvas ${c.parentElement.offsetWidth}x${c.parentElement.offsetHeight}, narrow ${c.hasAttribute("data-vela-narrow")}, phone box ${Math.round(R.width)}x${Math.round(R.height)}, window ${window.innerWidth}x${window.innerHeight}, contents ${_$$("[data-vela-slide-content]").length})`);
+        _nrwAllInside(c, R);
+      });
+      const b = (_wp5Cur().blocks || []).find((x) => x.type === "grid");
+      if (!b || b.cols !== 4 || (b.style && b.style.gridTemplateColumns)) throw new Error(`the narrow render changed the deck grid (cols ${b && b.cols})`);
+    });
+  }},
+  { name: "phone Present: paragraph cards take one column each", fn: async () => {
+    const long = "Only happy paths and trusted users were tested, so the signal never reached the cases that fail in production.";
+    const grid = { type: "grid", cols: 3, items: [_nrwCard("NRW para", long), _nrwCard("Second", long), _nrwCard("Third", long)] };
+    await _nrwOnSlide([grid], null, "NRW para", async () => {
+      await _nrwPhonePresent(async (c, R) => {
+        const g = _nrwGrid(c);
+        if (!g || _nrwTracks(g) !== 1) throw new Error(`grid has ${g ? _nrwTracks(g) : "no"} column(s), expected 1`);
+        _nrwAllInside(c, R);
+      });
+    });
+  }},
+  { name: "wide Present: the same card grid keeps its 4 columns", fn: async () => {
+    const grid = { type: "grid", cols: 4, gap: 16, items: [_nrwCard("NRW wide", "a"), _nrwCard("B", "b"), _nrwCard("C", "c"), _nrwCard("D", "d")] };
+    await _nrwOnSlide([grid], null, "NRW wide", async () => {
+      await _wp5Enter(); await _wait(300);
+      const g = _nrwGrid(_nrwContent());
+      if (!g || _nrwTracks(g) !== 4) throw new Error(`grid has ${g ? _nrwTracks(g) : "no"} column(s) on a wide canvas, expected 4`);
+    });
+  }},
+  { name: "phone Present: a two-column slide stacks left above right at full width", fn: async () => {
+    await _nrwOnSlide([{ type: "heading", text: "NRW cols" }], { layout: "cols", L: [{ type: "text", text: "NRW-LEFT" }], R: [{ type: "text", text: "NRW-RIGHT" }] }, "NRW-LEFT", async () => {
+      await _nrwPhonePresent(async (c, R) => {
+        const l = _nrwByText(c, "NRW-LEFT"), r = _nrwByText(c, "NRW-RIGHT");
+        if (!l || !r) throw new Error("column text not found");
+        const lr = l.getBoundingClientRect(), rr = r.getBoundingClientRect();
+        if (rr.top < lr.bottom - 1) throw new Error(`right column ${_wp5bBox(rr)} is not under the left column ${_wp5bBox(lr)}`);
+        if (Math.abs(lr.left - rr.left) > 2) throw new Error("the two columns do not share one left edge");
+        _nrwAllInside(c, R);
+      });
+    });
+  }},
+  { name: "phone Present: a 5-step flow runs top to bottom", fn: async () => {
+    const names = ["NRW-A", "NRW-B", "NRW-C", "NRW-D", "NRW-E"];
+    await _nrwOnSlide([{ type: "flow", items: names.map((label) => ({ label, icon: "Circle", sublabel: "step" })) }], null, "NRW-A", async () => {
+      await _nrwPhonePresent(async (c, R) => {
+        const tops = names.map((n) => { const e = _nrwByText(c, n); if (!e) throw new Error(`step ${n} not found`); return e.getBoundingClientRect().top; });
+        tops.forEach((t, i) => { if (i > 0 && t <= tops[i - 1] + 4) throw new Error(`step ${names[i]} is not below step ${names[i - 1]}`); });
+        _nrwAllInside(c, R);
+      });
+    });
+  }},
+  { name: "phone Present: a dense text slide scales down and stays on the canvas", fn: async () => {
+    const para = "NRW dense. Feedback lets the loop learn, fix and improve; without a check, every run repeats the same error and nobody sees it.";
+    await _nrwOnSlide(Array.from({ length: 14 }, () => ({ type: "text", text: para })), null, "NRW dense", async () => {
+      await _nrwPhonePresent(async (c, R) => {
+        const inner = c.firstElementChild;
+        if (!/scale\(0?\.\d+\)/.test(inner.style.transform)) throw new Error(`dense slide is not scaled (${inner.style.transform || "none"})`);
+        _nrwAllInside(c, R);
+      });
+    });
+  }},
+  { name: "phone Present: a tall diagram that grows with the width still fits", fn: async () => {
+    const svg = { type: "svg", markup: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 400" width="100%"><rect x="2" y="2" width="96" height="396" fill="none" stroke="{{accent}}"/></svg>' };
+    await _nrwOnSlide([{ type: "heading", text: "NRW tall" }, svg, { type: "text", text: "A line under the diagram" }], null, "NRW tall", async () => {
+      await _nrwPhonePresent(async (c, R) => { _nrwAllInside(c, R); });
+    });
+  }},
+  // The phone box of _wp5bPhone narrows Present only (the editor row keeps the
+  // window width), so the test gives the editor row the phone width itself.
+  { name: "phone editor: a portrait slide tab shows the portrait canvas; a wide tab and the wide editor keep 960x540", fn: async () => {
+    await _nrwOnSlide([{ type: "heading", text: "NRW editor" }], null, "NRW editor", async () => {
+      const is169 = () => { const v = _mrdViewport(); return !!v && v.offsetWidth === 960 && v.offsetHeight === 540; };
+      if (!is169()) throw new Error(`wide editor canvas is ${_mrdViewport()?.offsetWidth}x${_mrdViewport()?.offsetHeight}, expected 960x540`);
+      await _wp5bPhone(async () => {
+        const row = _$("[data-testid='editor-main-row']"); if (!row) throw new Error("no editor row");
+        const css = row.getAttribute("style");
+        try {
+          row.style.width = "390px"; row.style.maxWidth = "390px"; row.style.flex = "1 1 auto";
+          const vp = await _waitFor(() => { const v = _mrdViewport(); return v && v.offsetHeight > v.offsetWidth * 1.2 ? v : null; }, 2500)
+            .catch(() => { const v = _mrdViewport(); throw new Error(`phone editor canvas is ${v ? `${v.offsetWidth}x${v.offsetHeight}` : "missing"}, expected a portrait canvas`); });
+          if (vp.offsetWidth > 640) throw new Error(`portrait canvas is ${vp.offsetWidth} virtual px wide`);
+          if (!vp.querySelector("[data-vela-narrow]")) throw new Error("the portrait canvas does not use the narrow layout");
+          // The AI edits the 16:9 slide: it gets no layout data from this view.
+          if (computeSlideLayoutStats(vp) !== null) throw new Error("layout stats were returned for the narrow view");
+          // A height change of the tab must not mount the slide again (an open edit would be lost).
+          const node = vp.querySelector("[data-vela-slide-content]");
+          row.style.height = `${Math.round(row.getBoundingClientRect().height - 60)}px`; row.style.flex = "0 0 auto";
+          await _wait(250); await _mrdFrame();
+          if (!node.isConnected || _mrdViewport().querySelector("[data-vela-slide-content]") !== node) throw new Error("a height change of the slide tab mounted the slide again");
+        } finally {
+          if (css == null) row.removeAttribute("style"); else row.setAttribute("style", css);
+        }
+        // Phone layout with a wide slide tab: the fixed letterbox canvas, not a container-shaped one.
+        await _waitFor(is169, 2500).catch(() => { throw new Error(`a wide phone slide tab shows a ${_mrdViewport()?.offsetWidth}x${_mrdViewport()?.offsetHeight} canvas, expected 960x540`); });
+      });
+      await _waitFor(is169, 2500).catch(() => { throw new Error("the wide editor did not return to the 960x540 canvas"); });
+    });
+  }},
+  { name: "phone Present: the bar under the slide steps the slides and exits; no control floats over the slide", fn: async () => {
+    await _nrwOnSlide([{ type: "heading", text: "NRW bar" }], null, "NRW bar", async () => {
+      await _wp5bPhone(async (root) => {
+        await _nrwEnter(); await _wait(300); await _mrdFrame();
+        const R = root.getBoundingClientRect();
+        const bar = _$("[data-testid='present-nav-bar']");
+        if (!bar) throw new Error("no Present bar in the phone layout");
+        const br = bar.getBoundingClientRect(), c = _nrwContent().getBoundingClientRect();
+        if (!_wp5bInside(br, R, 1.5)) throw new Error(`bar ${_wp5bBox(br)} is outside the phone box ${_wp5bBox(R)}`);
+        if (br.top < c.bottom - 1.5) throw new Error(`bar ${_wp5bBox(br)} covers the slide ${_wp5bBox(c)}`);
+        if (_$$(".slide-nav-btn").some((b) => b.getBoundingClientRect().width > 0)) throw new Error("a floating control is over the slide in the phone layout");
+        for (const id of ["present-nav-prev", "present-nav-next", "present-nav-exit"]) {
+          const b = _$(`[data-testid='${id}']`).getBoundingClientRect();
+          if (b.width < 44 || b.height < 44) throw new Error(`${id} is ${Math.round(b.width)}x${Math.round(b.height)} px, under the 44 px touch size`);
+        }
+        const count = () => (_$("[data-testid='present-nav-count']").textContent || "").trim();
+        const k0 = _wp5Key(), c0 = count();
+        if (!/^\d+ \/ \d+$/.test(c0)) throw new Error(`slide count shows ${JSON.stringify(c0)}`);
+        _click("[data-testid='present-nav-next']");
+        await _waitFor(() => _wp5Key() !== k0, 2500).catch(() => { throw new Error("Next did not change the slide"); });
+        if (count() === c0) throw new Error("the slide count did not change after Next");
+        _click("[data-testid='present-nav-prev']");
+        await _waitFor(() => _wp5Key() === k0, 2500).catch(() => { throw new Error("Previous did not go back"); });
+        _click("[data-testid='present-nav-exit']");
+        await _waitFor(() => !_wp5Fs(), 2500).catch(() => { throw new Error("the exit button did not leave Present"); });
+      });
+      await _wp5Enter(); await _wait(200);
+      if (_$("[data-testid='present-nav-bar']")) throw new Error("the phone bar shows in wide Present");
+      if (!_$$(".slide-nav-btn").some((b) => b.getBoundingClientRect().width > 0)) throw new Error("wide Present lost its floating controls");
+    });
+  }},
+  { name: "phone Present: a long table header stays whole in one line; a flow loop label is vertical", fn: async () => {
+    // 5 columns: with equal columns the long header does not fit its column.
+    const table = { type: "table", headers: ["Id", "Q1", "Q2", "Q3", "Improvement"], rows: [["a", "1", "2", "3", "3x"], ["b", "4", "5", "6", "7x"]] };
+    const flow = { type: "flow", direction: "vertical", loop: true, loopLabel: "NRW loop label", items: [{ label: "One", icon: "Circle" }, { label: "Two", icon: "Circle" }, { label: "Three", icon: "Circle" }] };
+    await _nrwOnSlide([{ type: "heading", text: "NRW-table", size: "md" }, table, flow], null, "NRW-table", async () => {
+      await _nrwPhonePresent(async (c, R) => {
+        _nrwAllInside(c, R);
+        const h = _nrwByText(c, "Improvement");
+        if (!h) throw new Error("table header not found");
+        const cs = getComputedStyle(h), hr = h.getBoundingClientRect(), k = hr.width / h.offsetWidth;
+        const oneLine = (parseFloat(cs.fontSize) * 1.35 + parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom) + 2) * k;
+        if (hr.height > oneLine) throw new Error(`the header 'Improvement' is ${Math.round(hr.height)} px high, one line is ${Math.round(oneLine)} px: the word is split`);
+        if (h.scrollWidth > h.clientWidth + 1) throw new Error("the header 'Improvement' is wider than its column");
+        const short = _nrwByText(c, "Q1").getBoundingClientRect();
+        if (hr.width < short.width * 1.5) throw new Error(`the long header column (${Math.round(hr.width)} px) is not wider than a short column (${Math.round(short.width)} px)`);
+        const lbl = _$$("text", c).find((t) => (t.textContent || "").includes("NRW loop label"));
+        if (!lbl) throw new Error("loop label not found");
+        const lr = lbl.getBoundingClientRect();
+        if (lr.height <= lr.width) throw new Error(`loop label box is ${Math.round(lr.width)}x${Math.round(lr.height)}, expected a vertical label`);
+      });
+    });
+  }},
+  { name: "phone Present: the bar steps over a hidden slide in the two directions", fn: async () => {
+    await _nrwOnSlide([{ type: "heading", text: "NRW hidden" }], { hidden: true }, "NRW hidden", async () => {
+      const k1 = _wp5Key();
+      document.activeElement?.blur?.(); _key("ArrowRight");
+      await _waitFor(() => _wp5Key() && _wp5Key() !== k1, 2500).catch(() => { throw new Error("could not move to the third slide"); });
+      await _wp5bPhone(async () => {
+        await _nrwEnter(); await _wait(300); await _mrdFrame();
+        const s0 = _wp5Sel().slideIdx;
+        _click("[data-testid='present-nav-prev']");
+        await _waitFor(() => _wp5Sel().slideIdx === s0 - 2, 2500).catch(() => { throw new Error(`Previous did not step over the hidden slide (index ${_wp5Sel().slideIdx}, start ${s0})`); });
+        if ((_nrwContent()?.textContent || "").includes("NRW hidden")) throw new Error("the hidden slide is on screen in Present");
+        _click("[data-testid='present-nav-next']");
+        await _waitFor(() => _wp5Sel().slideIdx === s0, 2500).catch(() => { throw new Error(`Next did not step over the hidden slide (index ${_wp5Sel().slideIdx}, start ${s0})`); });
+        await _wp5Exit();
+      });
+    });
+  }},
+  { name: "phone editor: an edit on the portrait canvas changes the text only, not the layout fields", fn: async () => {
+    const grid = { type: "grid", cols: 4, gap: 16, style: { alignItems: "stretch" }, items: [_nrwCard("NRW Scope", "only the project"), _nrwCard("Deps", "audit first"), _nrwCard("Secrets", "out of reach"), _nrwCard("Costly", "a human step")] };
+    const flow = { type: "flow", items: ["Step A", "Step B", "Step C", "Step D", "Step E"].map((label) => ({ label, icon: "Circle" })) };
+    const head = { type: "heading", text: "NRW head", size: "4xl", maxWidth: "60%" };
+    // Layout fields the narrow view replaces at render time. None can change in the deck.
+    const layout = (bl) => JSON.stringify((bl || []).map((b) => ({ t: b.type, cols: b.cols, gap: b.gap, style: b.style, direction: b.direction, size: b.size, maxWidth: b.maxWidth, align: b.align, h: b.h,
+      cells: (b.items || []).map((c) => (c && c.blocks ? c.blocks.map((x) => ({ align: x.align, size: x.size, maxWidth: x.maxWidth })) : null)) })));
+    await _nrwOnSlide([head, grid, flow], null, "NRW head", async () => {
+      const before = layout(_wp5Cur().blocks);
+      await _nrwPhoneEditor(async (vp) => {
+        if (_nrwTracks(_nrwGrid(vp)) !== 2) throw new Error("the phone editor grid is not the narrow 2-up view");
+        await _tlEdit("NRW Scope", "NRW Scope 2");
+        await _tlEdit("Step A", "Step A2");
+        await _tlEdit("NRW head", "NRW head 2");
+      });
+      const bl = _wp5Cur().blocks || [];
+      const g = bl.find((b) => b.type === "grid"), f = bl.find((b) => b.type === "flow"), h = bl.find((b) => b.type === "heading");
+      if (g?.items?.[0]?.blocks?.[0]?.text !== "NRW Scope 2") throw new Error("the grid cell edit was not saved");
+      if (f?.items?.[0]?.label !== "Step A2") throw new Error("the flow label edit was not saved");
+      if (h?.text !== "NRW head 2") throw new Error("the heading edit was not saved");
+      const after = layout(bl);
+      if (after !== before) throw new Error(`an edit on the portrait canvas changed layout fields: ${after} (before: ${before})`);
+    });
   }},
 ]);
 
