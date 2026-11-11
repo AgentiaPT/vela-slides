@@ -222,7 +222,7 @@ tools/vela-dev/          ← DEV/TEST/CI TOOLCHAIN (never shipped)
                             lint.py, sync-skill-docs.py, dep-sweep.py
   channel/               ← Node/pnpm MCP bridge
   evals/, references/    ← evals.json, app-editing.md
-  promo/                 ← promo video source (capture, composition, render) — see its README
+  promo/                 ← promo video, README loop and HTML tour source — use the `vela-promo-video` skill
 examples/                ← vela-demo.vela, themed example decks
 decks/                   ← working deck files (gitignored)
 docs/                    ← ARCHITECTURE.md, SECURITY.md, SCREENSHOTS.md (visual testing runbook)

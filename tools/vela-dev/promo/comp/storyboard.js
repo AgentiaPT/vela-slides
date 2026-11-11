@@ -6,6 +6,8 @@
 // The track plays `passes` times; beat 120 is beat 0 of the second pass.
 // Numbers on screen come from window.PROMO_DATA.facts, which render.js reads
 // from the repository on every build. Do not type product numbers here.
+// Claims that the code cannot prove (test total, audits) are in
+// promo.config.json under "claims", with a note on their source.
 // ─────────────────────────────────────────────────────────────────────────
 (function () {
   const { Timeline, E, el, split, rng, clamp } = window.PromoEngine;
@@ -21,7 +23,9 @@
 
   // ── footage helpers ────────────────────────────────────────────────────
   const urls = new Set();
-  const U = p => { const u = `${A}/${p}`; urls.add(u); return `url("${u}")`; };
+  const EMB = window.PROMO_EMBED || {};
+  const U = p => { const u = EMB[p] || `${A}/${p}`; urls.add(p); return `url("${u}")`; };
+  const chapters = [], chapter = (g, label) => chapters.push({ t: g ? B(g) : 0, label });
   const slideUrl = (deck, n) => U(`slides/${deck}-${pad(n)}.jpg`);
   const thumbUrl = (deck, n) => U(`thumbs/${deck}-${pad(n)}.jpg`);
   const ALL = []; for (const deck in D.manifest.decks) D.manifest.decks[deck].forEach((_, i) => ALL.push([deck, i + 1]));
@@ -89,8 +93,9 @@
   { const g = gr.getContext('2d'), im = g.createImageData(1160, 740), R = rng(99);
     for (let i = 0; i < im.data.length; i += 4) { const v = R() * 255; im.data[i] = im.data[i + 1] = im.data[i + 2] = v; im.data[i + 3] = 255; } g.putImageData(im, 0, 0); }
   const flashEl = document.getElementById('flash'), fadeEl = document.getElementById('fade');
-  tl.tick(t => {
-    const v = bgv.v || { a: 0, warp: 0, hue: 0 }, p = pulse(t);
+  const LITE = Q.has('lite'); // static background: small files for the README loop
+  tl.tick(t0 => {
+    const v = bgv.v || { a: 0, warp: 0, hue: 0 }, p = LITE ? 0 : pulse(t0), t = LITE ? 0 : t0;
     au.forEach((a, i) => {
       const x = 960 - 850 + Math.sin(t * 0.21 + i * 2.1) * 620, y = 540 - 850 + Math.cos(t * 0.17 + i * 1.7) * 330;
       a.style.transform = `translate(${x.toFixed(1)}px,${y.toFixed(1)}px) scale(${(1 + 0.12 * p).toFixed(4)})`;
@@ -99,7 +104,7 @@
     });
     const d = warpInt[Math.min(warpInt.length - 1, Math.round(t * 60))];
     sc.clearRect(0, 0, 1920, 1080);
-    for (const s of STARS) {
+    for (const s of LITE ? [] : STARS) {
       const z = ((s.z - d) % 1 + 1) % 1 + 0.04, k = 620 / z, x = 960 + s.x * k, y = 540 + s.y * k * 0.62;
       if (x < -50 || x > 1970 || y < -50 || y > 1130) continue;
       const len = Math.min(260, v.warp * 150 / (z * z)), al = clamp((1.04 - z) * 1.6) * (0.25 + 0.75 * v.a);
@@ -108,15 +113,16 @@
       sc.beginPath(); sc.moveTo(x, y); sc.lineTo(x + dx + 0.5, y + dy + 0.5); sc.stroke();
     }
     const f = Math.round(t * 30); gr.style.transform = `translate(${(f * 7919) % 190}px,${(f * 104729) % 190}px)`;
-    let fl = 0; for (const [ft, a] of FLASH) if (t >= ft) fl = Math.max(fl, a * Math.exp(-(t - ft) * 9));
+    let fl = 0; for (const [ft, a] of LITE ? [] : FLASH) if (t >= ft) fl = Math.max(fl, a * Math.exp(-(t - ft) * 9));
     flashEl.style.opacity = fl.toFixed(4);
-    fadeEl.style.opacity = clamp((t - (END - 0.7)) / 0.6).toFixed(4);
+    fadeEl.style.opacity = clamp((t0 - (END - 0.7)) / 0.6).toFixed(4);
     cam.style.transform = `scale(${(1 + 0.013 * p).toFixed(5)})`;
   });
   const bgTo = (g, a, warp, hue = 0, dur = 0.6) => tl.to(bgv, { a, warp, hue }, B(g), dur, E.io);
 
-  // ═══ ACT 1 ═════════════════════════════════════════════════════════════
+  // ═══ ACT 1 — the product ═══════════════════════════════════════════════
   // 1 · Cold open: one word per beat.
+  chapter(0, 'Stop dragging text boxes');
   tl.scene('open', 0, B(8), R => {
     [['STOP', '#05061a', '#fff'], ['DRAGGING', '#f4f6ff', '#05061a'], ['TEXT', '#05061a', '#fff'], ['BOXES.', '#4f46e5', '#fff']].forEach(([w, bg, fg], i) => {
       const t0 = i ? B(i) : 0, t1 = B(i + 1);
@@ -133,6 +139,7 @@
   bgTo(4, 0.75, 0.12, 0, 0.3);
 
   // 2 · The prompt, then the deck builds one slide per beat.
+  chapter(8, 'Describe it');
   const PROMPT = 'Create a 10-slide deck that explains Vela Slides';
   const BUILD = [1, 2, 3, 5, 7, 8, 9, 6, 19, 21];
   tl.scene('build', B(8), B(32), R => {
@@ -144,19 +151,18 @@
     tl.to(pill, { y: -410, s: 0.6 }, B(16) - 0.12, 0.5, E.io).out(pill, B(28), { dur: 0.3 });
     const st = el('div', 'status', R); st.style.top = '262px'; tl.cut(st, B(16), B(28.5));
     const p3 = el('div', 'fill p3d', R), grid = el('div', 'fill t3d', p3);
-    const cards = BUILD.map((n, i) => {
+    BUILD.forEach((n, i) => {
       const c = el('div', 'card', grid); c.style.backgroundImage = thumbUrl('vela-demo', n);
       c.style.left = 64 + (i % 5) * 364 + 'px'; c.style.top = 392 + Math.floor(i / 5) * 222 + 'px';
       tl.fromTo(c, { o: 0, z: 1000, ry: -55, y: -160, s: 1.35 }, { o: 1, z: 0, ry: 0, y: 0, s: 1 }, B(16 + i) - 0.05, 0.42, E.expo);
       tl.fromTo(c, { bright: 2.4 }, { bright: 1 }, B(16 + i), 0.5, E.out);
-      return c;
     });
     const bar = el('div', 'abs', R); bar.style.cssText = 'left:64px;top:880px;height:6px;width:1792px;border-radius:3px;background:linear-gradient(90deg,#22d3ee,#818cf8,#f472b6);transform-origin:0 50%';
     tl.set(bar, { sx: 0 }); BUILD.forEach((_, i) => tl.to(bar, { sx: (i + 1) / 10 }, B(16 + i), 0.25, E.out)); tl.out(bar, B(28));
     tl.tick(t => {
       const k = clamp(Math.floor((t - B(16)) / BEAT) + 1, 0, 10);
-      const types = [...new Set(D.manifest.decks['vela-demo'][BUILD[Math.max(0, k - 1)] - 1].blocks.map(b => b.type).filter(x => x !== 'spacer'))].slice(0, 4).join(' · ');
-      const s = t >= B(26) ? '✓ 10 slides · ready to present' : `▸ slide ${pad(k)} / 10   ${types}`;
+      const types = [...new Set(D.manifest.decks['vela-demo'][BUILD[Math.max(0, k - 1)] - 1].blocks.map(b => b.type).filter(x => x !== 'spacer'))].slice(0, 3).join(' · ');
+      const s = t >= B(26) ? '✓ 10 slides · ready to present' : `▸ ${F.skill.name} skill · slide ${pad(k)} / 10   ${types}`;
       if (st.textContent !== s) st.textContent = s;
     });
     tl.to(grid, { rx: 62, s: 2.3, y: 330, z: 260 }, B(28), BEAT * 4, E.in5).to(grid, { bright: 2.6 }, B(30), BEAT * 2, E.in);
@@ -164,6 +170,7 @@
   bgTo(16, 0.55, 0.25); bgTo(28, 1, 2.6, 0, BEAT * 4);
 
   // 3 · Drop: logo, real slides fly past the camera.
+  chapter(32, 'Vela Slides');
   tl.scene('logo', B(32), B(36), R => {
     const p3 = el('div', 'fill p3d', R), Rn = rng(11);
     for (let i = 0; i < 56; i++) {
@@ -197,6 +204,7 @@
   bgTo(44, 1, 0.4); bgTo(49, 0.7, 0.1, 30);
 
   // 6 · Break: the block types, cut out of real slides.
+  chapter(49, `${F.blockTypes.length} semantic block types`);
   tl.scene('blocks', B(49), B(64), R => {
     const n = el('div', 'abs d grad big27', R, '0'); n.style.cssText = 'left:84px;top:150px';
     count(n, F.blockTypes.length, B(49), B(53)); tl.in(n, B(49), { y: 60, dur: 0.5 });
@@ -216,6 +224,7 @@
   });
 
   // 7 · Stabs: real example decks, one per hit.
+  chapter(64, 'Any theme');
   const THEMES = [[64, 'business-report', 1, 'REPORTS.'], [65, 'course-training', 1, 'COURSES.'], [66, 'startup-pitch', 1, 'PITCHES.'], [68, 'tech-talk', 1, 'TECH TALKS.'],
     [69, 'startup-pitch', 2, 'ANY THEME.'], [70, 'course-training', 3, 'ANY THEME.'], [71, 'business-report', 3, 'ANY THEME.'], [72, 'tech-talk', 4, 'ANY THEME.']];
   tl.scene('themes', B(64), B(73), R => {
@@ -227,24 +236,27 @@
   });
   bgTo(64, 1, 0.5, 0, 0.2);
 
-  // 8 · Build: Vera. The prompt is an example from the demo deck itself.
-  tl.scene('vera', B(73), B(80), R => {
-    const p3 = el('div', 'fill p3d', R), w = win(p3, 'ui/editor-dark-2.png', 1180, 'Vela Slides — editor');
-    w.style.cssText += ';left:790px;top:150px';
-    tl.fromTo(w, { o: 0, ry: -34, rx: 9, x: 300 }, { o: 1, ry: -17, rx: 5, x: 0 }, B(73), 0.7, E.expo).to(w, { ry: -10, rx: 3 }, B(73) + 0.7, BEAT * 5, E.lin);
-    tl.to(w, { s: 3.4, o: 0, blur: 18 }, B(79), BEAT, E.in);
-    const l = el('div', 'abs lbl', R, `Vera · ${F.tools} built-in AI tools`); l.style.cssText = 'left:104px;top:236px'; tl.in(l, B(73.3), { x: -40 });
-    const h = el('div', 'abs d', R, 'Edit by<br><span class="grad">talking.</span>'); h.style.cssText = 'left:96px;top:300px;font-size:176px;line-height:1.02;transform-origin:0 50%';
-    slam(h, B(73), { from: 1.2 });
-    const pb = el('div', 'abs chip', R); pb.style.cssText = 'left:100px;top:800px;font-size:33px;padding:24px 38px;border-color:#22d3ee;background:rgba(8,10,36,.94);box-shadow:0 0 60px rgba(34,211,238,.35)';
-    tl.in(pb, B(74.3), { y: 40 }); type(pb, "“Add a red accent bar with 'Acme Corp' in the footer”", B(74.6), B(78.4));
-    [l, h, pb].forEach(n => tl.out(n, B(79.2), { dur: BEAT * 0.7 }));
+  // 8 · Build: the deck is JSON. Sizes are measured by the vela CLI at build time.
+  chapter(73, 'The deck is JSON');
+  tl.scene('json', B(73), B(80), R => {
+    const h = el('div', 'abs d', R, 'A deck is <span class="gradc">JSON.</span>'); h.style.cssText = 'left:96px;top:70px;font-size:150px;line-height:1.1;transform-origin:0 50%'; slam(h, B(73), { from: 1.2 });
+    const l = el('div', 'abs lbl', R, 'The native format for agents'); l.style.cssText = 'left:104px;top:262px'; tl.in(l, B(73.6), { x: -40 });
+    const c = el('div', 'term', R); c.style.cssText += ';left:96px;top:340px;width:800px;height:650px;font-size:24px;line-height:1.46;padding:58px 30px 20px;overflow:hidden;color:#e6e9ff';
+    c.textContent = F.json.join('\n'); tl.fromTo(c, { o: 0, y: 60, cb: 100 }, { o: 1, y: 0, cb: 0 }, B(73.4), BEAT * 3.4, E.out);
+    const p3 = el('div', 'fill p3d', R), s = el('div', 'slide', p3); s.style.cssText = `left:990px;top:330px;width:850px;height:478px;background-image:${slideUrl('startup-pitch', 4)}`;
+    tl.fromTo(s, { o: 0, ry: -40, x: 220, s: 0.8 }, { o: 1, ry: -9, x: 0, s: 1 }, B(75), 0.6, E.expo).to(s, { ry: -4 }, B(75) + 0.6, BEAT * 3, E.lin);
+    const f = F.formats, pct = v => Math.round((1 - v / f.full) * 100);
+    const k = el('div', 'abs', R, [`Full ${nf(f.full)} B`, `Compact −${pct(f.compact)}%`, `Turbo −${pct(f.turbo)}%`].map(x => `<span class="chip" style="margin-right:10px;font-size:27px;padding:12px 20px">${x}</span>`).join('')); k.style.cssText = 'left:990px;top:850px;white-space:nowrap';
+    [...k.children].forEach((n, i) => tl.fromTo(n, { o: 0, y: 30 }, { o: 1, y: 0 }, B(76.5 + i * 0.6), 0.3, E.expo));
+    const m = el('div', 'abs mono', R, `three formats · measured on ${f.deck}`); m.style.cssText = 'left:994px;top:936px;font-size:24px;color:#8a93c9;letter-spacing:.06em'; tl.in(m, B(78), { dur: 0.4 });
+    [h, l, c, s, k, m].forEach(n => tl.to(n, { o: 0 }, B(79.3), BEAT * 0.6, E.in));
   });
   bgTo(73, 0.6, 0.12, -20); bgTo(79, 1, 2.2, 0, BEAT);
 
-  // 9 · Drop 2: one feature per bar.
-  function feature(i, name, word, chips, build) {
+  // 9 · Drop 2: one feature per bar. Order follows the feature ranking.
+  function feature(i, name, word, chips, build, label) {
     const t0 = B(80 + i * 4), t1 = B(84 + i * 4);
+    chapter(80 + i * 4, label);
     tl.scene('f-' + name, t0, t1, R => {
       build(R, t0);
       if (!word) return;
@@ -254,139 +266,162 @@
       tl.in(c, t0 + BEAT * 0.5, { y: 30, dur: 0.35 });
     });
   }
-  feature(0, 'present', 'PRESENT.', ['Fullscreen', 'Presenter view', 'Session clock'], (R, t0) => {
+  // A 16:9 frame that shows a list of stills in sequence (real app footage).
+  function reel(R, t0, shots, times, zoom) {
     const p3 = el('div', 'fill p3d', R), box = el('div', 'abs t3d', p3); box.style.cssText = 'left:391px;top:44px;width:1138px;height:640px';
-    [['tech-talk', 1], ['tech-talk', 2], ['tech-talk', 3], ['tech-talk', 4]].forEach(([d, n], k) => { const s = el('div', 'slide fill', box); s.style.backgroundImage = slideUrl(d, n); tl.cut(s, t0 + k * BEAT, null); if (k) tl.fromTo(s, { x: 90 }, { x: 0 }, t0 + k * BEAT, 0.25, E.expo); });
-    tl.fromTo(box, { o: 0, s: 0.72, ry: 26 }, { o: 1, s: 1, ry: -7 }, t0, 0.5, E.expo).to(box, { ry: -3 }, t0 + 0.5, BEAT * 3, E.lin);
-  });
-  feature(1, 'gallery', 'ORGANIZE.', ['Gallery view', 'Drag to reorder', 'Slide search'], (R, t0) => {
-    const w = win(R, 'ui/gallery.png', 1100, 'Vela Slides — gallery'); w.style.cssText += ';left:410px;top:30px';
-    tl.fromTo(w, { o: 0, s: 1.35, y: 80 }, { o: 1, s: 1, y: 0 }, t0, 0.5, E.expo).to(w, { s: 1.04 }, t0 + 0.5, BEAT * 3, E.lin);
-  });
-  feature(2, 'phone', 'ANY SCREEN.', ['Portrait layout', 'Phone-ready'], (R, t0) => {
+    shots.forEach((src, k) => { const s = el('div', 'slide fill', box); s.style.backgroundImage = src; if (zoom && zoom[k]) { s.style.backgroundSize = zoom[k]; s.style.backgroundPosition = 'left top'; } tl.cut(s, t0 + times[k] * BEAT, null); });
+    tl.fromTo(box, { o: 0, s: 0.72, ry: 26 }, { o: 1, s: 1, ry: -6 }, t0, 0.5, E.expo).to(box, { ry: -2 }, t0 + 0.5, BEAT * 3, E.lin);
+    return box;
+  }
+  feature(0, 'present', 'PRESENT.', ['Fullscreen', 'Presenter view', 'Pace bar and clock'], (R, t0) => {
+    reel(R, t0, [1, 2, 3, 4].map(n => slideUrl('tech-talk', n)), [0, 1, 2, 3]);
+  }, 'Present');
+  feature(1, 'edit', 'EDIT LIVE.', ['Edit while you present', 'Shift+E'], (R, t0) => {
+    const fr = D.manifest.edit;
+    reel(R, t0, fr.map(U), fr.map((_, k) => (k === 0 ? 0 : 0.5 + (k - 1) * 3.1 / (fr.length - 1))));
+  }, 'Edit while you present');
+  feature(2, 'search', 'SEARCH.', ['Ctrl+E', 'Finds slide text', 'Jumps to the slide'], (R, t0) => {
+    const s = D.manifest.search; reel(R, t0, s.map(U), [0, 0.6, 1.2, 2.7], ['190%', '190%', '190%', null]);
+  }, 'Search');
+  feature(3, 'story', 'STORY MODE.', ['One slide', 'Images one by one'], (R, t0) => {
+    reel(R, t0, D.manifest.story.slice(0, 4).map(U), [0, 1, 2, 3]);
+  }, 'Story mode');
+  feature(4, 'phone', 'ANY SCREEN.', ['Portrait layout', 'Phone-ready'], (R, t0) => {
     [[640, 3, -5], [960, 7, 0], [1280, 8, 5]].forEach(([x, n, r], k) => {
       const p = el('div', 'phone', R, '<div></div>'); p.style.left = x + 'px'; p.style.top = '366px'; p.firstChild.style.backgroundImage = U(`phone/p-${pad(n)}.png`);
       tl.fromTo(p, { o: 0, y: 760, r: r * 4, s: 0.9 }, { o: 1, y: 0, r, s: 0.9 }, t0 + k * BEAT * 0.5, 0.45, E.expo).to(p, { y: -16 }, t0 + k * BEAT * 0.5 + 0.45, BEAT * 3, E.lin);
     });
-  });
-  feature(3, 'export', 'EXPORT.', ['Vector PDF', 'PowerPoint', 'Markdown', 'Standalone HTML'], (R, t0) => {
-    [['PDF', 'vector', '#fb7185'], ['PPTX', 'PowerPoint', '#fbbf24'], ['MD', 'Markdown', '#34d399'], ['HTML', 'one file', '#22d3ee']].forEach(([a, b, c], k) => {
+  }, 'Any screen');
+  feature(5, 'export', 'EXPORT.', ['Editable PowerPoint', 'Vector PDF', 'Markdown', 'Standalone HTML'], (R, t0) => {
+    [['PPTX', 'editable', '#fbbf24'], ['PDF', 'vector', '#fb7185'], ['MD', 'Markdown', '#34d399'], ['HTML', 'one file', '#22d3ee']].forEach(([a, b, c], k) => {
       const f = el('div', 'file', R, `<b>${a}</b><span>${b}</span>`); f.style.setProperty('--fc', c); f.style.left = 510 + k * 300 + 'px'; f.style.top = '370px';
       tl.fromTo(f, { o: 0, s: 0.2, r: -25, y: 260 }, { o: 1, s: 1, r: (k - 1.5) * 4, y: 0 }, t0 + k * BEAT - 0.04, 0.38, E.back);
     });
-  });
-  feature(4, 'edit', 'EDIT.', ['Click any text', 'Drag and drop', 'Undo'], (R, t0) => {
-    const p3 = el('div', 'fill p3d', R), w = win(p3, 'ui/editor-light.png', 1100, 'Vela Slides — editor'); w.style.cssText += ';left:410px;top:30px';
-    tl.fromTo(w, { o: 0, ry: 24, s: 0.8 }, { o: 1, ry: 6, s: 1 }, t0, 0.5, E.expo).to(w, { ry: 2, s: 1.04 }, t0 + 0.5, BEAT * 3, E.lin);
-  });
-  feature(5, 'cli', 'SCRIPT IT.', ['Python CLI', 'Structured JSON I/O', 'Any coding agent'], (R, t0) => {
-    const t = el('div', 'term', R); t.style.cssText += ';left:300px;top:150px;width:1320px;height:440px;font-size:35px';
-    const a = el('div', '', t), b = el('div', '', t);
-    const line = (node, text, s, e) => tl.tick(tt => { const n = Math.floor(clamp((tt - s) / (e - s)) * text.length); const h = tt >= s ? `<span class="p">$ </span>${text.slice(0, n).replace(/"/g, '&quot;')}` : ''; if (node.__h !== h) { node.__h = h; node.innerHTML = h; } });
-    line(a, 'vela deck ship my-deck.json', t0 + 0.1, t0 + BEAT * 1.4); line(b, 'vela slide edit deck.json 3 block.2.text "New title"', t0 + BEAT * 1.7, t0 + BEAT * 3.4);
-    tl.fromTo(t, { o: 0, y: 80, s: 0.92 }, { o: 1, y: 0, s: 1 }, t0, 0.4, E.expo);
-  });
+  }, 'Export');
   feature(6, 'numbers', null, [], (R, t0) => {
     const l = el('div', 'abs lbl', R, 'Vela at a glance'); l.style.cssText = 'left:0;right:0;top:250px;text-align:center'; tl.in(l, t0, { y: -30 });
-    [[F.blockTypes.length, 'block types', 'grad'], [F.tools, 'Vera AI tools', 'gradc'], [3, 'deck formats', 'grad'], [3, 'runtimes', 'hotg']].forEach(([v, lab, g], k) => {
-      const s = el('div', 'stat', R, `<b class="${g}">${v}</b><span>${lab}</span>`); s.style.left = 110 + k * 433 + 'px'; s.style.top = '400px';
-      tl.fromTo(s, { o: 0, s: 2.2, y: 60 }, { o: 1, s: 1, y: 0 }, t0 + k * BEAT, 0.34, E.expo); count(s.firstChild, v, t0 + k * BEAT, t0 + k * BEAT + 0.3);
+    [[F.blockTypes.length, 'block types', 'grad', 70, 380], [3, 'deck formats', 'gradc', 440, 340], [3, 'runtimes', 'grad', 770, 340], [D.claims.tests, 'automated tests', 'hotg', 1110, 760]].forEach(([v, lab, g, x, w], k) => {
+      const s = el('div', 'stat', R, `<b class="${g}">${v}</b><span>${lab}</span>`); s.style.cssText = `left:${x}px;top:400px;width:${w}px`;
+      tl.fromTo(s, { o: 0, s: 2.2, y: 60 }, { o: 1, s: 1, y: 0 }, t0 + k * BEAT, 0.34, E.expo);
+      if (typeof v === 'number') count(s.firstChild, v, t0 + k * BEAT, t0 + k * BEAT + 0.3);
     });
-  });
+  }, 'At a glance');
   bgTo(80, 1, 0.7, 0, 0.2);
 
-  // 10 · Fill: stop.
+  // 10 · Fill, then the hand-over to the agent.
+  chapter(108, 'Hand it to your agent');
   tl.scene('fill', B(108), B(112), R => {
     const b = el('div', 'fill', R); b.style.background = '#000';
-    const t = el('div', 'word mono', R); t.style.cssText = 'font-size:54px;margin-top:-34px;color:#cfd6ff'; type(t, 'one more thing', B(108.2), B(110.6));
+    const t = el('div', 'word mono', R); t.style.cssText = 'font-size:54px;margin-top:-34px;color:#cfd6ff'; type(t, 'now hand it to your agent', B(108.2), B(111));
   });
   bgTo(108, 0, 0, 0, 0.1);
-
-  // 11 · The twist.
-  tl.scene('twist', B(112), B(120), R => {
+  tl.scene('handoff', B(112), B(120), R => {
     const b = el('div', 'fill', R); b.style.background = 'radial-gradient(ellipse at center, #1a0f3d 0%, #05061a 70%)';
-    const n = el('div', 'word d', R, '0'), l = el('div', 'word lbl', R, 'lines of app code');
-    n.style.cssText = 'font-size:380px;margin-top:-240px'; l.style.cssText = 'margin-top:150px;font-size:44px;letter-spacing:.4em';
-    [n, l].forEach(x => tl.cut(x, B(112), B(116))); slam(n, B(112), { hold: BEAT * 4 }); count(n, F.lines, B(112), B(113.6));
-    const z = el('div', 'word d hotg', R, 'ZERO'), w = el('div', 'word d', R, 'written by humans.');
-    z.style.cssText = 'font-size:470px;margin-top:-330px'; w.style.cssText = 'font-size:124px;margin-top:150px;letter-spacing:-.035em';
-    slam(z, B(116), { from: 2.2, hold: BEAT * 4 }); tl.in(w, B(117), { y: 60, s: 1.2, dur: 0.35 });
+    const a = el('div', 'word d', R, 'YOUR AGENT'), c = el('div', 'word d hotg', R, 'CAN DRIVE IT.');
+    a.style.cssText = 'font-size:270px;margin-top:-290px'; c.style.cssText = 'font-size:230px;margin-top:10px;line-height:1.15';
+    slam(a, B(112), { hold: BEAT * 8 }); slam(c, B(116), { from: 2, hold: BEAT * 4 });
   });
 
-  // ═══ ACT 2 (second pass of the track) ══════════════════════════════════
+  // ═══ ACT 2 — the agent (second pass of the track) ══════════════════════
   const P2 = PASS;
-  // 12 · How: every line is machine-written and machine-checked.
-  tl.scene('factory', B(P2), B(P2 + 32), R => {
-    const cd = el('div', 'code', R), half = Math.ceil(D.code.length / 2);
-    [[70, D.code.slice(0, half)], [1000, D.code.slice(half)]].forEach(([x, lines]) => { const c = el('div', '', cd); c.style.left = x + 'px'; c.textContent = lines.join('\n'); tl.fromTo(c, { y: 60 }, { y: -1500 }, B(P2), B(P2 + 32) - B(P2), E.lin); });
-    tl.fromTo(cd, { o: 0 }, { o: 1 }, B(P2), 1.2, E.out).to(cd, { o: 0.35 }, B(P2 + 28), 1, E.out);
-    const sh = el('div', 'fill', R); sh.style.background = 'radial-gradient(ellipse at center, rgba(5,6,26,.9) 10%, rgba(5,6,26,.2) 75%)';
-    const a = el('div', 'word d', R, 'Every line.'), b = el('div', 'word d grad', R, 'Generated by AI.');
-    a.style.cssText = 'font-size:210px;margin-top:-250px'; b.style.cssText = 'font-size:210px;margin-top:0;line-height:1.15';
-    slam(a, B(P2), { hold: BEAT * 8 }); slam(b, B(P2 + 4), { hold: BEAT * 4 }); [a, b].forEach(x => tl.out(x, B(P2 + 7.6), { dur: 0.18 }));
-    const q = el('div', 'quote', R, '<div class="q">“No human has reviewed the source code.”</div><div class="src">— README.md</div>'); q.style.marginTop = '-200px';
-    tl.cut(q, B(P2 + 8), B(P2 + 16));
-    split(q.firstChild).forEach((w, i) => tl.fromTo(w, { o: 0, y: 46, blur: 10 }, { o: 1, y: 0, blur: 0 }, B(P2 + 8) + i * 0.11, 0.45, E.expo));
-    tl.in(q.lastChild, B(P2 + 11), { y: 20 });
-    const hl = el('div', 'abs lbl', R, 'Kept in check by'); hl.style.cssText = 'left:400px;top:190px;font-size:32px'; tl.cut(hl, B(P2 + 16), B(P2 + 28));
-    const cl = el('div', 'abs', R); cl.style.cssText = 'left:400px;top:290px'; tl.cut(cl, B(P2 + 16), B(P2 + 28));
-    [[16, '270+ automated tests'], [18, 'AI code reviews'], [20, 'Static analysis'], [24, 'Security bounty program']].forEach(([g, t]) => {
-      const c = el('div', 'check', cl, `<i>✓</i>${t}`); tl.fromTo(c, { o: 0, x: -90 }, { o: 1, x: 0 }, B(P2 + g), 0.35, E.expo); tl.fromTo(c.firstChild, { s: 0 }, { s: 1 }, B(P2 + g) + 0.05, 0.4, E.back);
+  // 11 · A coding agent edits the deck file with the vela CLI; the browser follows.
+  //      The terminal is a simulation. The commands, their output and the three
+  //      screens are real (capture-assets.js runs the CLI and renders each state).
+  chapter(P2, 'Claude Code + the vela CLI');
+  tl.scene('agent', B(P2), B(P2 + 32), R => {
+    const AG = D.manifest.agent, st = AG.steps;
+    const top = el('div', 'abs lbl', R, 'Claude Code + the vela CLI'); top.style.cssText = 'left:0;right:0;top:54px;text-align:center'; tl.in(top, B(P2 + 0.5), { y: -20 });
+    const p3 = el('div', 'fill p3d', R), w = el('div', 'win', p3); w.style.cssText = 'left:50px;top:130px;width:1090px';
+    el('div', 'bar', w, '<i></i><i></i><i></i><span>localhost:3030 — Vela Slides</span>');
+    const sh = el('div', 'shot', w); sh.style.cssText = 'height:613px;position:relative';
+    const hit = [0, 13.4, 20.4];
+    [AG.start, st[1].shot, st[2].shot].forEach((f, k) => { const i = el('div', 'fill', sh); i.style.cssText = `background:${U(f)} 100% 18%/136% no-repeat`; tl.cut(i, B(P2 + hit[k]), null);
+      if (k) { const fl = el('div', 'fill', sh); fl.style.background = '#a5b4fc'; tl.fromTo(fl, { o: 0 }, { o: 0.55 }, B(P2 + hit[k]), 0.05, E.out).to(fl, { o: 0 }, B(P2 + hit[k]) + 0.05, 0.7, E.out); } });
+    const live = el('div', 'abs chip', R, '● live reload'); live.style.cssText = 'left:60px;top:806px;border-color:#34d399;color:#a7f3d0';
+    tl.set(live, { o: 0 }); hit.slice(1).forEach(g => tl.fromTo(live, { o: 0, s: 1.25 }, { o: 1, s: 1 }, B(P2 + g), 0.3, E.expo));
+    tl.fromTo(w, { o: 0, x: -200, ry: 14 }, { o: 1, x: 0, ry: 4 }, B(P2), 0.7, E.expo);
+    const t = el('div', 'term', R); t.style.cssText += ';left:1180px;top:130px;width:690px;height:657px;font-size:24px;line-height:1.45;padding:66px 26px 20px;white-space:pre-wrap;word-break:break-word';
+    tl.fromTo(t, { o: 0, x: 200 }, { o: 1, x: 0 }, B(P2 + 0.4), 0.7, E.expo);
+    el('div', '', t, '<span style="color:#fbbf24">✻</span> <span style="color:#fff">Claude Code</span>').style.cssText = 'position:absolute;left:120px;top:13px;font-size:22px';
+    const pr = el('div', '', t); pr.style.cssText = 'color:#fff;border:1px solid #3b4070;border-radius:10px;padding:10px 14px;margin-bottom:16px;min-height:86px';
+    const ask = "> New title: 'Traction: Q3 update'. MRR is now $612K.";
+    tl.tick(tt => { const n = Math.floor(clamp((tt - B(P2 + 1.6)) / (B(P2 + 7.4) - B(P2 + 1.6))) * ask.length); const h = ask.slice(0, n) + (tt < B(P2 + 8) ? '▍' : ''); if (pr.textContent !== h) pr.textContent = h; });
+    const esc = x => x.replace(/&/g, '&amp;').replace(/</g, '&lt;');
+    [[8.6, 0], [12.6, 1], [19.6, 2]].forEach(([g, k]) => {
+      const row = el('div', '', t, `<span class="p">●</span> Bash(${esc(st[k].cmd)})\n<span style="color:#8a93c9">  ⎿ ${esc(st[k].out[0] || 'ok')}</span>`); row.style.marginBottom = '14px';
+      tl.fromTo(row, { o: 0, y: 16 }, { o: 1, y: 0 }, B(P2 + g), 0.25, E.expo);
     });
-    const v = el('div', 'word d gradc', R), vl = el('div', 'word lbl', R, `${F.changelog} versions in the changelog`);
-    v.style.cssText = 'font-size:340px;margin-top:-250px;line-height:1.15'; vl.style.cssText = 'margin-top:170px;font-size:36px';
-    [v, vl].forEach(x => tl.cut(x, B(P2 + 28), null));
-    tl.tick(t => { const k = Math.min(F.versions.length - 1, Math.floor(E.in(clamp((t - B(P2 + 28)) / (B(P2 + 31.7) - B(P2 + 28)))) * F.versions.length)); const s = 'v' + F.versions[k]; if (v.textContent !== s) v.textContent = s; });
-    tl.fromTo(v, { s: 0.8 }, { s: 1.15 }, B(P2 + 28), BEAT * 4, E.in);
+    const done = el('div', '', t, '<span class="p">●</span> Done. Two edits saved to pitch.vela.'); tl.fromTo(done, { o: 0, y: 16 }, { o: 1, y: 0 }, B(P2 + 23.5), 0.25, E.expo);
+    const cap = el('div', 'abs d', R, 'The agent edits the file. <span class="grad">The browser follows.</span>'); cap.style.cssText = 'left:0;right:0;top:896px;text-align:center;font-size:72px;letter-spacing:-.03em;line-height:1.2';
+    tl.in(cap, B(P2 + 14), { y: 40, dur: 0.5 });
+    const sim = el('div', 'abs mono', R, 'simulated session · real CLI output · real renders'); sim.style.cssText = 'right:54px;top:806px;font-size:22px;color:#7c86c8;letter-spacing:.05em'; tl.in(sim, B(P2 + 2), { dur: 0.6 });
+    [w, t, top, cap, live, sim].forEach(n => tl.to(n, { s: 1.5, o: 0, blur: 14 }, B(P2 + 30.5), BEAT * 1.5, E.in));
   });
-  bgTo(P2, 0.35, 0.06, 40, 0.3); bgTo(P2 + 16, 0.5, 0.15, 20); bgTo(P2 + 28, 1, 2.4, 0, BEAT * 4);
+  bgTo(P2, 0.4, 0.06, 40, 0.3); bgTo(P2 + 16, 0.55, 0.15, 20); bgTo(P2 + 28, 1, 2.4, 0, BEAT * 4);
 
-  // 13 · Drop: the README's own name for it.
-  tl.scene('dark', B(P2 + 32), B(P2 + 49), R => {
-    const Rn = rng(31), chips = F.versions.map((ver, i) => { const c = el('div', 'verchip', R, 'v' + ver); c.style.left = Math.floor(Rn() * 1860) + 'px'; return { c, sp: 130 + Rn() * 420, y0: Rn() * 1300, o: 0.12 + Rn() * 0.3 }; });
-    tl.tick(t => chips.forEach(k => { k.c.style.transform = `translateY(${(((k.y0 + (t - B(P2 + 32)) * k.sp) % 1300) - 110).toFixed(1)}px)`; k.c.style.opacity = k.o; }));
-    const sh = el('div', 'fill', R); sh.style.background = 'radial-gradient(ellipse at center, rgba(5,6,26,.88) 15%, rgba(5,6,26,.15) 78%)';
-    const l = el('div', 'word lbl', R, 'Alpha · Experimental'), a = el('div', 'word d', R, 'A DARK AI'), b = el('div', 'word d hotg', R, 'SOFTWARE FACTORY.');
-    l.style.cssText = 'margin-top:-330px;font-size:34px'; a.style.cssText = 'font-size:230px;margin-top:-250px'; b.style.cssText = 'font-size:168px;margin-top:10px;line-height:1.15';
-    tl.in(l, B(P2 + 33), { y: -20 }); slam(a, B(P2 + 32), { from: 2.2, hold: BEAT * 8 }); slam(b, B(P2 + 34), { from: 1.6, hold: BEAT * 6 });
-    [l, a, b].forEach(x => tl.hide(x, B(P2 + 40)));
-    const v = el('div', 'word d gradc', R, 'v' + F.version); v.style.cssText = 'font-size:360px;margin-top:-330px;line-height:1.15'; slam(v, B(P2 + 40), { from: 1.8, hold: BEAT * 9 });
-    const s = el('div', 'word', R, [`${nf(F.lines)} lines`, `${F.blockTypes.length} blocks`, `${F.tools} AI tools`, '270+ tests'].map(x => `<span class="chip" style="margin:0 10px;font-size:34px;padding:16px 30px">${x}</span>`).join(''));
-    s.style.marginTop = '150px'; [...s.children].forEach((c, i) => tl.fromTo(c, { o: 0, y: 50, s: 0.7 }, { o: 1, y: 0, s: 1 }, B(P2 + 44 + i) - 0.03, 0.3, E.back));
+  // 12 · Drop: Vela ships as a skill.
+  chapter(P2 + 32, 'Ships as a skill');
+  tl.scene('skill', B(P2 + 32), B(P2 + 49), R => {
+    const a = el('div', 'word d', R, 'SHIPS AS'), b = el('div', 'word d hotg', R, 'A SKILL.');
+    a.style.cssText = 'font-size:230px;margin-top:-270px'; b.style.cssText = 'font-size:290px;margin-top:-30px;line-height:1.15';
+    slam(a, B(P2 + 32), { from: 2.2, hold: BEAT * 8 }); slam(b, B(P2 + 34), { from: 1.7, hold: BEAT * 6 }); [a, b].forEach(x => tl.hide(x, B(P2 + 40)));
+    const t = el('div', 'term', R); t.style.cssText += ';left:110px;top:170px;width:820px;height:640px;font-size:33px;line-height:1.72;padding:74px 40px 24px';
+    t.innerHTML = F.skill.tree.map((l, i) => `<div>${i ? l.replace(/^(\S+ )/, '<span style="color:#4d5594">$1</span>') : `<span class="p">${l}</span>`}</div>`).join('');
+    tl.fromTo(t, { o: 0, x: -120, s: 0.92 }, { o: 1, x: 0, s: 1 }, B(P2 + 40), 0.4, E.expo);
+    [...t.children].forEach((n, i) => tl.fromTo(n, { o: 0, x: -30 }, { o: 1, x: 0 }, B(P2 + 40) + 0.08 * i, 0.3, E.expo));
+    ['One skill.', 'One CLI.', 'JSON in, slides out.'].forEach((x, i) => { const d = el('div', 'abs d' + (i === 2 ? ' grad' : ''), R, x); d.style.cssText = `left:1010px;top:${190 + i * 190}px;font-size:${i === 2 ? 84 : 150}px;line-height:1.2;transform-origin:0 50%;white-space:nowrap`; slam(d, B(P2 + 40 + i * 2), { from: 1.3, dur: 0.3 }); });
+    const c = el('div', 'abs', R, [`name: ${F.skill.name}`, `v${F.version}`, 'Markdown + Python CLI'].map(x => `<span class="chip" style="margin-right:14px">${x}</span>`).join('')); c.style.cssText = 'left:110px;top:860px';
+    [...c.children].forEach((n, i) => tl.fromTo(n, { o: 0, y: 40, s: 0.7 }, { o: 1, y: 0, s: 1 }, B(P2 + 45 + i) - 0.03, 0.3, E.back));
   });
   bgTo(P2 + 32, 1, 0.8, -30, 0.2);
 
-  // 14 · Break: where it runs, in the README's words.
-  tl.scene('yours', B(P2 + 49), B(P2 + 64), R => {
-    ['No servers.', 'No deploys.', 'No accounts.'].forEach((t, i) => { const d = el('div', 'abs d' + (i === 2 ? ' grad' : ''), R, t); d.style.cssText = `left:120px;top:${140 + i * 185}px;font-size:150px;line-height:1.15;transform-origin:0 50%`; slam(d, B(P2 + 49 + i * 3), { from: 1.18, dur: 0.45 }); });
-    const y = el('div', 'abs d gradc', R, 'Your data stays where you put it.'); y.style.cssText = 'left:124px;top:770px;font-size:72px;letter-spacing:-.03em;line-height:1.2'; tl.in(y, B(P2 + 58.5), { y: 40, dur: 0.5 });
-    const p3 = el('div', 'abs p3d', R); p3.style.cssText = 'left:1180px;top:70px;width:680px;height:680px';
-    const ring = el('div', 'fill t3d', p3), th = []; for (let i = 0; i < 12; i++) { const t = thumb(ring, i * 3 + 1); th.push(t); }
-    tl.tick(t => th.forEach((n, i) => { const a = i / 12 * Math.PI * 2 + (t - B(P2 + 49)) * 0.42; n.style.transform = `translate3d(${(Math.cos(a) * 290).toFixed(1)}px,${(Math.sin(a) * 110).toFixed(1)}px,${(Math.sin(a) * 290).toFixed(1)}px) scale(.42)`; n.style.zIndex = Math.sin(a) > 0 ? 3 : 1; n.style.opacity = (0.55 + 0.45 * Math.sin(a)).toFixed(3); }));
-    tl.fromTo(p3, { o: 0, s: 0.7 }, { o: 1, s: 1 }, B(P2 + 50), 0.8, E.expo);
-    const f = el('div', 'file ctr', p3, `<b style="font-size:50px">vela.jsx</b><span>one file · ${(F.bytes / 1e6).toFixed(1)} MB</span>`); f.style.cssText += ';width:330px;margin-left:-165px;z-index:2';
+  // 13 · Break: the twist, in the README's own words.
+  chapter(P2 + 49, 'Zero lines written by humans');
+  tl.scene('twist', B(P2 + 49), B(P2 + 64), R => {
+    const cd = el('div', 'code', R), half = Math.ceil(D.code.length / 2);
+    [[70, D.code.slice(0, half)], [1000, D.code.slice(half)]].forEach(([x, lines]) => { const c = el('div', '', cd); c.style.left = x + 'px'; c.textContent = lines.join('\n'); tl.fromTo(c, { y: 60 }, { y: -700 }, B(P2 + 49), B(P2 + 64) - B(P2 + 49), E.lin); });
+    tl.fromTo(cd, { o: 0 }, { o: 0.8 }, B(P2 + 49), 1, E.out);
+    const sh = el('div', 'fill', R); sh.style.background = 'radial-gradient(ellipse at center, rgba(5,6,26,.92) 12%, rgba(5,6,26,.3) 78%)';
+    const n = el('div', 'word d', R, '0'), l = el('div', 'word lbl', R, 'lines of app code');
+    n.style.cssText = 'font-size:380px;margin-top:-240px'; l.style.cssText = 'margin-top:150px;font-size:44px;letter-spacing:.4em';
+    slam(n, B(P2 + 49), { from: 1.2, hold: BEAT * 4 }); count(n, F.lines, B(P2 + 49), B(P2 + 51.5)); tl.in(l, B(P2 + 49.5), { y: 20 }); [n, l].forEach(x => tl.hide(x, B(P2 + 53)));
+    const z = el('div', 'word d hotg', R, 'ZERO'), w = el('div', 'word d', R, 'written by humans.');
+    z.style.cssText = 'font-size:470px;margin-top:-330px'; w.style.cssText = 'font-size:124px;margin-top:150px;letter-spacing:-.035em';
+    slam(z, B(P2 + 53), { from: 1.6, hold: BEAT * 4 }); tl.in(w, B(P2 + 54), { y: 60, s: 1.2, dur: 0.35 }); [z, w].forEach(x => tl.hide(x, B(P2 + 57.5)));
+    const q = el('div', 'quote', R, '<div class="q">“No human has reviewed the source code.”</div><div class="src">— README.md</div>'); q.style.marginTop = '-200px';
+    tl.cut(q, B(P2 + 57.5), null);
+    split(q.firstChild).forEach((x, i) => tl.fromTo(x, { o: 0, y: 46, blur: 10 }, { o: 1, y: 0, blur: 0 }, B(P2 + 57.5) + i * 0.1, 0.45, E.expo));
+    tl.in(q.lastChild, B(P2 + 60), { y: 20 });
   });
-  bgTo(P2 + 49, 0.7, 0.1, 30);
+  bgTo(P2 + 49, 0.45, 0.08, 30);
 
-  // 15 · Stabs: three runtimes.
-  tl.scene('runtimes', B(P2 + 64), B(P2 + 73), R => {
-    const l = el('div', 'abs lbl', R, 'Three runtimes · one engine'); l.style.cssText = 'left:126px;top:96px'; tl.in(l, B(P2 + 64), { y: -20, dur: 0.3 });
-    [['CLAUDE.AI', ''], ['BROWSER', ' gradc'], ['DESKTOP', ' grad']].forEach(([w, c], i) => { const d = el('div', 'abs d' + c, R, w); d.style.cssText = `left:116px;top:${190 + i * 200}px;font-size:172px;line-height:1.12;transform-origin:0 50%`; slam(d, B(P2 + 64 + i), { from: 1.4, dur: 0.28 }); });
-    ['LINUX', 'MACOS', 'WINDOWS'].forEach((w, i) => { const d = el('div', 'abs d outline', R, w); d.style.cssText = `left:1190px;top:${226 + i * 200}px;font-size:120px;-webkit-text-stroke-width:2.5px;transform-origin:0 50%`; slam(d, B(P2 + 68 + i), { from: 1.5, dur: 0.26 }); });
-    const e = el('div', 'abs d', R, 'Same engine everywhere.'); e.style.cssText = 'left:122px;top:850px;font-size:84px;letter-spacing:-.03em'; tl.in(e, B(P2 + 71), { y: 40, dur: 0.3 });
+  // 14 · Stabs: what keeps it in check. Texts come from promo.config.json "claims".
+  chapter(P2 + 64, 'Kept in check');
+  tl.scene('checks', B(P2 + 64), B(P2 + 73), R => {
+    const hl = el('div', 'abs lbl', R, 'Kept in check by'); hl.style.cssText = 'left:300px;top:120px;font-size:34px'; tl.in(hl, B(P2 + 64), { y: -20, dur: 0.3 });
+    const cl = el('div', 'abs', R); cl.style.cssText = 'left:300px;top:210px';
+    const items = [`${D.claims.tests} automated tests`, 'AI code reviews', 'Static analysis', D.claims.audits, 'Security bounty program'].filter(Boolean);
+    [64, 65, 66, 68, 69].slice(0, items.length).forEach((g, i) => {
+      const c = el('div', 'check', cl, `<i>✓</i>${items[i]}`); c.style.marginBottom = '34px';
+      tl.fromTo(c, { o: 0, x: -120, s: 1.15 }, { o: 1, x: 0, s: 1 }, B(P2 + g), 0.28, E.expo); tl.fromTo(c.firstChild, { s: 0 }, { s: 1 }, B(P2 + g) + 0.04, 0.35, E.back);
+    });
   });
   bgTo(P2 + 64, 1, 0.5, 0, 0.2);
 
-  // 16 · Build: bring your own agent (list from the README).
-  tl.scene('byoa', B(P2 + 73), B(P2 + 80), R => {
-    const h = el('div', 'word d', R, 'Works with the agent<br><span class="grad">you already use.</span>'); h.style.cssText = 'font-size:150px;margin-top:-290px;line-height:1.1'; slam(h, B(P2 + 73), { from: 1.15, dur: 0.5 });
-    const c = el('div', 'word', R, ['Claude Code', 'GitHub Copilot CLI', 'Codex CLI', 'Aider', 'Cursor'].map(x => `<span class="chip" style="margin:0 10px;font-size:36px;padding:18px 32px">${x}</span>`).join('')); c.style.marginTop = '150px';
-    [...c.children].forEach((n, i) => tl.fromTo(n, { o: 0, y: 40 }, { o: 1, y: 0 }, B(P2 + 74.5) + i * 0.2, 0.35, E.expo));
-    [h, c].forEach(n => tl.to(n, { s: 2.6, o: 0, blur: 16 }, B(P2 + 79), BEAT, E.in));
+  // 15 · Build: where it runs.
+  chapter(P2 + 73, 'Three runtimes, one engine');
+  tl.scene('runtimes', B(P2 + 73), B(P2 + 80), R => {
+    const l = el('div', 'word lbl', R, 'Three runtimes · one engine'); l.style.cssText = 'margin-top:-300px'; tl.in(l, B(P2 + 73), { y: -20, dur: 0.4 });
+    const h = el('div', 'word d', R, '<span class="sp">Claude.ai</span> <span class="sp gradc">Browser</span> <span class="sp grad">Desktop</span>'); h.style.cssText = 'font-size:128px;margin-top:-150px;line-height:1.25;word-spacing:.1em;white-space:nowrap';
+    [...h.children].forEach((n, i) => tl.fromTo(n, { o: 0, y: 70, s: 1.25 }, { o: 1, y: 0, s: 1 }, B(P2 + 73.2 + i * 0.9), 0.35, E.expo));
+    const c = el('div', 'word', R, ['Linux', 'macOS', 'Windows'].map(x => `<span class="chip" style="margin:0 10px;font-size:40px;padding:18px 36px">${x}</span>`).join('')); c.style.marginTop = '120px';
+    [...c.children].forEach((n, i) => tl.fromTo(n, { o: 0, y: 40 }, { o: 1, y: 0 }, B(P2 + 76.2) + i * 0.22, 0.35, E.expo));
+    [l, h, c].forEach(n => tl.to(n, { s: 2.6, o: 0, blur: 16 }, B(P2 + 79), BEAT, E.in));
   });
   bgTo(P2 + 73, 0.6, 0.12, -20); bgTo(P2 + 79, 1, 2.4, 0, BEAT);
 
-  // 17 · Final drop: everything, in 3D.
+  // 16 · Final drop: everything, in 3D.
+  chapter(P2 + 80, 'The whole thing');
   const VERBS = ['DESCRIBE.', 'GENERATE.', 'EDIT.', 'PRESENT.', 'EXPORT.', 'SHARE.'];
   tl.scene('wall', B(P2 + 80), B(P2 + 92), R => {
     const p3 = el('div', 'fill p3d', R), plane = el('div', 'fill t3d', p3);
@@ -410,7 +445,8 @@
   });
   bgTo(P2 + 80, 1, 0.7, 0, 0.2); bgTo(P2 + 108, 0, 0, 0, 0.1);
 
-  // 18 · Fill, then the last line.
+  // 17 · Fill, then the last line.
+  chapter(P2 + 108, 'You think. Vela shows.');
   tl.scene('think', B(P2 + 108), B(P2 + 116), R => {
     const bg = el('div', 'fill', R); bg.style.background = '#000'; tl.cut(bg, 0, B(P2 + 112));
     const a = el('div', 'word d', R, 'You think.'), b = el('div', 'word d grad', R, 'Vela shows.');
@@ -419,7 +455,7 @@
   });
   bgTo(P2 + 112, 1, 0.6, 0, 0.2);
 
-  // 19 · End card.
+  // 18 · End card.
   tl.scene('end', B(P2 + 116), END, R => {
     const p3 = el('div', 'fill p3d', R), plane = el('div', 'fill t3d', p3);
     for (let i = 0; i < 63; i++) { const t = thumb(plane, i + 4); t.style.transform = `translate3d(${((i % 9) - 4) * 520}px,${(Math.floor(i / 9) - 3) * 300}px,0)`; }
@@ -442,12 +478,13 @@
     for (let i = 0; i < n; i++) { acc += tl._val(tr, i / 60) * 0.11 / 60; warpInt[i] = acc; }
   }
   const capture = Q.has('capture');
-  if (!capture) { const fit = () => { stage.style.transform = `scale(${Math.min(innerWidth / 1920, innerHeight / 1080)})`; }; fit(); addEventListener('resize', fit); }
-  window.__promo = { duration: END, fps: D.fps, seek: t => tl.seek(t), beat: B };
-  window.__promoReady = Promise.all([document.fonts.ready, ...[...urls].map(u => { const i = new Image(); i.src = u; return i.decode().catch(() => { window.__promoMissing = (window.__promoMissing || []).concat(u); }); })]).then(async () => {
+  if (Q.has('lite')) document.getElementById('grain').style.display = 'none';
+  if (!capture) { const fit = () => { const k = Math.min(innerWidth / 1920, innerHeight / 1080); stage.style.transform = `scale(${k})`; stage.style.left = (innerWidth - 1920 * k) / 2 + 'px'; stage.style.top = (innerHeight - 1080 * k) / 2 + 'px'; }; fit(); addEventListener('resize', fit); }
+  chapters.sort((x, y) => x.t - y.t);
+  window.__promo = { duration: END, fps: D.fps, seek: t => tl.seek(t), beat: B, chapters, urls: [...urls] };
+  window.__promoReady = Promise.all([document.fonts.ready, ...[...urls].map(p => { const i = new Image(); i.src = EMB[p] || `${A}/${p}`; return i.decode().catch(() => { window.__promoMissing = (window.__promoMissing || []).concat(p); }); })]).then(async () => {
     await Promise.all(['800 40px Sora', '700 40px Sora', '400 40px "Space Mono"', '400 40px "DM Sans"'].map(f => document.fonts.load(f).catch(() => {})));
     tl.seek(parseFloat(Q.get('t') || '0'));
-    if (Q.has('play')) { const t0 = performance.now() - parseFloat(Q.get('t') || '0') * 1000; const loop = () => { tl.seek(((performance.now() - t0) / 1000) % END); requestAnimationFrame(loop); }; loop(); }
     return true;
   });
 })();

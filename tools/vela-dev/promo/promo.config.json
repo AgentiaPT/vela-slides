@@ -9,5 +9,36 @@
     "passBeats": 120,
     "passes": 2,
     "tail": 2.8
+  },
+  "claims": {
+    "_note": "Statements that the code cannot prove at build time. Check each one before a release.",
+    "tests": "1,500+",
+    "_tests_source": "tools/vela-dev/scripts/ci-local.sh, 2026-11-11: 1,546 checks passed (unit 534, UI battery 511, server 175, integration 102, PDF 61, PPTX 47, desktop 37, e2e 32, release 22, journey 11, drag-and-drop 7, secrets 7).",
+    "audits": "Weekly security audits by Fable",
+    "_audits_source": "Stated by the project owner. Not documented in the repository."
+  },
+  "readme": {
+    "_note": "Silent loop for the GitHub README. Ranges are in beats. Keep the GIF under 10 MB.",
+    "beats": [
+      [
+        32,
+        44
+      ],
+      [
+        84,
+        96
+      ],
+      [
+        131,
+        142
+      ],
+      [
+        236,
+        243
+      ]
+    ],
+    "width": 640,
+    "fps": 10,
+    "colors": 80
   }
 }

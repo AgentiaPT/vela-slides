@@ -1,7 +1,8 @@
 # Vela promo video
 
-Source of the Vela Slides promo video (1920×1080, 30 fps, about 1 min 50 s).
-One command builds the video again after the app changes. Dev-only: nothing
+Source of the Vela Slides promo: a beat-synced video (1920×1080, 30 fps, about
+1 min 50 s), a silent loop for the README, and an interactive HTML tour. One
+command builds each output again after the app changes. Dev-only: nothing
 here ships in the skill.
 
 ## How it works
@@ -9,10 +10,10 @@ here ships in the skill.
 | Step | File | What it does |
 |---|---|---|
 | 1. Capture | `capture-assets.js` | Opens the real app offline and saves stills: each slide of the example decks at 2x, the editor, the gallery, the phone layout. Also saves the rectangle of each block. |
-| 2. Facts | `render.js` | Reads the numbers from the code: line count, version, block types, Vera tools, changelog versions. |
+| 2. Facts | `render.js` | Reads the numbers from the code: line count, version, block types, deck format sizes (measured with the `vela` CLI), skill name and files. |
 | 3. Composition | `comp/` | An HTML page. Each visual value is a function of the time, so each frame is reproducible. |
 | 4. Frames | `render.js` | Seeks the page frame by frame in Chromium and saves each frame. |
-| 5. Encode | `render.js` | Mixes the soundtrack and writes an H.264 + AAC `.mp4` with ffmpeg. |
+| 5. Encode | `render.js` | Mixes the soundtrack and writes an H.264 + AAC `.mp4`, a GIF loop, or one standalone `.html` (with `comp/player.js`). |
 
 All footage is real: it comes from `examples/*.vela` rendered by the current
 build of the app. The numbers on screen come from the repository, not from
@@ -20,29 +21,37 @@ the storyboard.
 
 ## Build
 
-```bash
-python3 tools/vela-dev/scripts/concat.py          # only after part-file edits
+The agent workflow (feature ranking, preview-first review, checks) is in the
+skill `.claude/skills/vela-promo-video/SKILL.md`. Commands:
 
-node tools/vela-dev/promo/render.js \
-  --work  /tmp/vela-promo \
-  --audio /path/to/track.mp3 \
-  --fonts /tmp/vela-promo/fonts \
-  --blur 4
-# result: /tmp/vela-promo/vela-promo.mp4
+```bash
+W=/tmp/vela-promo                                   # work folder, outside git
+python3 tools/vela-dev/scripts/concat.py            # only after part-file edits
+R="node tools/vela-dev/promo/render.js --work $W --fonts $W/fonts"
+
+$R --stills 14.5,36.2                               # stills (the first run captures footage)
+$R --skip-capture --audio track.mp3 --preview       # low-res full video: review this first
+$R --skip-capture --audio track.mp3 --blur 4        # final 1080p video
+$R --skip-capture --gif                             # silent README loop (GIF + MP4)
+$R --skip-capture --audio track.mp3 --html          # interactive tour, one .html file
 ```
 
 | Flag | Use |
 |---|---|
-| `--work <dir>` | Work folder (footage, frames, result). Keep it outside git. |
-| `--audio <file>` | Soundtrack. Not stored in this repository. Without it the video is silent. |
+| `--work <dir>` | Work folder (footage, frames, results). Keep it outside git. |
+| `--audio <file>` | Soundtrack. Not stored in this repository. Without it the output is silent. |
 | `--fonts <dir>` | Folder with the brand fonts (see below). Without it the fallback fonts are used. |
 | `--skip-capture` | Use the footage that is already in the work folder. |
-| `--stills 1.5,14.4` | Write PNG stills at these times (seconds). No video. Fast check of a scene. |
+| `--preview` | Full video at 960×540 and 15 fps, no blur. About 3 minutes. |
+| `--stills 1.5,14.4` | PNG stills at these times (seconds). Seconds to run. |
+| `--gif` | Loop for the README. Ranges, width and frame rate: `readme` in `promo.config.json`. |
+| `--html` | Standalone page: player, chapters (← →), soundtrack, images embedded. |
+| `--blur <n>` | Motion blur for the final video: `n` samples in a 180° shutter. Use 4. |
 | `--from <s> --to <s>` | Render only a part of the video. |
 | `--jobs <n>` | Number of parallel browser pages (default 4). |
-| `--blur <n>` | Motion blur: `n` samples for each frame in a 180° shutter. Use 4 for the final video. Default 1 (no blur). |
 
-On 4 cores a full build takes about 6 minutes without blur and about 25 minutes with `--blur 4`.
+On 4 cores the final video takes about 6 minutes without blur and about 25
+minutes with `--blur 4`.
 
 ### Brand fonts
 
@@ -64,7 +73,7 @@ Do not add these packages to `package.json`.
    `tl.scene(name, start, end, build)` block. Times are in beats: `B(g)` is
    the time of beat `g`. Keep cuts on beats.
 3. **Check the scene** with `--stills` before a full build.
-4. **New claim on screen:** make sure that the README or the code supports it.
+4. **New claim on screen:** make sure that the README or the code supports it. A claim that the code cannot prove goes in `claims` in `promo.config.json`, with its source.
 
 ### Scene map (beats; the track plays two times, 120 beats each)
 
@@ -72,19 +81,17 @@ Do not add these packages to `package.json`.
 |---|---|---|
 | 0–8 | `open` | Hook: one word per beat |
 | 8–32 | `build` | Prompt, then 10 slides appear |
-| 32–36 | `logo` | Logo, slides fly past the camera |
-| 36–44 | `blitz` | One real slide per beat |
-| 44–49 | `tagline` | Describe it. Present it. |
+| 32–49 | `logo`, `blitz`, `tagline` | Logo, one real slide per beat, tagline |
 | 49–64 | `blocks` | Block types, cut out of real slides |
 | 64–73 | `themes` | Example decks |
-| 73–80 | `vera` | Edit by talking |
-| 80–108 | `f-*` | One feature per bar (7 bars) |
-| 108–120 | `fill`, `twist` | Line count, written by AI |
-| 120–152 | `factory` | README quote, validation, version counter |
-| 152–169 | `dark` | Dark AI software factory, version |
-| 169–184 | `yours` | No servers, no deploys, no accounts |
-| 184–193 | `runtimes` | Three runtimes |
-| 193–200 | `byoa` | Works with your agent |
+| 73–80 | `json` | The deck is JSON; format sizes measured by the CLI |
+| 80–108 | `f-*` | One feature per bar: present, edit live, search, story mode, phone, export, numbers |
+| 108–120 | `fill`, `handoff` | Hand it to your agent |
+| 120–152 | `agent` | Claude Code + the vela CLI; the browser follows (simulated terminal, real output) |
+| 152–169 | `skill` | Ships as a skill |
+| 169–184 | `twist` | Line count, written by AI, README quote |
+| 184–193 | `checks` | What keeps it in check (`claims` in the config) |
+| 193–200 | `runtimes` | Three runtimes |
 | 200–228 | `wall`, `ring`, `verbs`, `title` | 3D montage |
 | 228–end | `think`, `end` | Last line, end card |
 

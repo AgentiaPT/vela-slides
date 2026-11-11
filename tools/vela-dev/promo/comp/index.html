@@ -7,6 +7,7 @@
 <style id="fonts"></style>
 <style>
   :root {
+    color-scheme: dark;
     --ink: #05061a; --ink2: #0b0d2a; --indigo: #6366f1; --iris: #818cf8; --violet: #a78bfa;
     --blue: #60a5fa; --cyan: #22d3ee; --hot: #f472b6; --amber: #fbbf24; --mint: #34d399; --paper: #f4f6ff;
     --display: 'Sora', 'Inter Display', 'Inter', sans-serif;
@@ -121,6 +122,7 @@
   <div id="cam"></div>
   <div id="fx"><canvas id="grain" width="580" height="370"></canvas><div id="vig"></div><div id="flash"></div><div id="fade"></div></div>
 </div>
+<!--PROMO:SCRIPTS-->
 <script src="engine.js"></script>
 <script>
   // Assets (captured footage + generated data.js) live outside the repo.
@@ -128,7 +130,10 @@
   const Q = new URLSearchParams(location.search);
   window.ASSETS = (Q.get('assets') || '../assets').replace(/\/$/, '');
   const add = src => new Promise((ok, no) => { const s = document.createElement('script'); s.src = src; s.onload = ok; s.onerror = () => no(new Error('cannot load ' + src)); document.head.appendChild(s); });
-  add(ASSETS + '/data.js').then(() => add('storyboard.js')).catch(e => { document.body.textContent = String(e); window.__promoError = String(e); });
+  add(ASSETS + '/data.js').then(() => add('storyboard.js'))
+    .then(() => (Q.has('capture') ? null : window.__promoReady.then(() => add('player.js'))))
+    .catch(e => { document.body.textContent = String(e); window.__promoError = String(e); });
 </script>
+<!--/PROMO:SCRIPTS-->
 </body>
 </html>
