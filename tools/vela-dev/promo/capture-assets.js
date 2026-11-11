@@ -2,12 +2,14 @@
 // ─────────────────────────────────────────────────────────────────────────
 // capture-assets.js — capture real Vela footage for the promo composition.
 //
-// Builds an offline render of each example deck (render-offline.js), opens it
+// Builds an offline render of each showcase deck (promo/decks), opens it
 // in the pinned Chromium and saves stills: every slide at 2x, the editor,
 // the gallery, the phone (portrait) layout. Also writes manifest.json with
 // the pixel rectangle of every block (from the app's data-block-type nodes).
 //
-// USAGE: node capture-assets.js <outDir> [--fonts <dir>] [--only slides,ui,phone,extras]
+// USAGE: node capture-assets.js <outDir> [--fonts <dir>] [--only slides,phone,extras]
+//   Decks, the tour deck, the phone slides and the search query: "footage" in
+//   promo.config.json.
 //   --fonts  folder with unpacked @fontsource/{sora,dm-sans,space-mono}
 //            packages. The container blocks Google Fonts; without this flag
 //            the slides use the fallback system font.
@@ -18,7 +20,8 @@ const { execFileSync, spawnSync } = require('child_process');
 const REPO = path.resolve(__dirname, '..', '..', '..');
 const { chromium } = require(path.join(REPO, 'node_modules', 'playwright'));
 
-const DECKS = ['vela-demo', 'startup-pitch', 'tech-talk', 'business-report', 'course-training'];
+const CFG = JSON.parse(fs.readFileSync(path.join(__dirname, 'promo.config.json'), 'utf8')).footage;
+const DECKS = CFG.decks, TOUR = CFG.tour, DECK_DIR = path.join(__dirname, 'decks');
 const outDir = path.resolve(process.argv[2] || '');
 if (!process.argv[2]) { console.error('usage: node capture-assets.js <outDir> [--fonts <dir>]'); process.exit(2); }
 const fi = process.argv.indexOf('--fonts');
@@ -48,7 +51,7 @@ function chromePath() {
   return fs.existsSync('/opt/pw-browsers/chromium') ? '/opt/pw-browsers/chromium' : undefined;
 }
 function slideCount(deck) {
-  const d = JSON.parse(fs.readFileSync(path.join(REPO, 'examples', deck + '.vela'), 'utf8'));
+  const d = JSON.parse(fs.readFileSync(path.join(DECK_DIR, deck + '.vela'), 'utf8'));
   let n = 0; for (const l of d.lanes) for (const it of l.items || []) n += (it.slides || []).length;
   return n;
 }
@@ -61,12 +64,13 @@ const jpg = (page, file) => page.screenshot({ path: path.join(outDir, file), typ
 async function extras(open, manifest) {
   // 4a. Search in Present (Ctrl+E).
   {
-    const { ctx, page } = await open('vela-demo', { width: 1280, height: 720 }, 1.5);
+    const { ctx, page } = await open(TOUR, { width: 1280, height: 720 }, 1.5);
     await page.keyboard.press('f'); await page.waitForTimeout(2600);
     await page.keyboard.press('Control+e'); await page.waitForTimeout(700);
     manifest.search = [];
-    for (const q of ['f', 'fun', 'funnel']) {
-      await page.keyboard.type(q.slice(manifest.search.length ? ['', 'f', 'fun'][manifest.search.length].length : 0), { delay: 40 });
+    const Q = CFG.search, cuts = [1, Math.ceil(Q.length / 2), Q.length];
+    for (const [k, n] of cuts.entries()) {
+      await page.keyboard.type(Q.slice(k ? cuts[k - 1] : 0, n), { delay: 40 });
       await page.waitForTimeout(600);
       const file = `ui/search-${manifest.search.length}.jpg`; await jpg(page, file); manifest.search.push(file);
     }
@@ -76,7 +80,7 @@ async function extras(open, manifest) {
   }
   // 4b. Edit while presenting (Shift+E, then click the text).
   {
-    const { ctx, page } = await open('vela-demo', { width: 960, height: 540 }, 2);
+    const { ctx, page } = await open(TOUR, { width: 960, height: 540 }, 2);
     await page.keyboard.press('f'); await page.addStyleTag({ content: HIDE_FS_CHROME });
     await page.keyboard.press('ArrowRight'); await page.waitForTimeout(2600);
     manifest.edit = [];
@@ -86,7 +90,7 @@ async function extras(open, manifest) {
     const box = await page.evaluate(() => { const r = document.querySelector('[data-block-type="heading"]').getBoundingClientRect(); return { x: r.x + Math.min(r.width / 2, 260), y: r.y + r.height / 2 }; });
     await page.mouse.click(box.x, box.y); await page.waitForTimeout(400);
     await page.keyboard.press('Control+a'); await page.waitForTimeout(200); await shot();
-    const text = 'You Talk. Vela Builds.';
+    const text = 'You talk. Your agent builds.';
     for (let i = 2; i <= text.length; i += 2) { await page.keyboard.type(text.slice(i - 2, i)); await page.waitForTimeout(90); await shot(); }
     await page.mouse.click(480, 500); await page.waitForTimeout(600); await shot();
     await ctx.close(); console.log('edit ok', manifest.edit.length);
@@ -94,7 +98,7 @@ async function extras(open, manifest) {
   // 4c. Story mode: one slide, four images (stills of real slides), shown one by one.
   {
     const img = n => 'data:image/jpeg;base64,' + fs.readFileSync(path.join(outDir, 'story', `src-${n}.jpg`)).toString('base64');
-    const src = [['startup-pitch', 1], ['tech-talk', 2], ['course-training', 3], ['business-report', 2]];
+    const src = [['startup-pitch', 1], ['tech-talk', 1], ['course', 1], ['business-report', 1]];
     src.forEach(([d, n], i) => execFileSync('ffmpeg', ['-loglevel', 'error', '-y', '-i', path.join(outDir, 'slides', `${d}-${String(n).padStart(2, '0')}.jpg`), '-vf', 'scale=1120:630', '-q:v', '4', path.join(outDir, 'story', `src-${i}.jpg`)]));
     const deck = { deckTitle: 'Story mode', lanes: [{ title: 'Story', items: [{ title: 'Story', status: 'done', slides: [{ title: 'Four decks, one story', bg: '#0f172a', color: '#f1f5f9', accent: '#818cf8', padding: '32px 44px', story: true,
       blocks: [{ type: 'heading', text: 'Four decks, one story', size: 'xl' }, ...['Pitch', 'Tech talk', 'Course', 'Report'].map((c, i) => ({ type: 'image', src: img(i), caption: c }))] }] }] }] };
@@ -107,7 +111,7 @@ async function extras(open, manifest) {
   }
   // 4d. Agent edit: the real vela CLI changes a deck file; each state is rendered.
   {
-    const work = path.join(outDir, 'agent', 'pitch.vela'); fs.copyFileSync(path.join(REPO, 'examples', 'startup-pitch.vela'), work);
+    const work = path.join(outDir, 'agent', 'pitch.vela'); fs.copyFileSync(path.join(DECK_DIR, 'startup-pitch.vela'), work);
     const cmds = [['slide', 'view', 'pitch.vela', '4'], ['slide', 'edit', 'pitch.vela', '4', 'block.0.text', 'Traction: Q3 update'], ['deck', 'replace-text', 'pitch.vela', '$480K', '$612K']];
     manifest.agent = { steps: [] };
     const state = async (name) => {
@@ -133,7 +137,7 @@ async function extras(open, manifest) {
 
 (async () => {
   for (const d of ['slides', 'ui', 'phone', 'render', 'edit', 'story', 'agent']) fs.mkdirSync(path.join(outDir, d), { recursive: true });
-  for (const deck of DECKS) renderDeck(path.join(REPO, 'examples', deck + '.vela'), deck);
+  for (const deck of DECKS) renderDeck(path.join(DECK_DIR, deck + '.vela'), deck);
   const css = fontCss();
   const browser = await chromium.launch({ executablePath: chromePath(), args: ['--no-sandbox', '--disable-gpu', '--disable-dev-shm-usage'] });
   const open = async (deck, viewport, dsf) => {
@@ -175,29 +179,13 @@ async function extras(open, manifest) {
     console.log('slides', deck, n);
   }
 
-  // 2. App screens at 1920x1080.
-  if (want('ui')) {
-    manifest.ui = [];
-    const { ctx, page } = await open('vela-demo', { width: 1920, height: 1080 }, 1);
-    const shot = async (name) => { await page.screenshot({ path: path.join(outDir, 'ui', name + '.png') }); manifest.ui.push(`ui/${name}.png`); };
-    await shot('editor-light');
-    await page.keyboard.press('d'); await page.waitForTimeout(900);
-    await shot('editor-dark');
-    await page.keyboard.press('ArrowDown'); await page.waitForTimeout(400);
-    await page.keyboard.press('ArrowRight'); await page.waitForTimeout(2600);
-    await shot('editor-dark-2');
-    await page.keyboard.press('g'); await page.waitForTimeout(3000);
-    await shot('gallery');
-    await ctx.close();
-    console.log('ui ok');
-  }
-
   // 3. Phone (portrait) layout, 390x844 at 3x.
   if (want('phone')) {
     manifest.phone = [];
-    const { ctx, page } = await open('vela-demo', { width: 390, height: 844 }, 3);
+    const { ctx, page } = await open(TOUR, { width: 390, height: 844 }, 3);
     await page.keyboard.press('f'); await page.waitForTimeout(1200);
-    for (let i = 1; i <= 9; i++) {
+    manifest.phonePick = CFG.phone;
+    for (let i = 1; i <= slideCount(TOUR); i++) {
       await page.waitForTimeout(2400);
       const file = `phone/p-${String(i).padStart(2, '0')}.png`;
       await page.screenshot({ path: path.join(outDir, file) });

@@ -1,0 +1,277 @@
+{
+  "deckTitle": "Resilient APIs at the Edge",
+  "lanes": [
+    {
+      "id": "tt-lane-1",
+      "title": "Talk",
+      "collapsed": false,
+      "items": [
+        {
+          "id": "tt-item-1",
+          "title": "Resilient APIs at the Edge",
+          "notes": "",
+          "comments": [],
+          "status": "done",
+          "importance": "must",
+          "order": 0,
+          "slides": [
+            {
+              "title": "Title",
+              "duration": 25,
+              "bg": "#082f49",
+              "bgGradient": "linear-gradient(135deg, #082f49 0%, #0e7490 50%, #155e75 80%, #164e63 100%)",
+              "color": "#ecfeff",
+              "accent": "#22d3ee",
+              "padding": "48px 80px",
+              "align": "center",
+              "verticalAlign": "center",
+              "blocks": [
+                {
+                  "type": "badge",
+                  "text": "TECHCONF 2026",
+                  "icon": "Mic",
+                  "color": "#083344",
+                  "bg": "#22d3ee"
+                },
+                {
+                  "type": "spacer",
+                  "h": 10
+                },
+                {
+                  "type": "heading",
+                  "text": "Building Resilient APIs with Edge Computing",
+                  "size": "4xl",
+                  "align": "center",
+                  "color": "#ecfeff",
+                  "maxWidth": "660px"
+                },
+                {
+                  "type": "text",
+                  "text": "Sarah Chen — Principal Engineer, Cloudfront Systems",
+                  "size": "xl",
+                  "color": "#a5f3fc",
+                  "align": "center"
+                },
+                {
+                  "type": "spacer",
+                  "h": 22
+                },
+                {
+                  "type": "icon-row",
+                  "cols": 3,
+                  "gap": 40,
+                  "iconColor": "#67e8f9",
+                  "iconBg": "#22d3ee38",
+                  "iconShape": "circle",
+                  "titleSize": "md",
+                  "textSize": "sm",
+                  "textColor": "#a5f3fc",
+                  "style": {
+                    "backgroundColor": "rgba(8,47,73,0.5)",
+                    "borderRadius": "16px",
+                    "borderWidth": "1px",
+                    "borderStyle": "solid",
+                    "borderColor": "rgba(103,232,249,0.28)",
+                    "padding": "16px 32px",
+                    "textAlign": "left"
+                  },
+                  "items": [
+                    {
+                      "icon": "Clock",
+                      "title": "45 minutes",
+                      "text": "Session length"
+                    },
+                    {
+                      "icon": "BarChart3",
+                      "title": "Intermediate",
+                      "text": "Audience level"
+                    },
+                    {
+                      "icon": "Terminal",
+                      "title": "Live demo",
+                      "text": "On real traffic"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "title": "Edge-first request architecture",
+              "duration": 90,
+              "bg": "#071824",
+              "bgGradient": "linear-gradient(160deg, #071824 0%, #0b2536 60%, #0e3247 100%)",
+              "color": "#ecfeff",
+              "accent": "#22d3ee",
+              "padding": "40px 56px",
+              "align": "left",
+              "verticalAlign": "center",
+              "blocks": [
+                {
+                  "type": "heading",
+                  "text": "Edge-first request architecture",
+                  "size": "2xl",
+                  "icon": "Network",
+                  "iconColor": "#22d3ee"
+                },
+                {
+                  "type": "spacer",
+                  "h": 1
+                },
+                {
+                  "type": "svg",
+                  "maxWidth": "100%",
+                  "align": "center",
+                  "markup": "<svg viewBox='0 8 848 276' xmlns='http://www.w3.org/2000/svg'><path d='M388 204 V246 Q388 262 372 262 H116 Q100 262 100 246 V185' fill='none' stroke='#34d399' stroke-width='2.5' stroke-linecap='round'/><path d='M91 196 L100 183 L109 196' fill='none' stroke='#34d399' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'/><path d='M748 180 V246 Q748 262 732 262 H476 Q460 262 460 246 V209' fill='none' stroke='{{muted}}' stroke-opacity='0.6' stroke-width='2' stroke-dasharray='6 7' stroke-linecap='round'/><path d='M451 220 L460 207 L469 220' fill='none' stroke='{{muted}}' stroke-opacity='0.6' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/><rect x='154' y='244' width='180' height='36' rx='18' fill='{{bg}}' stroke='#34d399' stroke-width='1.5'/><text x='244' y='267' text-anchor='middle' fill='#34d399' font-size='14' font-weight='700' font-family='Space Mono, monospace'>cache hit · 47 ms</text><rect x='506' y='244' width='196' height='36' rx='18' fill='{{bg}}' stroke='{{muted}}' stroke-opacity='0.6' stroke-width='1.5'/><text x='604' y='267' text-anchor='middle' fill='{{color}}' fill-opacity='0.8' font-size='14' font-family='Space Mono, monospace'>cache miss · 820 ms</text><line x1='202' y1='108' x2='304' y2='108' stroke='{{accent}}' stroke-width='2.5' stroke-linecap='round'/><path d='M294 100 L306 108 L294 116' fill='none' stroke='{{accent}}' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'/><text x='254' y='92' text-anchor='middle' fill='{{color}}' font-size='14' font-family='Space Mono, monospace'>request</text><line x1='542' y1='108' x2='644' y2='108' stroke='{{muted}}' stroke-opacity='0.6' stroke-width='2' stroke-dasharray='6 7' stroke-linecap='round'/><path d='M634 100 L646 108 L634 116' fill='none' stroke='{{muted}}' stroke-opacity='0.6' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/><text x='594' y='92' text-anchor='middle' fill='{{color}}' fill-opacity='0.8' font-size='14' font-family='Space Mono, monospace'>on miss</text><rect x='8' y='40' width='184' height='136' rx='16' fill='{{color}}' fill-opacity='0.04' stroke='{{muted}}' stroke-opacity='0.6' stroke-width='1.5'/><circle cx='100' cy='70' r='9' fill='none' stroke='{{accent}}' stroke-width='2.2'/><path d='M82 100 a18 16 0 0 1 36 0' fill='none' stroke='{{accent}}' stroke-width='2.2' stroke-linecap='round'/><text x='100' y='134' text-anchor='middle' fill='{{color}}' font-size='21' font-weight='700' font-family='Sora, sans-serif'>User</text><text x='100' y='157' text-anchor='middle' fill='{{color}}' fill-opacity='0.72' font-size='14.5' font-family='DM Sans, sans-serif'>Browser or app</text><rect x='316' y='16' width='216' height='184' rx='20' fill='{{accent}}' fill-opacity='0.12' stroke='{{accent}}' stroke-width='2.5'/><path d='M428 36 L412 56 H424 L420 70 L436 50 H424 Z' fill='{{accent}}' fill-opacity='0.25' stroke='{{accent}}' stroke-width='2.2' stroke-linejoin='round'/><text x='424' y='108' text-anchor='middle' fill='{{color}}' font-size='23' font-weight='700' font-family='Sora, sans-serif'>Edge node</text><rect x='354' y='128' width='140' height='42' rx='21' fill='{{accent}}'/><text x='424' y='155' text-anchor='middle' fill='{{bg}}' font-size='16' font-weight='700' font-family='Sora, sans-serif'>KV cache</text><rect x='656' y='40' width='184' height='136' rx='16' fill='{{color}}' fill-opacity='0.04' stroke='{{muted}}' stroke-opacity='0.6' stroke-width='1.5'/><rect x='732' y='58' width='32' height='14' rx='4' fill='none' stroke='{{accent}}' stroke-width='2.2'/><rect x='732' y='78' width='32' height='14' rx='4' fill='none' stroke='{{accent}}' stroke-width='2.2'/><circle cx='740' cy='65' r='1.8' fill='{{accent}}'/><circle cx='740' cy='85' r='1.8' fill='{{accent}}'/><text x='748' y='134' text-anchor='middle' fill='{{color}}' font-size='21' font-weight='700' font-family='Sora, sans-serif'>Origin</text><text x='748' y='157' text-anchor='middle' fill='{{color}}' fill-opacity='0.72' font-size='14.5' font-family='DM Sans, sans-serif'>API and database</text></svg>"
+                },
+                {
+                  "type": "spacer",
+                  "h": 1
+                },
+                {
+                  "type": "callout",
+                  "text": "Cache hits skip the origin: P99 latency falls from **820 ms** to **47 ms**.",
+                  "icon": "Zap",
+                  "bg": "rgba(34,211,238,0.10)",
+                  "border": "#22d3ee",
+                  "color": "#ecfeff",
+                  "size": "lg"
+                }
+              ],
+              "mutedColor": "#8fbccd"
+            },
+            {
+              "title": "Edge function handler",
+              "duration": 120,
+              "bg": "#071824",
+              "bgGradient": "linear-gradient(160deg, #071824 0%, #0b2536 60%, #0e3247 100%)",
+              "color": "#ecfeff",
+              "accent": "#22d3ee",
+              "padding": "40px 56px",
+              "align": "left",
+              "verticalAlign": "center",
+              "blocks": [
+                {
+                  "type": "heading",
+                  "text": "Edge function handler",
+                  "size": "2xl",
+                  "icon": "Code2",
+                  "iconColor": "#22d3ee"
+                },
+                {
+                  "type": "spacer",
+                  "h": 1
+                },
+                {
+                  "type": "code",
+                  "label": "TYPESCRIPT",
+                  "size": "md",
+                  "bg": "rgba(2,12,20,0.6)",
+                  "color": "#d5f3fa",
+                  "text": "export default {\n  async fetch(req: Request, env: Env) {\n    const key = new URL(req.url).pathname;\n    const hit = await env.CACHE.get(key);\n    if (hit) return new Response(hit, { headers: { \"x-cache\": \"HIT\" } });\n    const body = await (await fetch(env.ORIGIN + key)).text();\n    await env.CACHE.put(key, body, { expirationTtl: 60 });\n    return new Response(body, { headers: { \"x-cache\": \"MISS\" } });\n  },\n};"
+                },
+                {
+                  "type": "text",
+                  "text": "One handler, deployed to 280+ locations. The origin only sees cache misses.",
+                  "size": "md",
+                  "color": "#a8d5e2"
+                }
+              ],
+              "mutedColor": "#8fbccd"
+            },
+            {
+              "title": "Performance benchmarks",
+              "duration": 75,
+              "bg": "#071824",
+              "bgGradient": "linear-gradient(160deg, #071824 0%, #0b2536 60%, #0e3247 100%)",
+              "color": "#ecfeff",
+              "accent": "#22d3ee",
+              "padding": "40px 56px",
+              "align": "left",
+              "verticalAlign": "center",
+              "blocks": [
+                {
+                  "type": "heading",
+                  "text": "Performance benchmarks",
+                  "size": "2xl",
+                  "icon": "Gauge",
+                  "iconColor": "#22d3ee"
+                },
+                {
+                  "type": "table",
+                  "headers": [
+                    "Metric",
+                    "Origin only",
+                    "Edge-first",
+                    "Improvement"
+                  ],
+                  "rows": [
+                    [
+                      "P99 latency",
+                      "820 ms",
+                      "47 ms",
+                      "**94% faster**"
+                    ],
+                    [
+                      "Throughput",
+                      "1.2K rps",
+                      "18K rps",
+                      "**15x higher**"
+                    ],
+                    [
+                      "Error rate",
+                      "0.8%",
+                      "0.02%",
+                      "**40x lower**"
+                    ]
+                  ],
+                  "striped": true,
+                  "size": "sm",
+                  "headerBg": "rgba(34,211,238,0.14)",
+                  "headerColor": "#67e8f9",
+                  "cellColor": "#d3ecf3",
+                  "borderColor": "rgba(103,232,249,0.2)"
+                },
+                {
+                  "type": "number-row",
+                  "size": "4xl",
+                  "bordered": true,
+                  "items": [
+                    {
+                      "value": "47 ms",
+                      "label": "P99 latency",
+                      "icon": "Timer",
+                      "color": "#22d3ee"
+                    },
+                    {
+                      "value": "99.98%",
+                      "label": "Availability",
+                      "icon": "ShieldCheck",
+                      "color": "#34d399"
+                    },
+                    {
+                      "value": "280+",
+                      "label": "Edge locations",
+                      "icon": "Globe",
+                      "color": "#a78bfa"
+                    }
+                  ],
+                  "style": {
+                    "borderColor": "rgba(103,232,249,0.2)",
+                    "backgroundColor": "rgba(34,211,238,0.05)",
+                    "padding": "4px 0",
+                    "boxSizing": "border-box"
+                  },
+                  "compact": true
+                }
+              ],
+              "mutedColor": "#8fbccd",
+              "gap": 20
+            }
+          ],
+          "createdAt": "2026-11-11T00:00:00.000Z"
+        }
+      ]
+    }
+  ],
+  "guidelines": ""
+}

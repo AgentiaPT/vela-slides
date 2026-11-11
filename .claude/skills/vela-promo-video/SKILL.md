@@ -12,7 +12,7 @@ repository at build time. One storyboard gives three outputs.
 
 | Output | Command mode | Use |
 |---|---|---|
-| Low-res preview (960×540, 15 fps) | `--preview` | Review. Always first. |
+| Low-res preview (960×540, 15 fps) | `--preview` | Review. Always first. About 4 minutes. |
 | Final video (1080p, motion blur) | default + `--blur 4` | LinkedIn and other social posts |
 | README loop (GIF + small MP4, no sound) | `--gif` | GitHub README |
 | Interactive tour (one `.html` file) | `--html` | Browser: play, pause, go chapter by chapter |
@@ -52,7 +52,16 @@ priorities: external agent integration (Claude Code + the `vela` CLI + live
 reload), the skill, the JSON deck format, story mode, search, edit while
 presenting. Do not feature the built-in Vera chat.
 
-### 2. Get the footage
+### 2. Make the slides gorgeous
+
+The video shows the showcase decks in `tools/vela-dev/promo/decks/`, not the
+example decks. The owner's bar: each slide balanced, one focal point, readable,
+no clipping. For a new or changed slide: edit the deck, run `shoot-deck.js`,
+read `sheet.jpg`, fix, shoot again. Give one deck to one subagent when you make
+many slides. Keep the natural content height below about 430px or the app
+scales the slide down. See "Showcase decks" in the promo README.
+
+### 3. Get the footage
 
 `capture-assets.js` drives the offline app and saves stills. Add a new block
 in `extras()` for a new feature. Use `--only extras` to run that part only.
@@ -60,10 +69,14 @@ Use the `playwright-cli-setup` skill first if you must find a selector or a
 key. Save file names in `manifest.json`; the storyboard reads them from
 `D.manifest`.
 
-### 3. Edit the storyboard
+### 4. Edit the storyboard
 
 `comp/storyboard.js`. One `tl.scene(name, start, end, build)` for each scene.
-Times are in beats: `B(g)` is the time of beat `g`. Keep cuts on beats. Add a
+Times are in beats: `B(g)` is the time of beat `g`. Keep cuts on beats.
+**Reading time:** each line of text stays on screen for 3 seconds or more
+(about 7 beats); only single big words can be shorter. If the content does not
+fit, add a track segment in `music.segments` (the owner accepts up to 2 min 30 s)
+or remove a scene. Do not shorten the hold. Add a
 `chapter(g, label)` line for each new section (the HTML tour uses it).
 Helpers: `slam` (big word), `type` (typed text), `count` (number roll),
 `reel` (stills in sequence), `feature` (one feature bar), `crop` (a block cut
@@ -72,7 +85,7 @@ out of a real slide). Engine API: top of `comp/engine.js`.
 Text with a gradient class must not have transformed child spans (Chrome
 paints it wrong). Put the gradient class on each span.
 
-### 4. Build
+### 5. Build
 
 ```bash
 W=/tmp/vela-promo        # work folder, outside git
@@ -88,7 +101,7 @@ node tools/vela-dev/promo/render.js --work $W --fonts $W/fonts --audio track.mp3
 Fonts and soundtrack are not in the repository. See
 `tools/vela-dev/promo/README.md` for the font command and the beat grid.
 
-### 5. Verify before you send
+### 6. Verify before you send
 
 - `ffprobe`: size, frame rate, duration, audio stream.
 - Loudness near −14 LUFS: `ffmpeg -i out.mp4 -af ebur128 -f null -`.
@@ -98,7 +111,7 @@ Fonts and soundtrack are not in the repository. See
   console has no errors and that the page does not scroll sideways at 390 px.
 - README loop: keep the GIF under 10 MB (`readme` block in the config).
 
-### 6. Report
+### 7. Report
 
 Tell the owner: what changed, which screens are simulated, which claims rest
 on the owner's word, and what you could not verify (for example, you cannot
@@ -110,11 +123,13 @@ hear the soundtrack).
 |---|---|
 | `tools/vela-dev/promo/render.js` | All build modes; facts from the repository |
 | `tools/vela-dev/promo/capture-assets.js` | Real footage and `manifest.json` |
+| `tools/vela-dev/promo/decks/*.vela` | Showcase decks (the slides in the video) |
+| `tools/vela-dev/promo/shoot-deck.js` | Stills and a contact sheet of one deck, for design review |
 | `tools/vela-dev/promo/comp/storyboard.js` | Scenes, copy, chapters |
 | `tools/vela-dev/promo/comp/engine.js` | Deterministic timeline |
 | `tools/vela-dev/promo/comp/player.js` | Player for the HTML tour |
 | `tools/vela-dev/promo/comp/index.html` | Stage and styles |
-| `tools/vela-dev/promo/promo.config.json` | Beat grid, claims, README loop ranges |
+| `tools/vela-dev/promo/promo.config.json` | Beat grid and segments, claims, footage choices, README loop ranges |
 
 Do not commit the soundtrack, the fonts, the work folder or the rendered
 files unless the owner asks. Dev-only: no `VELA_VERSION` bump is necessary.

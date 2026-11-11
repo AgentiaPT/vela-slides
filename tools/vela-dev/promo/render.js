@@ -60,7 +60,7 @@ function buildData() {
   const demo = JSON.parse(read('examples/vela-demo.vela'));
   const logo = need(demo.lanes[0].items[0].slides[0].blocks.find(b => b.type === 'svg'), 'logo svg').markup;
   // Deck formats: sizes measured now with the real CLI, on one example deck.
-  const deckName = 'startup-pitch.vela', deckPath = path.join(REPO, 'examples', deckName), tmp = path.join(WORK, 'tmp');
+  const deckName = 'startup-pitch.vela', deckPath = path.join(__dirname, 'decks', deckName), tmp = path.join(WORK, 'tmp');
   fs.mkdirSync(tmp, { recursive: true });
   vela(['deck', 'compact', deckPath, path.join(tmp, 'c.vela')]); vela(['deck', 'turbo', deckPath, path.join(tmp, 't.vela')]);
   const pitch = JSON.parse(fs.readFileSync(deckPath, 'utf8'));
@@ -71,7 +71,7 @@ function buildData() {
   const skillDir = path.join(REPO, 'skills', 'vela-slides');
   const skillName = need(/^name:\s*(\S+)/m.exec(fs.readFileSync(path.join(skillDir, 'SKILL.md'), 'utf8')), 'skill name')[1];
   const ls = d => fs.readdirSync(path.join(skillDir, d)).filter(f => !f.startsWith('_') && !f.startsWith('.')).sort();
-  const tree = [skillName + '/', '├─ SKILL.md', '├─ app/ vela.jsx', ...ls('scripts').filter(f => f.endsWith('.py')).map(f => '├─ scripts/ ' + f), ...ls('references').map(f => '├─ references/ ' + f), '└─ examples/'];
+  const tree = [skillName + '/', '├─ SKILL.md', '├─ app/vela.jsx', `├─ scripts/  ${ls('scripts').filter(f => f.endsWith('.py')).length} Python tools`, `├─ references/  ${ls('references').length} guides`, '└─ examples/'];
   let fontCss = '';
   if (FONTS) for (const [family, pkg, slug, weights] of [['Sora', 'fontsource-sora', 'sora', [400, 600, 700, 800]], ['DM Sans', 'fontsource-dm-sans', 'dm-sans', [400, 500, 700]], ['Space Mono', 'fontsource-space-mono', 'space-mono', [400, 700]]]) {
     for (const w of weights) { const f = path.join(FONTS, pkg, 'files', `${slug}-latin-${w}-normal.woff2`);
@@ -92,20 +92,24 @@ function buildThumbs() {
     ff(['-i', path.join(src, f), '-vf', 'scale=480:270:flags=lanczos', '-q:v', '3', path.join(dst, f)]);
 }
 
-// ── 3. audio: N passes of the track, each one starts on the beat grid ─────
+// ── 3. audio: the track plays in segments; each one starts on the beat grid ─
 function buildAudio(duration) {
   const track = opt('audio');
   if (!track) return null;
-  const m = CFG.music, beat = 60 / m.bpm, out = path.join(WORK, 'mix.wav');
-  const ins = [], parts = [];
-  for (let p = 0; p < m.passes; p++) { ins.push('-i', path.resolve(track)); const ms = Math.round(p * m.passBeats * beat * 1000);
-    parts.push(`[${p}:a]aformat=sample_rates=48000:channel_layouts=stereo,adelay=${ms}|${ms}[p${p}]`); }
+  const m = CFG.music, beat = 60 / m.bpm, out = path.join(WORK, 'mix.wav'), pre = 0.03;
+  const ins = [], parts = []; let g0 = 0, lastHit = null;
+  m.segments.forEach(([from, to], i) => {
+    ins.push('-i', path.resolve(track));
+    // Segment i: track beat `from` lands on global beat g0. A whole pass (from 0) starts at its file start.
+    const cut = from ? m.phase + from * beat - pre : 0, at = Math.round((from ? m.phase + g0 * beat - pre : g0 * beat) * 1000);
+    parts.push(`[${i}:a]aformat=sample_rates=48000:channel_layouts=stereo,atrim=start=${cut.toFixed(3)},asetpts=PTS-STARTPTS${from ? ',afade=t=in:d=0.02' : ''},adelay=${at}|${at}[p${i}]`);
+    g0 += to - from; lastHit = { time: m.phase + g0 * beat, src: m.phase + to * beat };
+  });
   // Echo of the last hit, so the end does not stop dead.
-  const lastStart = (m.passes - 1) * m.passBeats * beat, hit = m.phase + m.passBeats * beat;
-  ins.push('-i', path.resolve(track));
-  const ems = Math.round((lastStart + hit - 0.04) * 1000);
-  parts.push(`[${m.passes}:a]aformat=sample_rates=48000:channel_layouts=stereo,atrim=start=${(hit - 0.04).toFixed(3)}:end=${(hit + 0.4).toFixed(3)},asetpts=PTS-STARTPTS,apad=pad_dur=3,aecho=0.6:0.7:170|340|510|680:0.42|0.27|0.16|0.09,volume=0.9,adelay=${ems}|${ems}[tail]`);
-  const mix = parts.join(';') + ';' + [...Array(m.passes).keys()].map(p => `[p${p}]`).join('') + `[tail]amix=inputs=${m.passes + 1}:normalize=0:duration=longest,alimiter=limit=0.9:level=disabled,atrim=end=${duration.toFixed(3)},afade=t=out:st=${(duration - 0.9).toFixed(3)}:d=0.9[a]`;
+  const n = m.segments.length; ins.push('-i', path.resolve(track));
+  const ems = Math.round((lastHit.time - 0.04) * 1000);
+  parts.push(`[${n}:a]aformat=sample_rates=48000:channel_layouts=stereo,atrim=start=${(lastHit.src - 0.04).toFixed(3)}:end=${(lastHit.src + 0.4).toFixed(3)},asetpts=PTS-STARTPTS,apad=pad_dur=3,aecho=0.6:0.7:170|340|510|680:0.42|0.27|0.16|0.09,volume=0.9,adelay=${ems}|${ems}[tail]`);
+  const mix = parts.join(';') + ';' + [...Array(n).keys()].map(i => `[p${i}]`).join('') + `[tail]amix=inputs=${n + 1}:normalize=0:duration=longest,alimiter=limit=0.9:level=disabled,atrim=end=${duration.toFixed(3)},afade=t=out:st=${(duration - 0.9).toFixed(3)}:d=0.9[a]`;
   ff([...ins, '-filter_complex', mix, '-map', '[a]', '-ar', '48000', out]);
   return out;
 }

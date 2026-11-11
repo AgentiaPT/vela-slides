@@ -1,0 +1,936 @@
+{
+ "deckTitle": "Vela Slides — Tour",
+ "lanes": [
+  {
+   "id": "tour-a",
+   "title": "Product Tour",
+   "collapsed": false,
+   "items": [
+    {
+     "id": "tour-a-1",
+     "title": "What Vela is",
+     "notes": "",
+     "status": "done",
+     "importance": "must",
+     "order": 0,
+     "slides": [
+      {
+       "title": "Vela Slides",
+       "duration": 20,
+       "bg": "#0f172a",
+       "bgGradient": "linear-gradient(140deg, #0f172a 0%, #1e1b4b 40%, #312e81 70%, #1e3a5f 100%)",
+       "color": "#f1f5f9",
+       "accent": "#818cf8",
+       "padding": "48px 80px",
+       "align": "left",
+       "verticalAlign": "center",
+       "blocks": [
+        {
+         "type": "svg",
+         "maxWidth": "84px",
+         "align": "center",
+         "markup": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 48 48\" width=\"84\" height=\"84\"><path d=\"M24 2 L24 44\" stroke=\"{{accent}}\" stroke-width=\"2\" stroke-linecap=\"round\"/><path d=\"M24 4 Q40 14 30 38 L24 38 Z\" fill=\"{{accent}}\" opacity=\"0.85\"/><path d=\"M24 10 Q10 18 18 38 L24 38 Z\" fill=\"{{accent}}\" opacity=\"0.4\"/><path d=\"M16 46 L32 46\" stroke=\"{{accent}}\" stroke-width=\"2\" stroke-linecap=\"round\"/></svg>"
+        },
+        {
+         "type": "spacer",
+         "h": 4
+        },
+        {
+         "type": "heading",
+         "text": "Vela Slides",
+         "size": "4xl",
+         "align": "center",
+         "color": "#ffffff"
+        },
+        {
+         "type": "text",
+         "text": "Agent-native presentations",
+         "size": "xl",
+         "align": "center",
+         "color": "#c7d2fe"
+        },
+        {
+         "type": "spacer",
+         "h": 14
+        },
+        {
+         "type": "text",
+         "text": "Describe it. Present it.",
+         "size": "lg",
+         "align": "center",
+         "color": "#a5b0c5"
+        },
+        {
+         "type": "spacer",
+         "h": 10
+        },
+        {
+         "type": "badge",
+         "text": "Ships as a skill",
+         "icon": "Sparkles",
+         "color": "#c7d2fe",
+         "bg": "rgba(129,140,248,0.16)",
+         "border": "rgba(129,140,248,0.45)",
+         "style": {
+          "display": "flex",
+          "width": "fit-content",
+          "margin": "0 auto"
+         }
+        }
+       ]
+      },
+      {
+       "title": "You describe. Your agent builds.",
+       "duration": 60,
+       "bg": "#0f172a",
+       "bgGradient": "linear-gradient(160deg, #0b1023 0%, #141a3c 60%, #1b1f4b 100%)",
+       "color": "#f1f5f9",
+       "accent": "#818cf8",
+       "padding": "40px 56px",
+       "align": "left",
+       "blocks": [
+        {
+         "type": "heading",
+         "text": "You describe. Your agent builds.",
+         "size": "2xl",
+         "icon": "MessageSquare",
+         "iconColor": "#818cf8"
+        },
+        {
+         "type": "spacer",
+         "h": 34
+        },
+        {
+         "type": "flow",
+         "labelSize": "lg",
+         "sublabelSize": "sm",
+         "arrowColor": "#818cf8",
+         "iconBg": "rgba(129,140,248,0.16)",
+         "sublabelColor": "#a5b0c5",
+         "style": {
+          "padding": "54px 16px",
+          "backgroundColor": "rgba(129,140,248,0.05)",
+          "borderRadius": 16,
+          "borderWidth": 1,
+          "borderStyle": "solid",
+          "borderColor": "rgba(129,140,248,0.22)"
+         },
+         "items": [
+          {
+           "icon": "Lightbulb",
+           "label": "Your idea",
+           "sublabel": "Plain words"
+          },
+          {
+           "icon": "Bot",
+           "label": "Agent + skill",
+           "sublabel": "Writes the deck"
+          },
+          {
+           "icon": "Braces",
+           "label": "Deck JSON",
+           "sublabel": "Structured blocks"
+          },
+          {
+           "icon": "Sparkles",
+           "label": "Vela renders",
+           "sublabel": "Designed slides"
+          },
+          {
+           "icon": "Presentation",
+           "label": "Present",
+           "sublabel": "Full screen"
+          }
+         ]
+        },
+        {
+         "type": "spacer",
+         "h": 34
+        },
+        {
+         "type": "callout",
+         "text": "The deck is plain JSON, so your agent can rewrite any slide in one prompt.",
+         "size": "lg",
+         "icon": "Zap",
+         "bg": "rgba(129,140,248,0.10)",
+         "border": "#818cf8",
+         "color": "#e2e8f0",
+         "style": {
+          "padding": "18px 22px",
+          "alignItems": "center"
+         }
+        }
+       ]
+      },
+      {
+       "title": "Vela at a glance",
+       "duration": 40,
+       "bg": "#0f172a",
+       "bgGradient": "linear-gradient(160deg, #0b1023 0%, #141a3c 60%, #1b1f4b 100%)",
+       "color": "#f1f5f9",
+       "accent": "#818cf8",
+       "padding": "40px 56px",
+       "align": "left",
+       "blocks": [
+        {
+         "type": "heading",
+         "text": "Vela at a glance",
+         "size": "2xl",
+         "icon": "Gauge",
+         "iconColor": "#818cf8"
+        },
+        {
+         "type": "spacer",
+         "h": 22
+        },
+        {
+         "type": "number-row",
+         "size": "4xl",
+         "bordered": true,
+         "items": [
+          {
+           "value": "27",
+           "label": "Block types",
+           "icon": "Blocks",
+           "color": "#818cf8"
+          },
+          {
+           "value": "3",
+           "label": "Deck formats",
+           "icon": "Layers",
+           "color": "#22d3ee"
+          },
+          {
+           "value": "3",
+           "label": "Runtimes",
+           "icon": "Monitor",
+           "color": "#f472b6"
+          },
+          {
+           "value": "1,500+",
+           "label": "Automated tests",
+           "icon": "ShieldCheck",
+           "color": "#34d399"
+          }
+         ]
+        },
+        {
+         "type": "spacer",
+         "h": 22
+        },
+        {
+         "type": "quote",
+         "text": "The gap between thinking and presenting should be zero.",
+         "size": "2xl",
+         "color": "#e2e8f0"
+        }
+       ]
+      },
+      {
+       "title": "27 semantic blocks",
+       "duration": 60,
+       "bg": "#0f172a",
+       "bgGradient": "linear-gradient(160deg, #0b1023 0%, #141a3c 60%, #1b1f4b 100%)",
+       "color": "#f1f5f9",
+       "accent": "#818cf8",
+       "padding": "40px 56px",
+       "align": "left",
+       "blocks": [
+        {
+         "type": "heading",
+         "text": "27 semantic blocks",
+         "size": "2xl",
+         "icon": "Blocks",
+         "iconColor": "#818cf8"
+        },
+        {
+         "type": "spacer",
+         "h": 30
+        },
+        {
+         "type": "comparison",
+         "dividerLabel": "VS",
+         "titleSize": "xl",
+         "size": "lg",
+         "items": [
+          {
+           "title": "Text boxes",
+           "icon": "Type",
+           "color": "#f472b6",
+           "items": [
+            "Placed by hand",
+            "Break when content changes",
+            "Opaque to your agent"
+           ]
+          },
+          {
+           "title": "Semantic blocks",
+           "icon": "Blocks",
+           "color": "#34d399",
+           "items": [
+            "Named by meaning",
+            "Layout adapts to content",
+            "Easy for your agent to write"
+           ]
+          }
+         ]
+        },
+        {
+         "type": "spacer",
+         "h": 36
+        },
+        {
+         "type": "tag-group",
+         "variant": "subtle",
+         "size": "md",
+         "gap": 10,
+         "style": {
+          "justifyContent": "center",
+          "padding": "0 40px"
+         },
+         "items": [
+          {
+           "text": "flow"
+          },
+          {
+           "text": "timeline"
+          },
+          {
+           "text": "funnel"
+          },
+          {
+           "text": "cycle"
+          },
+          {
+           "text": "matrix"
+          },
+          {
+           "text": "table"
+          },
+          {
+           "text": "code"
+          },
+          {
+           "text": "metric"
+          },
+          {
+           "text": "steps"
+          },
+          {
+           "text": "checklist"
+          },
+          {
+           "text": "comparison"
+          },
+          {
+           "text": "number-row"
+          },
+          {
+           "text": "progress"
+          },
+          {
+           "text": "quote"
+          }
+         ]
+        }
+       ]
+      },
+      {
+       "title": "Structure, not decoration",
+       "duration": 60,
+       "bg": "#0f172a",
+       "bgGradient": "linear-gradient(160deg, #0b1023 0%, #141a3c 60%, #1b1f4b 100%)",
+       "color": "#f1f5f9",
+       "accent": "#818cf8",
+       "padding": "40px 56px",
+       "align": "left",
+       "blocks": [
+        {
+         "type": "heading",
+         "text": "Structure, not decoration",
+         "size": "2xl",
+         "icon": "Workflow",
+         "iconColor": "#818cf8"
+        },
+        {
+         "type": "spacer",
+         "h": 6
+        }
+       ],
+       "layout": "cols",
+       "contentFlex": 5.12,
+       "imageFlex": 3,
+       "splitGap": 36,
+       "L": [
+        {
+         "type": "funnel",
+         "style": {
+          "width": "108.6%",
+          "maxWidth": "none",
+          "margin": "7.2% -4.7% 6.7%"
+         },
+         "items": [
+          {
+           "label": "Visitors",
+           "value": "10K",
+           "color": "#818cf8"
+          },
+          {
+           "label": "Signups",
+           "value": "2.4K",
+           "color": "#22d3ee"
+          },
+          {
+           "label": "Active",
+           "value": "800",
+           "color": "#34d399"
+          },
+          {
+           "label": "Paid",
+           "value": "120",
+           "color": "#fbbf24"
+          }
+         ]
+        },
+        {
+         "type": "tag-group",
+         "variant": "subtle",
+         "size": "sm",
+         "style": {
+          "justifyContent": "center"
+         },
+         "items": [
+          {
+           "text": "funnel"
+          }
+         ]
+        }
+       ],
+       "R": [
+        {
+         "type": "cycle",
+         "style": {
+          "width": "151%",
+          "maxWidth": "none",
+          "margin": "-8.3% -25.5% -15.6%"
+         },
+         "items": [
+          {
+           "label": "Describe",
+           "color": "#818cf8"
+          },
+          {
+           "label": "Build",
+           "color": "#22d3ee"
+          },
+          {
+           "label": "Review",
+           "color": "#f472b6"
+          },
+          {
+           "label": "Refine",
+           "color": "#34d399"
+          }
+         ]
+        },
+        {
+         "type": "tag-group",
+         "variant": "subtle",
+         "size": "sm",
+         "style": {
+          "justifyContent": "center"
+         },
+         "items": [
+          {
+           "text": "cycle"
+          }
+         ]
+        }
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "tourb001",
+   "title": "Tour",
+   "collapsed": false,
+   "items": [
+    {
+     "id": "tourb101",
+     "title": "Present, build, export",
+     "notes": "",
+     "comments": [],
+     "status": "done",
+     "importance": "should",
+     "order": 0,
+     "slides": [
+      {
+       "title": "Present like a pro",
+       "duration": 45,
+       "bg": "#0f172a",
+       "bgGradient": "linear-gradient(160deg, #0b1023 0%, #141a3c 60%, #1b1f4b 100%)",
+       "color": "#f1f5f9",
+       "accent": "#818cf8",
+       "padding": "40px 56px",
+       "align": "left",
+       "gap": 12,
+       "blocks": [
+        {
+         "type": "heading",
+         "text": "Present like a pro",
+         "size": "2xl",
+         "icon": "Presentation",
+         "iconColor": "#818cf8"
+        },
+        {
+         "type": "spacer",
+         "h": 28
+        },
+        {
+         "type": "icon-row",
+         "cols": 2,
+         "gap": 30,
+         "iconShape": "circle",
+         "titleSize": "xl",
+         "textSize": "lg",
+         "textColor": "#a5b4cf",
+         "items": [
+          {
+           "icon": "Maximize",
+           "title": "Fullscreen",
+           "text": "Every pixel, one key",
+           "iconColor": "#818cf8",
+           "iconBg": "#818cf822"
+          },
+          {
+           "icon": "MonitorPlay",
+           "title": "Presenter view",
+           "text": "Notes, timer, next slide",
+           "iconColor": "#22d3ee",
+           "iconBg": "#22d3ee1f"
+          },
+          {
+           "icon": "Timer",
+           "title": "Pace bar and clock",
+           "text": "End right on time",
+           "iconColor": "#fbbf24",
+           "iconBg": "#fbbf241f"
+          },
+          {
+           "icon": "Search",
+           "title": "Search · Ctrl+E",
+           "text": "Jump to any slide",
+           "iconColor": "#818cf8",
+           "iconBg": "#818cf822"
+          },
+          {
+           "icon": "Images",
+           "title": "Story mode",
+           "text": "One image at a time",
+           "iconColor": "#f472b6",
+           "iconBg": "#f472b61f"
+          },
+          {
+           "icon": "Pencil",
+           "title": "Edit live · Shift+E",
+           "text": "Fix it mid-talk",
+           "iconColor": "#34d399",
+           "iconBg": "#34d3991f"
+          }
+         ]
+        },
+        {
+         "type": "spacer",
+         "h": 28
+        },
+        {
+         "type": "callout",
+         "text": "No menus on stage. Every move is one key away.",
+         "icon": "Keyboard",
+         "bg": "rgba(129,140,248,0.12)",
+         "border": "#818cf8",
+         "color": "#e2e8f0"
+        }
+       ]
+      },
+      {
+       "title": "A deck is JSON",
+       "duration": 60,
+       "bg": "#0f172a",
+       "bgGradient": "linear-gradient(160deg, #0b1023 0%, #141a3c 60%, #1b1f4b 100%)",
+       "color": "#f1f5f9",
+       "accent": "#818cf8",
+       "padding": "40px 56px",
+       "align": "left",
+       "gap": 12,
+       "blocks": [
+        {
+         "type": "heading",
+         "text": "A deck is JSON",
+         "size": "2xl",
+         "icon": "Braces",
+         "iconColor": "#818cf8"
+        },
+        {
+         "type": "spacer",
+         "h": 6
+        },
+        {
+         "type": "code",
+         "label": "one slide",
+         "size": "sm",
+         "bg": "rgba(2,6,23,0.55)",
+         "color": "#e2e8f0",
+         "text": "{\n  \"bg\": \"#0f172a\",\n  \"blocks\": [\n    { \"type\": \"heading\", \"text\": \"Ship in minutes\", \"size\": \"2xl\" },\n    { \"type\": \"number-row\", \"items\": [{ \"value\": \"27\", \"label\": \"Block types\" }] }\n  ]\n}",
+         "style": {
+          "borderColor": "#2a3158"
+         }
+        },
+        {
+         "type": "spacer",
+         "h": 6
+        },
+        {
+         "type": "table",
+         "headers": [
+          "Format",
+          "Written as",
+          "Size"
+         ],
+         "rows": [
+          [
+           "Full",
+           "Named keys",
+           "Baseline"
+          ],
+          [
+           "Compact",
+           "Short keys",
+           "About 32% smaller"
+          ],
+          [
+           "Turbo",
+           "Positional arrays",
+           "About 47% smaller"
+          ]
+         ],
+         "striped": true,
+         "headerBg": "rgba(129,140,248,0.16)",
+         "headerColor": "#c7d2fe",
+         "cellColor": "#cbd5e1",
+         "borderColor": "#2a3158",
+         "size": "sm"
+        }
+       ]
+      },
+      {
+       "title": "Your agent drives it",
+       "duration": 60,
+       "bg": "#0f172a",
+       "bgGradient": "linear-gradient(160deg, #0b1023 0%, #141a3c 60%, #1b1f4b 100%)",
+       "color": "#f1f5f9",
+       "accent": "#818cf8",
+       "padding": "40px 56px",
+       "align": "left",
+       "gap": 12,
+       "blocks": [
+        {
+         "type": "heading",
+         "text": "Your agent drives it",
+         "size": "2xl",
+         "icon": "Terminal",
+         "iconColor": "#818cf8"
+        },
+        {
+         "type": "spacer",
+         "h": 6
+        },
+        {
+         "type": "steps",
+         "titleSize": "lg",
+         "textSize": "md",
+         "numberColor": "#818cf8",
+         "lineColor": "#818cf855",
+         "titleColor": "#f1f5f9",
+         "textColor": "#a5b4fc",
+         "items": [
+          {
+           "title": "Edit",
+           "text": "vela slide edit deck.vela 4 block.0.text \"New title\""
+          },
+          {
+           "title": "Check",
+           "text": "vela deck validate deck.vela"
+          },
+          {
+           "title": "Ship",
+           "text": "vela deck ship deck.vela"
+          }
+         ],
+         "style": {
+          "backgroundColor": "rgba(2,6,23,0.45)",
+          "padding": "14px 24px",
+          "borderRadius": "12px",
+          "borderLeft": "3px solid #818cf8"
+         }
+        },
+        {
+         "type": "spacer",
+         "h": 4
+        },
+        {
+         "type": "checklist",
+         "size": "md",
+         "showLabels": true,
+         "style": {
+          "display": "grid",
+          "gridTemplateColumns": "repeat(auto-fit, minmax(300px, 1fr))",
+          "gap": 12
+         },
+         "items": [
+          {
+           "text": "Deck validated",
+           "status": "done"
+          },
+          {
+           "text": "Slide 4 updated",
+           "status": "done"
+          },
+          {
+           "text": "Browser reloaded",
+           "status": "done"
+          },
+          {
+           "text": "Ready to present",
+           "status": "partial"
+          }
+         ]
+        }
+       ]
+      },
+      {
+       "title": "Export anywhere",
+       "duration": 50,
+       "bg": "#0f172a",
+       "bgGradient": "linear-gradient(160deg, #0b1023 0%, #141a3c 60%, #1b1f4b 100%)",
+       "color": "#f1f5f9",
+       "accent": "#818cf8",
+       "padding": "40px 56px",
+       "align": "left",
+       "gap": 12,
+       "blocks": [
+        {
+         "type": "heading",
+         "text": "Export anywhere",
+         "size": "2xl",
+         "icon": "Share2",
+         "iconColor": "#818cf8"
+        },
+        {
+         "type": "spacer",
+         "h": 32
+        },
+        {
+         "type": "timeline",
+         "direction": "horizontal",
+         "titleSize": "xl",
+         "lineColor": "#818cf855",
+         "dotColor": "#818cf8",
+         "titleColor": "#f1f5f9",
+         "textColor": "#a5b4cf",
+         "items": [
+          {
+           "title": "Describe",
+           "text": "Say the idea"
+          },
+          {
+           "title": "Generate",
+           "text": "Agent writes JSON"
+          },
+          {
+           "title": "Edit",
+           "text": "Chat or click"
+          },
+          {
+           "title": "Present",
+           "text": "Own the room"
+          },
+          {
+           "title": "Export",
+           "text": "Four formats"
+          }
+         ]
+        },
+        {
+         "type": "spacer",
+         "h": 34
+        },
+        {
+         "type": "grid",
+         "cols": 2,
+         "gap": 18,
+         "items": [
+          {
+           "direction": "row",
+           "blocks": [
+            {
+             "type": "icon-row",
+             "titleSize": "lg",
+             "textSize": "md",
+             "textColor": "#a5b4cf",
+             "items": [
+              {
+               "icon": "Presentation",
+               "title": "Editable PowerPoint",
+               "text": ".pptx with real text",
+               "iconColor": "#fbbf24",
+               "iconBg": "#fbbf241f"
+              }
+             ]
+            }
+           ],
+           "style": {
+            "padding": "26px 24px",
+            "backgroundColor": "rgba(255,255,255,0.045)",
+            "borderRadius": "12px",
+            "borderLeft": "3px solid #fbbf24"
+           }
+          },
+          {
+           "direction": "row",
+           "blocks": [
+            {
+             "type": "icon-row",
+             "titleSize": "lg",
+             "textSize": "md",
+             "textColor": "#a5b4cf",
+             "items": [
+              {
+               "icon": "FileText",
+               "title": "Vector PDF",
+               "text": "Sharp at any zoom",
+               "iconColor": "#f472b6",
+               "iconBg": "#f472b61f"
+              }
+             ]
+            }
+           ],
+           "style": {
+            "padding": "26px 24px",
+            "backgroundColor": "rgba(255,255,255,0.045)",
+            "borderRadius": "12px",
+            "borderLeft": "3px solid #f472b6"
+           }
+          },
+          {
+           "direction": "row",
+           "blocks": [
+            {
+             "type": "icon-row",
+             "titleSize": "lg",
+             "textSize": "md",
+             "textColor": "#a5b4cf",
+             "items": [
+              {
+               "icon": "Hash",
+               "title": "Markdown",
+               "text": "Plain, portable text",
+               "iconColor": "#22d3ee",
+               "iconBg": "#22d3ee1f"
+              }
+             ]
+            }
+           ],
+           "style": {
+            "padding": "26px 24px",
+            "backgroundColor": "rgba(255,255,255,0.045)",
+            "borderRadius": "12px",
+            "borderLeft": "3px solid #22d3ee"
+           }
+          },
+          {
+           "direction": "row",
+           "blocks": [
+            {
+             "type": "icon-row",
+             "titleSize": "lg",
+             "textSize": "md",
+             "textColor": "#a5b4cf",
+             "items": [
+              {
+               "icon": "Globe",
+               "title": "Standalone HTML",
+               "text": "One file, any browser",
+               "iconColor": "#34d399",
+               "iconBg": "#34d3991f"
+              }
+             ]
+            }
+           ],
+           "style": {
+            "padding": "26px 24px",
+            "backgroundColor": "rgba(255,255,255,0.045)",
+            "borderRadius": "12px",
+            "borderLeft": "3px solid #34d399"
+           }
+          }
+         ]
+        }
+       ]
+      },
+      {
+       "title": "You think. Vela shows.",
+       "duration": 20,
+       "bg": "#0f172a",
+       "bgGradient": "linear-gradient(140deg, #0f172a 0%, #1e1b4b 40%, #312e81 70%, #1e3a5f 100%)",
+       "color": "#f1f5f9",
+       "accent": "#818cf8",
+       "padding": "48px 80px",
+       "align": "center",
+       "verticalAlign": "center",
+       "gap": 12,
+       "blocks": [
+        {
+         "type": "badge",
+         "text": "Alpha · Source-available (ELv2)",
+         "icon": "Sparkles",
+         "color": "#c7d2fe",
+         "bg": "rgba(129,140,248,0.18)",
+         "border": "#818cf866",
+         "style": {
+          "textTransform": "none",
+          "letterSpacing": "0.08em"
+         }
+        },
+        {
+         "type": "spacer",
+         "h": 18
+        },
+        {
+         "type": "heading",
+         "text": "You think. Vela shows.",
+         "size": "4xl",
+         "align": "center",
+         "color": "#ffffff"
+        },
+        {
+         "type": "spacer",
+         "h": 14
+        },
+        {
+         "type": "text",
+         "text": "github.com/AgentiaPT/vela-slides",
+         "size": "xl",
+         "align": "center",
+         "color": "#a5b4fc"
+        }
+       ]
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}

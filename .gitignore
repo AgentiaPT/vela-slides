@@ -77,6 +77,8 @@ tests/screenshots/
 
 # Working decks (user-created, not shipped)
 decks/
+# Exception: the promo showcase decks are source (see tools/vela-dev/promo/README.md)
+!tools/vela-dev/promo/decks/
 
 # Eval outputs (generated at runtime)
 eval/

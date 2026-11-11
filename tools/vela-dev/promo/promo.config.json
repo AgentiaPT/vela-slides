@@ -3,11 +3,23 @@
   "width": 1920,
   "height": 1080,
   "music": {
-    "_note": "Beat grid of the soundtrack. Measure again if the track changes (see README).",
+    "_note": "Beat grid of the soundtrack. segments: parts of the track, in beats, played one after the other (the third one starts at the first drop). Measure again if the track changes (see README).",
     "bpm": 135.56,
     "phase": 0.232,
-    "passBeats": 120,
-    "passes": 2,
+    "segments": [
+      [
+        0,
+        120
+      ],
+      [
+        0,
+        120
+      ],
+      [
+        32,
+        120
+      ]
+    ],
     "tail": 2.8
   },
   "claims": {
@@ -25,20 +37,37 @@
         44
       ],
       [
-        84,
-        96
+        88,
+        104
       ],
       [
         131,
         142
       ],
       [
-        236,
-        243
+        320,
+        331
       ]
     ],
     "width": 640,
     "fps": 10,
     "colors": 80
+  },
+  "footage": {
+    "_note": "Showcase decks in promo/decks. tour = the 10-slide deck of the build scene. phone = slides of the tour deck shown on phones. search = query typed in Present.",
+    "decks": [
+      "vela-tour",
+      "startup-pitch",
+      "course",
+      "business-report",
+      "tech-talk"
+    ],
+    "tour": "vela-tour",
+    "phone": [
+      3,
+      5,
+      9
+    ],
+    "search": "json"
   }
 }

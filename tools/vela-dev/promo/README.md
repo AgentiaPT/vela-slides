@@ -1,7 +1,7 @@
 # Vela promo video
 
 Source of the Vela Slides promo: a beat-synced video (1920×1080, 30 fps, about
-1 min 50 s), a silent loop for the README, and an interactive HTML tour. One
+2 min 29 s), a silent loop for the README, and an interactive HTML tour. One
 command builds each output again after the app changes. Dev-only: nothing
 here ships in the skill.
 
@@ -9,14 +9,15 @@ here ships in the skill.
 
 | Step | File | What it does |
 |---|---|---|
-| 1. Capture | `capture-assets.js` | Opens the real app offline and saves stills: each slide of the example decks at 2x, the editor, the gallery, the phone layout. Also saves the rectangle of each block. |
+| 1. Capture | `capture-assets.js` | Opens the real app offline and saves stills: each slide of the showcase decks at 2x, the phone layout, search, edit while presenting, story mode, and each state of the agent edit (made with the real `vela` CLI). Also saves the rectangle of each block. |
 | 2. Facts | `render.js` | Reads the numbers from the code: line count, version, block types, deck format sizes (measured with the `vela` CLI), skill name and files. |
 | 3. Composition | `comp/` | An HTML page. Each visual value is a function of the time, so each frame is reproducible. |
 | 4. Frames | `render.js` | Seeks the page frame by frame in Chromium and saves each frame. |
 | 5. Encode | `render.js` | Mixes the soundtrack and writes an H.264 + AAC `.mp4`, a GIF loop, or one standalone `.html` (with `comp/player.js`). |
 
-All footage is real: it comes from `examples/*.vela` rendered by the current
-build of the app. The numbers on screen come from the repository, not from
+All footage is real: the current build of the app renders the showcase decks
+in `decks/`. These decks are made for the promo: each slide is designed and
+checked by eye (`shoot-deck.js`). The numbers on screen come from the repository, not from
 the storyboard.
 
 ## Build
@@ -75,30 +76,56 @@ Do not add these packages to `package.json`.
 3. **Check the scene** with `--stills` before a full build.
 4. **New claim on screen:** make sure that the README or the code supports it. A claim that the code cannot prove goes in `claims` in `promo.config.json`, with its source.
 
-### Scene map (beats; the track plays two times, 120 beats each)
+### Scene map (global beats)
+
+The track plays in three segments (`music.segments` in the config): two full
+passes of 120 beats, then the track again from its first drop (88 beats).
+About 2 min 29 s. Rule: each line of text stays on screen for 3 seconds or
+more (single big words excepted).
 
 | Beats | Scene | Content |
 |---|---|---|
 | 0–8 | `open` | Hook: one word per beat |
-| 8–32 | `build` | Prompt, then 10 slides appear |
+| 8–32 | `build` | Prompt, then the 10 slides of the tour deck appear |
 | 32–49 | `logo`, `blitz`, `tagline` | Logo, one real slide per beat, tagline |
 | 49–64 | `blocks` | Block types, cut out of real slides |
-| 64–73 | `themes` | Example decks |
-| 73–80 | `json` | The deck is JSON; format sizes measured by the CLI |
-| 80–108 | `f-*` | One feature per bar: present, edit live, search, story mode, phone, export, numbers |
-| 108–120 | `fill`, `handoff` | Hand it to your agent |
+| 64–73 | `themes` | Showcase decks |
+| 73–80 | `lead` | Now run the show |
+| 80–120 | `f-*` | Two bars each: present, edit live, search, story mode, phone |
 | 120–152 | `agent` | Claude Code + the vela CLI; the browser follows (simulated terminal, real output) |
 | 152–169 | `skill` | Ships as a skill |
-| 169–184 | `twist` | Line count, written by AI, README quote |
-| 184–193 | `checks` | What keeps it in check (`claims` in the config) |
-| 193–200 | `runtimes` | Three runtimes |
-| 200–228 | `wall`, `ring`, `verbs`, `title` | 3D montage |
-| 228–end | `think`, `end` | Last line, end card |
+| 169–184 | `json` | A deck is JSON; format sizes measured by the CLI |
+| 184–193 | `export` | Export formats |
+| 193–200 | `numbers` | At a glance |
+| 200–228 | `twist` | Line count, written by AI, README quote |
+| 228–240 | `who`, `tests` | Who checks it? The test total (`claims`) |
+| 240–257 | `checks` | What keeps it in check (`claims`) |
+| 257–272 | `runtimes` | Three runtimes |
+| 272–288 | `verbs`, `think` | Recap verbs, You think. |
+| 288–320 | `wall`, `ring`, `shows`, `title`, `black` | Vela shows. 3D montage |
+| 320–end | `end` | End card |
+
+### Showcase decks
+
+`decks/*.vela` are the slides that the video shows. To change or add one:
+
+```bash
+node tools/vela-dev/promo/shoot-deck.js tools/vela-dev/promo/decks/course.vela /tmp/shots --fonts $W/fonts --portrait
+# read /tmp/shots/sheet.jpg (and sheet-p.jpg), fix the deck, shoot again
+```
+
+Quality bar: balanced, one focal point, no text below about 13px on the
+960×540 canvas, no clipping, natural content height below about 430px (above
+that the app scales the slide down and aligns it to the top). `footage` in the
+config names the decks, the tour deck, the phone slides and the search query.
+The agent scene edits slide 4 of `startup-pitch.vela`: keep `blocks[0]` a
+heading with the text `Traction` and keep `$480K` on that slide.
 
 ## Change the soundtrack
 
 `promo.config.json` holds the beat grid of the track: `bpm`, `phase` (time of
-the first beat, seconds), `passBeats` (beats in one pass), `passes` and `tail`
-(seconds of hold after the last hit). Measure a new track and update these
-values. The scene map above follows the structure of the current track
-(drops at beats 32, 80 and 112), so a different track needs new scene times.
+the first beat, seconds), `segments` (parts of the track, in beats, played one
+after the other) and `tail` (seconds of hold after the last hit). Measure a
+new track and update these values. The scene map follows the structure of the
+current track (drops at track beats 32, 80 and 112), so a different track
+needs new scene times.
