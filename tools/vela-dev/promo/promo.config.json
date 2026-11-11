@@ -1,0 +1,13 @@
+{
+  "fps": 30,
+  "width": 1920,
+  "height": 1080,
+  "music": {
+    "_note": "Beat grid of the soundtrack. Measure again if the track changes (see README).",
+    "bpm": 135.56,
+    "phase": 0.232,
+    "passBeats": 120,
+    "passes": 2,
+    "tail": 2.8
+  }
+}
