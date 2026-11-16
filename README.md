@@ -129,7 +129,7 @@ Vela ships as a **skill** — a structured prompt + reference architecture (mark
 └──────────────────────────────────────────────────┘
 ```
 
-The Vela engine is a **14,000+ line React application**. The same engine renders in three runtimes — Claude.ai's artifact sandbox, a local browser server, and the Neutralino desktop window — with Vera transparently routed to whichever AI backend is available (artifact proxy, channel bridge to a local coding-agent CLI, or the desktop's bundled adapter). No servers, no deploys, no accounts; your data stays where you put it.
+The Vela engine is a **33,000+ line React application**. The same engine renders in three runtimes — Claude.ai's artifact sandbox, a local browser server, and the Neutralino desktop window — with Vera transparently routed to whichever AI backend is available (artifact proxy, channel bridge to a local coding-agent CLI, or the desktop's bundled adapter). No servers, no deploys, no accounts; your data stays where you put it.
 
 ---
 
@@ -152,6 +152,15 @@ Decks use the `.vela` extension — a standard JSON file with a dedicated identi
 
 ### Presenter Mode
 Fullscreen presentation with arrow keys (Up/Down/Left/Right), Space, and Escape — PowerPoint-style navigation across slides and modules. Designed for 16:9 projection.
+
+### Session Timer & Pace
+Set a session end time from the toolbar or the Presenter View. The Presenter View shows the clock, time left and pace guidance (ahead / on pace / behind); Present shows a thin pace bar on the slide edge (T hides it) and an optional on-slide clock (C key).
+
+### Slide Search
+Ctrl+E (or `/` in the editor) searches slide text, notes, column layouts and section names, with highlighted matches and ↑↓ + Enter navigation. In Present, results can jump to hidden slides or collapsed lanes and then return to the slide you left.
+
+### Phone (Portrait) Layout
+On a portrait phone screen, slides use a one-column layout that fills the screen: columns, grids and image groups stack, flows run top to bottom, and text stays near real size. Present mode gets a bar under the slide with previous, next, slide count and exit. The desktop layout does not change.
 
 ### Vector PDF Export
 Canvas-rendered PDF output with clickable links, branding overlays, and watermarks. Every slide exports as a crisp vector page.

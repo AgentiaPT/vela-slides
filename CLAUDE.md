@@ -42,7 +42,7 @@ before it continues. Do not ask an over-limit agent to do more work.
 
 ## What is Vela?
 
-AI-native presentation engine for Claude.ai. Single-file React app (~1.3MB, 18,421 lines) that runs inside Claude.ai artifacts. Users describe slides in conversation, Vela renders them with 27 semantic block types.
+AI-native presentation engine for Claude.ai. Single-file React app (~2.4MB, ~33,600 lines) that runs inside Claude.ai artifacts. Users describe slides in conversation, Vela renders them with 27 semantic block types.
 
 ## Architecture
 
@@ -68,7 +68,7 @@ build order, and each part's purpose — `concat.py`, `lint.py` and
 same change, or the lint fails.
 
 ```
-imports → icons → blocks → reducer → engine → slides → list → chat → test → uitest → demo → pdf → pptx → app
+imports → icons → blocks → branding → canvas → reducer → engine → slides → slidepanel → list → chat → test → uitest → uitest2 → demo → pdf-fonts → pdf → pdf-extract → pdf-vector → export-md → pptx → app-modals → app
 ```
 
 Read `src/parts/MANIFEST.txt` for the per-part purpose line. For a size/section

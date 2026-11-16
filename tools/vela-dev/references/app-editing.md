@@ -5,24 +5,34 @@
 
 ## Architecture
 
-The skill has two layers: a **modular app** (14 part-files) and a **deck injection pipeline**.
+The skill has two layers: a **modular app** (23 part-files) and a **deck injection pipeline**.
 
 ```
 src/parts/                   # Modular source (edit these for app changes)
-├── part-imports.jsx    # ~1400L — constants, sanitizers, helpers, storage
+├── MANIFEST.txt        # build order + per-part purpose (single source of truth)
+├── part-imports.jsx    # ~2970L — constants, sanitizers, helpers, storage, session/pace
 ├── part-icons.jsx      #  ~290L — icon resolution system
-├── part-blocks.jsx     # ~1730L — all 27 block renderers, EditableText
-├── part-reducer.jsx    #  ~300L — state management, dispatch actions
-├── part-engine.jsx     # ~1240L — AI tools, system prompts, slide ops
-├── part-slides.jsx     # ~2410L — SlidePanel, Fullscreen, Branding
-├── part-list.jsx       #  ~530L — Lane, ConceptRow, AI adder
-├── part-chat.jsx       #  ~440L — ChatPanel, tool trace cards
-├── part-test.jsx       #  ~330L — VelaBatteryTest
-├── part-uitest.jsx     # ~1860L — 185 UI tests in 33 suites
-├── part-demo.jsx       #  ~860L — Cinematic demo mode (18 scenes)
-├── part-pdf.jsx        # ~3950L — PDF export (raster + vector), markdown export
-├── part-pptx.jsx       # ~1180L — native editable PowerPoint (.pptx) export
-└── part-app.jsx        # ~1910L — main VelaApp component
+├── part-blocks.jsx     # ~2250L — all 27 block renderers, EditableText, portrait block views
+├── part-branding.jsx   #   ~55L — BrandingOverlay slide chrome
+├── part-canvas.jsx     # ~1210L — SlideContent canvas, block toolbar, portrait stacking
+├── part-reducer.jsx    #  ~460L — state management, dispatch actions, undo/redo
+├── part-engine.jsx     # ~1350L — AI tools, system prompts, slide ops
+├── part-slides.jsx     # ~1790L — VirtualSlide, PresenterView, Gallery, slide search engine
+├── part-slidepanel.jsx # ~2020L — SlidePanel: editor view, nav, fullscreen, per-slide AI
+├── part-list.jsx       # ~1030L — ModuleList, ConceptRow, AI adder, editor search
+├── part-chat.jsx       #  ~460L — ChatPanel, tool trace cards
+├── part-test.jsx       #  ~510L — VelaBatteryTest
+├── part-uitest.jsx     # ~2390L — UI test registry/runner + early suites
+├── part-uitest2.jsx    # ~7500L — later UI suites + VelaUITestRunner
+├── part-demo.jsx       # ~1290L — product-tour demo mode
+├── part-pdf-fonts.jsx  #   ~15L — offline font fallback data
+├── part-pdf.jsx        # ~1000L — canvas (raster) PDF export
+├── part-pdf-extract.jsx #  ~820L — shared PDF/PPTX DOM extractors + encoding
+├── part-pdf-vector.jsx # ~1760L — vector PDF builder
+├── part-export-md.jsx  #  ~610L — markdown + standalone HTML export
+├── part-pptx.jsx       # ~1190L — native editable PowerPoint (.pptx) export
+├── part-app-modals.jsx # ~1260L — app-level modals and dialogs
+└── part-app.jsx        # ~1420L — root App component
 
 skills/vela-slides/
 ├── app/vela.jsx             # Auto-generated monolith (concat of all parts)
@@ -41,36 +51,29 @@ tools/vela-dev/scripts/      # Dev/test/CI toolchain (never shipped)
 ### Dependency Graph (strictly top-down, no circular deps)
 
 ```
-imports → icons → blocks → reducer → engine → slides
-                                        ↓        ↓
-                                       list     chat
-                                        ↓        ↓
-                                       test    uitest
-                                        ↓        ↓
-                                       demo     pdf
-                                        ↓        ↓
-                                         ↘     pptx
-                                           ↘   ↙
-                                            app
+imports → icons → blocks → branding → canvas → reducer → engine → slides → slidepanel → list → chat → test → uitest → uitest2 → demo → pdf-fonts → pdf → pdf-extract → pdf-vector → export-md → pptx → app-modals → app
 ```
+
+Each part may reference only top-level bindings from earlier parts. See
+`src/parts/MANIFEST.txt` for the purpose of each part.
 
 ### Concatenation Order (fixed)
 
 ```
-imports → icons → blocks → reducer → engine → slides → list → chat → test → uitest → demo → pdf → pptx → app
+imports → icons → blocks → branding → canvas → reducer → engine → slides → slidepanel → list → chat → test → uitest → uitest2 → demo → pdf-fonts → pdf → pdf-extract → pdf-vector → export-md → pptx → app-modals → app
 ```
 
 ### Why Modular Parts?
 
-The Vela app is ~18,421 lines / ~1.3MB. Editing a monolith that large carries real risks:
+The Vela app is ~33,600 lines / ~2.4MB. Editing a monolith that large carries real risks:
 
 | Concern | Monolith | Modular Parts |
 |---|---|---|
-| str_replace collision risk | High — many similar patterns across 18,421L | Low — part files are ~290–3950L |
-| Context needed to edit | Must read entire 1.3MB file | Read only relevant part |
+| str_replace collision risk | High — many similar patterns across ~33,600L | Low — most part files are ~50–2,500L |
+| Context needed to edit | Must read entire 2.4MB file | Read only relevant part |
 | Accidental side effects | Easy to break distant code | Edits are scoped to one module |
 | Rewriting a subsystem | Dangerous at monolith scale | Replace a single part file safely |
-| Finding what to edit | Grep through 18,421 lines | File name tells you where to look |
+| Finding what to edit | Grep through ~33,600 lines | File name tells you where to look |
 
 ### Why Not Split + Bundler (Vite/Parcel)?
 
