@@ -213,7 +213,8 @@ commit if you want the full story.
 - New field → allowlist entry + type + length/range clamp + the right sanitizer.
 - New nested shape → reached by `scrubSubObject`, breadth-sliced, depth-capped.
 - Re-sanitize on the **storage-reload** path too, not only on import
-  (`resanitizeLoadedLanes` / `resanitizeLoadedBranding`).
+  (`resanitizeLoadedLanes` / `resanitizeLoadedBranding` /
+  `resanitizeLoadedSession`).
 
 **Exporters (PDF, PPTX, Markdown, Standalone HTML)**
 - Each output format is its own injection context. Route **every** deck value
