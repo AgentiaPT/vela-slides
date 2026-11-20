@@ -4870,7 +4870,8 @@ uiSuite("toolbar-auto-compact", [
 
 // v13.79 Present detour: while typing, Ctrl+E search lists hidden slides (and
 // matches hidden-block text); a jump shows the hidden slide with no slide
-// number; arrows or Esc return to the slide that was left; Present stays.
+// number. v13.84: arrows move on (the Back bar stays); Back or Esc return to
+// the slide that was left; Present stays.
 const _pdSel = () => _hooks().getSelection();
 const _pdOnSlide = (t) => _$$("[data-block-type]").some((el) => (el.textContent || "").includes(t));
 const _pdSame = (a, b) => !!a && !!b && a.itemId === b.itemId && a.slideIdx === b.slideIdx;
@@ -4908,7 +4909,7 @@ const _pdJump = async (checkEmpty) => {
   document.activeElement?.blur?.();
 };
 uiSuite("present-detour-search", [
-  { name: "D1: hidden slide found only while typing; jump shows it with no number; Presenter view shows the detour; an arrow returns", fn: async () => {
+  { name: "D1: hidden slide found only while typing; jump shows it with no number; Presenter view shows the detour; an arrow moves on, Back returns", fn: async () => {
     let past = null;
     try {
       past = await _pdPrepare();
@@ -4922,7 +4923,10 @@ uiSuite("present-detour-search", [
       await _waitFor(() => !_$("[data-testid='presenter-view']"), 1500);
       document.activeElement?.blur?.();
       _key("ArrowRight");
-      await _waitFor(() => _pdSame(_pdSel(), before), 1500).catch(() => { throw new Error("ArrowRight did not return to the slide the detour left"); });
+      await _waitFor(() => !_pdOnSlide("PDBACKUP") && !_pdSame(_pdSel(), before), 1500).catch(() => { throw new Error("ArrowRight did not move on from the hidden slide"); });
+      if (!_$("[data-testid='detour-bar']")) throw new Error("the Back bar closed when an arrow moved on");
+      _click("[data-testid='detour-back']");
+      await _waitFor(() => _pdSame(_pdSel(), before), 1500).catch(() => { throw new Error("Back did not return to the slide the detour left"); });
       if (_pdOnSlide("PDBACKUP")) throw new Error("the hidden slide is still on screen after the return");
       if (_$("header")) throw new Error("the return left Present");
     } finally { await _exitFullscreen(); if (past != null) await _mrdUndoTo(past); }
@@ -7447,6 +7451,203 @@ uiSuite("present-del-hide", [
       if (_pdhToast()) throw new Error("editor Del shows the Present undo toast");
       if (_hooks().getCurrentSlideForTest()?.blocks?.[0]?.text !== "PDHA1") throw new Error("editor Del removed the wrong slide");
     } finally { await _pdhEnd(); }
+  }},
+]);
+
+// v13.84 Present detour bar: every Present TOC jump to another slide shows a
+// Back / Keep here bar. Back (button, B, Esc, Alt+←) returns to the slide before
+// the FIRST jump, held by slide identity; Keep here (button, K) closes it.
+// Test deck: module A (title card) = A1..A4; module B = B1, B2 (hidden), B3.
+const _pdbDeck = () => _pdhDeck([
+  { id: "pdb-a", title: "PDB Module A", presentCard: true, slides: [_pdhSlide("PDBA1"), _pdhSlide("PDBA2"), _pdhSlide("PDBA3"), _pdhSlide("PDBA4")] },
+  { id: "pdb-b", title: "PDB Module B", slides: [_pdhSlide("PDBB1"), { hidden: true, blocks: [{ type: "heading", text: "PDBB2" }, { type: "text", text: "zqxpdb word" }] }, _pdhSlide("PDBB3")] },
+]);
+const _pdbBar = () => _$("[data-testid='detour-bar']");
+const _pdbBackText = () => _$("[data-testid='detour-back']")?.textContent || "";
+// Import gives modules new ids: the heading text names the module and slide.
+const _pdbAt = (id, idx, text) => _waitFor(() => { const s = _pdSel(); return s && s.slideIdx === idx && _pdhOn(text); }, 1500)
+  .catch(() => { throw new Error(`expected ${id} slide ${idx} (${text}), got ${JSON.stringify(_pdSel())}`); });
+// Open the Present TOC, type a word, and click the row that shows `text`.
+const _pdbJump = async (word, text) => {
+  document.activeElement?.blur?.();
+  _key("e", { ctrlKey: true });
+  await _waitFor(_hfeTocOpen, 2000).catch(() => { throw new Error("the Present TOC did not open"); });
+  await _wait(150);
+  _type(_psnInput(), word);
+  const row = await _waitFor(() => _psnRows().find((r) => (r.textContent || "").includes(text)), 1500).catch(() => { throw new Error(`no TOC row for ${text}`); });
+  _click(row);
+  await _waitFor(() => !_hfeTocOpen() && _pdhOn(text), 1500).catch(() => { throw new Error(`the jump did not show ${text}`); });
+  await _wait(150);
+  document.activeElement?.blur?.();
+};
+const _pdbNoBar = async (why) => { await _wait(150); if (_pdbBar()) throw new Error(why); };
+uiSuite("present-detour-back", [
+  { name: "PDB1: a row jump to a visible slide in another module shows the bar; arrows move on and it stays; B returns", fn: async () => {
+    try {
+      await _pdhStart(_pdbDeck());
+      await _pdbAt("pdb-a", 1, "PDBA1");
+      await _pdhStep("ArrowRight");
+      await _pdbAt("pdb-a", 2, "PDBA2");
+      if (_pdbBar()) throw new Error("normal navigation shows the bar");
+      await _pdbJump("PDBB3", "PDBB3");
+      await _pdbAt("pdb-b", 2, "PDBB3");
+      if (!_pdbBar()) throw new Error("no bar after a jump to a visible slide");
+      if (!_pdbBackText().includes("PDBA2")) throw new Error("the Back label does not name the return slide: " + _pdbBackText());
+      await _pdhStep("ArrowLeft");
+      await _pdbAt("pdb-b", 0, "PDBB1"); // the hidden B2 is skipped
+      await _pdhStep(" ");
+      await _pdbAt("pdb-b", 2, "PDBB3");
+      if (!_pdbBar()) throw new Error("the bar closed when the arrows moved on");
+      await _pdhStep("b");
+      await _pdbAt("pdb-a", 2, "PDBA2");
+      await _pdbNoBar("the bar stays after Back");
+      if (_$("header")) throw new Error("Back left Present");
+    } finally { await _pdhEnd(); }
+  }},
+  { name: "PDB2: a jump to a hidden slide shows the bar and no auto-skip; → goes to the next visible slide; Esc returns, Present stays", fn: async () => {
+    try {
+      await _pdhStart(_pdbDeck());
+      await _pdhStep("ArrowRight");
+      await _pdbAt("pdb-a", 2, "PDBA2");
+      await _pdbJump("zqxpdb", "PDBB2");
+      await _wait(400); // the hidden-slide auto-skip must not move off the jump target
+      await _pdbAt("pdb-b", 1, "PDBB2");
+      if (!_pdbBar()) throw new Error("no bar after a jump to a hidden slide");
+      if (_slideCounterEl()) throw new Error("the hidden slide shows a slide number");
+      await _pdhStep("ArrowRight");
+      await _pdbAt("pdb-b", 2, "PDBB3");
+      if (!_pdbBar()) throw new Error("the bar closed when → moved on");
+      await _pdhStep("Escape");
+      await _pdbAt("pdb-a", 2, "PDBA2");
+      await _pdbNoBar("the bar stays after Esc");
+      if (_$("header")) throw new Error("Esc with the bar left Present");
+    } finally { await _pdhEnd(); }
+  }},
+  { name: "PDB3: chained jumps keep the first return point; Alt+← returns (default prevented); the Back button returns", fn: async () => {
+    try {
+      await _pdhStart(_pdbDeck());
+      await _pdhStep("ArrowRight");
+      await _pdbAt("pdb-a", 2, "PDBA2");
+      await _pdbJump("PDBB3", "PDBB3");
+      await _pdbJump("PDBA4", "PDBA4");
+      await _pdbAt("pdb-a", 4, "PDBA4");
+      await _pdbJump("PDBB1", "PDBB1");
+      if (!_pdbBackText().includes("PDBA2")) throw new Error("a chained jump changed the return point: " + _pdbBackText());
+      const ev = new KeyboardEvent("keydown", { key: "ArrowLeft", altKey: true, bubbles: true, cancelable: true });
+      document.body.dispatchEvent(ev);
+      if (!ev.defaultPrevented) throw new Error("Alt+← did not prevent the browser back");
+      await _pdbAt("pdb-a", 2, "PDBA2");
+      await _pdbNoBar("the bar stays after Alt+←");
+      await _pdbJump("PDBB3", "PDBB3");
+      _click("[data-testid='detour-back']");
+      await _pdbAt("pdb-a", 2, "PDBA2");
+      await _pdbNoBar("the bar stays after the Back button");
+    } finally { await _pdhEnd(); }
+  }},
+  { name: "PDB4: K and Keep here close the bar and stay; a jump to the current slide shows no bar; leaving Present closes it", fn: async () => {
+    try {
+      await _pdhStart(_pdbDeck());
+      await _pdhStep("ArrowRight");
+      await _pdbAt("pdb-a", 2, "PDBA2");
+      await _pdbJump("PDBA2", "PDBA2");
+      await _pdbNoBar("a jump to the current slide shows the bar");
+      await _pdbJump("PDBB3", "PDBB3");
+      await _pdhStep("k");
+      await _pdbNoBar("K did not close the bar");
+      await _pdbAt("pdb-b", 2, "PDBB3");
+      await _pdbJump("PDBA4", "PDBA4");
+      if (!_pdbBackText().includes("PDBB3")) throw new Error("the return point after K is not the slide kept: " + _pdbBackText());
+      _click("[data-testid='detour-keep']");
+      await _pdbNoBar("Keep here did not close the bar");
+      await _pdbAt("pdb-a", 4, "PDBA4");
+      await _pdbJump("PDBB1", "PDBB1");
+      if (!_pdbBar()) throw new Error("no bar before leaving Present");
+      await _exitFullscreen();
+      await _pdbNoBar("the bar stays after leaving Present");
+      await _sesUiPresent();
+      await _pdbNoBar("the bar shows again after re-entering Present");
+    } finally { await _pdhEnd(); }
+  }},
+  { name: "PDB5: a slide deleted or put back before the return slide: Back still lands on the return slide", fn: async () => {
+    try {
+      await _pdhStart(_pdbDeck());
+      await _pdhStep("ArrowRight"); await _pdhStep("ArrowRight");
+      await _pdbAt("pdb-a", 3, "PDBA3");
+      await _pdbJump("PDBB3", "PDBB3");
+      for (const t of ["PDBB1", "PDBA4", "PDBA3", "PDBA2"]) { await _pdhStep("ArrowLeft"); await _waitFor(() => _pdhOn(t), 1500).catch(() => { throw new Error("← did not reach " + t); }); }
+      // Delete A2 (before the return slide), then undo: A2 comes back before it.
+      await _pdhStep("Delete");
+      await _waitFor(() => _pdhMsg() === "Slide deleted", 1000).catch(() => { throw new Error("no 'Slide deleted' toast"); });
+      if (!_pdbBar()) throw new Error("the bar closed when a different slide was deleted");
+      _key("z", { ctrlKey: true });
+      await _pdbAt("pdb-a", 2, "PDBA2");
+      if (!_pdbBar()) throw new Error("the bar is gone after undo");
+      await _pdhStep("b");
+      await _pdbAt("pdb-a", 3, "PDBA3");
+      // Again, now with the delete kept: the return slide moves up by one.
+      await _pdbJump("PDBB3", "PDBB3");
+      for (const t of ["PDBB1", "PDBA4", "PDBA3", "PDBA2"]) { await _pdhStep("ArrowLeft"); await _waitFor(() => _pdhOn(t), 1500).catch(() => { throw new Error("← did not reach " + t); }); }
+      await _pdhStep("Delete");
+      await _pdbAt("pdb-a", 2, "PDBA3");
+      await _pdhStep("ArrowRight");
+      await _pdbAt("pdb-a", 3, "PDBA4");
+      await _pdhStep("b");
+      await _pdbAt("pdb-a", 2, "PDBA3");
+    } finally { await _pdhEnd(); }
+  }},
+  { name: "PDB6: the return slide deleted closes the bar; B then does nothing", fn: async () => {
+    try {
+      await _pdhStart(_pdbDeck());
+      await _pdhStep("ArrowRight");
+      await _pdbAt("pdb-a", 2, "PDBA2");
+      await _pdbJump("PDBB3", "PDBB3");
+      for (const t of ["PDBB1", "PDBA4", "PDBA3", "PDBA2"]) { await _pdhStep("ArrowLeft"); await _waitFor(() => _pdhOn(t), 1500).catch(() => { throw new Error("← did not reach " + t); }); }
+      await _pdhStep("Delete");
+      await _pdbAt("pdb-a", 2, "PDBA3");
+      await _pdbNoBar("the bar stays after its return slide was deleted");
+      await _pdhStep("b");
+      await _pdbAt("pdb-a", 2, "PDBA3");
+      if (_$("header")) throw new Error("B left Present");
+    } finally { await _pdhEnd(); }
+  }},
+  { name: "PDB7: B / K / Alt+← ignored in a text field, with a dialog open, with Ctrl or Shift, when held; Presenter view badge text", fn: async () => {
+    const token = {};
+    try {
+      await _pdhStart(_pdbDeck());
+      await _pdhStep("ArrowRight");
+      await _pdbAt("pdb-a", 2, "PDBA2");
+      await _pdbJump("PDBB3", "PDBB3");
+      _key("e", { ctrlKey: true });
+      await _waitFor(_hfeTocOpen, 2000);
+      await _wait(150);
+      _psnInput().focus();
+      for (const k of ["b", "k"]) _key(k);
+      _key("ArrowLeft", { altKey: true });
+      await _wait(200);
+      if (!_pdbBar() || !_pdhOn("PDBB3")) throw new Error("a key in the search field acted on the bar");
+      _key("Escape"); // the first Esc may only clear the search text
+      await _wait(150);
+      if (_hfeTocOpen()) _key("Escape");
+      await _waitFor(() => !_hfeTocOpen(), 1500).catch(() => { throw new Error("Esc did not close the TOC"); });
+      await _wait(150);
+      if (!_pdbBar() || !_pdhOn("PDBB3")) throw new Error("Esc that closed the TOC also went back");
+      document.activeElement?.blur?.();
+      // (A real dialog owns the arrow keys itself; this token checks B / K only.)
+      VELA_OPEN_CHROME.modals.add(token);
+      for (const k of ["b", "k"]) _key(k);
+      await _wait(200);
+      VELA_OPEN_CHROME.modals.delete(token);
+      if (!_pdbBar() || !_pdhOn("PDBB3")) throw new Error("a key acted on the bar while a dialog was open");
+      _key("b", { ctrlKey: true }); _key("B", { shiftKey: true }); _key("k", { metaKey: true }); _key("b", { repeat: true }); _key("k", { repeat: true });
+      await _wait(200);
+      if (!_pdbBar() || !_pdhOn("PDBB3")) throw new Error("a modified or held key acted on the bar");
+      await _pdhStep("s");
+      const badge = await _waitFor(() => _$("[data-testid='presenter-detour']"), 1500).catch(() => { throw new Error("Presenter view shows no detour badge"); });
+      const txt = badge.textContent || "";
+      if (!txt.includes("B / Esc back to PDB Module A · PDBA2") || !txt.includes("K keep here")) throw new Error("badge text: " + txt);
+      await _pdhStep("s");
+      await _waitFor(() => !_$("[data-testid='presenter-view']"), 1500);
+    } finally { VELA_OPEN_CHROME.modals.delete(token); await _pdhEnd(); }
   }},
 ]);
 

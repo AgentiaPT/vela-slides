@@ -109,6 +109,28 @@ function presentClockBottom(branding) {
   return `calc(max(${(k * 100 / VIRTUAL_W).toFixed(4)}vw, ${(k * 100 / VIRTUAL_H).toFixed(4)}vh) + 10px)`;
 }
 
+// Present detour bar (v13.84): bottom-left pill after a Present TOC jump.
+// `title` is a deck value: render it only as a React text node.
+function DetourBar({ title, hints, bottom, onBack, onKeep }) {
+  const [hot, setHot] = useState(false);
+  const keepFocus = (e) => e.preventDefault(); // a click leaves keyboard focus on the slide
+  const chip = { fontFamily: FONT.mono, fontSize: 12, color: "rgba(255,255,255,0.45)", border: "1px solid rgba(255,255,255,0.2)", borderRadius: 4, padding: "0 5px", flex: "none" };
+  const btn = { all: "unset", cursor: "pointer", display: "flex", alignItems: "center", gap: 8, fontFamily: FONT.display, fontSize: 14, minWidth: 0 };
+  return (
+    <div data-testid="detour-bar" role="group" aria-label="Return to slide" onMouseEnter={() => setHot(true)} onMouseLeave={() => setHot(false)} onFocus={() => setHot(true)} onBlur={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) setHot(false); }}
+      style={{ position: "absolute", bottom, left: 20, zIndex: 22, display: "flex", alignItems: "center", gap: 8, padding: "6px 8px", borderRadius: 8, background: "rgba(0,0,0,0.78)", backdropFilter: "blur(8px)", border: `1px solid ${T.accent}30`, opacity: hot ? 1 : 0.7, transition: "opacity 0.15s", maxWidth: "calc(100% - 40px)", boxSizing: "border-box" }}>
+      <button type="button" data-testid="detour-back" title={title ? `Back to ${title}` : "Back"} onMouseDown={keepFocus} onClick={(e) => { e.stopPropagation(); onBack(); }} style={{ ...btn, color: "#fff", fontWeight: 600 }}>
+        <span style={{ maxWidth: "38ch", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>← Back to ‘{title}’</span>
+        {hints && <span style={chip}>B</span>}
+      </button>
+      <span aria-hidden="true" style={{ width: 1, height: 16, background: "rgba(255,255,255,0.2)", flex: "none" }} />
+      <button type="button" data-testid="detour-keep" onMouseDown={keepFocus} onClick={(e) => { e.stopPropagation(); onKeep(); }} style={{ ...btn, color: T.accent, fontWeight: 700, whiteSpace: "nowrap", flex: "none" }}>
+        Keep here{hints && <span style={chip}>K</span>}
+      </button>
+    </div>
+  );
+}
+
 function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, branding, guidelines, isMobile, fontScale, actionsRef, onRibbonUpdate }) {
   const deckEpochRef = useRef(state._deckEpoch);
   deckEpochRef.current = state._deckEpoch;
@@ -386,7 +408,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
     const cur = presSlides[slideIndex];
     if (!cur || !cur.hidden) return;
     // A detour shows a hidden slide on purpose; do not nudge off it.
-    if (detour && detour.at.id === concept.id && detour.at.index === slideIndex) return;
+    if (detour && detour.at && detour.at.id === concept.id && detour.at.index === slideIndex) return;
     let n = -1;
     for (let i = slideIndex + 1; i < presSlides.length; i++) if (!presSlides[i].hidden) { n = i; break; }
     if (n < 0) for (let i = slideIndex - 1; i >= 0; i--) if (!presSlides[i].hidden) { n = i; break; }
@@ -405,30 +427,48 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
   // CR07: editor-only review cycle — arrow keys skip slides marked `reviewed`.
   // Distinct from state.reviewMode (comments review), which owns that name.
   const [reviewCycle, setReviewCycle] = useState(false);
-  // Present detour: a TOC search jump to a hidden slide (or a collapsed lane).
-  // `ret` is the last VISIBLE slide (kept across chained detours), `at` is the
-  // detour slide. Arrows, wheel and Esc on the detour slide return to `ret`;
-  // landing anywhere else ends the detour (effect below). Indices are Present
-  // indices (title-card offset included), as passed to SET_SLIDE_INDEX.
+  // Present detour (v13.84): a Present TOC jump (search hit or row) to another
+  // slide opens the Back / Keep here bar (DetourBar). `ret` is the slide before
+  // the FIRST jump (chained jumps keep it), held by module id + slide object
+  // (detourReturnFind in part-slides.jsx), so an insert or delete does not move
+  // it. `at` is the jump target (Present index; `off`: a hidden slide or a
+  // collapsed lane, shown on purpose); it clears when you land elsewhere.
+  // Arrows, space and wheel move on and the bar stays. Back: B / Esc / Alt+←.
+  // Keep here: K. Leaving Present, or a return slide that is gone, closes it.
   // (The `detour` state itself is declared above the hidden-slide nudge effect.)
   const detourRef = useRef(null);
   detourRef.current = detour;
-  const onDetour = useCallback((on, at) => {
-    if (!on) { setDetour(null); return; }
-    setDetour((d) => ({ ret: d ? d.ret : { id: concept.id, index: slideIndex }, at }));
-  }, [concept.id, slideIndex]);
+  const onDetour = useCallback((off, at) => {
+    if (at.id === concept.id && at.index === slideIndex) return; // same slide: no bar
+    setDetour((d) => {
+      const ret = d && detourReturnIndex(lanes, d.ret) >= 0 ? d.ret
+        : slideIndex < presOffset ? { id: concept.id, card: true }
+        : presSlides[slideIndex] ? { id: concept.id, slide: presSlides[slideIndex] } : null;
+      // A jump back to the return slide closes the bar.
+      if (!ret || (ret.id === at.id && detourReturnIndex(lanes, ret) === at.index)) return null;
+      return { ret, at: { id: at.id, index: at.index, off: !!off } };
+    });
+  }, [concept.id, slideIndex, presOffset, presSlides, lanes]);
   const detourBackRef = useRef(() => false);
   detourBackRef.current = () => {
     const d = detourRef.current;
     if (!d) return false;
     setDetour(null);
+    const idx = detourReturnIndex(lanes, d.ret);
+    if (idx < 0) return true; // the return slide is gone: close only
     if (d.ret.id !== concept.id) dispatch({ type: "SELECT", id: d.ret.id });
-    dispatch({ type: "SET_SLIDE_INDEX", index: d.ret.index });
+    dispatch({ type: "SET_SLIDE_INDEX", index: idx });
     return true;
   };
+  const detourKeep = () => setDetour(null);
   useEffect(() => {
-    if (detour && (!fullscreen || detour.at.id !== concept.id || detour.at.index !== slideIndex)) setDetour(null);
-  }, [detour, fullscreen, concept.id, slideIndex]);
+    if (!detour) return;
+    if (!fullscreen || detourReturnIndex(lanes, detour.ret) < 0) { setDetour(null); return; }
+    if (detour.at && (detour.at.id !== concept.id || detour.at.index !== slideIndex)) setDetour({ ...detour, at: null });
+  }, [detour, fullscreen, concept.id, slideIndex, lanes]);
+  // On the hidden / collapsed-lane slide of a jump: no slide number, and the
+  // pace stays on the return slide.
+  const detourOff = !!(detour && detour.at && detour.at.off && detour.at.id === concept.id && detour.at.index === slideIndex);
   const showGalleryRef = useRef(false);
   const setGallery = (v) => { const val = typeof v === "function" ? v(showGalleryRef.current) : v; showGalleryRef.current = val; setShowGallery(val); };
   // ── Presenter view (CR-08) — single-screen speaker dashboard: current +
@@ -446,8 +486,8 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
   const [presentElapsed, setPresentElapsed] = useState(0); // seconds since Present mode was entered
   const presentStartRef = useRef(null);
   // ── Session end (v13.80): clock, pace, Present edge bar, dialog. Present only.
-  // Pace follows the Present numbering (presentSequence); during a detour it
-  // uses the return slide (detour.ret, with that item's own title-card offset).
+  // Pace follows the Present numbering (presentSequence); on a hidden detour
+  // slide it uses the return slide (detour.ret, with that item's own title-card offset).
   const [nowMs, setNowMs] = useState(() => Date.now());
   const [sessionDialogOpen, setSessionDialogOpen] = useState(false);
   const sessionDialogOpenRef = useRef(false);
@@ -461,18 +501,17 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
     try { if (on) localStorage.setItem(VELA_PRESENT_CLOCK_KEY, "1"); else localStorage.removeItem(VELA_PRESENT_CLOCK_KEY); } catch {}
     return on;
   });
-  const paceItemId = detour ? detour.ret.id : concept.id;
+  const paceItemId = detourOff ? detour.ret.id : concept.id;
   const sessionSeq = useMemo(() => { const seq = presentSequence(lanes, paceItemId); return { seq, est: sessionEstimates(seq) }; }, [lanes, paceItemId]);
   const paceRawIdx = (() => {
-    if (!detour) return slideIndex - presOffset;
-    let retItem = null;
-    for (const l of lanes || []) for (const it of (l && l.items) || []) if (it && it.id === detour.ret.id) retItem = it;
-    return detour.ret.index - (retItem && retItem.presentCard ? 1 : 0);
+    if (!detourOff) return slideIndex - presOffset;
+    const f = detourReturnFind(lanes, detour.ret);
+    return f ? f.raw : -1;
   })();
   const paceIdx = sessionSeqIndex(sessionSeq.seq, paceItemId, paceRawIdx);
   // On-slide counter: restarts when the pace position changes (not on a detour).
   const slideEnterRef = useRef({ key: null, at: 0 });
-  const paceSlideKey = fullscreen ? `${paceItemId}|${detour ? detour.ret.index : slideIndex}` : null;
+  const paceSlideKey = fullscreen ? `${paceItemId}|${detourOff ? detourReturnIndex(lanes, detour.ret) : slideIndex}` : null;
   if (slideEnterRef.current.key !== paceSlideKey) slideEnterRef.current = { key: paceSlideKey, at: Date.now() };
   const sessionLive = fullscreen ? liveSession(state.session, nowMs) : null;
   const sessionPace = sessionLive ? computeSessionPace(sessionSeq.est, paceIdx, sessionOnSlideSec(nowMs, slideEnterRef.current.at, sessionLive), sessionLive, nowMs) : null;
@@ -1055,9 +1094,18 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       // (editor nav keeps reaching them so they can be edited/unhidden).
       const nextVisible = (from) => { for (let i = from + 1; i < navSlides.length; i++) if (!fullscreen || !navSlides[i].hidden) return i; return -1; };
       const prevVisible = (from) => { for (let i = from - 1; i >= 0; i--) if (!fullscreen || !navSlides[i].hidden) return i; return -1; };
-      // Present detour: any step key returns to the slide the detour left.
-      if (fullscreen && detourRef.current && ["ArrowRight", "ArrowDown", " ", "ArrowLeft", "ArrowUp"].includes(e.key)) {
-        e.preventDefault(); stopAlternatives(); detourBackRef.current(); return;
+      // Present detour bar (v13.84): B or Alt+← goes back, K keeps this slide.
+      // Ignored with other modifiers, in a text field, while a dialog, zoom or
+      // the gallery is open; a held key acts once. Step keys move on as normal.
+      if (fullscreen && detourRef.current && !e.ctrlKey && !e.metaKey && !e.shiftKey && ((!e.altKey && ["b", "B", "k", "K"].includes(e.key)) || (e.altKey && e.key === "ArrowLeft"))) {
+        const ae = document.activeElement;
+        if (!(VELA_OPEN_CHROME.modals.size > 0 || VELA_OPEN_CHROME.zooms.size > 0 || sessionDialogOpenRef.current || showGalleryRef.current || (ae && (["INPUT", "TEXTAREA", "SELECT"].includes(ae.tagName) || ae.isContentEditable)))) {
+          e.preventDefault();
+          if (e.repeat) return;
+          stopAlternatives();
+          if (e.key === "k" || e.key === "K") detourKeep(); else detourBackRef.current();
+          return;
+        }
       }
       // CR07: editor review cycle — step through unreviewed slides across modules.
       // The current slide stays in the order (even if reviewed) only to anchor the step.
@@ -1186,7 +1234,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       // sandboxed iframe (Claude.ai artifact) requestFullscreen fails, so the key lands here.
       // An open modal takes Esc first (it closes on the same keydown).
       // A story slide zoomed on an image: Esc zooms out to the grid first and Present stays.
-      // A Present detour: Esc returns to the slide it left, and Present stays.
+      // A Present detour bar: Esc goes back to the return slide, and Present stays.
       if (e.key === "Escape" && fullscreen && VELA_OPEN_CHROME.modals.size === 0 && detourBackRef.current()) { e.preventDefault(); return; }
       if (e.key === "Escape" && fullscreen && VELA_OPEN_CHROME.modals.size === 0 && storyEscRef.current()) { e.preventDefault(); return; }
       if (e.key === "Escape" && fullscreen && VELA_OPEN_CHROME.modals.size === 0) { e.preventDefault(); stopAlternatives(); dispatch({ type: "SET_FULLSCREEN", value: false }); return; }
@@ -1259,7 +1307,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
           if (ti >= 0) land = { id: mods[ti].id, index: mods[ti].lastVisible >= 0 ? mods[ti].lastVisible + (mods[ti].presentCard ? 1 : 0) : 0 };
         }
         if (!land) land = { id: concept.id, index: Math.max(0, slideIndex - shift) };
-        setDetour(null);
+        setDetour((d) => d && { ...d, at: null }); // the bar stays while its return slide exists
         dispatch(hide ? { type: "TOGGLE_SLIDE_HIDDEN", id: concept.id, index: real } : { type: "REMOVE_SLIDE", id: concept.id, index: real });
         if (land.id !== concept.id) dispatch({ type: "SELECT", id: land.id });
         dispatch({ type: "SET_SLIDE_INDEX", index: land.index });
@@ -1344,7 +1392,6 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       if (Math.abs(scrollAccum.current) >= SCROLL_THRESHOLD) {
         const dir = scrollAccum.current > 0 ? 1 : -1;
         scrollAccum.current = 0;
-        if (fullscreen && detourBackRef.current()) return; // a detour returns first
         if (storyStepRef.current(dir)) return; // one story step per notch
         const navSlides = fullscreen ? presSlides : slides;
         if (dir > 0) {
@@ -1725,7 +1772,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
             .slide-transition-fade (part-imports.jsx). Independent of the per-block
             .stg-N stagger reveal inside SlideContent, which keeps working as-is. */}
         <div key={slideIndex} className="slide-transition-fade" style={{ position: "relative", width: "100%", height: "100%" }}>
-          <FullscreenSlide key={`deck-${state._deckEpoch}`} slide={presSlides[slideIndex]} index={slideIndex} total={presSlides.length} innerRef={slideRef} branding={presSlides[slideIndex]?._virtual ? null : branding} editable={!isStudent && !presSlides[slideIndex]?._virtual} onEdit={isStudent || presSlides[slideIndex]?._virtual ? undefined : handleSlideEdit} onBlockEdit={isStudent || presSlides[slideIndex]?._virtual ? undefined : runBlockEdit} blockEditing={isStudent ? null : blockEditing} fontScale={fontScale} mode="fill" forceEdit={presentEdit && !isStudent} displayIndex={globalSlideIndex - presOffset} displayTotal={globalSlideTotal} hideSlideNumber={!!detour} story={story} onStoryJump={story ? onStoryJump : undefined} onStoryZoomOut={story ? onStoryZoomOut : undefined} />
+          <FullscreenSlide key={`deck-${state._deckEpoch}`} slide={presSlides[slideIndex]} index={slideIndex} total={presSlides.length} innerRef={slideRef} branding={presSlides[slideIndex]?._virtual ? null : branding} editable={!isStudent && !presSlides[slideIndex]?._virtual} onEdit={isStudent || presSlides[slideIndex]?._virtual ? undefined : handleSlideEdit} onBlockEdit={isStudent || presSlides[slideIndex]?._virtual ? undefined : runBlockEdit} blockEditing={isStudent ? null : blockEditing} fontScale={fontScale} mode="fill" forceEdit={presentEdit && !isStudent} displayIndex={globalSlideIndex - presOffset} displayTotal={globalSlideTotal} hideSlideNumber={detourOff} story={story} onStoryJump={story ? onStoryJump : undefined} onStoryZoomOut={story ? onStoryZoomOut : undefined} />
         </div>
         {/* Session edge bar (v13.80): neutral fill up to the first of YOU / SHOULD
             BE, pace-colour gap between them, white tick = YOU (sessionBarGeom).
@@ -1812,6 +1859,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
             <span data-testid="present-undo-hint" style={{ fontFamily: FONT.mono, fontSize: 12, color: "rgba(255,255,255,0.6)" }}>{typeof navigator !== "undefined" && /Mac|iPhone|iPad|iPod/.test(navigator.platform || "") ? "⌘Z" : "Ctrl+Z"}</span>
           </div>
         </div>}
+        {detour && <DetourBar title={detourReturnName(lanes, detour.ret)} hints={!isMobile} bottom={20 + (navToast ? 44 : 0) + (undoToast ? 44 : 0)} onBack={() => detourBackRef.current()} onKeep={detourKeep} />}
         {/* Floating Edit + New Slide cluster — REMOVED from the fullscreen/Present
             view (CR-03): this branch is the audience-facing Present surface, and a
             pencil/+ edit cluster here is edit chrome that must never be visible to
@@ -1823,7 +1871,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
           the slide, in thumb reach. Nothing floats over the slide, and a step
           does not need a swipe across slide content (links, zoom, story tiles). */}
       {isMobile && !showGallery && (() => {
-        const virtual = !!presSlides[slideIndex]?._virtual || !!detourRef.current;
+        const virtual = !!presSlides[slideIndex]?._virtual || detourOff;
         const at = globalSlideIndex - presOffset, total = Math.max(1, globalSlideTotal);
         const noPrev = !virtual && at <= 0 && !(presOffset && slideIndex > 0);
         const btn = (dim) => ({ border: "none", background: "transparent", color: "#e2e8f0", opacity: dim ? 0.3 : 0.9, display: "flex", alignItems: "center", justifyContent: "center", padding: 0, cursor: "pointer", touchAction: "manipulation", WebkitTapHighlightColor: "transparent" });

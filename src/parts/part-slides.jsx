@@ -668,15 +668,34 @@ function SearchResultRow({ title, snippet, kind, hiddenBlock, hiddenSlide, q, se
     </div>
   );
 }
-// "Module · slide title" for a detour's return point (Present index → raw slide).
-function detourReturnTitle(lanes, ret) {
-  for (const l of (lanes || [])) {
-    const it = (l.items || []).find((i) => i.id === ret.id);
-    if (!it) continue;
-    const raw = ret.index - (it.presentCard ? 1 : 0);
-    return raw < 0 ? it.title : `${it.title} · ${getSlideTitle((it.slides || [])[raw], raw)}`;
+// A Present detour return point (v13.84). `ret` holds the module id and the
+// slide object (`card: true` for the module's title card), so an insert or a
+// delete before it does not change which slide it is. Returns { item, raw, idx }
+// (raw deck index, Present index) or null when the slide is gone.
+function detourReturnFind(lanes, ret) {
+  if (!ret) return null;
+  for (const l of (lanes || [])) for (const it of ((l && l.items) || [])) {
+    if (!it || it.id !== ret.id) continue;
+    const off = it.presentCard ? 1 : 0;
+    if (ret.card) return off ? { item: it, raw: -1, idx: 0 } : null;
+    const raw = (it.slides || []).indexOf(ret.slide);
+    return raw < 0 ? null : { item: it, raw, idx: raw + off };
   }
-  return "";
+  return null;
+}
+// Present index of a detour return point, or -1 when it is gone.
+function detourReturnIndex(lanes, ret) { const f = detourReturnFind(lanes, ret); return f ? f.idx : -1; }
+// Slide title of a detour return point (the module title for a title card).
+function detourReturnName(lanes, ret) {
+  const f = detourReturnFind(lanes, ret);
+  if (!f) return "";
+  return String((f.raw < 0 ? f.item.title : getSlideTitle(f.item.slides[f.raw], f.raw)) || "");
+}
+// "Module · slide title" for a detour's return point.
+function detourReturnTitle(lanes, ret) {
+  const f = detourReturnFind(lanes, ret);
+  if (!f) return "";
+  return f.raw < 0 ? f.item.title : `${f.item.title} · ${detourReturnName(lanes, ret)}`;
 }
 
 function PresenterTOC({ slides, slideIndex, onJump, lanes, currentConceptId, dispatch, onDetour }) {
@@ -795,7 +814,8 @@ function PresenterTOC({ slides, slideIndex, onJump, lanes, currentConceptId, dis
     // Add the target module's title-card offset so the jump lands on the intended
     // slide (not one early) in presentCard modules.
     const idx = slideIdx + (presentCardOf(moduleId) ? 1 : 0);
-    // A detour jump records where to return; a normal jump ends any detour.
+    // Every jump opens the Back / Keep here bar (`detour`: a hidden slide or a
+    // collapsed lane, shown on purpose). See onDetour in part-slidepanel.jsx.
     onDetour?.(detour, { id: moduleId, index: idx });
     if (moduleId === currentConceptId) {
       onJump(idx);
@@ -1099,7 +1119,7 @@ function PresenterView({ current, next, index, total, duration, elapsed, brandin
         <span style={{ fontFamily: FONT.mono, fontSize: 13, fontWeight: 700, color: "#60a5fa", letterSpacing: "0.05em" }}>PRESENTER VIEW</span>
         <span data-testid="presenter-timer" style={{ fontFamily: FONT.mono, fontSize: 15, fontWeight: 700, color: "#fff", background: "rgba(255,255,255,0.08)", padding: "3px 12px", borderRadius: 6 }}>⏱ {fmtElapsed(elapsed)}</span>
         {detourReturn != null
-          ? <span data-testid="presenter-detour" style={{ fontFamily: FONT.mono, fontSize: 12, fontWeight: 700, color: "#0a0d14", background: "#f59e0b", padding: "3px 10px", borderRadius: 6, maxWidth: "40%", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>↪ DETOUR · hidden slide · ← → Esc return to {detourReturn}</span>
+          ? <span data-testid="presenter-detour" style={{ fontFamily: FONT.mono, fontSize: 12, fontWeight: 700, color: "#0a0d14", background: "#f59e0b", padding: "3px 10px", borderRadius: 6, maxWidth: "40%", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>↪ DETOUR · B / Esc back to {detourReturn} · K keep here</span>
           : <span style={{ fontFamily: FONT.mono, fontSize: 12, color: "#94a3b8" }}>Slide {index + 1} / {total}</span>}
         {duration > 0 && <span style={{ fontFamily: FONT.mono, fontSize: 12, color: "#facc15" }}>budget {fmtElapsed(duration)}</span>}
         <span style={{ marginLeft: "auto", fontFamily: FONT.mono, fontSize: 11, color: "#64748b" }}>← → to advance · S or Esc to close</span>

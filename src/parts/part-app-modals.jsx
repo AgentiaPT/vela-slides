@@ -738,6 +738,8 @@ function ShortcutHelp({ onClose }) {
       ["T", "Pace bar (fullscreen, with a session end)"],
       ["Del / ⌫", "Delete slide (fullscreen, with undo)"],
       ["H", "Hide / show slide (fullscreen, with undo)"],
+      ["B / Alt+←", "Back to the slide before a TOC jump (fullscreen)"],
+      ["K", "Keep the slide of a TOC jump, close the Back bar (fullscreen)"],
       ["D", "Toggle dark / light theme"],
       ["+ / −", "Scale font up / down"],
       ["0", "Reset font scale"],

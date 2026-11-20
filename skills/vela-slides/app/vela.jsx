@@ -138,8 +138,9 @@ const velaClipboardReadSlides = async () => {
   return [];
 };
 
-const VELA_VERSION = "13.83";
+const VELA_VERSION = "13.84";
 const VELA_CHANGELOG = [
+  { v: "13.84", d: ["Present: a jump from the slides TOC or search shows a Back / Keep here bar (bottom left).", "Present: Back (B, Esc or Alt+←) returns to the slide before the first jump; Keep here (K) closes the bar.", "Present: arrows, space and wheel now move on from the found slide; the bar stays."] },
   { v: "13.83", d: ["Present: Del or Backspace deletes the current slide; H hides it (H on a hidden slide shows it).", "Present: an undo toast follows (Undo button or Ctrl/⌘+Z) and returns to the slide.", "Present: the title card and the last visible slide cannot be removed."] },
   { v: "13.82", d: ["Phone (portrait): slides use a one-column layout that fills the screen; text stays near real size.", "Phone: side-by-side columns, split images and grids stack; short cards stay two per row.", "Phone: flows and timelines run top to bottom; stat rows and tables fit the width.", "Phone: images take the full width and shrink before text does; a slide does not run off the screen.", "Phone: a portrait first image keeps the lead position in an image group.", "Phone: story mode shows each image at full width, with the index row under it.", "Phone Present: a bar under the slide has previous, next, slide count and exit; nothing covers the slide.", "Phone editor: the slide tab shows the portrait layout, not a small 16:9 box.", "Hardening: malformed table or size values cannot stall or break a slide (fail-closed type checks; tests added).", "Wide (desktop) view: no layout change."] },
   { v: "13.81", d: ["Editor: search in the slide list (Ctrl+E or /), same engine as Present", "Search: ↑↓ + Enter, highlighted matches, match count; finds text in column layouts, notes and section names (editor)", "Editor: short outline on the matched block when a result opens"] },
@@ -9258,15 +9259,34 @@ function SearchResultRow({ title, snippet, kind, hiddenBlock, hiddenSlide, q, se
     </div>
   );
 }
-// "Module · slide title" for a detour's return point (Present index → raw slide).
-function detourReturnTitle(lanes, ret) {
-  for (const l of (lanes || [])) {
-    const it = (l.items || []).find((i) => i.id === ret.id);
-    if (!it) continue;
-    const raw = ret.index - (it.presentCard ? 1 : 0);
-    return raw < 0 ? it.title : `${it.title} · ${getSlideTitle((it.slides || [])[raw], raw)}`;
+// A Present detour return point (v13.84). `ret` holds the module id and the
+// slide object (`card: true` for the module's title card), so an insert or a
+// delete before it does not change which slide it is. Returns { item, raw, idx }
+// (raw deck index, Present index) or null when the slide is gone.
+function detourReturnFind(lanes, ret) {
+  if (!ret) return null;
+  for (const l of (lanes || [])) for (const it of ((l && l.items) || [])) {
+    if (!it || it.id !== ret.id) continue;
+    const off = it.presentCard ? 1 : 0;
+    if (ret.card) return off ? { item: it, raw: -1, idx: 0 } : null;
+    const raw = (it.slides || []).indexOf(ret.slide);
+    return raw < 0 ? null : { item: it, raw, idx: raw + off };
   }
-  return "";
+  return null;
+}
+// Present index of a detour return point, or -1 when it is gone.
+function detourReturnIndex(lanes, ret) { const f = detourReturnFind(lanes, ret); return f ? f.idx : -1; }
+// Slide title of a detour return point (the module title for a title card).
+function detourReturnName(lanes, ret) {
+  const f = detourReturnFind(lanes, ret);
+  if (!f) return "";
+  return String((f.raw < 0 ? f.item.title : getSlideTitle(f.item.slides[f.raw], f.raw)) || "");
+}
+// "Module · slide title" for a detour's return point.
+function detourReturnTitle(lanes, ret) {
+  const f = detourReturnFind(lanes, ret);
+  if (!f) return "";
+  return f.raw < 0 ? f.item.title : `${f.item.title} · ${detourReturnName(lanes, ret)}`;
 }
 
 function PresenterTOC({ slides, slideIndex, onJump, lanes, currentConceptId, dispatch, onDetour }) {
@@ -9385,7 +9405,8 @@ function PresenterTOC({ slides, slideIndex, onJump, lanes, currentConceptId, dis
     // Add the target module's title-card offset so the jump lands on the intended
     // slide (not one early) in presentCard modules.
     const idx = slideIdx + (presentCardOf(moduleId) ? 1 : 0);
-    // A detour jump records where to return; a normal jump ends any detour.
+    // Every jump opens the Back / Keep here bar (`detour`: a hidden slide or a
+    // collapsed lane, shown on purpose). See onDetour in part-slidepanel.jsx.
     onDetour?.(detour, { id: moduleId, index: idx });
     if (moduleId === currentConceptId) {
       onJump(idx);
@@ -9689,7 +9710,7 @@ function PresenterView({ current, next, index, total, duration, elapsed, brandin
         <span style={{ fontFamily: FONT.mono, fontSize: 13, fontWeight: 700, color: "#60a5fa", letterSpacing: "0.05em" }}>PRESENTER VIEW</span>
         <span data-testid="presenter-timer" style={{ fontFamily: FONT.mono, fontSize: 15, fontWeight: 700, color: "#fff", background: "rgba(255,255,255,0.08)", padding: "3px 12px", borderRadius: 6 }}>⏱ {fmtElapsed(elapsed)}</span>
         {detourReturn != null
-          ? <span data-testid="presenter-detour" style={{ fontFamily: FONT.mono, fontSize: 12, fontWeight: 700, color: "#0a0d14", background: "#f59e0b", padding: "3px 10px", borderRadius: 6, maxWidth: "40%", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>↪ DETOUR · hidden slide · ← → Esc return to {detourReturn}</span>
+          ? <span data-testid="presenter-detour" style={{ fontFamily: FONT.mono, fontSize: 12, fontWeight: 700, color: "#0a0d14", background: "#f59e0b", padding: "3px 10px", borderRadius: 6, maxWidth: "40%", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>↪ DETOUR · B / Esc back to {detourReturn} · K keep here</span>
           : <span style={{ fontFamily: FONT.mono, fontSize: 12, color: "#94a3b8" }}>Slide {index + 1} / {total}</span>}
         {duration > 0 && <span style={{ fontFamily: FONT.mono, fontSize: 12, color: "#facc15" }}>budget {fmtElapsed(duration)}</span>}
         <span style={{ marginLeft: "auto", fontFamily: FONT.mono, fontSize: 11, color: "#64748b" }}>← → to advance · S or Esc to close</span>
@@ -10491,6 +10512,28 @@ function presentClockBottom(branding) {
   return `calc(max(${(k * 100 / VIRTUAL_W).toFixed(4)}vw, ${(k * 100 / VIRTUAL_H).toFixed(4)}vh) + 10px)`;
 }
 
+// Present detour bar (v13.84): bottom-left pill after a Present TOC jump.
+// `title` is a deck value: render it only as a React text node.
+function DetourBar({ title, hints, bottom, onBack, onKeep }) {
+  const [hot, setHot] = useState(false);
+  const keepFocus = (e) => e.preventDefault(); // a click leaves keyboard focus on the slide
+  const chip = { fontFamily: FONT.mono, fontSize: 12, color: "rgba(255,255,255,0.45)", border: "1px solid rgba(255,255,255,0.2)", borderRadius: 4, padding: "0 5px", flex: "none" };
+  const btn = { all: "unset", cursor: "pointer", display: "flex", alignItems: "center", gap: 8, fontFamily: FONT.display, fontSize: 14, minWidth: 0 };
+  return (
+    <div data-testid="detour-bar" role="group" aria-label="Return to slide" onMouseEnter={() => setHot(true)} onMouseLeave={() => setHot(false)} onFocus={() => setHot(true)} onBlur={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) setHot(false); }}
+      style={{ position: "absolute", bottom, left: 20, zIndex: 22, display: "flex", alignItems: "center", gap: 8, padding: "6px 8px", borderRadius: 8, background: "rgba(0,0,0,0.78)", backdropFilter: "blur(8px)", border: `1px solid ${T.accent}30`, opacity: hot ? 1 : 0.7, transition: "opacity 0.15s", maxWidth: "calc(100% - 40px)", boxSizing: "border-box" }}>
+      <button type="button" data-testid="detour-back" title={title ? `Back to ${title}` : "Back"} onMouseDown={keepFocus} onClick={(e) => { e.stopPropagation(); onBack(); }} style={{ ...btn, color: "#fff", fontWeight: 600 }}>
+        <span style={{ maxWidth: "38ch", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>← Back to ‘{title}’</span>
+        {hints && <span style={chip}>B</span>}
+      </button>
+      <span aria-hidden="true" style={{ width: 1, height: 16, background: "rgba(255,255,255,0.2)", flex: "none" }} />
+      <button type="button" data-testid="detour-keep" onMouseDown={keepFocus} onClick={(e) => { e.stopPropagation(); onKeep(); }} style={{ ...btn, color: T.accent, fontWeight: 700, whiteSpace: "nowrap", flex: "none" }}>
+        Keep here{hints && <span style={chip}>K</span>}
+      </button>
+    </div>
+  );
+}
+
 function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, branding, guidelines, isMobile, fontScale, actionsRef, onRibbonUpdate }) {
   const deckEpochRef = useRef(state._deckEpoch);
   deckEpochRef.current = state._deckEpoch;
@@ -10768,7 +10811,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
     const cur = presSlides[slideIndex];
     if (!cur || !cur.hidden) return;
     // A detour shows a hidden slide on purpose; do not nudge off it.
-    if (detour && detour.at.id === concept.id && detour.at.index === slideIndex) return;
+    if (detour && detour.at && detour.at.id === concept.id && detour.at.index === slideIndex) return;
     let n = -1;
     for (let i = slideIndex + 1; i < presSlides.length; i++) if (!presSlides[i].hidden) { n = i; break; }
     if (n < 0) for (let i = slideIndex - 1; i >= 0; i--) if (!presSlides[i].hidden) { n = i; break; }
@@ -10787,30 +10830,48 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
   // CR07: editor-only review cycle — arrow keys skip slides marked `reviewed`.
   // Distinct from state.reviewMode (comments review), which owns that name.
   const [reviewCycle, setReviewCycle] = useState(false);
-  // Present detour: a TOC search jump to a hidden slide (or a collapsed lane).
-  // `ret` is the last VISIBLE slide (kept across chained detours), `at` is the
-  // detour slide. Arrows, wheel and Esc on the detour slide return to `ret`;
-  // landing anywhere else ends the detour (effect below). Indices are Present
-  // indices (title-card offset included), as passed to SET_SLIDE_INDEX.
+  // Present detour (v13.84): a Present TOC jump (search hit or row) to another
+  // slide opens the Back / Keep here bar (DetourBar). `ret` is the slide before
+  // the FIRST jump (chained jumps keep it), held by module id + slide object
+  // (detourReturnFind in part-slides.jsx), so an insert or delete does not move
+  // it. `at` is the jump target (Present index; `off`: a hidden slide or a
+  // collapsed lane, shown on purpose); it clears when you land elsewhere.
+  // Arrows, space and wheel move on and the bar stays. Back: B / Esc / Alt+←.
+  // Keep here: K. Leaving Present, or a return slide that is gone, closes it.
   // (The `detour` state itself is declared above the hidden-slide nudge effect.)
   const detourRef = useRef(null);
   detourRef.current = detour;
-  const onDetour = useCallback((on, at) => {
-    if (!on) { setDetour(null); return; }
-    setDetour((d) => ({ ret: d ? d.ret : { id: concept.id, index: slideIndex }, at }));
-  }, [concept.id, slideIndex]);
+  const onDetour = useCallback((off, at) => {
+    if (at.id === concept.id && at.index === slideIndex) return; // same slide: no bar
+    setDetour((d) => {
+      const ret = d && detourReturnIndex(lanes, d.ret) >= 0 ? d.ret
+        : slideIndex < presOffset ? { id: concept.id, card: true }
+        : presSlides[slideIndex] ? { id: concept.id, slide: presSlides[slideIndex] } : null;
+      // A jump back to the return slide closes the bar.
+      if (!ret || (ret.id === at.id && detourReturnIndex(lanes, ret) === at.index)) return null;
+      return { ret, at: { id: at.id, index: at.index, off: !!off } };
+    });
+  }, [concept.id, slideIndex, presOffset, presSlides, lanes]);
   const detourBackRef = useRef(() => false);
   detourBackRef.current = () => {
     const d = detourRef.current;
     if (!d) return false;
     setDetour(null);
+    const idx = detourReturnIndex(lanes, d.ret);
+    if (idx < 0) return true; // the return slide is gone: close only
     if (d.ret.id !== concept.id) dispatch({ type: "SELECT", id: d.ret.id });
-    dispatch({ type: "SET_SLIDE_INDEX", index: d.ret.index });
+    dispatch({ type: "SET_SLIDE_INDEX", index: idx });
     return true;
   };
+  const detourKeep = () => setDetour(null);
   useEffect(() => {
-    if (detour && (!fullscreen || detour.at.id !== concept.id || detour.at.index !== slideIndex)) setDetour(null);
-  }, [detour, fullscreen, concept.id, slideIndex]);
+    if (!detour) return;
+    if (!fullscreen || detourReturnIndex(lanes, detour.ret) < 0) { setDetour(null); return; }
+    if (detour.at && (detour.at.id !== concept.id || detour.at.index !== slideIndex)) setDetour({ ...detour, at: null });
+  }, [detour, fullscreen, concept.id, slideIndex, lanes]);
+  // On the hidden / collapsed-lane slide of a jump: no slide number, and the
+  // pace stays on the return slide.
+  const detourOff = !!(detour && detour.at && detour.at.off && detour.at.id === concept.id && detour.at.index === slideIndex);
   const showGalleryRef = useRef(false);
   const setGallery = (v) => { const val = typeof v === "function" ? v(showGalleryRef.current) : v; showGalleryRef.current = val; setShowGallery(val); };
   // ── Presenter view (CR-08) — single-screen speaker dashboard: current +
@@ -10828,8 +10889,8 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
   const [presentElapsed, setPresentElapsed] = useState(0); // seconds since Present mode was entered
   const presentStartRef = useRef(null);
   // ── Session end (v13.80): clock, pace, Present edge bar, dialog. Present only.
-  // Pace follows the Present numbering (presentSequence); during a detour it
-  // uses the return slide (detour.ret, with that item's own title-card offset).
+  // Pace follows the Present numbering (presentSequence); on a hidden detour
+  // slide it uses the return slide (detour.ret, with that item's own title-card offset).
   const [nowMs, setNowMs] = useState(() => Date.now());
   const [sessionDialogOpen, setSessionDialogOpen] = useState(false);
   const sessionDialogOpenRef = useRef(false);
@@ -10843,18 +10904,17 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
     try { if (on) localStorage.setItem(VELA_PRESENT_CLOCK_KEY, "1"); else localStorage.removeItem(VELA_PRESENT_CLOCK_KEY); } catch {}
     return on;
   });
-  const paceItemId = detour ? detour.ret.id : concept.id;
+  const paceItemId = detourOff ? detour.ret.id : concept.id;
   const sessionSeq = useMemo(() => { const seq = presentSequence(lanes, paceItemId); return { seq, est: sessionEstimates(seq) }; }, [lanes, paceItemId]);
   const paceRawIdx = (() => {
-    if (!detour) return slideIndex - presOffset;
-    let retItem = null;
-    for (const l of lanes || []) for (const it of (l && l.items) || []) if (it && it.id === detour.ret.id) retItem = it;
-    return detour.ret.index - (retItem && retItem.presentCard ? 1 : 0);
+    if (!detourOff) return slideIndex - presOffset;
+    const f = detourReturnFind(lanes, detour.ret);
+    return f ? f.raw : -1;
   })();
   const paceIdx = sessionSeqIndex(sessionSeq.seq, paceItemId, paceRawIdx);
   // On-slide counter: restarts when the pace position changes (not on a detour).
   const slideEnterRef = useRef({ key: null, at: 0 });
-  const paceSlideKey = fullscreen ? `${paceItemId}|${detour ? detour.ret.index : slideIndex}` : null;
+  const paceSlideKey = fullscreen ? `${paceItemId}|${detourOff ? detourReturnIndex(lanes, detour.ret) : slideIndex}` : null;
   if (slideEnterRef.current.key !== paceSlideKey) slideEnterRef.current = { key: paceSlideKey, at: Date.now() };
   const sessionLive = fullscreen ? liveSession(state.session, nowMs) : null;
   const sessionPace = sessionLive ? computeSessionPace(sessionSeq.est, paceIdx, sessionOnSlideSec(nowMs, slideEnterRef.current.at, sessionLive), sessionLive, nowMs) : null;
@@ -11437,9 +11497,18 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       // (editor nav keeps reaching them so they can be edited/unhidden).
       const nextVisible = (from) => { for (let i = from + 1; i < navSlides.length; i++) if (!fullscreen || !navSlides[i].hidden) return i; return -1; };
       const prevVisible = (from) => { for (let i = from - 1; i >= 0; i--) if (!fullscreen || !navSlides[i].hidden) return i; return -1; };
-      // Present detour: any step key returns to the slide the detour left.
-      if (fullscreen && detourRef.current && ["ArrowRight", "ArrowDown", " ", "ArrowLeft", "ArrowUp"].includes(e.key)) {
-        e.preventDefault(); stopAlternatives(); detourBackRef.current(); return;
+      // Present detour bar (v13.84): B or Alt+← goes back, K keeps this slide.
+      // Ignored with other modifiers, in a text field, while a dialog, zoom or
+      // the gallery is open; a held key acts once. Step keys move on as normal.
+      if (fullscreen && detourRef.current && !e.ctrlKey && !e.metaKey && !e.shiftKey && ((!e.altKey && ["b", "B", "k", "K"].includes(e.key)) || (e.altKey && e.key === "ArrowLeft"))) {
+        const ae = document.activeElement;
+        if (!(VELA_OPEN_CHROME.modals.size > 0 || VELA_OPEN_CHROME.zooms.size > 0 || sessionDialogOpenRef.current || showGalleryRef.current || (ae && (["INPUT", "TEXTAREA", "SELECT"].includes(ae.tagName) || ae.isContentEditable)))) {
+          e.preventDefault();
+          if (e.repeat) return;
+          stopAlternatives();
+          if (e.key === "k" || e.key === "K") detourKeep(); else detourBackRef.current();
+          return;
+        }
       }
       // CR07: editor review cycle — step through unreviewed slides across modules.
       // The current slide stays in the order (even if reviewed) only to anchor the step.
@@ -11568,7 +11637,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       // sandboxed iframe (Claude.ai artifact) requestFullscreen fails, so the key lands here.
       // An open modal takes Esc first (it closes on the same keydown).
       // A story slide zoomed on an image: Esc zooms out to the grid first and Present stays.
-      // A Present detour: Esc returns to the slide it left, and Present stays.
+      // A Present detour bar: Esc goes back to the return slide, and Present stays.
       if (e.key === "Escape" && fullscreen && VELA_OPEN_CHROME.modals.size === 0 && detourBackRef.current()) { e.preventDefault(); return; }
       if (e.key === "Escape" && fullscreen && VELA_OPEN_CHROME.modals.size === 0 && storyEscRef.current()) { e.preventDefault(); return; }
       if (e.key === "Escape" && fullscreen && VELA_OPEN_CHROME.modals.size === 0) { e.preventDefault(); stopAlternatives(); dispatch({ type: "SET_FULLSCREEN", value: false }); return; }
@@ -11641,7 +11710,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
           if (ti >= 0) land = { id: mods[ti].id, index: mods[ti].lastVisible >= 0 ? mods[ti].lastVisible + (mods[ti].presentCard ? 1 : 0) : 0 };
         }
         if (!land) land = { id: concept.id, index: Math.max(0, slideIndex - shift) };
-        setDetour(null);
+        setDetour((d) => d && { ...d, at: null }); // the bar stays while its return slide exists
         dispatch(hide ? { type: "TOGGLE_SLIDE_HIDDEN", id: concept.id, index: real } : { type: "REMOVE_SLIDE", id: concept.id, index: real });
         if (land.id !== concept.id) dispatch({ type: "SELECT", id: land.id });
         dispatch({ type: "SET_SLIDE_INDEX", index: land.index });
@@ -11726,7 +11795,6 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       if (Math.abs(scrollAccum.current) >= SCROLL_THRESHOLD) {
         const dir = scrollAccum.current > 0 ? 1 : -1;
         scrollAccum.current = 0;
-        if (fullscreen && detourBackRef.current()) return; // a detour returns first
         if (storyStepRef.current(dir)) return; // one story step per notch
         const navSlides = fullscreen ? presSlides : slides;
         if (dir > 0) {
@@ -12107,7 +12175,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
             .slide-transition-fade (part-imports.jsx). Independent of the per-block
             .stg-N stagger reveal inside SlideContent, which keeps working as-is. */}
         <div key={slideIndex} className="slide-transition-fade" style={{ position: "relative", width: "100%", height: "100%" }}>
-          <FullscreenSlide key={`deck-${state._deckEpoch}`} slide={presSlides[slideIndex]} index={slideIndex} total={presSlides.length} innerRef={slideRef} branding={presSlides[slideIndex]?._virtual ? null : branding} editable={!isStudent && !presSlides[slideIndex]?._virtual} onEdit={isStudent || presSlides[slideIndex]?._virtual ? undefined : handleSlideEdit} onBlockEdit={isStudent || presSlides[slideIndex]?._virtual ? undefined : runBlockEdit} blockEditing={isStudent ? null : blockEditing} fontScale={fontScale} mode="fill" forceEdit={presentEdit && !isStudent} displayIndex={globalSlideIndex - presOffset} displayTotal={globalSlideTotal} hideSlideNumber={!!detour} story={story} onStoryJump={story ? onStoryJump : undefined} onStoryZoomOut={story ? onStoryZoomOut : undefined} />
+          <FullscreenSlide key={`deck-${state._deckEpoch}`} slide={presSlides[slideIndex]} index={slideIndex} total={presSlides.length} innerRef={slideRef} branding={presSlides[slideIndex]?._virtual ? null : branding} editable={!isStudent && !presSlides[slideIndex]?._virtual} onEdit={isStudent || presSlides[slideIndex]?._virtual ? undefined : handleSlideEdit} onBlockEdit={isStudent || presSlides[slideIndex]?._virtual ? undefined : runBlockEdit} blockEditing={isStudent ? null : blockEditing} fontScale={fontScale} mode="fill" forceEdit={presentEdit && !isStudent} displayIndex={globalSlideIndex - presOffset} displayTotal={globalSlideTotal} hideSlideNumber={detourOff} story={story} onStoryJump={story ? onStoryJump : undefined} onStoryZoomOut={story ? onStoryZoomOut : undefined} />
         </div>
         {/* Session edge bar (v13.80): neutral fill up to the first of YOU / SHOULD
             BE, pace-colour gap between them, white tick = YOU (sessionBarGeom).
@@ -12194,6 +12262,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
             <span data-testid="present-undo-hint" style={{ fontFamily: FONT.mono, fontSize: 12, color: "rgba(255,255,255,0.6)" }}>{typeof navigator !== "undefined" && /Mac|iPhone|iPad|iPod/.test(navigator.platform || "") ? "⌘Z" : "Ctrl+Z"}</span>
           </div>
         </div>}
+        {detour && <DetourBar title={detourReturnName(lanes, detour.ret)} hints={!isMobile} bottom={20 + (navToast ? 44 : 0) + (undoToast ? 44 : 0)} onBack={() => detourBackRef.current()} onKeep={detourKeep} />}
         {/* Floating Edit + New Slide cluster — REMOVED from the fullscreen/Present
             view (CR-03): this branch is the audience-facing Present surface, and a
             pencil/+ edit cluster here is edit chrome that must never be visible to
@@ -12205,7 +12274,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
           the slide, in thumb reach. Nothing floats over the slide, and a step
           does not need a swipe across slide content (links, zoom, story tiles). */}
       {isMobile && !showGallery && (() => {
-        const virtual = !!presSlides[slideIndex]?._virtual || !!detourRef.current;
+        const virtual = !!presSlides[slideIndex]?._virtual || detourOff;
         const at = globalSlideIndex - presOffset, total = Math.max(1, globalSlideTotal);
         const noPrev = !virtual && at <= 0 && !(presOffset && slideIndex > 0);
         const btn = (dim) => ({ border: "none", background: "transparent", color: "#e2e8f0", opacity: dim ? 0.3 : 0.9, display: "flex", alignItems: "center", justifyContent: "center", padding: 0, cursor: "pointer", touchAction: "manipulation", WebkitTapHighlightColor: "transparent" });
@@ -21760,7 +21829,8 @@ uiSuite("toolbar-auto-compact", [
 
 // v13.79 Present detour: while typing, Ctrl+E search lists hidden slides (and
 // matches hidden-block text); a jump shows the hidden slide with no slide
-// number; arrows or Esc return to the slide that was left; Present stays.
+// number. v13.84: arrows move on (the Back bar stays); Back or Esc return to
+// the slide that was left; Present stays.
 const _pdSel = () => _hooks().getSelection();
 const _pdOnSlide = (t) => _$$("[data-block-type]").some((el) => (el.textContent || "").includes(t));
 const _pdSame = (a, b) => !!a && !!b && a.itemId === b.itemId && a.slideIdx === b.slideIdx;
@@ -21798,7 +21868,7 @@ const _pdJump = async (checkEmpty) => {
   document.activeElement?.blur?.();
 };
 uiSuite("present-detour-search", [
-  { name: "D1: hidden slide found only while typing; jump shows it with no number; Presenter view shows the detour; an arrow returns", fn: async () => {
+  { name: "D1: hidden slide found only while typing; jump shows it with no number; Presenter view shows the detour; an arrow moves on, Back returns", fn: async () => {
     let past = null;
     try {
       past = await _pdPrepare();
@@ -21812,7 +21882,10 @@ uiSuite("present-detour-search", [
       await _waitFor(() => !_$("[data-testid='presenter-view']"), 1500);
       document.activeElement?.blur?.();
       _key("ArrowRight");
-      await _waitFor(() => _pdSame(_pdSel(), before), 1500).catch(() => { throw new Error("ArrowRight did not return to the slide the detour left"); });
+      await _waitFor(() => !_pdOnSlide("PDBACKUP") && !_pdSame(_pdSel(), before), 1500).catch(() => { throw new Error("ArrowRight did not move on from the hidden slide"); });
+      if (!_$("[data-testid='detour-bar']")) throw new Error("the Back bar closed when an arrow moved on");
+      _click("[data-testid='detour-back']");
+      await _waitFor(() => _pdSame(_pdSel(), before), 1500).catch(() => { throw new Error("Back did not return to the slide the detour left"); });
       if (_pdOnSlide("PDBACKUP")) throw new Error("the hidden slide is still on screen after the return");
       if (_$("header")) throw new Error("the return left Present");
     } finally { await _exitFullscreen(); if (past != null) await _mrdUndoTo(past); }
@@ -24337,6 +24410,203 @@ uiSuite("present-del-hide", [
       if (_pdhToast()) throw new Error("editor Del shows the Present undo toast");
       if (_hooks().getCurrentSlideForTest()?.blocks?.[0]?.text !== "PDHA1") throw new Error("editor Del removed the wrong slide");
     } finally { await _pdhEnd(); }
+  }},
+]);
+
+// v13.84 Present detour bar: every Present TOC jump to another slide shows a
+// Back / Keep here bar. Back (button, B, Esc, Alt+←) returns to the slide before
+// the FIRST jump, held by slide identity; Keep here (button, K) closes it.
+// Test deck: module A (title card) = A1..A4; module B = B1, B2 (hidden), B3.
+const _pdbDeck = () => _pdhDeck([
+  { id: "pdb-a", title: "PDB Module A", presentCard: true, slides: [_pdhSlide("PDBA1"), _pdhSlide("PDBA2"), _pdhSlide("PDBA3"), _pdhSlide("PDBA4")] },
+  { id: "pdb-b", title: "PDB Module B", slides: [_pdhSlide("PDBB1"), { hidden: true, blocks: [{ type: "heading", text: "PDBB2" }, { type: "text", text: "zqxpdb word" }] }, _pdhSlide("PDBB3")] },
+]);
+const _pdbBar = () => _$("[data-testid='detour-bar']");
+const _pdbBackText = () => _$("[data-testid='detour-back']")?.textContent || "";
+// Import gives modules new ids: the heading text names the module and slide.
+const _pdbAt = (id, idx, text) => _waitFor(() => { const s = _pdSel(); return s && s.slideIdx === idx && _pdhOn(text); }, 1500)
+  .catch(() => { throw new Error(`expected ${id} slide ${idx} (${text}), got ${JSON.stringify(_pdSel())}`); });
+// Open the Present TOC, type a word, and click the row that shows `text`.
+const _pdbJump = async (word, text) => {
+  document.activeElement?.blur?.();
+  _key("e", { ctrlKey: true });
+  await _waitFor(_hfeTocOpen, 2000).catch(() => { throw new Error("the Present TOC did not open"); });
+  await _wait(150);
+  _type(_psnInput(), word);
+  const row = await _waitFor(() => _psnRows().find((r) => (r.textContent || "").includes(text)), 1500).catch(() => { throw new Error(`no TOC row for ${text}`); });
+  _click(row);
+  await _waitFor(() => !_hfeTocOpen() && _pdhOn(text), 1500).catch(() => { throw new Error(`the jump did not show ${text}`); });
+  await _wait(150);
+  document.activeElement?.blur?.();
+};
+const _pdbNoBar = async (why) => { await _wait(150); if (_pdbBar()) throw new Error(why); };
+uiSuite("present-detour-back", [
+  { name: "PDB1: a row jump to a visible slide in another module shows the bar; arrows move on and it stays; B returns", fn: async () => {
+    try {
+      await _pdhStart(_pdbDeck());
+      await _pdbAt("pdb-a", 1, "PDBA1");
+      await _pdhStep("ArrowRight");
+      await _pdbAt("pdb-a", 2, "PDBA2");
+      if (_pdbBar()) throw new Error("normal navigation shows the bar");
+      await _pdbJump("PDBB3", "PDBB3");
+      await _pdbAt("pdb-b", 2, "PDBB3");
+      if (!_pdbBar()) throw new Error("no bar after a jump to a visible slide");
+      if (!_pdbBackText().includes("PDBA2")) throw new Error("the Back label does not name the return slide: " + _pdbBackText());
+      await _pdhStep("ArrowLeft");
+      await _pdbAt("pdb-b", 0, "PDBB1"); // the hidden B2 is skipped
+      await _pdhStep(" ");
+      await _pdbAt("pdb-b", 2, "PDBB3");
+      if (!_pdbBar()) throw new Error("the bar closed when the arrows moved on");
+      await _pdhStep("b");
+      await _pdbAt("pdb-a", 2, "PDBA2");
+      await _pdbNoBar("the bar stays after Back");
+      if (_$("header")) throw new Error("Back left Present");
+    } finally { await _pdhEnd(); }
+  }},
+  { name: "PDB2: a jump to a hidden slide shows the bar and no auto-skip; → goes to the next visible slide; Esc returns, Present stays", fn: async () => {
+    try {
+      await _pdhStart(_pdbDeck());
+      await _pdhStep("ArrowRight");
+      await _pdbAt("pdb-a", 2, "PDBA2");
+      await _pdbJump("zqxpdb", "PDBB2");
+      await _wait(400); // the hidden-slide auto-skip must not move off the jump target
+      await _pdbAt("pdb-b", 1, "PDBB2");
+      if (!_pdbBar()) throw new Error("no bar after a jump to a hidden slide");
+      if (_slideCounterEl()) throw new Error("the hidden slide shows a slide number");
+      await _pdhStep("ArrowRight");
+      await _pdbAt("pdb-b", 2, "PDBB3");
+      if (!_pdbBar()) throw new Error("the bar closed when → moved on");
+      await _pdhStep("Escape");
+      await _pdbAt("pdb-a", 2, "PDBA2");
+      await _pdbNoBar("the bar stays after Esc");
+      if (_$("header")) throw new Error("Esc with the bar left Present");
+    } finally { await _pdhEnd(); }
+  }},
+  { name: "PDB3: chained jumps keep the first return point; Alt+← returns (default prevented); the Back button returns", fn: async () => {
+    try {
+      await _pdhStart(_pdbDeck());
+      await _pdhStep("ArrowRight");
+      await _pdbAt("pdb-a", 2, "PDBA2");
+      await _pdbJump("PDBB3", "PDBB3");
+      await _pdbJump("PDBA4", "PDBA4");
+      await _pdbAt("pdb-a", 4, "PDBA4");
+      await _pdbJump("PDBB1", "PDBB1");
+      if (!_pdbBackText().includes("PDBA2")) throw new Error("a chained jump changed the return point: " + _pdbBackText());
+      const ev = new KeyboardEvent("keydown", { key: "ArrowLeft", altKey: true, bubbles: true, cancelable: true });
+      document.body.dispatchEvent(ev);
+      if (!ev.defaultPrevented) throw new Error("Alt+← did not prevent the browser back");
+      await _pdbAt("pdb-a", 2, "PDBA2");
+      await _pdbNoBar("the bar stays after Alt+←");
+      await _pdbJump("PDBB3", "PDBB3");
+      _click("[data-testid='detour-back']");
+      await _pdbAt("pdb-a", 2, "PDBA2");
+      await _pdbNoBar("the bar stays after the Back button");
+    } finally { await _pdhEnd(); }
+  }},
+  { name: "PDB4: K and Keep here close the bar and stay; a jump to the current slide shows no bar; leaving Present closes it", fn: async () => {
+    try {
+      await _pdhStart(_pdbDeck());
+      await _pdhStep("ArrowRight");
+      await _pdbAt("pdb-a", 2, "PDBA2");
+      await _pdbJump("PDBA2", "PDBA2");
+      await _pdbNoBar("a jump to the current slide shows the bar");
+      await _pdbJump("PDBB3", "PDBB3");
+      await _pdhStep("k");
+      await _pdbNoBar("K did not close the bar");
+      await _pdbAt("pdb-b", 2, "PDBB3");
+      await _pdbJump("PDBA4", "PDBA4");
+      if (!_pdbBackText().includes("PDBB3")) throw new Error("the return point after K is not the slide kept: " + _pdbBackText());
+      _click("[data-testid='detour-keep']");
+      await _pdbNoBar("Keep here did not close the bar");
+      await _pdbAt("pdb-a", 4, "PDBA4");
+      await _pdbJump("PDBB1", "PDBB1");
+      if (!_pdbBar()) throw new Error("no bar before leaving Present");
+      await _exitFullscreen();
+      await _pdbNoBar("the bar stays after leaving Present");
+      await _sesUiPresent();
+      await _pdbNoBar("the bar shows again after re-entering Present");
+    } finally { await _pdhEnd(); }
+  }},
+  { name: "PDB5: a slide deleted or put back before the return slide: Back still lands on the return slide", fn: async () => {
+    try {
+      await _pdhStart(_pdbDeck());
+      await _pdhStep("ArrowRight"); await _pdhStep("ArrowRight");
+      await _pdbAt("pdb-a", 3, "PDBA3");
+      await _pdbJump("PDBB3", "PDBB3");
+      for (const t of ["PDBB1", "PDBA4", "PDBA3", "PDBA2"]) { await _pdhStep("ArrowLeft"); await _waitFor(() => _pdhOn(t), 1500).catch(() => { throw new Error("← did not reach " + t); }); }
+      // Delete A2 (before the return slide), then undo: A2 comes back before it.
+      await _pdhStep("Delete");
+      await _waitFor(() => _pdhMsg() === "Slide deleted", 1000).catch(() => { throw new Error("no 'Slide deleted' toast"); });
+      if (!_pdbBar()) throw new Error("the bar closed when a different slide was deleted");
+      _key("z", { ctrlKey: true });
+      await _pdbAt("pdb-a", 2, "PDBA2");
+      if (!_pdbBar()) throw new Error("the bar is gone after undo");
+      await _pdhStep("b");
+      await _pdbAt("pdb-a", 3, "PDBA3");
+      // Again, now with the delete kept: the return slide moves up by one.
+      await _pdbJump("PDBB3", "PDBB3");
+      for (const t of ["PDBB1", "PDBA4", "PDBA3", "PDBA2"]) { await _pdhStep("ArrowLeft"); await _waitFor(() => _pdhOn(t), 1500).catch(() => { throw new Error("← did not reach " + t); }); }
+      await _pdhStep("Delete");
+      await _pdbAt("pdb-a", 2, "PDBA3");
+      await _pdhStep("ArrowRight");
+      await _pdbAt("pdb-a", 3, "PDBA4");
+      await _pdhStep("b");
+      await _pdbAt("pdb-a", 2, "PDBA3");
+    } finally { await _pdhEnd(); }
+  }},
+  { name: "PDB6: the return slide deleted closes the bar; B then does nothing", fn: async () => {
+    try {
+      await _pdhStart(_pdbDeck());
+      await _pdhStep("ArrowRight");
+      await _pdbAt("pdb-a", 2, "PDBA2");
+      await _pdbJump("PDBB3", "PDBB3");
+      for (const t of ["PDBB1", "PDBA4", "PDBA3", "PDBA2"]) { await _pdhStep("ArrowLeft"); await _waitFor(() => _pdhOn(t), 1500).catch(() => { throw new Error("← did not reach " + t); }); }
+      await _pdhStep("Delete");
+      await _pdbAt("pdb-a", 2, "PDBA3");
+      await _pdbNoBar("the bar stays after its return slide was deleted");
+      await _pdhStep("b");
+      await _pdbAt("pdb-a", 2, "PDBA3");
+      if (_$("header")) throw new Error("B left Present");
+    } finally { await _pdhEnd(); }
+  }},
+  { name: "PDB7: B / K / Alt+← ignored in a text field, with a dialog open, with Ctrl or Shift, when held; Presenter view badge text", fn: async () => {
+    const token = {};
+    try {
+      await _pdhStart(_pdbDeck());
+      await _pdhStep("ArrowRight");
+      await _pdbAt("pdb-a", 2, "PDBA2");
+      await _pdbJump("PDBB3", "PDBB3");
+      _key("e", { ctrlKey: true });
+      await _waitFor(_hfeTocOpen, 2000);
+      await _wait(150);
+      _psnInput().focus();
+      for (const k of ["b", "k"]) _key(k);
+      _key("ArrowLeft", { altKey: true });
+      await _wait(200);
+      if (!_pdbBar() || !_pdhOn("PDBB3")) throw new Error("a key in the search field acted on the bar");
+      _key("Escape"); // the first Esc may only clear the search text
+      await _wait(150);
+      if (_hfeTocOpen()) _key("Escape");
+      await _waitFor(() => !_hfeTocOpen(), 1500).catch(() => { throw new Error("Esc did not close the TOC"); });
+      await _wait(150);
+      if (!_pdbBar() || !_pdhOn("PDBB3")) throw new Error("Esc that closed the TOC also went back");
+      document.activeElement?.blur?.();
+      // (A real dialog owns the arrow keys itself; this token checks B / K only.)
+      VELA_OPEN_CHROME.modals.add(token);
+      for (const k of ["b", "k"]) _key(k);
+      await _wait(200);
+      VELA_OPEN_CHROME.modals.delete(token);
+      if (!_pdbBar() || !_pdhOn("PDBB3")) throw new Error("a key acted on the bar while a dialog was open");
+      _key("b", { ctrlKey: true }); _key("B", { shiftKey: true }); _key("k", { metaKey: true }); _key("b", { repeat: true }); _key("k", { repeat: true });
+      await _wait(200);
+      if (!_pdbBar() || !_pdhOn("PDBB3")) throw new Error("a modified or held key acted on the bar");
+      await _pdhStep("s");
+      const badge = await _waitFor(() => _$("[data-testid='presenter-detour']"), 1500).catch(() => { throw new Error("Presenter view shows no detour badge"); });
+      const txt = badge.textContent || "";
+      if (!txt.includes("B / Esc back to PDB Module A · PDBA2") || !txt.includes("K keep here")) throw new Error("badge text: " + txt);
+      await _pdhStep("s");
+      await _waitFor(() => !_$("[data-testid='presenter-view']"), 1500);
+    } finally { VELA_OPEN_CHROME.modals.delete(token); await _pdhEnd(); }
   }},
 ]);
 
@@ -31980,6 +32250,8 @@ function ShortcutHelp({ onClose }) {
       ["T", "Pace bar (fullscreen, with a session end)"],
       ["Del / ⌫", "Delete slide (fullscreen, with undo)"],
       ["H", "Hide / show slide (fullscreen, with undo)"],
+      ["B / Alt+←", "Back to the slide before a TOC jump (fullscreen)"],
+      ["K", "Keep the slide of a TOC jump, close the Back bar (fullscreen)"],
       ["D", "Toggle dark / light theme"],
       ["+ / −", "Scale font up / down"],
       ["0", "Reset font scale"],
