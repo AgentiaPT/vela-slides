@@ -685,6 +685,45 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
 
   useEffect(() => () => clearTimeout(navToastTimer.current), []);
 
+  // Present Del / Backspace / H (v13.83): undo toast for one slide delete,
+  // hide or show. It shows only code-authored text. undoMarkRef keeps the lanes
+  // object from before the action (an UNDO puts back that same object), the
+  // Present slide to return to, and the detour of that moment. `after` is the
+  // lanes object of the action itself (set on the first change).
+  const [undoToast, setUndoToast] = useState(null); // { msg, phase }
+  const undoToastTimer = useRef(null);
+  const undoMarkRef = useRef(null);
+  const closeUndoToast = useCallback(() => { clearTimeout(undoToastTimer.current); undoMarkRef.current = null; setUndoToast(null); }, []);
+  const showUndoToast = useCallback((msg, mark) => {
+    clearTimeout(undoToastTimer.current);
+    undoMarkRef.current = { ...mark, after: null };
+    setUndoToast({ msg, phase: "in" });
+    undoToastTimer.current = setTimeout(() => {
+      setUndoToast((t) => t ? { ...t, phase: "out" } : null);
+      undoToastTimer.current = setTimeout(() => { undoMarkRef.current = null; setUndoToast(null); }, 300);
+    }, 6000);
+  }, []);
+  useEffect(() => () => clearTimeout(undoToastTimer.current), []);
+  useEffect(() => { if (!fullscreen) closeUndoToast(); }, [fullscreen]);
+  // Undo by any path (toast button, Ctrl/Cmd+Z): the lanes object is the one
+  // from before the action. Close the toast and show the restored slide (the
+  // UNDO clamp does not know the title-card offset). Any other deck change
+  // closes the toast, so its button never undoes a different change.
+  useEffect(() => {
+    const m = undoMarkRef.current;
+    if (!m) return;
+    if (lanes === m.before) {
+      closeUndoToast();
+      if (!fullscreen) return;
+      if (m.at.id !== concept.id) dispatch({ type: "SELECT", id: m.at.id });
+      dispatch({ type: "SET_SLIDE_INDEX", index: m.at.index });
+      setDetour(m.detour);
+      return;
+    }
+    if (m.after === null) { m.after = lanes; return; }
+    if (lanes !== m.after) closeUndoToast();
+  }, [lanes]);
+
   // Touch swipe for mobile slide navigation (crosses module boundaries like keyboard)
   // A modal over the slide (session dialog, any ModalBackdrop) owns the swipe.
   const swipeBlocked = (e) => sessionDialogOpenRef.current || !!e?.target?.closest?.("[data-vela-modal]");
@@ -1174,6 +1213,58 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
           dispatch({ type: "SET_SLIDE_INDEX", index: insertAt + arr.length - 1 });
           showNavToast(arr.length > 1 ? `${arr.length} slides pasted` : "Slide pasted");
         });
+      }
+      // Present (v13.83): Del / Backspace delete the current slide, H hides it
+      // (H on a hidden slide, e.g. a detour, shows it again and stays). One undo
+      // step each, then an undo toast. Main Present view only: the gallery and
+      // the Presenter View keep the Del path below. The deck index removes the
+      // title-card offset. Ignored with Ctrl/Cmd/Alt (and Shift for H), in a text
+      // field, or while a dialog or zoom is open; a held key acts once.
+      if (fullscreen && !showGalleryRef.current && !showPresenterViewRef.current && (e.key === "Delete" || e.key === "Backspace" || e.key === "h" || e.key === "H")) {
+        const hide = e.key === "h" || e.key === "H";
+        const ae = document.activeElement;
+        if (e.ctrlKey || e.metaKey || e.altKey || (hide && e.shiftKey) || VELA_OPEN_CHROME.modals.size > 0 || VELA_OPEN_CHROME.zooms.size > 0 || sessionDialogOpenRef.current || (ae && (["INPUT", "TEXTAREA", "SELECT"].includes(ae.tagName) || ae.isContentEditable))) return;
+        e.preventDefault();
+        if (e.repeat) return;
+        const cur = presSlides[slideIndex];
+        if (!cur) return;
+        if (cur._virtual) { showNavToast("Title card — nothing to remove"); return; }
+        const real = slideIndex - presOffset;
+        if (real < 0 || real >= slides.length) return;
+        const mark = { before: lanes, at: { id: concept.id, index: slideIndex }, detour: detourRef.current };
+        if (hide && cur.hidden) {
+          dispatch({ type: "TOGGLE_SLIDE_HIDDEN", id: concept.id, index: real });
+          showUndoToast("Slide shown", mark);
+          return;
+        }
+        // Never remove the last visible slide of the presentation.
+        if (!cur.hidden && !slides.some((s, i) => i !== real && !s.hidden) && !mods.some((m) => m.id !== concept.id && m.firstVisible >= 0)) {
+          showNavToast("Can't remove the last visible slide"); return;
+        }
+        // Land on the next visible slide (across modules, like →), else on the
+        // previous one (like ←). A delete moves the later slides up by one.
+        const shift = hide ? 0 : 1;
+        let land = null;
+        for (let i = real + 1; i < slides.length && !land; i++) if (!slides[i].hidden) land = { id: concept.id, index: i - shift + presOffset };
+        if (!land) {
+          let ti = curIdx + 1;
+          while (ti < mods.length && !mods[ti].presentCard && mods[ti].firstVisible < 0) ti++;
+          if (ti < mods.length) land = { id: mods[ti].id, index: mods[ti].presentCard ? 0 : mods[ti].firstVisible };
+        }
+        for (let i = real - 1; i >= 0 && !land; i--) if (!slides[i].hidden) land = { id: concept.id, index: i + presOffset };
+        if (!land && presOffset) land = { id: concept.id, index: 0 };
+        if (!land) {
+          let ti = curIdx - 1;
+          while (ti >= 0 && !mods[ti].presentCard && mods[ti].lastVisible < 0) ti--;
+          if (ti >= 0) land = { id: mods[ti].id, index: mods[ti].lastVisible >= 0 ? mods[ti].lastVisible + (mods[ti].presentCard ? 1 : 0) : 0 };
+        }
+        if (!land) land = { id: concept.id, index: Math.max(0, slideIndex - shift) };
+        setDetour(null);
+        dispatch(hide ? { type: "TOGGLE_SLIDE_HIDDEN", id: concept.id, index: real } : { type: "REMOVE_SLIDE", id: concept.id, index: real });
+        if (land.id !== concept.id) dispatch({ type: "SELECT", id: land.id });
+        dispatch({ type: "SET_SLIDE_INDEX", index: land.index });
+        showUndoToast(hide ? "Slide hidden" : "Slide deleted", mark);
+        return;
       }
       // Delete key → remove current slide (not in input/textarea)
       if (e.key === "Delete" && slides.length > 0 && !["INPUT", "TEXTAREA"].includes(document.activeElement?.tagName)) {
@@ -1712,6 +1803,13 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
             {navToast.section && <span style={{ fontFamily: FONT.mono, fontSize: 10, color: T.accent, fontWeight: 600, letterSpacing: "0.05em", textTransform: "uppercase" }}>{navToast.section}</span>}
             {navToast.section && <span style={{ color: T.textDim, fontSize: 13 }}>›</span>}
             <span style={{ fontFamily: FONT.display, fontSize: 14, color: "#fff", fontWeight: 600 }}>{navToast.module}</span>
+          </div>
+        </div>}
+        {undoToast && <div data-testid="present-undo-toast" role="status" className={undoToast.phase === "in" ? "nav-toast-in" : "nav-toast-out"} style={{ position: "absolute", bottom: navToast ? 64 : 20, left: 0, right: 0, display: "flex", justifyContent: "center", zIndex: 21, pointerEvents: "none" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "6px 10px 6px 20px", borderRadius: 8, background: "rgba(0,0,0,0.78)", backdropFilter: "blur(8px)", border: `1px solid ${T.accent}30` }}>
+            <span data-testid="present-undo-msg" style={{ fontFamily: FONT.display, fontSize: 14, color: "#fff", fontWeight: 600 }}>{undoToast.msg}</span>
+            <button data-testid="present-undo-btn" onClick={(e) => { e.stopPropagation(); e.currentTarget.blur(); dispatch({ type: "UNDO" }); }} style={{ pointerEvents: "auto", cursor: "pointer", background: T.accent + "30", border: `1px solid ${T.accent}60`, borderRadius: 6, padding: "3px 10px", fontFamily: FONT.display, fontSize: 13, fontWeight: 600, color: "#fff" }}>Undo</button>
+            <span data-testid="present-undo-hint" style={{ fontFamily: FONT.mono, fontSize: 12, color: "rgba(255,255,255,0.6)" }}>{typeof navigator !== "undefined" && /Mac|iPhone|iPad|iPod/.test(navigator.platform || "") ? "⌘Z" : "Ctrl+Z"}</span>
           </div>
         </div>}
         {/* Floating Edit + New Slide cluster — REMOVED from the fullscreen/Present

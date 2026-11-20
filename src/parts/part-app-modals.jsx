@@ -736,6 +736,8 @@ function ShortcutHelp({ onClose }) {
       ["Ctrl+E", "Toggle slides TOC / search (fullscreen)"],
       ["C", "Clock on slide (fullscreen)"],
       ["T", "Pace bar (fullscreen, with a session end)"],
+      ["Del / ⌫", "Delete slide (fullscreen, with undo)"],
+      ["H", "Hide / show slide (fullscreen, with undo)"],
       ["D", "Toggle dark / light theme"],
       ["+ / −", "Scale font up / down"],
       ["0", "Reset font scale"],

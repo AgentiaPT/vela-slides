@@ -7278,6 +7278,178 @@ uiSuite("narrow-layout", [
   }},
 ]);
 
+// v13.83 Present: Del / Backspace delete the current slide, H hides it (or
+// shows a hidden detour slide), each with an undo toast and one undo step.
+// Test deck: module A (title card) = A1, A2; module B = B1, B2 (hidden), B3.
+const _pdhSlide = (t, hidden) => ({ ...(hidden ? { hidden: true } : {}), blocks: [{ type: "heading", text: t }] });
+const _pdhDeck = (items) => { const d = JSON.parse(JSON.stringify(VELA_TEST_STARTUP_PATCH)); delete d.session; d.lanes = [{ id: "pdh-lane", title: "PDH Lane", items }]; return d; };
+const _pdhMain = () => _pdhDeck([
+  { id: "pdh-a", title: "PDH Module A", presentCard: true, slides: [_pdhSlide("PDHA1"), _pdhSlide("PDHA2")] },
+  { id: "pdh-b", title: "PDH Module B", slides: [_pdhSlide("PDHB1"), _pdhSlide("PDHB2", true), _pdhSlide("PDHB3")] },
+]);
+const _pdhOn = (t) => { const r = _sesUiRoot(); return !!r && _$$("[data-block-type]", r).some((el) => (el.textContent || "").includes(t)); };
+const _pdhToast = () => _$("[data-testid='present-undo-toast']");
+const _pdhMsg = () => _$("[data-testid='present-undo-msg']")?.textContent || null;
+const _pdhNav = (t) => _$$("span").some((s) => s.textContent === t);
+const _pdhPast = () => _hooks().getHistoryCounts().past;
+// One action adds at most one undo step (the history keeps at most 50).
+const _pdhOneStep = (before) => { const p = _pdhPast(); if (p !== Math.min(before + 1, 50)) throw new Error(`expected one undo step, past ${before} -> ${p}`); };
+const _pdhSel = (idx, text) => _waitFor(() => { const s = _pdSel(); return s && s.slideIdx === idx && _pdhOn(text); }, 1500)
+  .catch(() => { throw new Error(`expected slide ${idx} (${text}), got ${JSON.stringify(_pdSel())}`); });
+const _pdhStart = async (deck) => {
+  const hooks = _sesUiNeedHooks();
+  if (!VELA_TEST_STARTUP_PATCH || !hooks.restoreStartupDeck || !hooks.getHistoryCounts) throw new Error("test hooks missing");
+  await _exitFullscreen();
+  await _sesImport(deck);
+  await _waitFor(() => hooks.getDeckStateForTest()?.firstItemTitle === deck.lanes[0].items[0].title, 2000).catch(() => { throw new Error("test deck not loaded"); });
+  await _sesUiPresent();
+  await _wait(150);
+  document.activeElement?.blur?.();
+};
+const _pdhEnd = async () => { await _exitFullscreen(); _hooks().restoreStartupDeck?.(); await _wait(150); };
+const _pdhStep = async (key) => { document.activeElement?.blur?.(); _key(key); await _wait(150); };
+
+uiSuite("present-del-hide", [
+  { name: "PDH1: title card is a no-op; Del deletes, lands on the next slide, toast; Undo button restores it in Present", fn: async () => {
+    try {
+      await _pdhStart(_pdhMain());
+      // Present opens on the first real slide; the title card is one step back.
+      await _pdhSel(1, "PDHA1");
+      await _pdhStep("ArrowLeft");
+      await _waitFor(() => _pdSel()?.slideIdx === 0 && !_pdhOn("PDHA1"), 1500).catch(() => { throw new Error("did not reach the title card"); });
+      const p0 = _pdhPast();
+      _key("Delete");
+      await _waitFor(() => _pdhNav("Title card — nothing to remove"), 1000).catch(() => { throw new Error("no title-card notice"); });
+      _key("h"); await _wait(150);
+      if (_pdhPast() !== p0 || _pdhToast()) throw new Error("Del/H on the title card changed the deck");
+      await _pdhStep("ArrowRight");
+      await _pdhSel(1, "PDHA1");
+      const p1 = _pdhPast();
+      _key("Delete");
+      await _waitFor(() => _pdhMsg() === "Slide deleted", 1000).catch(() => { throw new Error("no 'Slide deleted' toast"); });
+      _pdhOneStep(p1);
+      await _pdhSel(1, "PDHA2");
+      const toast = _pdhToast();
+      if (toast.getAttribute("role") !== "status") throw new Error("toast has no role=status");
+      if (getComputedStyle(toast).pointerEvents !== "none") throw new Error("toast row takes pointer events");
+      const btn = _$("[data-testid='present-undo-btn']");
+      if (!btn || getComputedStyle(btn).pointerEvents !== "auto") throw new Error("Undo button is not clickable");
+      if (!/^(Ctrl\+Z|⌘Z)$/.test(_$("[data-testid='present-undo-hint']")?.textContent || "")) throw new Error("no undo key hint");
+      const f1 = _hooks().getHistoryCounts().future;
+      _click(btn);
+      await _waitFor(() => !_pdhToast(), 1500).catch(() => { throw new Error("Undo did not close the toast"); });
+      await _pdhSel(1, "PDHA1");
+      if (_hooks().getHistoryCounts().future !== f1 + 1) throw new Error("Undo did not take exactly one step");
+      if (_$("header") || !_hooks().getDeckStateForTest().fullscreen) throw new Error("Undo left Present");
+    } finally { await _pdhEnd(); }
+  }},
+  { name: "PDH2: H hides, lands in the next module (no extra skip); Ctrl+Z restores the slide and closes the toast", fn: async () => {
+    try {
+      await _pdhStart(_pdhMain());
+      await _pdhStep("ArrowRight");
+      await _pdhSel(2, "PDHA2");
+      const p = _pdhPast();
+      _key("h");
+      await _waitFor(() => _pdhMsg() === "Slide hidden", 1000).catch(() => { throw new Error("no 'Slide hidden' toast"); });
+      _pdhOneStep(p);
+      await _pdhSel(0, "PDHB1");
+      await _wait(400);
+      if (!_pdhOn("PDHB1")) throw new Error("Present moved again after the hide");
+      _key("z", { ctrlKey: true });
+      await _waitFor(() => !_pdhToast(), 1500).catch(() => { throw new Error("Ctrl+Z did not close the toast"); });
+      await _pdhSel(2, "PDHA2");
+      if (_$("header")) throw new Error("Ctrl+Z left Present");
+    } finally { await _pdhEnd(); }
+  }},
+  { name: "PDH3: Backspace deletes and skips hidden slides; last slide lands back; modifiers, repeat, text fields and dialogs are ignored", fn: async () => {
+    const tok = {};
+    let input = null;
+    try {
+      await _pdhStart(_pdhMain());
+      await _pdhStep("ArrowRight"); await _pdhStep("ArrowRight");
+      await _pdhSel(0, "PDHB1");
+      const p0 = _pdhPast();
+      _key("Backspace", { ctrlKey: true }); _key("Delete", { altKey: true }); _key("Delete", { metaKey: true });
+      _key("H", { shiftKey: true }); _key("h", { ctrlKey: true }); _key("Delete", { repeat: true });
+      VELA_OPEN_CHROME.modals.add(tok); _key("Delete"); _key("h"); VELA_OPEN_CHROME.modals.delete(tok);
+      input = document.createElement("input"); document.body.appendChild(input); input.focus(); _key("Backspace"); _key("h"); input.remove(); input = null;
+      await _wait(200);
+      if (_pdhPast() !== p0 || _pdhToast() || !_pdhOn("PDHB1")) throw new Error("an ignored key changed the deck");
+      await _pdhStep("Backspace");
+      await _waitFor(() => _pdhMsg() === "Slide deleted", 1000).catch(() => { throw new Error("Backspace did not delete"); });
+      _pdhOneStep(p0);
+      await _pdhSel(1, "PDHB3");
+      _key("z", { ctrlKey: true });
+      await _pdhSel(0, "PDHB1");
+      await _pdhStep("ArrowRight");
+      await _pdhSel(2, "PDHB3");
+      await _pdhStep("Delete");
+      await _pdhSel(0, "PDHB1");
+      _key("z", { ctrlKey: true });
+      await _pdhSel(2, "PDHB3");
+      if (_pdhToast()) throw new Error("toast still open after undo");
+    } finally { VELA_OPEN_CHROME.modals.delete(tok); input?.remove(); await _pdhEnd(); }
+  }},
+  { name: "PDH4: the last visible slide cannot be deleted or hidden", fn: async () => {
+    try {
+      await _pdhStart(_pdhDeck([{ id: "pdh-s", title: "PDH Solo", slides: [_pdhSlide("PDHS1"), _pdhSlide("PDHS2", true)] }]));
+      await _pdhSel(0, "PDHS1");
+      const p = _pdhPast();
+      _key("Delete");
+      await _waitFor(() => _pdhNav("Can't remove the last visible slide"), 1000).catch(() => { throw new Error("no block notice for Del"); });
+      await _pdhStep("h");
+      await _pdhStep("Backspace");
+      if (_pdhPast() !== p || _pdhToast() || !_pdhOn("PDHS1")) throw new Error("the last visible slide was changed");
+    } finally { await _pdhEnd(); }
+  }},
+  { name: "PDH5: H on a hidden detour slide shows it and stays; undo hides it again and keeps the detour", fn: async () => {
+    let past = null;
+    try {
+      await _exitFullscreen();
+      _hooks().restoreStartupDeck(); await _wait(200);
+      await _selectFirstModule();
+      past = await _pdPrepare();
+      await _pdEnterPresent();
+      await _pdJump(false);
+      const at = _pdSel();
+      const p = _pdhPast();
+      _key("h");
+      await _waitFor(() => _pdhMsg() === "Slide shown", 1000).catch(() => { throw new Error("no 'Slide shown' toast"); });
+      _pdhOneStep(p);
+      if (_hooks().getCurrentSlideForTest()?.hidden) throw new Error("H did not show the hidden slide");
+      await _wait(300);
+      if (!_pdSame(_pdSel(), at) || !_pdOnSlide("PDBACKUP")) throw new Error("H moved off the detour slide");
+      _key("z", { ctrlKey: true });
+      await _waitFor(() => !_pdhToast() && _hooks().getCurrentSlideForTest()?.hidden, 1500).catch(() => { throw new Error("Ctrl+Z did not hide the slide again"); });
+      await _wait(300);
+      if (!_pdSame(_pdSel(), at) || !_pdOnSlide("PDBACKUP")) throw new Error("undo moved off the detour slide");
+    } finally { await _exitFullscreen(); if (past != null) await _mrdUndoTo(past); }
+  }},
+  { name: "PDH6: editor Del is unchanged (no toast); Backspace/H do nothing in the editor and the Presenter View", fn: async () => {
+    try {
+      await _pdhStart(_pdhMain());
+      await _pdhStep("s");
+      await _waitFor(() => _$("[data-testid='presenter-view']"), 1500).catch(() => { throw new Error("Presenter view did not open"); });
+      const p0 = _pdhPast();
+      await _pdhStep("h"); await _pdhStep("Backspace");
+      if (_pdhPast() !== p0 || _pdhToast()) throw new Error("H/Backspace acted in the Presenter View");
+      await _pdhStep("s");
+      await _waitFor(() => !_$("[data-testid='presenter-view']"), 1500);
+      await _exitFullscreen();
+      await _pdhStep("ArrowRight");
+      await _waitFor(() => _pdSel()?.slideIdx === 1, 1500).catch(() => { throw new Error("editor did not reach slide 2"); });
+      const p1 = _pdhPast();
+      await _pdhStep("h"); await _pdhStep("Backspace");
+      if (_pdhPast() !== p1) throw new Error("H/Backspace changed the deck in the editor");
+      await _pdhStep("Delete");
+      await _waitFor(() => _pdSel()?.slideIdx === 0, 1500).catch(() => { throw new Error("editor Del did not go to the previous slide"); });
+      _pdhOneStep(p1);
+      if (_pdhToast()) throw new Error("editor Del shows the Present undo toast");
+      if (_hooks().getCurrentSlideForTest()?.blocks?.[0]?.text !== "PDHA1") throw new Error("editor Del removed the wrong slide");
+    } finally { await _pdhEnd(); }
+  }},
+]);
+
 // ━━━ UI TEST RUNNER COMPONENT ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 // Demo deck guard — UI tests only run against the original demo deck

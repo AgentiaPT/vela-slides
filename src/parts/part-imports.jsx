@@ -138,8 +138,9 @@ const velaClipboardReadSlides = async () => {
   return [];
 };
 
-const VELA_VERSION = "13.82";
+const VELA_VERSION = "13.83";
 const VELA_CHANGELOG = [
+  { v: "13.83", d: ["Present: Del or Backspace deletes the current slide; H hides it (H on a hidden slide shows it).", "Present: an undo toast follows (Undo button or Ctrl/⌘+Z) and returns to the slide.", "Present: the title card and the last visible slide cannot be removed."] },
   { v: "13.82", d: ["Phone (portrait): slides use a one-column layout that fills the screen; text stays near real size.", "Phone: side-by-side columns, split images and grids stack; short cards stay two per row.", "Phone: flows and timelines run top to bottom; stat rows and tables fit the width.", "Phone: images take the full width and shrink before text does; a slide does not run off the screen.", "Phone: a portrait first image keeps the lead position in an image group.", "Phone: story mode shows each image at full width, with the index row under it.", "Phone Present: a bar under the slide has previous, next, slide count and exit; nothing covers the slide.", "Phone editor: the slide tab shows the portrait layout, not a small 16:9 box.", "Hardening: malformed table or size values cannot stall or break a slide (fail-closed type checks; tests added).", "Wide (desktop) view: no layout change."] },
   { v: "13.81", d: ["Editor: search in the slide list (Ctrl+E or /), same engine as Present", "Search: ↑↓ + Enter, highlighted matches, match count; finds text in column layouts, notes and section names (editor)", "Editor: short outline on the matched block when a result opens"] },
   { v: "13.80", d: ["Session end time: set it from the toolbar or the Presenter View.", "Presenter View: clock, time left and pace guidance (ahead / on pace / behind).", "Present: thin pace bar on the slide edge (T hides it).", "Present: optional clock on the slide (C key)."] },

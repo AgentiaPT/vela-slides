@@ -143,7 +143,7 @@ that symbol in the named part for the line. No line numbers here — they rot.
 - Session end: editor toolbar, dialog, live ingress, bar geometry (v13.80, P3): _sesTbBtn _sesTbIs _sesTbDesc _sesTbOpen _sesSecs _sesShape _sesRgb _sesImport
 - Session end: review fixes (v13.80): _sesSig _sesWheel _sesSwipe
 - Present clock chip (v13.80, C key). Each test restores: chip off,: _clkChip _clkBtn _clkKey _clkStored _clkNowOk _clkLeave _clkOn
-- Narrow (portrait) layout: _nrwContent _nrwGrid _nrwTracks _nrwByText _nrwAllInside _nrwCard _nrwOnSlide _nrwEnter _nrwPhonePresent _nrwPhoneEditor
+- Narrow (portrait) layout: _nrwContent _nrwGrid _nrwTracks _nrwByText _nrwAllInside _nrwCard _nrwOnSlide _nrwEnter _nrwPhonePresent _nrwPhoneEditor _pdhSlide _pdhDeck _pdhMain _pdhOn _pdhToast _pdhMsg _pdhNav _pdhPast _pdhOneStep _pdhSel _pdhStart _pdhEnd _pdhStep
 - UI TEST RUNNER COMPONENT: computeDeckFingerprint DEMO_DECK_FP_TITLE VelaUITestRunner
 
 ### part-demo.jsx
@@ -300,9 +300,9 @@ keyboard ternaries) or are currently unused — check before assuming a UI exist
 - TOGGLE_LANE: part-app.jsx
 - TOGGLE_PRESENT_CARD: part-list.jsx
 - TOGGLE_SECTION_COLLAPSE: part-list.jsx
-- TOGGLE_SLIDE_HIDDEN: part-list.jsx part-slides.jsx
+- TOGGLE_SLIDE_HIDDEN: part-list.jsx part-slidepanel.jsx part-slides.jsx
 - TOGGLE_SLIDE_REVIEWED: part-slidepanel.jsx
-- UNDO: (no direct dispatch site)
+- UNDO: part-slidepanel.jsx
 - UPDATE_COMMENT: (no direct dispatch site)
 - UPDATE_SLIDE: part-app.jsx part-imports.jsx part-list.jsx part-slidepanel.jsx
 
@@ -341,18 +341,19 @@ add_lane add_item batch_add_items remove_item remove_lane rename_item rename_lan
 
 ## Navigability debt (WARN — candidates for banners or splits)
 
-- part-imports.jsx: 929-line unbannered stretch after line 520
+- part-imports.jsx: 929-line unbannered stretch after line 521
 - part-blocks.jsx: 828-line unbannered stretch after line 1422
 - part-canvas.jsx: 688-line unbannered stretch after line 153
 - part-canvas.jsx: 358-line unbannered stretch after line 856
 - part-slides.jsx: 548-line unbannered stretch after line 396
-- part-slidepanel.jsx: 503-line unbannered stretch after line 1522
+- part-slidepanel.jsx: 510-line unbannered stretch after line 1613
 - part-uitest.jsx: 616-line unbannered stretch after line 1230
 - part-uitest2.jsx: 448-line unbannered stretch after line 2
 - part-uitest2.jsx: 593-line unbannered stretch after line 1457
 - part-uitest2.jsx: 853-line unbannered stretch after line 2323
 - part-uitest2.jsx: 376-line unbannered stretch after line 4104
 - part-uitest2.jsx: 1094-line unbannered stretch after line 4480
+- part-uitest2.jsx: 444-line unbannered stretch after line 7009
 - part-demo.jsx: 407-line unbannered stretch after line 510
 - part-demo.jsx: 373-line unbannered stretch after line 917
 - part-pdf.jsx: 414-line unbannered stretch after line 582
