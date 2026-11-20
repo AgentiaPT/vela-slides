@@ -7452,6 +7452,23 @@ uiSuite("present-del-hide", [
       if (_hooks().getCurrentSlideForTest()?.blocks?.[0]?.text !== "PDHA1") throw new Error("editor Del removed the wrong slide");
     } finally { await _pdhEnd(); }
   }},
+  { name: "PDH7: Student mode: Del, Backspace and H do nothing in Present (no deck change, no undo step, no toast)", fn: async () => {
+    try {
+      await _pdhStart(_pdhMain());
+      await _pdhSel(1, "PDHA1");
+      _click("[data-testid='student-toggle']");
+      await _waitFor(() => _$("[data-teacher-panel]"), 3000).catch(() => { throw new Error("student mode did not turn on"); });
+      const p0 = _pdhPast(), d0 = _paeAll();
+      for (const k of ["Delete", "Backspace", "h"]) await _pdhStep(k);
+      await _wait(300);
+      if (_pdhPast() !== p0 || _paeAll() !== d0) throw new Error(`a key changed the deck in student mode: ${_paeAll()}`);
+      if (_pdhToast() || ["Slide deleted", "Slide hidden", "Can't remove the last visible slide", "Title card — nothing to remove"].some(_pdhNav)) throw new Error("a toast shows in student mode");
+      await _pdhSel(1, "PDHA1");
+    } finally {
+      if (_$("[data-teacher-panel]")) { _click("[data-testid='student-toggle']"); await _waitFor(() => !_$("[data-teacher-panel]"), 2000).catch(() => {}); }
+      await _pdhEnd();
+    }
+  }},
 ]);
 
 // v13.84 Present detour bar: every Present TOC jump to another slide shows a
@@ -7644,10 +7661,73 @@ uiSuite("present-detour-back", [
       await _pdhStep("s");
       const badge = await _waitFor(() => _$("[data-testid='presenter-detour']"), 1500).catch(() => { throw new Error("Presenter view shows no detour badge"); });
       const txt = badge.textContent || "";
-      if (!txt.includes("B / Esc back to PDB Module A · PDBA2") || !txt.includes("K keep here")) throw new Error("badge text: " + txt);
+      if (!txt.includes("B back to PDB Module A · PDBA2") || !txt.includes("K keep here")) throw new Error("badge text: " + txt);
       await _pdhStep("s");
       await _waitFor(() => !_$("[data-testid='presenter-view']"), 1500);
     } finally { VELA_OPEN_CHROME.modals.delete(token); await _pdhEnd(); }
+  }},
+  { name: "PDB8: Keep here (K or the button) on a hidden jump slide: you stay, no slide number; → moves on; ← skips the hidden slide", fn: async () => {
+    try {
+      await _pdhStart(_pdbDeck());
+      await _pdhStep("ArrowRight");
+      await _pdbAt("pdb-a", 2, "PDBA2");
+      for (const how of ["K", "button"]) {
+        await _pdbJump("zqxpdb", "PDBB2");
+        await _pdbAt("pdb-b", 1, "PDBB2");
+        if (how === "K") await _pdhStep("k"); else _click("[data-testid='detour-keep']");
+        await _pdbNoBar(`Keep here (${how}) did not close the bar`);
+        await _wait(400); // the hidden-slide auto-skip must not move off the kept slide
+        await _pdbAt("pdb-b", 1, "PDBB2");
+        if (_slideCounterEl()) throw new Error(`the kept hidden slide shows a slide number (${how})`);
+        await _pdhStep("ArrowRight");
+        await _pdbAt("pdb-b", 2, "PDBB3");
+        await _pdhStep("ArrowLeft");
+        await _pdbAt("pdb-b", 0, "PDBB1"); // the hidden B2 is skipped again
+      }
+    } finally { await _pdhEnd(); }
+  }},
+  { name: "PDB9: story slide after a jump: Esc zooms out first and the bar stays; the next Esc goes back", fn: async () => {
+    try {
+      await _pdhStart(_pdhDeck([
+        { id: "pdb-a", title: "PDB Module A", presentCard: true, slides: [_pdhSlide("PDBA1"), _pdhSlide("PDBA2")] },
+        { id: "pdb-s", title: "PDB Story", slides: [_pdhSlide("PDBS1"), { story: true, blocks: [{ type: "heading", text: "PDBS2" }, ..._wp5Imgs(2)] }] },
+      ]));
+      await _pdhStep("ArrowRight");
+      await _pdbAt("pdb-a", 2, "PDBA2");
+      await _pdbJump("PDBS1", "PDBS1");
+      await _pdbAt("pdb-s", 0, "PDBS1");
+      await _pdhStep("ArrowRight");
+      await _pdbAt("pdb-s", 1, "PDBS2");
+      if (!_wp5ZoomedAt(1)) await _wp5Step("ArrowRight", () => _wp5ZoomedAt(1), "zoom image 1");
+      if (!_pdbBar()) throw new Error("no bar on the zoomed story slide");
+      await _wp5Step("Escape", () => _wp5Grid(), "zoom out");
+      await _pdbAt("pdb-s", 1, "PDBS2");
+      if (!_pdbBar()) throw new Error("Esc on a zoomed story image closed the bar");
+      await _pdhStep("Escape");
+      await _pdbAt("pdb-a", 2, "PDBA2");
+      await _pdbNoBar("the bar stays after the second Esc");
+      if (_$("header")) throw new Error("Esc left Present");
+    } finally { await _pdhEnd(); }
+  }},
+  { name: "PDB10: H on a hidden jump slide shows it: slide number back, bar stays; Undo hides it again and you stay on it", fn: async () => {
+    try {
+      await _pdhStart(_pdbDeck());
+      await _pdhStep("ArrowRight");
+      await _pdbAt("pdb-a", 2, "PDBA2");
+      await _pdbJump("zqxpdb", "PDBB2");
+      await _pdbAt("pdb-b", 1, "PDBB2");
+      if (_slideCounterEl()) throw new Error("the hidden jump slide shows a slide number");
+      await _pdhStep("h");
+      await _waitFor(() => _pdhMsg() === "Slide shown", 1000).catch(() => { throw new Error("no 'Slide shown' toast"); });
+      await _waitFor(() => !!_slideCounterEl(), 1500).catch(() => { throw new Error("the shown slide has no slide number"); });
+      if (!_pdbBar()) throw new Error("H closed the bar");
+      await _pdbAt("pdb-b", 1, "PDBB2");
+      _click("[data-testid='present-undo-btn']");
+      await _waitFor(() => !_pdhToast() && !_slideCounterEl(), 1500).catch(() => { throw new Error("Undo did not hide the slide again"); });
+      await _wait(400); // no auto-skip off the jump slide after the undo
+      await _pdbAt("pdb-b", 1, "PDBB2");
+      if (!_pdbBar()) throw new Error("the bar closed after the undo");
+    } finally { await _pdhEnd(); }
   }},
 ]);
 
@@ -7900,6 +7980,19 @@ uiSuite("present-ai-edit", [
     await _wait(150);
     if (_paeAll() !== d0 || _pdhPast() !== p0) throw new Error(`a dropped AI edit changed the deck: ${_paeAll()}`);
     if (_$("[data-testid='quick-edit-input']")) throw new Error("the editor box stays open after the discard");
+  }) },
+  { name: "PAE13: navigate away during the run, then Undo: the view goes to the origin slide and shows it restored", fn: () => _paeRun(async (tr) => {
+    await _pdhSel(1, "PDHA1");
+    await _pdhStep("ArrowRight"); await _pdhSel(2, "PDHA2");
+    await _paeApply(tr, "edit A2");
+    await _pdhStep("ArrowRight");
+    await _waitFor(() => _pdSel()?.itemId === _paeId("pdh-b") && _pdhOn("PDHB1"), 1500).catch(() => { throw new Error("did not move to module B"); });
+    tr.resolveNext(_paeReply("PAE A2 UNDO"));
+    await _waitFor(() => _paeTexts("pdh-a")?.[1] === "PAE A2 UNDO" && _pdhMsg() === "Slide updated", 2000).catch(() => { throw new Error(`the result did not land: ${_paeAll()}`); });
+    _click("[data-testid='present-undo-btn']");
+    await _waitFor(() => _paeTexts("pdh-a")?.[1] === "PDHA2" && !_pdhToast(), 1500).catch(() => { throw new Error("Undo did not restore the slide"); });
+    await _waitFor(() => _pdSel()?.itemId === _paeId("pdh-a"), 1500).catch(() => { throw new Error(`Undo did not go to the origin module: ${JSON.stringify(_pdSel())}`); });
+    await _pdhSel(2, "PDHA2");
   }) },
 ]);
 

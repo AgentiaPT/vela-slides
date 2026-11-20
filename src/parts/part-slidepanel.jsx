@@ -459,17 +459,24 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
   // Present detour state (see onDetour below). Declared here, before its first
   // use in this effect's deps, so the render never reads it in the TDZ.
   const [detour, setDetour] = useState(null);
+  // Keep here (K) on a hidden / collapsed-lane jump slide: { id, index, ret }.
+  // You stay on it as during the jump (no auto-skip, no slide number, pace on
+  // `ret`) until you move away or leave Present.
+  const [detourKept, setDetourKept] = useState(null);
+  const detourKeptRef = useRef(null);
+  detourKeptRef.current = detourKept;
   useEffect(() => {
     if (!fullscreen) return;
     const cur = presSlides[slideIndex];
     if (!cur || !cur.hidden) return;
     // A detour shows a hidden slide on purpose; do not nudge off it.
     if (detour && detour.at && detour.at.id === concept.id && detour.at.index === slideIndex) return;
+    if (detourKept && detourKept.id === concept.id && detourKept.index === slideIndex) return;
     let n = -1;
     for (let i = slideIndex + 1; i < presSlides.length; i++) if (!presSlides[i].hidden) { n = i; break; }
     if (n < 0) for (let i = slideIndex - 1; i >= 0; i--) if (!presSlides[i].hidden) { n = i; break; }
     if (n >= 0 && n !== slideIndex) dispatch({ type: "SET_SLIDE_INDEX", index: n });
-  }, [fullscreen, slideIndex, presSlides, detour, concept.id]);
+  }, [fullscreen, slideIndex, presSlides, detour, detourKept, concept.id]);
   const [showImproveInput, setShowImproveInput] = useState(false);
   const [improvePrompt, setImprovePrompt] = useState("");
   const [improveScope, setImproveScope] = useState("all"); // "slide" | "module" | "section" | "all"
@@ -500,6 +507,8 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
   // (The `detour` state itself is declared above the hidden-slide nudge effect.)
   const detourRef = useRef(null);
   detourRef.current = detour;
+  const studentRef = useRef(false);
+  studentRef.current = state?.veraMode === "student";
   const onDetour = useCallback((off, at) => {
     if (at.id === concept.id && at.index === slideIndex) return; // same slide: no bar
     setDetour((d) => {
@@ -522,15 +531,24 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
     dispatch({ type: "SET_SLIDE_INDEX", index: idx });
     return true;
   };
-  const detourKeep = () => setDetour(null);
+  const detourKeep = () => {
+    const d = detourRef.current;
+    setDetourKept(d && d.at && d.at.off && d.at.id === concept.id && d.at.index === slideIndex ? { id: d.at.id, index: d.at.index, ret: d.ret } : null);
+    setDetour(null);
+  };
+  useEffect(() => {
+    if (detourKept && (!fullscreen || detourKept.id !== concept.id || detourKept.index !== slideIndex)) setDetourKept(null);
+  }, [detourKept, fullscreen, concept.id, slideIndex]);
   useEffect(() => {
     if (!detour) return;
     if (!fullscreen || detourReturnIndex(lanes, detour.ret) < 0) { setDetour(null); return; }
     if (detour.at && (detour.at.id !== concept.id || detour.at.index !== slideIndex)) setDetour({ ...detour, at: null });
   }, [detour, fullscreen, concept.id, slideIndex, lanes]);
   // On the hidden / collapsed-lane slide of a jump: no slide number, and the
-  // pace stays on the return slide.
-  const detourOff = !!(detour && detour.at && detour.at.off && detour.at.id === concept.id && detour.at.index === slideIndex);
+  // pace stays on the return slide. The same after Keep here (detourKept).
+  const detourOffRet = detour && detour.at && detour.at.off && detour.at.id === concept.id && detour.at.index === slideIndex ? detour.ret
+    : detourKept && detourKept.id === concept.id && detourKept.index === slideIndex ? detourKept.ret : null;
+  const detourOff = !!detourOffRet;
   const showGalleryRef = useRef(false);
   const setGallery = (v) => { const val = typeof v === "function" ? v(showGalleryRef.current) : v; showGalleryRef.current = val; setShowGallery(val); };
   // ── Presenter view (CR-08) — single-screen speaker dashboard: current +
@@ -563,17 +581,17 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
     try { if (on) localStorage.setItem(VELA_PRESENT_CLOCK_KEY, "1"); else localStorage.removeItem(VELA_PRESENT_CLOCK_KEY); } catch {}
     return on;
   });
-  const paceItemId = detourOff ? detour.ret.id : concept.id;
+  const paceItemId = detourOff ? detourOffRet.id : concept.id;
   const sessionSeq = useMemo(() => { const seq = presentSequence(lanes, paceItemId); return { seq, est: sessionEstimates(seq) }; }, [lanes, paceItemId]);
   const paceRawIdx = (() => {
     if (!detourOff) return slideIndex - presOffset;
-    const f = detourReturnFind(lanes, detour.ret);
+    const f = detourReturnFind(lanes, detourOffRet);
     return f ? f.raw : -1;
   })();
   const paceIdx = sessionSeqIndex(sessionSeq.seq, paceItemId, paceRawIdx);
   // On-slide counter: restarts when the pace position changes (not on a detour).
   const slideEnterRef = useRef({ key: null, at: 0 });
-  const paceSlideKey = fullscreen ? `${paceItemId}|${detourOff ? detourReturnIndex(lanes, detour.ret) : slideIndex}` : null;
+  const paceSlideKey = fullscreen ? `${paceItemId}|${detourOff ? detourReturnIndex(lanes, detourOffRet) : slideIndex}` : null;
   if (slideEnterRef.current.key !== paceSlideKey) slideEnterRef.current = { key: paceSlideKey, at: Date.now() };
   const sessionLive = fullscreen ? liveSession(state.session, nowMs) : null;
   const sessionPace = sessionLive ? computeSessionPace(sessionSeq.est, paceIdx, sessionOnSlideSec(nowMs, slideEnterRef.current.at, sessionLive), sessionLive, nowMs) : null;
@@ -851,6 +869,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       if (m.at.id !== concept.id) dispatch({ type: "SELECT", id: m.at.id });
       dispatch({ type: "SET_SLIDE_INDEX", index: m.at.index });
       setDetour(m.detour);
+      setDetourKept(m.kept || null);
       return;
     }
     if (m.after === null) { m.after = lanes; return; }
@@ -1338,9 +1357,9 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       // sandboxed iframe (Claude.ai artifact) requestFullscreen fails, so the key lands here.
       // An open modal takes Esc first (it closes on the same keydown).
       // A story slide zoomed on an image: Esc zooms out to the grid first and Present stays.
-      // A Present detour bar: Esc goes back to the return slide, and Present stays.
-      if (e.key === "Escape" && fullscreen && VELA_OPEN_CHROME.modals.size === 0 && detourBackRef.current()) { e.preventDefault(); return; }
+      // Then a Present detour bar: Esc goes back to the return slide, and Present stays.
       if (e.key === "Escape" && fullscreen && VELA_OPEN_CHROME.modals.size === 0 && storyEscRef.current()) { e.preventDefault(); return; }
+      if (e.key === "Escape" && fullscreen && VELA_OPEN_CHROME.modals.size === 0 && detourBackRef.current()) { e.preventDefault(); return; }
       if (e.key === "Escape" && fullscreen && VELA_OPEN_CHROME.modals.size === 0) { e.preventDefault(); stopAlternatives(); dispatch({ type: "SET_FULLSCREEN", value: false }); return; }
       // Ctrl+C → copy ALL selected slides (multi-select) to system clipboard,
       // in slide order. Falls back to the active slide when nothing is multi-selected.
@@ -1375,6 +1394,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       if (fullscreen && !showGalleryRef.current && !showPresenterViewRef.current && (e.key === "Delete" || e.key === "Backspace" || e.key === "h" || e.key === "H")) {
         const hide = e.key === "h" || e.key === "H";
         const ae = document.activeElement;
+        if (studentRef.current) return; // student mode: no editing (as E)
         if (e.ctrlKey || e.metaKey || e.altKey || (hide && e.shiftKey) || VELA_OPEN_CHROME.modals.size > 0 || VELA_OPEN_CHROME.zooms.size > 0 || sessionDialogOpenRef.current || (ae && (["INPUT", "TEXTAREA", "SELECT"].includes(ae.tagName) || ae.isContentEditable))) return;
         e.preventDefault();
         if (e.repeat) return;
@@ -1383,8 +1403,11 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
         if (cur._virtual) { showNavToast("Title card — nothing to remove"); return; }
         const real = slideIndex - presOffset;
         if (real < 0 || real >= slides.length) return;
-        const mark = { before: lanes, at: { id: concept.id, index: slideIndex }, detour: detourRef.current };
+        const mark = { before: lanes, at: { id: concept.id, index: slideIndex }, detour: detourRef.current, kept: detourKeptRef.current };
         if (hide && cur.hidden) {
+          // A jump slide shown again: a normal visible slide (slide number, pace).
+          setDetour((d) => d && d.at && d.at.id === concept.id && d.at.index === slideIndex ? { ...d, at: { ...d.at, off: false } } : d);
+          setDetourKept(null);
           dispatch({ type: "TOGGLE_SLIDE_HIDDEN", id: concept.id, index: real });
           showUndoToast("Slide shown", mark);
           return;
@@ -1468,6 +1491,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       if (showGalleryRef.current) { setGallery(false); return; }
       if (showPresenterViewRef.current) { setPresenterView(false); return; }
       if (storyEscRef.current()) return;
+      if (detourBackRef.current()) return; // then the detour bar: Back, Present stays
       dispatch({ type: "SET_FULLSCREEN", value: false });
     };
     document.addEventListener("fullscreenchange", onFsChange);
@@ -1578,8 +1602,8 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
         setRevealKey(`qe-${Date.now()}`);
         // UPDATE_SLIDE runs sanitizeSlide on the result (part-reducer.jsx).
         dispatch({ type: "UPDATE_SLIDE", id: originId, index: found.raw, patch: result });
-        // Present: undo toast; the undo keeps you on the slide you are on now.
-        if (fullscreenRef.current) showUndoToast("Slide updated", { before: live, at: { id: conceptIdRef.current, index: slideIndexRef.current }, detour: detourRef.current });
+        // Present: undo toast; the undo goes to the origin slide (Present index), to show it restored.
+        if (fullscreenRef.current) showUndoToast("Slide updated", { before: live, at: { id: originId, index: found.idx }, detour: detourRef.current, kept: detourKeptRef.current });
         setShowQuickEdit(false);
         setQuickEditPrompt("");
         setQuickEditImage(null);
