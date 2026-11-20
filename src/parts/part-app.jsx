@@ -331,6 +331,11 @@ export default function App() {
         dispatch({ type: "LOAD", payload: sanitized });
         return true;
       },
+      // First-block text of every slide, per module (Present AI Edit suite).
+      getDeckTextsForTest: () => {
+        const s = _localSyncState.current;
+        return s ? (s.lanes || []).flatMap((l) => (l.items || []).map((i) => ({ id: i.id, texts: (i.slides || []).map((sl) => sl?.blocks?.[0]?.text ?? null) }))) : null;
+      },
       getDeckStateForTest: () => {
         const s = _localSyncState.current;
         const firstLane = s?.lanes?.[0];

@@ -668,15 +668,34 @@ function SearchResultRow({ title, snippet, kind, hiddenBlock, hiddenSlide, q, se
     </div>
   );
 }
-// "Module · slide title" for a detour's return point (Present index → raw slide).
-function detourReturnTitle(lanes, ret) {
-  for (const l of (lanes || [])) {
-    const it = (l.items || []).find((i) => i.id === ret.id);
-    if (!it) continue;
-    const raw = ret.index - (it.presentCard ? 1 : 0);
-    return raw < 0 ? it.title : `${it.title} · ${getSlideTitle((it.slides || [])[raw], raw)}`;
+// A Present detour return point (v13.84). `ret` holds the module id and the
+// slide object (`card: true` for the module's title card), so an insert or a
+// delete before it does not change which slide it is. Returns { item, raw, idx }
+// (raw deck index, Present index) or null when the slide is gone.
+function detourReturnFind(lanes, ret) {
+  if (!ret) return null;
+  for (const l of (lanes || [])) for (const it of ((l && l.items) || [])) {
+    if (!it || it.id !== ret.id) continue;
+    const off = it.presentCard ? 1 : 0;
+    if (ret.card) return off ? { item: it, raw: -1, idx: 0 } : null;
+    const raw = (it.slides || []).indexOf(ret.slide);
+    return raw < 0 ? null : { item: it, raw, idx: raw + off };
   }
-  return "";
+  return null;
+}
+// Present index of a detour return point, or -1 when it is gone.
+function detourReturnIndex(lanes, ret) { const f = detourReturnFind(lanes, ret); return f ? f.idx : -1; }
+// Slide title of a detour return point (the module title for a title card).
+function detourReturnName(lanes, ret) {
+  const f = detourReturnFind(lanes, ret);
+  if (!f) return "";
+  return String((f.raw < 0 ? f.item.title : getSlideTitle(f.item.slides[f.raw], f.raw)) || "");
+}
+// "Module · slide title" for a detour's return point.
+function detourReturnTitle(lanes, ret) {
+  const f = detourReturnFind(lanes, ret);
+  if (!f) return "";
+  return f.raw < 0 ? f.item.title : `${f.item.title} · ${detourReturnName(lanes, ret)}`;
 }
 
 function PresenterTOC({ slides, slideIndex, onJump, lanes, currentConceptId, dispatch, onDetour }) {
@@ -795,7 +814,8 @@ function PresenterTOC({ slides, slideIndex, onJump, lanes, currentConceptId, dis
     // Add the target module's title-card offset so the jump lands on the intended
     // slide (not one early) in presentCard modules.
     const idx = slideIdx + (presentCardOf(moduleId) ? 1 : 0);
-    // A detour jump records where to return; a normal jump ends any detour.
+    // Every jump opens the Back / Keep here bar (`detour`: a hidden slide or a
+    // collapsed lane, shown on purpose). See onDetour in part-slidepanel.jsx.
     onDetour?.(detour, { id: moduleId, index: idx });
     if (moduleId === currentConceptId) {
       onJump(idx);
@@ -1083,8 +1103,33 @@ function PresenterSessionCard({ nowMs, session, pace, estimated, youNum, shouldN
     </div>
   );
 }
-function PresenterView({ current, next, index, total, duration, elapsed, branding, onClose, currentStory, nextStory, detourReturn, sessionCard }) {
+function PresenterView({ current, next, index, total, duration, elapsed, branding, onClose, currentStory, nextStory, detourReturn, sessionCard, aiBox, aiThinking, onAiEdit, toasts }) {
   const notes = (current?.notes || "").trim();
+  // AI Edit box (v13.85): it takes its height from the notes panel, so the NOW
+  // preview keeps its size. zoneH: the notes height before the box opened.
+  const notesRef = useRef(null);
+  const rootRef = useRef(null);
+  const boxWrapRef = useRef(null);
+  const [zoneH, setZoneH] = useState(null);
+  // boxH: the box's own height (the zone never clips it). toastLift: px that
+  // lift the toasts to just above the box, so a toast never covers the box.
+  const [boxH, setBoxH] = useState(0);
+  const [toastLift, setToastLift] = useState(0);
+  useLayoutEffect(() => {
+    if (!aiBox) { if (zoneH !== null) setZoneH(null); if (toastLift) setToastLift(0); return; }
+    if (zoneH === null && notesRef.current) setZoneH(notesRef.current.offsetHeight);
+    const measure = () => {
+      const box = boxWrapRef.current, root = rootRef.current;
+      if (!box || !root) return;
+      setBoxH(box.offsetHeight);
+      // The toasts sit at bottom 20 in their layer: put their bottom 8 px over the box.
+      setToastLift(Math.max(0, Math.round(root.getBoundingClientRect().bottom - box.getBoundingClientRect().top - 20 + 8)));
+    };
+    measure();
+    window.addEventListener("resize", measure);
+    return () => window.removeEventListener("resize", measure);
+  });
+  const boxOn = !!aiBox && zoneH !== null;
   // Story slide: the NEXT step can still be on this slide (nextStory set), so
   // NEXT then shows the current slide at that step, labelled "image k/N" or
   // "overview". Without nextStory, NEXT is the next slide as before.
@@ -1093,32 +1138,38 @@ function PresenterView({ current, next, index, total, duration, elapsed, brandin
   const nextStoryLabel = nextInSlide ? (nextStory.zoomed ? `image ${nextStory.k}/${nextStoryN}` : "overview") : "";
   const studyNotes = (current?.studyNotes?.text || "").trim();
   return (
-    <div data-testid="presenter-view" onClick={(e) => e.stopPropagation()} style={{ position: "fixed", inset: 0, zIndex: 10000, background: "#0a0d14", color: "#e2e8f0", display: "flex", flexDirection: "column", overflow: "hidden" }}>
+    <div ref={rootRef} data-testid="presenter-view" onClick={(e) => e.stopPropagation()} style={{ position: "fixed", inset: 0, zIndex: 10000, background: "#0a0d14", color: "#e2e8f0", display: "flex", flexDirection: "column", overflow: "hidden" }}>
       <div style={{ padding: "10px 20px", display: "flex", alignItems: "center", gap: 14, borderBottom: "1px solid rgba(255,255,255,0.1)", flexShrink: 0 }}>
-        <span style={{ fontSize: 16 }}>🗒️</span>
-        <span style={{ fontFamily: FONT.mono, fontSize: 13, fontWeight: 700, color: "#60a5fa", letterSpacing: "0.05em" }}>PRESENTER VIEW</span>
-        <span data-testid="presenter-timer" style={{ fontFamily: FONT.mono, fontSize: 15, fontWeight: 700, color: "#fff", background: "rgba(255,255,255,0.08)", padding: "3px 12px", borderRadius: 6 }}>⏱ {fmtElapsed(elapsed)}</span>
+        <span style={{ fontSize: 16, flexShrink: 0 }}>🗒️</span>
+        <span style={{ fontFamily: FONT.mono, fontSize: 13, fontWeight: 700, color: "#60a5fa", letterSpacing: "0.05em", whiteSpace: "nowrap", flexShrink: 0 }}>PRESENTER VIEW</span>
+        <span data-testid="presenter-timer" style={{ fontFamily: FONT.mono, fontSize: 15, fontWeight: 700, color: "#fff", background: "rgba(255,255,255,0.08)", padding: "3px 12px", borderRadius: 6, whiteSpace: "nowrap", flexShrink: 0 }}>⏱ {fmtElapsed(elapsed)}</span>
         {detourReturn != null
-          ? <span data-testid="presenter-detour" style={{ fontFamily: FONT.mono, fontSize: 12, fontWeight: 700, color: "#0a0d14", background: "#f59e0b", padding: "3px 10px", borderRadius: 6, maxWidth: "40%", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>↪ DETOUR · hidden slide · ← → Esc return to {detourReturn}</span>
-          : <span style={{ fontFamily: FONT.mono, fontSize: 12, color: "#94a3b8" }}>Slide {index + 1} / {total}</span>}
-        {duration > 0 && <span style={{ fontFamily: FONT.mono, fontSize: 12, color: "#facc15" }}>budget {fmtElapsed(duration)}</span>}
-        <span style={{ marginLeft: "auto", fontFamily: FONT.mono, fontSize: 11, color: "#64748b" }}>← → to advance · S or Esc to close</span>
-        <button onClick={onClose} title="Close presenter view" style={{ background: "none", border: "none", color: "#94a3b8", cursor: "pointer", fontSize: 18, padding: 4 }}>✕</button>
+          ? <span data-testid="presenter-detour" style={{ fontFamily: FONT.mono, fontSize: 12, fontWeight: 700, color: "#0a0d14", background: "#f59e0b", padding: "3px 10px", borderRadius: 6, maxWidth: "40%", minWidth: 0, flexShrink: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>↪ DETOUR · B back to {detourReturn} · K keep here</span>
+          : <span style={{ fontFamily: FONT.mono, fontSize: 12, color: "#94a3b8", whiteSpace: "nowrap", flexShrink: 0 }}>Slide {index + 1} / {total}</span>}
+        {duration > 0 && <span style={{ fontFamily: FONT.mono, fontSize: 12, color: "#facc15", whiteSpace: "nowrap", flexShrink: 0 }}>budget {fmtElapsed(duration)}</span>}
+        {onAiEdit && <button type="button" data-testid="presenter-ai-edit" onClick={onAiEdit} title="AI edit this slide (E)" style={{ whiteSpace: "nowrap", flexShrink: 0, fontFamily: FONT.mono, fontSize: 13, background: aiBox ? "rgba(96,165,250,0.2)" : "rgba(255,255,255,0.08)", border: "none", borderRadius: 6, padding: "3px 12px", color: "#60a5fa", cursor: "pointer" }}>✨ AI Edit (E)</button>}
+        <span style={{ marginLeft: "auto", fontFamily: FONT.mono, fontSize: 11, color: "#64748b", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", minWidth: 0, flexShrink: 1 }}>← → to advance · S or Esc to close</span>
+        <button onClick={onClose} title="Close presenter view" style={{ flexShrink: 0, background: "none", border: "none", color: "#94a3b8", cursor: "pointer", fontSize: 18, padding: 4 }}>✕</button>
       </div>
       <div style={{ flex: 1, display: "flex", gap: 18, padding: 20, minHeight: 0 }}>
         <div style={{ flex: 2, display: "flex", flexDirection: "column", gap: 10, minWidth: 0 }}>
           <div style={{ fontFamily: FONT.mono, fontSize: 10, color: "#64748b", letterSpacing: "0.05em" }}>NOW</div>
-          <div style={{ flex: 1, minHeight: 0, borderRadius: 10, overflow: "hidden", border: "2px solid #3b82f6", boxShadow: "0 0 24px rgba(59,130,246,0.25)", display: "flex", alignItems: "center" }}>
+          <div data-testid="presenter-current" className={aiThinking ? "vera-thinking" : undefined} style={{ flex: 1, minHeight: 0, borderRadius: 10, overflow: "hidden", border: "2px solid #3b82f6", boxShadow: "0 0 24px rgba(59,130,246,0.25)", display: "flex", alignItems: "center" }}>
             {current ? <GalleryThumb slide={current} slideIdx={index} total={total} branding={branding} story={currentStory} /> : <div style={{ width: "100%", padding: 40, textAlign: "center", color: "#64748b" }}>No slide</div>}
           </div>
-          <div data-testid="presenter-notes" data-scroll-container style={{ flexShrink: 0, maxHeight: "38%", overflowY: "auto", background: "rgba(255,255,255,0.05)", borderRadius: 8, padding: 14 }}>
-            <div style={{ fontFamily: FONT.mono, fontSize: 10, color: "#64748b", letterSpacing: "0.05em", marginBottom: 6 }}>📝 SPEAKER NOTES</div>
-            {notes ? <div style={{ fontSize: 14, lineHeight: 1.6, whiteSpace: "pre-wrap" }}>{notes}</div> : <div style={{ fontSize: 13, color: "#64748b", fontStyle: "italic" }}>No notes</div>}
-            {studyNotes && <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px solid rgba(255,255,255,0.08)" }}>
-              <div style={{ fontFamily: FONT.mono, fontSize: 10, color: "#64748b", letterSpacing: "0.05em", marginBottom: 6 }}>🎓 STUDY NOTES</div>
-              <div style={{ fontSize: 13, lineHeight: 1.6, color: "#94a3b8", whiteSpace: "pre-wrap" }}>{studyNotes}</div>
-            </div>}
-          </div>
+          {(() => {
+            const notesEl = (
+              <div ref={notesRef} data-testid="presenter-notes" data-scroll-container style={{ ...(boxOn ? { flex: "1 1 0", minHeight: 0 } : { flexShrink: 0, maxHeight: "38%" }), overflowY: "auto", background: "rgba(255,255,255,0.05)", borderRadius: 8, padding: 14 }}>
+                <div style={{ fontFamily: FONT.mono, fontSize: 10, color: "#64748b", letterSpacing: "0.05em", marginBottom: 6 }}>📝 SPEAKER NOTES</div>
+                {notes ? <div style={{ fontSize: 14, lineHeight: 1.6, whiteSpace: "pre-wrap" }}>{notes}</div> : <div style={{ fontSize: 13, color: "#64748b", fontStyle: "italic" }}>No notes</div>}
+                {studyNotes && <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px solid rgba(255,255,255,0.08)" }}>
+                  <div style={{ fontFamily: FONT.mono, fontSize: 10, color: "#64748b", letterSpacing: "0.05em", marginBottom: 6 }}>🎓 STUDY NOTES</div>
+                  <div style={{ fontSize: 13, lineHeight: 1.6, color: "#94a3b8", whiteSpace: "pre-wrap" }}>{studyNotes}</div>
+                </div>}
+              </div>
+            );
+            return boxOn ? <div data-testid="presenter-ai-zone" style={{ flexShrink: 0, height: Math.max(zoneH, boxH), minHeight: 0, display: "flex", flexDirection: "column", gap: 10, overflow: "hidden" }}><div ref={boxWrapRef} style={{ flexShrink: 0 }}>{aiBox}</div>{notesEl}</div> : notesEl;
+          })()}
         </div>
         <div data-scroll-container style={{ flex: 1, display: "flex", flexDirection: "column", gap: 8, minWidth: 180, maxWidth: 320, minHeight: 0, overflowY: "auto" }}>
           <div style={{ fontFamily: FONT.mono, fontSize: 10, color: "#64748b", letterSpacing: "0.05em" }}>NEXT ▸{nextInSlide && <span data-testid="presenter-next-story"> {nextStoryLabel}</span>}</div>
@@ -1130,6 +1181,7 @@ function PresenterView({ current, next, index, total, duration, elapsed, brandin
           {sessionCard && <PresenterSessionCard {...sessionCard} />}
         </div>
       </div>
+      {toasts && <div data-testid="presenter-toast-layer" style={{ position: "absolute", left: 0, right: 0, bottom: toastLift, height: 0, pointerEvents: "none" }}>{toasts}</div>}
     </div>
   );
 }

@@ -736,6 +736,10 @@ function ShortcutHelp({ onClose }) {
       ["Ctrl+E", "Toggle slides TOC / search (fullscreen)"],
       ["C", "Clock on slide (fullscreen)"],
       ["T", "Pace bar (fullscreen, with a session end)"],
+      ["Del / ⌫", "Delete slide (fullscreen, with undo)"],
+      ["H", "Hide / show slide (fullscreen, with undo)"],
+      ["B / Alt+←", "Back to the slide before a TOC jump (fullscreen)"],
+      ["K", "Keep the slide of a TOC jump, close the Back bar (fullscreen)"],
       ["D", "Toggle dark / light theme"],
       ["+ / −", "Scale font up / down"],
       ["0", "Reset font scale"],
@@ -754,6 +758,7 @@ function ShortcutHelp({ onClose }) {
     { title: "AI Tools", items: [
       ["Shift+I", "Quick improve slide via Vera"],
       ["E", "Quick edit slide by prompt"],
+      ["E", "AI edit slide (Present / Presenter)"],
       ["N", "New slide by prompt"],
       ["1 – 4", "Apply variant (preview stays open)"],
       ["0", "Back to original"],
