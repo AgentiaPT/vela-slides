@@ -758,6 +758,7 @@ function ShortcutHelp({ onClose }) {
     { title: "AI Tools", items: [
       ["Shift+I", "Quick improve slide via Vera"],
       ["E", "Quick edit slide by prompt"],
+      ["E", "AI edit slide (Present / Presenter)"],
       ["N", "New slide by prompt"],
       ["1 – 4", "Apply variant (preview stays open)"],
       ["0", "Back to original"],

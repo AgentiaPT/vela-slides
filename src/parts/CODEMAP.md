@@ -87,7 +87,7 @@ that symbol in the named part for the line. No line numbers here — they rot.
 - StudentPanel — dispatcher: static studyNotes first, else live Vera: StudentPanel TeacherPanel SectionPicker
 
 ### part-slidepanel.jsx
-- Slide Panel — editor slide view, fullscreen/presenter nav, per-slide AI actions: VIEW_SWITCH_SEGMENTS VIEW_SWITCH_PAD VIEW_SWITCH_LABEL_EXTRA ViewSwitch dragHasOnlyImageFiles TB_COMPACT_PAD_X useToolbarCompact VELA_SESSION_BAR VELA_PRESENT_CLOCK_KEY presentClockBottom DetourBar SlidePanel
+- Slide Panel — editor slide view, fullscreen/presenter nav, per-slide AI actions: VIEW_SWITCH_SEGMENTS VIEW_SWITCH_PAD VIEW_SWITCH_LABEL_EXTRA ViewSwitch dragHasOnlyImageFiles TB_COMPACT_PAD_X useToolbarCompact VELA_SESSION_BAR VELA_PRESENT_CLOCK_KEY presentClockBottom DetourBar AiEditBox SlidePanel
 
 ### part-list.jsx
 - (file preamble): _velaDrag _setDrag _clearDrag
@@ -143,7 +143,7 @@ that symbol in the named part for the line. No line numbers here — they rot.
 - Session end: editor toolbar, dialog, live ingress, bar geometry (v13.80, P3): _sesTbBtn _sesTbIs _sesTbDesc _sesTbOpen _sesSecs _sesShape _sesRgb _sesImport
 - Session end: review fixes (v13.80): _sesSig _sesWheel _sesSwipe
 - Present clock chip (v13.80, C key). Each test restores: chip off,: _clkChip _clkBtn _clkKey _clkStored _clkNowOk _clkLeave _clkOn
-- Narrow (portrait) layout: _nrwContent _nrwGrid _nrwTracks _nrwByText _nrwAllInside _nrwCard _nrwOnSlide _nrwEnter _nrwPhonePresent _nrwPhoneEditor _pdhSlide _pdhDeck _pdhMain _pdhOn _pdhToast _pdhMsg _pdhNav _pdhPast _pdhOneStep _pdhSel _pdhStart _pdhEnd _pdhStep _pdbDeck _pdbBar _pdbBackText _pdbAt _pdbJump _pdbNoBar
+- Narrow (portrait) layout: _nrwContent _nrwGrid _nrwTracks _nrwByText _nrwAllInside _nrwCard _nrwOnSlide _nrwEnter _nrwPhonePresent _nrwPhoneEditor _pdhSlide _pdhDeck _pdhMain _pdhOn _pdhToast _pdhMsg _pdhNav _pdhPast _pdhOneStep _pdhSel _pdhStart _pdhEnd _pdhStep _pdbDeck _pdbBar _pdbBackText _pdbAt _pdbJump _pdbNoBar _paeDock _paeOverlay _paeMods _paeId _paeTexts _paeAll _paeReply _paeOpen _paeApply _paeRun _paeRect _paeSame _paeApart _paeToastPill _paeOnTop
 - UI TEST RUNNER COMPONENT: computeDeckFingerprint DEMO_DECK_FP_TITLE VelaUITestRunner
 
 ### part-demo.jsx
@@ -341,19 +341,21 @@ add_lane add_item batch_add_items remove_item remove_lane rename_item rename_lan
 
 ## Navigability debt (WARN — candidates for banners or splits)
 
-- part-imports.jsx: 929-line unbannered stretch after line 522
+- part-imports.jsx: 929-line unbannered stretch after line 523
 - part-blocks.jsx: 828-line unbannered stretch after line 1422
 - part-canvas.jsx: 688-line unbannered stretch after line 153
 - part-canvas.jsx: 358-line unbannered stretch after line 856
 - part-slides.jsx: 568-line unbannered stretch after line 396
-- part-slidepanel.jsx: 511-line unbannered stretch after line 1660
+- part-slides.jsx: 368-line unbannered stretch after line 1031
+- part-slidepanel.jsx: 371-line unbannered stretch after line 550
+- part-slidepanel.jsx: 521-line unbannered stretch after line 1784
 - part-uitest.jsx: 616-line unbannered stretch after line 1230
 - part-uitest2.jsx: 448-line unbannered stretch after line 2
 - part-uitest2.jsx: 593-line unbannered stretch after line 1457
 - part-uitest2.jsx: 853-line unbannered stretch after line 2323
 - part-uitest2.jsx: 376-line unbannered stretch after line 4104
 - part-uitest2.jsx: 1098-line unbannered stretch after line 4480
-- part-uitest2.jsx: 641-line unbannered stretch after line 7013
+- part-uitest2.jsx: 893-line unbannered stretch after line 7013
 - part-demo.jsx: 407-line unbannered stretch after line 510
 - part-demo.jsx: 373-line unbannered stretch after line 917
 - part-pdf.jsx: 414-line unbannered stretch after line 582
@@ -361,4 +363,4 @@ add_lane add_item batch_add_items remove_item remove_lane rename_item rename_lan
 - part-pdf-vector.jsx: 490-line unbannered stretch after line 459
 - part-pdf-vector.jsx: 551-line unbannered stretch after line 1214
 - part-pptx.jsx: no level-1 banners (1191 lines)
-- part-app.jsx: 358-line unbannered stretch after line 1065
+- part-app.jsx: 358-line unbannered stretch after line 1070

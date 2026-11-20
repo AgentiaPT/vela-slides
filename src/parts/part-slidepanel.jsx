@@ -131,6 +131,62 @@ function DetourBar({ title, hints, bottom, onBack, onKeep }) {
   );
 }
 
+// Present / Presenter AI Edit box (v13.85): the editor Quick Edit fields
+// (prompt, pasted image, Apply, close) for runQuickEdit. `prompt` is user
+// text: it goes only to the textarea value, never to an HTML sink. The
+// textarea keeps its keys (stopPropagation), so no Present key acts while
+// you type. Enter applies, Shift+Enter adds a line, Esc closes the box only.
+function AiEditBox({ testid, boxRef, prompt, image, running, onPrompt, onImage, onClearImage, onApply, onClose, style }) {
+  const taRef = useRef(null);
+  // The textarea grows from 1 to 4 lines (24 px each), then scrolls.
+  useLayoutEffect(() => {
+    const el = taRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${Math.min(el.scrollHeight, 96)}px`;
+  }, [prompt, running]);
+  const onPaste = (e) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    for (const item of items) {
+      if (!item.type.startsWith("image/")) continue;
+      e.preventDefault(); e.stopPropagation();
+      const reader = new FileReader();
+      reader.onload = () => onImage({ base64: reader.result.split(",")[1], preview: reader.result });
+      reader.readAsDataURL(item.getAsFile());
+      break;
+    }
+  };
+  const dim = { fontFamily: FONT.mono, fontSize: 12, color: "rgba(255,255,255,0.45)" };
+  const ok = !!prompt.trim();
+  return (
+    <div ref={boxRef} data-testid={testid} role="group" aria-label="AI edit slide" onClick={(e) => e.stopPropagation()}
+      style={{ boxSizing: "border-box", display: "flex", alignItems: running ? "center" : "flex-start", gap: 10, padding: "10px 12px", borderRadius: 10, background: "rgba(0,0,0,0.78)", backdropFilter: "blur(8px)", border: `1px solid ${T.accent}30`, color: "#fff", fontFamily: FONT.display, ...style }}>
+      {running ? <>
+        <span aria-hidden="true" style={{ display: "inline-block", fontSize: 16, animation: "spin 1.5s linear infinite" }}>✨</span>
+        <span data-testid={`${testid}-running`} role="status" style={{ fontFamily: FONT.mono, fontSize: 13, color: T.accent }}>Editing slide…</span>
+      </> : <>
+        <span aria-hidden="true" style={{ fontSize: 16, lineHeight: "24px" }}>✨</span>
+        <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 6 }}>
+          <textarea ref={taRef} data-testid={`${testid}-input`} autoFocus rows={1} value={prompt} aria-label="Describe the change to this slide" placeholder="Describe the change to this slide… (paste image)"
+            onChange={(e) => onPrompt(e.target.value)} onPaste={onPaste}
+            onKeyDown={(e) => { e.stopPropagation(); if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); if (ok) onApply(); } else if (e.key === "Escape") { e.preventDefault(); onClose(); } }}
+            style={{ width: "100%", boxSizing: "border-box", resize: "none", padding: 0, margin: 0, background: "transparent", border: "none", outline: "none", color: "#fff", fontFamily: FONT.body, fontSize: 16, lineHeight: "24px", overflowY: "auto" }} />
+          {image && <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <img src={image.preview} alt="Pasted reference" style={{ height: 28, borderRadius: 4, objectFit: "cover" }} />
+            <button type="button" aria-label="Remove image" onClick={onClearImage} style={{ all: "unset", cursor: "pointer", ...dim, fontSize: 13 }}>✕</button>
+          </div>}
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flex: "none" }}>
+          <button type="button" data-testid={`${testid}-apply`} onClick={onApply} disabled={!ok} style={{ background: T.accent, color: "#fff", border: "none", borderRadius: 6, padding: "6px 14px", fontFamily: FONT.display, fontSize: 14, fontWeight: 700, cursor: ok ? "pointer" : "default", opacity: ok ? 1 : 0.5 }}>✨ Apply</button>
+          <span aria-hidden="true" style={dim}>Esc</span>
+          <button type="button" data-testid={`${testid}-close`} aria-label="Close AI edit" title="Close (Esc)" onClick={onClose} style={{ all: "unset", cursor: "pointer", ...dim, fontSize: 14, padding: "0 2px" }}>✕</button>
+        </div>
+      </>}
+    </div>
+  );
+}
+
 function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, branding, guidelines, isMobile, fontScale, actionsRef, onRibbonUpdate }) {
   const deckEpochRef = useRef(state._deckEpoch);
   deckEpochRef.current = state._deckEpoch;
@@ -423,6 +479,12 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
   const [quickEditPrompt, setQuickEditPrompt] = useState("");
   const [quickEditing, setQuickEditing] = useState(false);
   const [quickEditImage, setQuickEditImage] = useState(null); // { base64, preview }
+  const showQuickEditRef = useRef(false);
+  showQuickEditRef.current = showQuickEdit;
+  const fullscreenRef = useRef(fullscreen);
+  fullscreenRef.current = fullscreen;
+  const aiDockRef = useRef(null);
+  const [aiDockLift, setAiDockLift] = useState(null); // { bottom, h }: numbers (px)
   const [showGallery, setShowGallery] = useState(false);
   // CR07: editor-only review cycle — arrow keys skip slides marked `reviewed`.
   // Distinct from state.reviewMode (comments review), which owns that name.
@@ -744,6 +806,38 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
   }, []);
   useEffect(() => () => clearTimeout(undoToastTimer.current), []);
   useEffect(() => { if (!fullscreen) closeUndoToast(); }, [fullscreen]);
+  // Present / Presenter AI Edit (v13.85): E or the Presenter chip opens the
+  // Quick Edit fields (AiEditBox) over Present (bottom right) or under the
+  // Presenter preview. The same runQuickEdit flow as the editor box.
+  const closeAiEdit = () => { setShowQuickEdit(false); setQuickEditImage(null); if (fullscreenRef.current) containerRef.current?.focus({ preventScroll: true }); };
+  const aiEditToggleRef = useRef(null);
+  aiEditToggleRef.current = () => {
+    if (showQuickEditRef.current) { closeAiEdit(); return; }
+    if (isStudent) return; // student mode: no editing
+    if (!aiOk) { showNavToast(VELA_AI_UNAVAILABLE_MSG); return; }
+    if (presSlides[slideIndex]?._virtual) { showNavToast("Title card can't be AI-edited"); return; }
+    setShowNewSlide(false); setQuickEditPrompt(""); setQuickEditImage(null); setShowQuickEdit(true);
+  };
+  // Entering or leaving Present closes the box: an editor box never opens on the audience screen.
+  useEffect(() => { setShowQuickEdit(false); setQuickEditImage(null); }, [fullscreen]);
+  const aiDockOn = fullscreen && !showPresenterView && !showGallery && (showQuickEdit || quickEditing);
+  // The dock sits right-aligned just above the slide-number chip, which the
+  // scaled slide draws at bottom 16 (about 20 high, slide units): 44 slide
+  // units over the slide's bottom edge, plus 8 px. Numbers only.
+  useLayoutEffect(() => {
+    if (!aiDockOn) return;
+    const measure = () => {
+      const slide = slideRef.current, dock = aiDockRef.current, area = dock?.offsetParent;
+      if (!slide || !dock || !area || !slide.offsetWidth) return;
+      const r = slide.getBoundingClientRect(), a = area.getBoundingClientRect();
+      const bottom = Math.round(Math.max(0, a.bottom - r.bottom) + 44 * (r.width / slide.offsetWidth) + 8);
+      const h = dock.offsetHeight;
+      setAiDockLift((p) => (p && p.bottom === bottom && p.h === h ? p : { bottom, h }));
+    };
+    measure();
+    window.addEventListener("resize", measure);
+    return () => window.removeEventListener("resize", measure);
+  });
   // Undo by any path (toast button, Ctrl/Cmd+Z): the lanes object is the one
   // from before the action. Close the toast and show the restored slide (the
   // UNDO clamp does not know the title-card offset). Any other deck change
@@ -1186,7 +1280,14 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       if (e.key === "F5") { e.preventDefault(); e.stopPropagation(); if (!fullscreen) { stopAlternatives(); dispatch({ type: "SET_FULLSCREEN", value: true }); } }
       // E → quick edit current slide (not in input/textarea)
       if (e.key === "e" && !e.metaKey && !e.ctrlKey && !e.shiftKey && slides.length > 0 && !["INPUT", "TEXTAREA"].includes(document.activeElement?.tagName)) {
-        e.preventDefault(); setShowNewSlide(false); setShowQuickEdit((v) => !v); setQuickEditPrompt(""); setQuickEditImage(null);
+        e.preventDefault();
+        // Present / Presenter: the AI Edit dock or box. Not while a dialog or
+        // the gallery is open; a held key acts once.
+        if (fullscreen) {
+          if (!e.altKey && !e.repeat && VELA_OPEN_CHROME.modals.size === 0 && !sessionDialogOpenRef.current && !showGalleryRef.current && !document.activeElement?.isContentEditable) aiEditToggleRef.current?.();
+          return;
+        }
+        setShowNewSlide(false); setShowQuickEdit((v) => !v); setQuickEditPrompt(""); setQuickEditImage(null);
       }
       // N → new slide by prompt
       if (e.key === "n" && !e.metaKey && !e.ctrlKey && !e.shiftKey && !["INPUT", "TEXTAREA"].includes(document.activeElement?.tagName)) {
@@ -1226,6 +1327,9 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       if (fullscreen && e.key === "E" && e.shiftKey && !e.metaKey && !e.ctrlKey && !["INPUT", "TEXTAREA"].includes(document.activeElement?.tagName)) {
         e.preventDefault(); setPresentEdit((v) => { showNavToast(v ? "Edit mode OFF" : "Edit mode ON"); return !v; });
       }
+      // An open AI Edit dock / box closes first; Present and the Presenter View stay.
+      // (The gallery hides the dock, so with the gallery open Esc closes the gallery first.)
+      if (e.key === "Escape" && fullscreen && showQuickEditRef.current && !showGalleryRef.current && VELA_OPEN_CHROME.modals.size === 0) { e.preventDefault(); closeAiEdit(); return; }
       // An open Present TOC panel closes first; Present stays.
       if (e.key === "Escape" && fullscreen && VELA_OPEN_CHROME.panels.size > 0) { e.preventDefault(); window.dispatchEvent(new Event("vela-close-panel")); return; }
       if (e.key === "Escape" && showGalleryRef.current) { e.preventDefault(); setGallery(false); return; }
@@ -1358,6 +1462,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
     const onFsChange = () => {
       if (document.fullscreenElement || !fullscreen) return;
       if (sessionDialogOpenRef.current) { setSessionDialogOpen(false); return; } // browser Esc: the session dialog closes first
+      if (showQuickEditRef.current && !showGalleryRef.current) { setShowQuickEdit(false); setQuickEditImage(null); return; } // then the AI Edit dock / box
       if (VELA_OPEN_CHROME.zooms.size > 0) { window.dispatchEvent(new Event("vela-close-zoom")); return; }
       if (VELA_OPEN_CHROME.panels.size > 0) { window.dispatchEvent(new Event("vela-close-panel")); return; }
       if (showGalleryRef.current) { setGallery(false); return; }
@@ -1438,7 +1543,12 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
 
   // ── Quick Edit (single slide, prompt-based) ──
   const runQuickEdit = async () => {
-    if (!aiOk || !quickEditPrompt.trim() || quickEditing || !slides[slideIndex]) return;
+    // The deck index: in Present, slideIndex counts the title card (presOffset).
+    // The edit belongs to the slide where it started (module id + slide object).
+    const real = slideIndex - presOffset;
+    const origin = real >= 0 ? slides[real] : null;
+    const originId = concept.id;
+    if (!aiOk || !quickEditPrompt.trim() || quickEditing || !origin) return;
     const operationEpoch = state._deckEpoch;
     const operationOwner = claimOperation("quickEdit");
     const operationIsCurrent = () => ownsOperation("quickEdit", operationOwner, operationEpoch);
@@ -1446,16 +1556,30 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
     dispatch({ type: "SET_AI_WORK", value: { itemId: concept.id, slideIdx: slideIndex } }); // CR5
     try {
       const layoutStats = computeSlideLayoutStats(slideRef.current);
-      const result = await quickEditSlide(slides[slideIndex], concept.title, slideIndex + 1, slides.length, quickEditPrompt.trim(), branding, guidelines, quickEditImage?.base64 || null, layoutStats);
+      const result = await quickEditSlide(origin, concept.title, real + 1, slides.length, quickEditPrompt.trim(), branding, guidelines, quickEditImage?.base64 || null, layoutStats);
       if (!operationIsCurrent()) return;
       if (result) {
+        // Find the origin slide again in the live lanes, by identity
+        // (detourReturnFind). Gone or replaced while the AI worked: drop the
+        // result. It must never go to another slide.
+        const live = lanesRef.current;
+        const found = detourReturnFind(live, { id: originId, slide: origin });
+        if (!found) {
+          // Present: the Present toast; the editor: its own toast (paste-notice).
+          showNavToast("Slide changed — AI edit discarded", null, !fullscreenRef.current);
+          setShowQuickEdit(false); setQuickEditPrompt(""); setQuickEditImage(null);
+          return;
+        }
         if (quickEditImage) replacePastedImage(result, quickEditImage.preview);
         const ts = new Date().toLocaleString("en-GB", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
         const logEntry = `[✏️ ${ts}] prompt: "${quickEditPrompt.trim()}"${quickEditImage ? " 📎" : ""}`;
-        const existing = slides[slideIndex]?.notes?.trim() || "";
+        const existing = origin?.notes?.trim() || "";
         result.notes = existing ? `${existing}\n${logEntry}` : logEntry;
         setRevealKey(`qe-${Date.now()}`);
-        dispatch({ type: "UPDATE_SLIDE", id: concept.id, index: slideIndex, patch: result });
+        // UPDATE_SLIDE runs sanitizeSlide on the result (part-reducer.jsx).
+        dispatch({ type: "UPDATE_SLIDE", id: originId, index: found.raw, patch: result });
+        // Present: undo toast; the undo keeps you on the slide you are on now.
+        if (fullscreenRef.current) showUndoToast("Slide updated", { before: live, at: { id: conceptIdRef.current, index: slideIndexRef.current }, detour: detourRef.current });
         setShowQuickEdit(false);
         setQuickEditPrompt("");
         setQuickEditImage(null);
@@ -1762,6 +1886,26 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
     </div>
   ) : null;
 
+  // Present toasts. With the Presenter View open they render inside it (it
+  // covers the Present overlay), so they stay visible there.
+  const presentToasts = <>
+        {navToast && <div className={navToast.phase === "in" ? "nav-toast-in" : "nav-toast-out"} style={{ position: "absolute", bottom: 20, left: 0, right: 0, display: "flex", justifyContent: "center", zIndex: 20, pointerEvents: "none" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 20px", borderRadius: 8, background: "rgba(0,0,0,0.78)", backdropFilter: "blur(8px)", border: `1px solid ${T.accent}30` }}>
+            {navToast.section && <span style={{ fontFamily: FONT.mono, fontSize: 10, color: T.accent, fontWeight: 600, letterSpacing: "0.05em", textTransform: "uppercase" }}>{navToast.section}</span>}
+            {navToast.section && <span style={{ color: T.textDim, fontSize: 13 }}>›</span>}
+            <span style={{ fontFamily: FONT.display, fontSize: 14, color: "#fff", fontWeight: 600 }}>{navToast.module}</span>
+          </div>
+        </div>}
+        {undoToast && <div data-testid="present-undo-toast" role="status" className={undoToast.phase === "in" ? "nav-toast-in" : "nav-toast-out"} style={{ position: "absolute", bottom: aiDockOn && aiDockLift ? aiDockLift.bottom + aiDockLift.h + 8 : navToast ? 64 : 20, left: 0, right: 0, display: "flex", justifyContent: "center", zIndex: 21, pointerEvents: "none" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "6px 10px 6px 20px", borderRadius: 8, background: "rgba(0,0,0,0.78)", backdropFilter: "blur(8px)", border: `1px solid ${T.accent}30` }}>
+            <span data-testid="present-undo-msg" style={{ fontFamily: FONT.display, fontSize: 14, color: "#fff", fontWeight: 600 }}>{undoToast.msg}</span>
+            <button data-testid="present-undo-btn" onClick={(e) => { e.stopPropagation(); e.currentTarget.blur(); dispatch({ type: "UNDO" }); }} style={{ pointerEvents: "auto", cursor: "pointer", background: T.accent + "30", border: `1px solid ${T.accent}60`, borderRadius: 6, padding: "3px 10px", fontFamily: FONT.display, fontSize: 13, fontWeight: 600, color: "#fff" }}>Undo</button>
+            <span data-testid="present-undo-hint" style={{ fontFamily: FONT.mono, fontSize: 12, color: "rgba(255,255,255,0.6)" }}>{typeof navigator !== "undefined" && /Mac|iPhone|iPad|iPod/.test(navigator.platform || "") ? "⌘Z" : "Ctrl+Z"}</span>
+          </div>
+        </div>}
+  </>;
+  const aiBoxProps = { prompt: quickEditPrompt, image: quickEditImage, running: quickEditing, onPrompt: setQuickEditPrompt, onImage: setQuickEditImage, onClearImage: () => setQuickEditImage(null), onApply: runQuickEdit, onClose: closeAiEdit };
+
   if (fullscreen) return (
     <div ref={containerRef} tabIndex={0} style={{ position: "fixed", inset: 0, zIndex: 9999, background: T.bg, display: "flex", flexDirection: "row", outline: "none" }}>
       {measureHarness}
@@ -1773,6 +1917,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
             .stg-N stagger reveal inside SlideContent, which keeps working as-is. */}
         <div key={slideIndex} className="slide-transition-fade" style={{ position: "relative", width: "100%", height: "100%" }}>
           <FullscreenSlide key={`deck-${state._deckEpoch}`} slide={presSlides[slideIndex]} index={slideIndex} total={presSlides.length} innerRef={slideRef} branding={presSlides[slideIndex]?._virtual ? null : branding} editable={!isStudent && !presSlides[slideIndex]?._virtual} onEdit={isStudent || presSlides[slideIndex]?._virtual ? undefined : handleSlideEdit} onBlockEdit={isStudent || presSlides[slideIndex]?._virtual ? undefined : runBlockEdit} blockEditing={isStudent ? null : blockEditing} fontScale={fontScale} mode="fill" forceEdit={presentEdit && !isStudent} displayIndex={globalSlideIndex - presOffset} displayTotal={globalSlideTotal} hideSlideNumber={detourOff} story={story} onStoryJump={story ? onStoryJump : undefined} onStoryZoomOut={story ? onStoryZoomOut : undefined} />
+          {quickEditing && aiWorkingHere && <div data-testid="present-ai-shimmer" className="vera-thinking" aria-hidden="true" style={{ position: "absolute", inset: 0, pointerEvents: "none", zIndex: 14 }} />}
         </div>
         {/* Session edge bar (v13.80): neutral fill up to the first of YOU / SHOULD
             BE, pace-colour gap between them, white tick = YOU (sessionBarGeom).
@@ -1845,21 +1990,9 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
         </>}
         </div>
         {!isMobile && !VELA_LOCAL_MODE && showCinemaTip && <CinemaTip onClose={() => setShowCinemaTip(false)} />}
-        {navToast && <div className={navToast.phase === "in" ? "nav-toast-in" : "nav-toast-out"} style={{ position: "absolute", bottom: 20, left: 0, right: 0, display: "flex", justifyContent: "center", zIndex: 20, pointerEvents: "none" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 20px", borderRadius: 8, background: "rgba(0,0,0,0.78)", backdropFilter: "blur(8px)", border: `1px solid ${T.accent}30` }}>
-            {navToast.section && <span style={{ fontFamily: FONT.mono, fontSize: 10, color: T.accent, fontWeight: 600, letterSpacing: "0.05em", textTransform: "uppercase" }}>{navToast.section}</span>}
-            {navToast.section && <span style={{ color: T.textDim, fontSize: 13 }}>›</span>}
-            <span style={{ fontFamily: FONT.display, fontSize: 14, color: "#fff", fontWeight: 600 }}>{navToast.module}</span>
-          </div>
-        </div>}
-        {undoToast && <div data-testid="present-undo-toast" role="status" className={undoToast.phase === "in" ? "nav-toast-in" : "nav-toast-out"} style={{ position: "absolute", bottom: navToast ? 64 : 20, left: 0, right: 0, display: "flex", justifyContent: "center", zIndex: 21, pointerEvents: "none" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "6px 10px 6px 20px", borderRadius: 8, background: "rgba(0,0,0,0.78)", backdropFilter: "blur(8px)", border: `1px solid ${T.accent}30` }}>
-            <span data-testid="present-undo-msg" style={{ fontFamily: FONT.display, fontSize: 14, color: "#fff", fontWeight: 600 }}>{undoToast.msg}</span>
-            <button data-testid="present-undo-btn" onClick={(e) => { e.stopPropagation(); e.currentTarget.blur(); dispatch({ type: "UNDO" }); }} style={{ pointerEvents: "auto", cursor: "pointer", background: T.accent + "30", border: `1px solid ${T.accent}60`, borderRadius: 6, padding: "3px 10px", fontFamily: FONT.display, fontSize: 13, fontWeight: 600, color: "#fff" }}>Undo</button>
-            <span data-testid="present-undo-hint" style={{ fontFamily: FONT.mono, fontSize: 12, color: "rgba(255,255,255,0.6)" }}>{typeof navigator !== "undefined" && /Mac|iPhone|iPad|iPod/.test(navigator.platform || "") ? "⌘Z" : "Ctrl+Z"}</span>
-          </div>
-        </div>}
+        {!showPresenterView && presentToasts}
         {detour && <DetourBar title={detourReturnName(lanes, detour.ret)} hints={!isMobile} bottom={20 + (navToast ? 44 : 0) + (undoToast ? 44 : 0)} onBack={() => detourBackRef.current()} onKeep={detourKeep} />}
+        {aiDockOn && <AiEditBox testid="present-ai-dock" boxRef={aiDockRef} {...aiBoxProps} style={{ position: "absolute", right: 20, bottom: aiDockLift ? aiDockLift.bottom : 72, width: 400, maxWidth: "90vw", zIndex: 23 }} />}
         {/* Floating Edit + New Slide cluster — REMOVED from the fullscreen/Present
             view (CR-03): this branch is the audience-facing Present surface, and a
             pencil/+ edit cluster here is edit chrome that must never be visible to
@@ -1893,6 +2026,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
         // NEXT on a story slide is its next step; after the last step, the next slide.
         const nextStory = story ? storyNext(story, storyN) : null;
         return <PresenterView current={presSlides[slideIndex]} next={nextStory ? presSlides[slideIndex] : nextIdx >= 0 ? presSlides[nextIdx] : null} currentStory={story} nextStory={nextStory || undefined} index={globalSlideIndex - presOffset} total={globalSlideTotal} duration={presSlides[slideIndex]?.duration || 0} elapsed={presentElapsed} branding={branding} onClose={() => setPresenterView(false)} detourReturn={detour ? detourReturnTitle(lanes, detour.ret) : null}
+          aiBox={showQuickEdit || quickEditing ? <AiEditBox testid="presenter-ai-box" {...aiBoxProps} style={{ flexShrink: 0 }} /> : null} aiThinking={quickEditing && aiWorkingHere} onAiEdit={isStudent ? undefined : () => aiEditToggleRef.current?.()} toasts={presentToasts}
           sessionCard={{ nowMs, session: sessionLive, pace: sessionPace, estimated: sessionSeq.est.estimated, youNum: sessionSeq.seq[paceIdx]?.num, shouldNum: sessionPace ? sessionSeq.seq[sessionPace.shouldIdx]?.num : undefined, onEditSession: () => setSessionDialogOpen(true) }} />;
       })()}
       {/* Session dialog INSIDE the Present root: App-level modals are outside the

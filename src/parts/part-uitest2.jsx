@@ -7651,6 +7651,258 @@ uiSuite("present-detour-back", [
   }},
 ]);
 
+// v13.85 Present / Presenter AI Edit (E). The deferred agent transport makes
+// the AI path run for real offline. Deck: _pdhMain (module A has a title card).
+const _paeDock = () => _$("[data-testid='present-ai-dock']");
+const _paeOverlay = () => _$$("div").find((d) => { const cs = getComputedStyle(d); return cs.position === "fixed" && cs.zIndex === "9999"; }) || null;
+// Import gives modules new ids: "pdh-a" / "pdh-b" name the first / second module.
+const _paeMods = () => _hooks().getDeckTextsForTest() || [];
+const _paeId = (id) => (id === "pdh-a" ? _paeMods()[0]?.id : id === "pdh-b" ? _paeMods()[1]?.id : id);
+const _paeTexts = (id) => _paeMods().find((m) => m.id === _paeId(id))?.texts || null;
+const _paeAll = () => JSON.stringify(_hooks().getDeckTextsForTest());
+const _paeReply = (text) => JSON.stringify({ blocks: [{ type: "heading", text }], duration: 30 });
+const _paeOpen = async (id = "present-ai-dock") => {
+  document.activeElement?.blur?.(); _key("e");
+  return _waitFor(() => _$(`[data-testid='${id}-input']`), 1500).catch(() => { throw new Error(`E did not open ${id}`); });
+};
+const _paeApply = async (transport, prompt, id) => {
+  const ta = await _paeOpen(id);
+  _type(ta, prompt); _key("Enter");
+  await _waitFor(() => transport.pending() === 1, 1500).catch(() => { throw new Error("Enter did not start the AI edit"); });
+};
+const _paeRun = async (fn, ai = true) => {
+  const transport = ai ? _hooks().installDeferredAgentTransport?.() : null;
+  if ((ai && !transport) || !_hooks().getDeckTextsForTest) throw new Error("AI test hooks missing");
+  try { await _pdhStart(_pdhMain()); await fn(transport); }
+  finally {
+    if (transport) { while (transport.pending()) transport.rejectNext("cleanup"); transport.restore(); }
+    await _pdhEnd();
+  }
+};
+const _paeRect = (sel) => { const el = _$(sel); if (!el) throw new Error(`${sel} missing`); const r = el.getBoundingClientRect(); return { x: r.x, y: r.y, w: r.width, h: r.height, b: r.bottom }; };
+const _paeSame = (a, b) => ["x", "y", "w", "h"].every((k) => Math.abs(a[k] - b[k]) < 0.6);
+// Two on-screen rects must not intersect; `what` names them in the error.
+const _paeApart = (a, b, what) => {
+  if (!a.width || !a.height || !b.width || !b.height) throw new Error(`${what}: an element is not visible`);
+  if (a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom) throw new Error(`${what} overlap: [${Math.round(a.left)},${Math.round(a.top)},${Math.round(a.right)},${Math.round(a.bottom)}] / [${Math.round(b.left)},${Math.round(b.top)},${Math.round(b.right)},${Math.round(b.bottom)}]`);
+};
+// The visible toast pill (the toast row itself spans the full width).
+const _paeToastPill = () => { const t = _pdhToast(); if (!t?.firstElementChild) throw new Error("no undo toast"); return t.firstElementChild.getBoundingClientRect(); };
+// Nothing covers the centre of `el` (a click there reaches el).
+const _paeOnTop = (el, what) => {
+  if (!el) throw new Error(`${what} missing`);
+  const r = el.getBoundingClientRect(), hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+  if (!hit || !(el === hit || el.contains(hit))) throw new Error(`${what} is covered by ${hit?.tagName || "nothing"} ${hit?.getAttribute?.("data-testid") || ""}`);
+};
+
+uiSuite("present-ai-edit", [
+  { name: "PAE1: E opens the dock in Present: in the overlay, bottom right, just above the slide-number chip, no text under 12px", fn: () => _paeRun(async () => {
+    await _pdhSel(1, "PDHA1");
+    const ta = await _paeOpen();
+    if (document.activeElement !== ta) throw new Error("the dock textarea has no focus");
+    const dock = _paeDock(), r = dock.getBoundingClientRect(), overlay = _paeOverlay();
+    if (!overlay || !overlay.contains(dock)) throw new Error("the dock is not inside the Present overlay");
+    if (r.width < 200 || r.height < 30) throw new Error(`the dock is not visible: ${r.width}x${r.height}`);
+    if (innerWidth - r.right > 40 || r.left < innerWidth / 2) throw new Error(`the dock is not bottom right: ${r.left}-${r.right} of ${innerWidth}`);
+    const chip = _$$("*", overlay).find((el) => el.children.length === 0 && /^\d+ \/ \d+$/.test((el.textContent || "").trim()));
+    if (!chip) throw new Error("no slide-number chip");
+    const c = chip.getBoundingClientRect();
+    if (r.bottom > c.top) throw new Error(`the dock overlaps the slide-number chip (dock bottom ${r.bottom}, chip top ${c.top})`);
+    if (c.top - r.bottom > 40) throw new Error(`the dock is not directly above the chip (gap ${c.top - r.bottom})`);
+    const small = _$$("*", dock).filter((el) => (el.children.length === 0 && (el.textContent || "").trim() || el.tagName === "TEXTAREA") && parseFloat(getComputedStyle(el).fontSize) < 12);
+    if (small.length) throw new Error(`dock text under 12px: ${small.map((el) => el.tagName).join(",")}`);
+  }) },
+  { name: "PAE2: keys typed in the dock never act on Present; Esc closes the dock only", fn: () => _paeRun(async () => {
+    await _pdhSel(1, "PDHA1");
+    const ta = await _paeOpen();
+    _type(ta, "abc");
+    const p0 = _pdhPast(), s0 = JSON.stringify(_pdSel()), d0 = _paeAll();
+    for (const k of ["Delete", "Backspace", "h", "H", "b", "k", "ArrowRight", "ArrowLeft", " ", "e", "f", "g", "c", "t", "s", "r", "?"]) { ta.focus(); _key(k); await _wait(20); }
+    await _wait(200);
+    if (_pdhPast() !== p0 || _paeAll() !== d0) throw new Error("a key typed in the dock changed the deck");
+    if (JSON.stringify(_pdSel()) !== s0) throw new Error("a key typed in the dock moved the slide");
+    if (!_paeDock() || !_paeOverlay()) throw new Error("a key typed in the dock closed the dock or Present");
+    if (_$("[data-testid='presenter-view']") || _$("[data-vela-modal]")) throw new Error("a key typed in the dock opened a view or dialog");
+    ta.focus(); _key("Escape");
+    await _waitFor(() => !_paeDock(), 1000).catch(() => { throw new Error("Esc did not close the dock"); });
+    await _wait(200);
+    if (!_paeOverlay() || !_pdhOn("PDHA1")) throw new Error("Esc in the dock also left Present or moved the slide");
+  }) },
+  { name: "PAE3: Apply edits the right slide in a module with a title card; Slide updated toast; Undo button and Ctrl+Z each restore in one step", fn: () => _paeRun(async (tr) => {
+    await _pdhSel(1, "PDHA1");
+    await _paeApply(tr, "make it louder");
+    await _waitFor(() => _$("[data-testid='present-ai-dock-running']") && _$("[data-testid='present-ai-shimmer']"), 1000).catch(() => { throw new Error("no running state or no shimmer"); });
+    document.activeElement?.blur?.(); _key("e"); await _wait(80); _key("e"); await _wait(80); _key("Enter"); await _wait(80);
+    if (tr.pending() !== 1) throw new Error(`E during the run started another run (pending ${tr.pending()})`);
+    if (!_$("[data-testid='present-ai-dock-running']")) throw new Error("E during the run hid the running state");
+    const p0 = _pdhPast();
+    tr.resolveNext(_paeReply("PAE EDITED"));
+    await _waitFor(() => _paeTexts("pdh-a")?.[0] === "PAE EDITED", 2000).catch(() => { throw new Error(`the edit did not land on the first slide: ${_paeAll()}`); });
+    if (JSON.stringify(_paeTexts("pdh-a")) !== '["PAE EDITED","PDHA2"]' || JSON.stringify(_paeTexts("pdh-b")) !== '["PDHB1","PDHB2","PDHB3"]') throw new Error(`another slide changed: ${_paeAll()}`);
+    _pdhOneStep(p0);
+    await _waitFor(() => _pdhMsg() === "Slide updated", 1000).catch(() => { throw new Error("no Slide updated toast"); });
+    if (_paeDock()) throw new Error("the dock stays open after the edit");
+    // One undo step back from the count after the edit (the history can be at its cap).
+    const p1 = _pdhPast();
+    _click("[data-testid='present-undo-btn']");
+    await _waitFor(() => _paeTexts("pdh-a")?.[0] === "PDHA1" && !_pdhToast(), 1500).catch(() => { throw new Error("Undo did not restore the slide"); });
+    if (_pdhPast() !== p1 - 1) throw new Error("Undo is not one step");
+    await _pdhSel(1, "PDHA1");
+    await _paeApply(tr, "again");
+    tr.resolveNext(_paeReply("PAE EDITED 2"));
+    await _waitFor(() => _paeTexts("pdh-a")?.[0] === "PAE EDITED 2" && _pdhMsg() === "Slide updated", 2000).catch(() => { throw new Error("second edit did not land"); });
+    const p2 = _pdhPast();
+    document.activeElement?.blur?.(); _key("z", { ctrlKey: true });
+    await _waitFor(() => _paeTexts("pdh-a")?.[0] === "PDHA1" && !_pdhToast(), 1500).catch(() => { throw new Error("Ctrl+Z did not restore the slide"); });
+    if (_pdhPast() !== p2 - 1) throw new Error("Ctrl+Z is not one step");
+    await _pdhSel(1, "PDHA1");
+  }) },
+  { name: "PAE4: navigate away during the run: the result lands on the origin slide", fn: () => _paeRun(async (tr) => {
+    await _pdhSel(1, "PDHA1");
+    await _pdhStep("ArrowRight"); await _pdhSel(2, "PDHA2");
+    await _paeApply(tr, "edit A2");
+    await _pdhStep("ArrowRight");
+    await _waitFor(() => _pdSel()?.itemId === _paeId("pdh-b") && _pdhOn("PDHB1"), 1500).catch(() => { throw new Error("did not move to module B"); });
+    tr.resolveNext(_paeReply("PAE A2 EDITED"));
+    await _waitFor(() => _paeTexts("pdh-a")?.[1] === "PAE A2 EDITED", 2000).catch(() => { throw new Error(`the result did not land on the origin slide: ${_paeAll()}`); });
+    if (_paeTexts("pdh-a")[0] !== "PDHA1" || JSON.stringify(_paeTexts("pdh-b")) !== '["PDHB1","PDHB2","PDHB3"]') throw new Error(`another slide changed: ${_paeAll()}`);
+    if (_pdSel()?.itemId !== _paeId("pdh-b") || !_pdhOn("PDHB1")) throw new Error("the landing moved the view");
+  }) },
+  { name: "PAE5: origin slide deleted during the run: result dropped with a toast, no slide changed", fn: () => _paeRun(async (tr) => {
+    await _pdhSel(1, "PDHA1");
+    await _pdhStep("ArrowRight"); await _pdhSel(2, "PDHA2");
+    await _paeApply(tr, "edit then delete");
+    await _pdhStep("Delete");
+    await _waitFor(() => JSON.stringify(_paeTexts("pdh-a")) === '["PDHA1"]', 1500).catch(() => { throw new Error("Del did not delete the origin slide"); });
+    const d0 = _paeAll(), p0 = _pdhPast();
+    tr.resolveNext(_paeReply("PAE SHOULD DROP"));
+    await _waitFor(() => _pdhNav("Slide changed — AI edit discarded"), 2000).catch(() => { throw new Error("no discard toast"); });
+    await _wait(150);
+    if (_paeAll() !== d0 || _pdhPast() !== p0) throw new Error(`a dropped AI edit changed the deck: ${_paeAll()}`);
+  }) },
+  { name: "PAE6: Presenter view: chip and E open the box under the preview; the preview keeps its size; Esc closes the box, not the Presenter view", fn: () => _paeRun(async (tr) => {
+    await _pdhSel(1, "PDHA1");
+    await _pdhStep("s");
+    await _waitFor(() => _$("[data-testid='presenter-view']"), 1500).catch(() => { throw new Error("S did not open the Presenter view"); });
+    await _wait(250);
+    const r0 = _paeRect("[data-testid='presenter-current']");
+    _click(await _waitFor(() => _$("[data-testid='presenter-ai-edit']"), 1000));
+    const ta = await _waitFor(() => _$("[data-testid='presenter-ai-box-input']"), 1500).catch(() => { throw new Error("the chip did not open the box"); });
+    await _wait(150);
+    const r1 = _paeRect("[data-testid='presenter-current']"), box = _paeRect("[data-testid='presenter-ai-box']"), n = _paeRect("[data-testid='presenter-notes']");
+    if (!_paeSame(r0, r1)) throw new Error(`the preview changed size: ${JSON.stringify(r0)} -> ${JSON.stringify(r1)}`);
+    if (box.y < r1.b - 0.5 || n.y < box.b - 0.5) throw new Error("the box is not between the preview and the notes");
+    if (_paeDock()) throw new Error("the Present dock shows under the Presenter view");
+    ta.focus(); _key("Escape");
+    await _waitFor(() => !_$("[data-testid='presenter-ai-box']"), 1000).catch(() => { throw new Error("Esc did not close the box"); });
+    await _wait(150);
+    if (!_$("[data-testid='presenter-view']")) throw new Error("Esc in the box closed the Presenter view");
+    if (!_paeSame(r0, _paeRect("[data-testid='presenter-current']"))) throw new Error("the preview size changed after the box closed");
+    await _paeApply(tr, "presenter edit", "presenter-ai-box");
+    if (!_$("[data-testid='presenter-current']").classList.contains("vera-thinking")) throw new Error("no shimmer on the Presenter preview");
+    tr.resolveNext(_paeReply("PAE PRESENTER"));
+    await _waitFor(() => _paeTexts("pdh-a")?.[0] === "PAE PRESENTER", 2000).catch(() => { throw new Error("the Presenter edit did not land"); });
+    await _waitFor(() => _$("[data-testid='presenter-view'] [data-testid='present-undo-toast']"), 1000).catch(() => { throw new Error("no undo toast in the Presenter view"); });
+    await _paeOpen("presenter-ai-box");
+    document.activeElement?.blur?.(); _key("Escape");
+    await _waitFor(() => !_$("[data-testid='presenter-ai-box']"), 1000).catch(() => { throw new Error("Esc did not close the box first"); });
+    await _wait(100);
+    if (!_$("[data-testid='presenter-view']")) throw new Error("the first Esc closed the Presenter view");
+    _key("Escape");
+    await _waitFor(() => !_$("[data-testid='presenter-view']"), 1000).catch(() => { throw new Error("the second Esc did not close the Presenter view"); });
+    if (!_paeOverlay()) throw new Error("Esc left Present");
+  }) },
+  { name: "PAE7: AI not available: E shows the AI-unavailable toast, no box", fn: () => _paeRun(async () => {
+    await _pdhSel(1, "PDHA1");
+    document.activeElement?.blur?.(); _key("e");
+    await _waitFor(() => _pdhNav(VELA_AI_UNAVAILABLE_MSG), 1000).catch(() => { throw new Error("no AI-unavailable toast"); });
+    await _wait(150);
+    if (_paeDock()) throw new Error("the dock opened without AI");
+  }, false) },
+  { name: "PAE8: title card: E shows a toast, no box", fn: () => _paeRun(async () => {
+    await _pdhSel(1, "PDHA1");
+    await _pdhStep("ArrowLeft");
+    await _waitFor(() => _pdSel()?.slideIdx === 0 && !_pdhOn("PDHA1"), 1500).catch(() => { throw new Error("did not reach the title card"); });
+    document.activeElement?.blur?.(); _key("e");
+    await _waitFor(() => _pdhNav("Title card can't be AI-edited"), 1000).catch(() => { throw new Error("no title-card toast"); });
+    await _wait(150);
+    if (_paeDock()) throw new Error("the dock opened on the title card");
+  }) },
+  { name: "PAE9: editor E and Quick Edit are unchanged (editor box, current slide, no Present toast)", fn: () => _paeRun(async (tr) => {
+    await _exitFullscreen();
+    await _wait(200);
+    document.activeElement?.blur?.(); _key("e");
+    const ta = await _waitFor(() => _$("[data-testid='quick-edit-input']"), 1500).catch(() => { throw new Error("E did not open the editor Quick Edit box"); });
+    if (_paeDock()) throw new Error("the Present dock opened in the editor");
+    const sel = _pdSel();
+    _type(ta, "editor edit"); _click("[data-testid='quick-edit-apply']");
+    await _waitFor(() => tr.pending() === 1, 1500).catch(() => { throw new Error("Apply did not start the editor edit"); });
+    tr.resolveNext(_paeReply("PAE EDITOR"));
+    await _waitFor(() => _paeTexts(sel.itemId)?.[sel.slideIdx] === "PAE EDITOR", 2000).catch(() => { throw new Error(`the editor edit did not land on the current slide: ${_paeAll()}`); });
+    await _wait(100);
+    if (_pdhToast()) throw new Error("the editor shows the Present undo toast");
+    document.activeElement?.blur?.(); _key("e");
+    const ta2 = await _waitFor(() => _$("[data-testid='quick-edit-input']"), 1500);
+    ta2.focus(); _key("Escape");
+    await _waitFor(() => !_$("[data-testid='quick-edit-input']"), 1000).catch(() => { throw new Error("Esc did not close the editor box"); });
+  }) },
+  { name: "PAE10: Presenter view: the Slide updated toast never covers the open box or its buttons", fn: () => _paeRun(async (tr) => {
+    await _pdhSel(1, "PDHA1");
+    await _pdhStep("s");
+    await _waitFor(() => _$("[data-testid='presenter-view']"), 1500).catch(() => { throw new Error("S did not open the Presenter view"); });
+    await _wait(250);
+    await _paeApply(tr, "presenter toast", "presenter-ai-box");
+    tr.resolveNext(_paeReply("PAE P TOAST"));
+    await _waitFor(() => _paeTexts("pdh-a")?.[0] === "PAE P TOAST" && _pdhMsg() === "Slide updated", 2000).catch(() => { throw new Error("the Presenter edit did not land with a toast"); });
+    await _paeOpen("presenter-ai-box");
+    await _wait(200);
+    if (!_pdhToast()) throw new Error("the toast closed when the box opened");
+    const box = _$("[data-testid='presenter-ai-box']"), t = _paeToastPill();
+    _paeApart(t, box.getBoundingClientRect(), "toast and Presenter box");
+    if (t.top < 0) throw new Error("the toast is off screen");
+    _paeOnTop(_$("[data-testid='presenter-ai-box-apply']"), "the Apply button");
+    _paeOnTop(_$("[data-testid='presenter-ai-box-close']"), "the box close button");
+    _paeOnTop(_$("[data-testid='present-undo-btn']"), "the Undo button");
+  }) },
+  { name: "PAE11: Present: dock, Slide updated toast and detour bar together never overlap (or cover the slide-number chip)", fn: () => _paeRun(async (tr) => {
+    await _pdhSel(1, "PDHA1");
+    await _pdbJump("PDHB3", "PDHB3");
+    if (!_pdbBar()) throw new Error("no detour bar after the TOC jump");
+    await _paeApply(tr, "detour edit");
+    tr.resolveNext(_paeReply("PAE DETOUR"));
+    await _waitFor(() => _paeTexts("pdh-b")?.[2] === "PAE DETOUR" && _pdhMsg() === "Slide updated", 2000).catch(() => { throw new Error(`the edit did not land with a toast: ${_paeAll()}`); });
+    await _paeOpen();
+    await _wait(200);
+    if (!_pdhToast() || !_pdbBar()) throw new Error("the toast or the detour bar closed when the dock opened");
+    const dock = _paeDock().getBoundingClientRect(), t = _paeToastPill(), bar = _pdbBar().getBoundingClientRect();
+    const chip = _$$("*", _paeOverlay()).find((el) => el.children.length === 0 && /^\d+ \/ \d+$/.test((el.textContent || "").trim()));
+    _paeApart(dock, t, "dock and toast");
+    _paeApart(dock, bar, "dock and detour bar");
+    _paeApart(t, bar, "toast and detour bar");
+    if (chip) _paeApart(dock, chip.getBoundingClientRect(), "dock and slide-number chip");
+    _paeOnTop(_$("[data-testid='present-ai-dock-apply']"), "the dock Apply button");
+    _paeOnTop(_$("[data-testid='present-undo-btn']"), "the Undo button");
+    _paeOnTop(_$("[data-testid='detour-back']"), "the detour Back button");
+  }) },
+  { name: "PAE12: editor: origin slide deleted during the run: result dropped with the editor toast", fn: () => _paeRun(async (tr) => {
+    await _exitFullscreen();
+    await _wait(200);
+    document.activeElement?.blur?.(); _key("e");
+    const ta = await _waitFor(() => _$("[data-testid='quick-edit-input']"), 1500).catch(() => { throw new Error("E did not open the editor Quick Edit box"); });
+    _type(ta, "edit then delete"); _click("[data-testid='quick-edit-apply']");
+    await _waitFor(() => tr.pending() === 1, 1500).catch(() => { throw new Error("Apply did not start the editor edit"); });
+    const before = _paeAll();
+    document.activeElement?.blur?.(); _key("Delete");
+    await _waitFor(() => _paeAll() !== before, 1500).catch(() => { throw new Error("the Delete key did not take the slide out"); });
+    const d0 = _paeAll(), p0 = _pdhPast();
+    tr.resolveNext(_paeReply("PAE EDITOR DROP"));
+    await _waitFor(() => (_$("[data-testid='paste-notice']")?.textContent || "").includes("Slide changed — AI edit discarded"), 2000).catch(() => { throw new Error("no editor discard toast"); });
+    await _wait(150);
+    if (_paeAll() !== d0 || _pdhPast() !== p0) throw new Error(`a dropped AI edit changed the deck: ${_paeAll()}`);
+    if (_$("[data-testid='quick-edit-input']")) throw new Error("the editor box stays open after the discard");
+  }) },
+]);
+
 // ━━━ UI TEST RUNNER COMPONENT ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 // Demo deck guard — UI tests only run against the original demo deck

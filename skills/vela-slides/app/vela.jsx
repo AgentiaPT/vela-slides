@@ -138,8 +138,9 @@ const velaClipboardReadSlides = async () => {
   return [];
 };
 
-const VELA_VERSION = "13.84";
+const VELA_VERSION = "13.85";
 const VELA_CHANGELOG = [
+  { v: "13.85", d: ["Present and Presenter view: E or ✨ AI Edit opens the AI slide edit box; Enter applies, Esc closes the box only.", "Present: an AI edit shows an undo toast (Undo button or Ctrl/⌘+Z).", "AI edit: the result goes to the slide where the edit started; if that slide changes first, the result is dropped."] },
   { v: "13.84", d: ["Present: a jump from the slides TOC or search shows a Back / Keep here bar (bottom left).", "Present: Back (B, Esc or Alt+←) returns to the slide before the first jump; Keep here (K) closes the bar.", "Present: arrows, space and wheel now move on from the found slide; the bar stays."] },
   { v: "13.83", d: ["Present: Del or Backspace deletes the current slide; H hides it (H on a hidden slide shows it).", "Present: an undo toast follows (Undo button or Ctrl/⌘+Z) and returns to the slide.", "Present: the title card and the last visible slide cannot be removed."] },
   { v: "13.82", d: ["Phone (portrait): slides use a one-column layout that fills the screen; text stays near real size.", "Phone: side-by-side columns, split images and grids stack; short cards stay two per row.", "Phone: flows and timelines run top to bottom; stat rows and tables fit the width.", "Phone: images take the full width and shrink before text does; a slide does not run off the screen.", "Phone: a portrait first image keeps the lead position in an image group.", "Phone: story mode shows each image at full width, with the index row under it.", "Phone Present: a bar under the slide has previous, next, slide count and exit; nothing covers the slide.", "Phone editor: the slide tab shows the portrait layout, not a small 16:9 box.", "Hardening: malformed table or size values cannot stall or break a slide (fail-closed type checks; tests added).", "Wide (desktop) view: no layout change."] },
@@ -9694,8 +9695,33 @@ function PresenterSessionCard({ nowMs, session, pace, estimated, youNum, shouldN
     </div>
   );
 }
-function PresenterView({ current, next, index, total, duration, elapsed, branding, onClose, currentStory, nextStory, detourReturn, sessionCard }) {
+function PresenterView({ current, next, index, total, duration, elapsed, branding, onClose, currentStory, nextStory, detourReturn, sessionCard, aiBox, aiThinking, onAiEdit, toasts }) {
   const notes = (current?.notes || "").trim();
+  // AI Edit box (v13.85): it takes its height from the notes panel, so the NOW
+  // preview keeps its size. zoneH: the notes height before the box opened.
+  const notesRef = useRef(null);
+  const rootRef = useRef(null);
+  const boxWrapRef = useRef(null);
+  const [zoneH, setZoneH] = useState(null);
+  // boxH: the box's own height (the zone never clips it). toastLift: px that
+  // lift the toasts to just above the box, so a toast never covers the box.
+  const [boxH, setBoxH] = useState(0);
+  const [toastLift, setToastLift] = useState(0);
+  useLayoutEffect(() => {
+    if (!aiBox) { if (zoneH !== null) setZoneH(null); if (toastLift) setToastLift(0); return; }
+    if (zoneH === null && notesRef.current) setZoneH(notesRef.current.offsetHeight);
+    const measure = () => {
+      const box = boxWrapRef.current, root = rootRef.current;
+      if (!box || !root) return;
+      setBoxH(box.offsetHeight);
+      // The toasts sit at bottom 20 in their layer: put their bottom 8 px over the box.
+      setToastLift(Math.max(0, Math.round(root.getBoundingClientRect().bottom - box.getBoundingClientRect().top - 20 + 8)));
+    };
+    measure();
+    window.addEventListener("resize", measure);
+    return () => window.removeEventListener("resize", measure);
+  });
+  const boxOn = !!aiBox && zoneH !== null;
   // Story slide: the NEXT step can still be on this slide (nextStory set), so
   // NEXT then shows the current slide at that step, labelled "image k/N" or
   // "overview". Without nextStory, NEXT is the next slide as before.
@@ -9704,32 +9730,38 @@ function PresenterView({ current, next, index, total, duration, elapsed, brandin
   const nextStoryLabel = nextInSlide ? (nextStory.zoomed ? `image ${nextStory.k}/${nextStoryN}` : "overview") : "";
   const studyNotes = (current?.studyNotes?.text || "").trim();
   return (
-    <div data-testid="presenter-view" onClick={(e) => e.stopPropagation()} style={{ position: "fixed", inset: 0, zIndex: 10000, background: "#0a0d14", color: "#e2e8f0", display: "flex", flexDirection: "column", overflow: "hidden" }}>
+    <div ref={rootRef} data-testid="presenter-view" onClick={(e) => e.stopPropagation()} style={{ position: "fixed", inset: 0, zIndex: 10000, background: "#0a0d14", color: "#e2e8f0", display: "flex", flexDirection: "column", overflow: "hidden" }}>
       <div style={{ padding: "10px 20px", display: "flex", alignItems: "center", gap: 14, borderBottom: "1px solid rgba(255,255,255,0.1)", flexShrink: 0 }}>
-        <span style={{ fontSize: 16 }}>🗒️</span>
-        <span style={{ fontFamily: FONT.mono, fontSize: 13, fontWeight: 700, color: "#60a5fa", letterSpacing: "0.05em" }}>PRESENTER VIEW</span>
-        <span data-testid="presenter-timer" style={{ fontFamily: FONT.mono, fontSize: 15, fontWeight: 700, color: "#fff", background: "rgba(255,255,255,0.08)", padding: "3px 12px", borderRadius: 6 }}>⏱ {fmtElapsed(elapsed)}</span>
+        <span style={{ fontSize: 16, flexShrink: 0 }}>🗒️</span>
+        <span style={{ fontFamily: FONT.mono, fontSize: 13, fontWeight: 700, color: "#60a5fa", letterSpacing: "0.05em", whiteSpace: "nowrap", flexShrink: 0 }}>PRESENTER VIEW</span>
+        <span data-testid="presenter-timer" style={{ fontFamily: FONT.mono, fontSize: 15, fontWeight: 700, color: "#fff", background: "rgba(255,255,255,0.08)", padding: "3px 12px", borderRadius: 6, whiteSpace: "nowrap", flexShrink: 0 }}>⏱ {fmtElapsed(elapsed)}</span>
         {detourReturn != null
-          ? <span data-testid="presenter-detour" style={{ fontFamily: FONT.mono, fontSize: 12, fontWeight: 700, color: "#0a0d14", background: "#f59e0b", padding: "3px 10px", borderRadius: 6, maxWidth: "40%", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>↪ DETOUR · B / Esc back to {detourReturn} · K keep here</span>
-          : <span style={{ fontFamily: FONT.mono, fontSize: 12, color: "#94a3b8" }}>Slide {index + 1} / {total}</span>}
-        {duration > 0 && <span style={{ fontFamily: FONT.mono, fontSize: 12, color: "#facc15" }}>budget {fmtElapsed(duration)}</span>}
-        <span style={{ marginLeft: "auto", fontFamily: FONT.mono, fontSize: 11, color: "#64748b" }}>← → to advance · S or Esc to close</span>
-        <button onClick={onClose} title="Close presenter view" style={{ background: "none", border: "none", color: "#94a3b8", cursor: "pointer", fontSize: 18, padding: 4 }}>✕</button>
+          ? <span data-testid="presenter-detour" style={{ fontFamily: FONT.mono, fontSize: 12, fontWeight: 700, color: "#0a0d14", background: "#f59e0b", padding: "3px 10px", borderRadius: 6, maxWidth: "40%", minWidth: 0, flexShrink: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>↪ DETOUR · B / Esc back to {detourReturn} · K keep here</span>
+          : <span style={{ fontFamily: FONT.mono, fontSize: 12, color: "#94a3b8", whiteSpace: "nowrap", flexShrink: 0 }}>Slide {index + 1} / {total}</span>}
+        {duration > 0 && <span style={{ fontFamily: FONT.mono, fontSize: 12, color: "#facc15", whiteSpace: "nowrap", flexShrink: 0 }}>budget {fmtElapsed(duration)}</span>}
+        {onAiEdit && <button type="button" data-testid="presenter-ai-edit" onClick={onAiEdit} title="AI edit this slide (E)" style={{ whiteSpace: "nowrap", flexShrink: 0, fontFamily: FONT.mono, fontSize: 13, background: aiBox ? "rgba(96,165,250,0.2)" : "rgba(255,255,255,0.08)", border: "none", borderRadius: 6, padding: "3px 12px", color: "#60a5fa", cursor: "pointer" }}>✨ AI Edit (E)</button>}
+        <span style={{ marginLeft: "auto", fontFamily: FONT.mono, fontSize: 11, color: "#64748b", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", minWidth: 0, flexShrink: 1 }}>← → to advance · S or Esc to close</span>
+        <button onClick={onClose} title="Close presenter view" style={{ flexShrink: 0, background: "none", border: "none", color: "#94a3b8", cursor: "pointer", fontSize: 18, padding: 4 }}>✕</button>
       </div>
       <div style={{ flex: 1, display: "flex", gap: 18, padding: 20, minHeight: 0 }}>
         <div style={{ flex: 2, display: "flex", flexDirection: "column", gap: 10, minWidth: 0 }}>
           <div style={{ fontFamily: FONT.mono, fontSize: 10, color: "#64748b", letterSpacing: "0.05em" }}>NOW</div>
-          <div style={{ flex: 1, minHeight: 0, borderRadius: 10, overflow: "hidden", border: "2px solid #3b82f6", boxShadow: "0 0 24px rgba(59,130,246,0.25)", display: "flex", alignItems: "center" }}>
+          <div data-testid="presenter-current" className={aiThinking ? "vera-thinking" : undefined} style={{ flex: 1, minHeight: 0, borderRadius: 10, overflow: "hidden", border: "2px solid #3b82f6", boxShadow: "0 0 24px rgba(59,130,246,0.25)", display: "flex", alignItems: "center" }}>
             {current ? <GalleryThumb slide={current} slideIdx={index} total={total} branding={branding} story={currentStory} /> : <div style={{ width: "100%", padding: 40, textAlign: "center", color: "#64748b" }}>No slide</div>}
           </div>
-          <div data-testid="presenter-notes" data-scroll-container style={{ flexShrink: 0, maxHeight: "38%", overflowY: "auto", background: "rgba(255,255,255,0.05)", borderRadius: 8, padding: 14 }}>
-            <div style={{ fontFamily: FONT.mono, fontSize: 10, color: "#64748b", letterSpacing: "0.05em", marginBottom: 6 }}>📝 SPEAKER NOTES</div>
-            {notes ? <div style={{ fontSize: 14, lineHeight: 1.6, whiteSpace: "pre-wrap" }}>{notes}</div> : <div style={{ fontSize: 13, color: "#64748b", fontStyle: "italic" }}>No notes</div>}
-            {studyNotes && <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px solid rgba(255,255,255,0.08)" }}>
-              <div style={{ fontFamily: FONT.mono, fontSize: 10, color: "#64748b", letterSpacing: "0.05em", marginBottom: 6 }}>🎓 STUDY NOTES</div>
-              <div style={{ fontSize: 13, lineHeight: 1.6, color: "#94a3b8", whiteSpace: "pre-wrap" }}>{studyNotes}</div>
-            </div>}
-          </div>
+          {(() => {
+            const notesEl = (
+              <div ref={notesRef} data-testid="presenter-notes" data-scroll-container style={{ ...(boxOn ? { flex: "1 1 0", minHeight: 0 } : { flexShrink: 0, maxHeight: "38%" }), overflowY: "auto", background: "rgba(255,255,255,0.05)", borderRadius: 8, padding: 14 }}>
+                <div style={{ fontFamily: FONT.mono, fontSize: 10, color: "#64748b", letterSpacing: "0.05em", marginBottom: 6 }}>📝 SPEAKER NOTES</div>
+                {notes ? <div style={{ fontSize: 14, lineHeight: 1.6, whiteSpace: "pre-wrap" }}>{notes}</div> : <div style={{ fontSize: 13, color: "#64748b", fontStyle: "italic" }}>No notes</div>}
+                {studyNotes && <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px solid rgba(255,255,255,0.08)" }}>
+                  <div style={{ fontFamily: FONT.mono, fontSize: 10, color: "#64748b", letterSpacing: "0.05em", marginBottom: 6 }}>🎓 STUDY NOTES</div>
+                  <div style={{ fontSize: 13, lineHeight: 1.6, color: "#94a3b8", whiteSpace: "pre-wrap" }}>{studyNotes}</div>
+                </div>}
+              </div>
+            );
+            return boxOn ? <div data-testid="presenter-ai-zone" style={{ flexShrink: 0, height: Math.max(zoneH, boxH), minHeight: 0, display: "flex", flexDirection: "column", gap: 10, overflow: "hidden" }}><div ref={boxWrapRef} style={{ flexShrink: 0 }}>{aiBox}</div>{notesEl}</div> : notesEl;
+          })()}
         </div>
         <div data-scroll-container style={{ flex: 1, display: "flex", flexDirection: "column", gap: 8, minWidth: 180, maxWidth: 320, minHeight: 0, overflowY: "auto" }}>
           <div style={{ fontFamily: FONT.mono, fontSize: 10, color: "#64748b", letterSpacing: "0.05em" }}>NEXT ▸{nextInSlide && <span data-testid="presenter-next-story"> {nextStoryLabel}</span>}</div>
@@ -9741,6 +9773,7 @@ function PresenterView({ current, next, index, total, duration, elapsed, brandin
           {sessionCard && <PresenterSessionCard {...sessionCard} />}
         </div>
       </div>
+      {toasts && <div data-testid="presenter-toast-layer" style={{ position: "absolute", left: 0, right: 0, bottom: toastLift, height: 0, pointerEvents: "none" }}>{toasts}</div>}
     </div>
   );
 }
@@ -10534,6 +10567,62 @@ function DetourBar({ title, hints, bottom, onBack, onKeep }) {
   );
 }
 
+// Present / Presenter AI Edit box (v13.85): the editor Quick Edit fields
+// (prompt, pasted image, Apply, close) for runQuickEdit. `prompt` is user
+// text: it goes only to the textarea value, never to an HTML sink. The
+// textarea keeps its keys (stopPropagation), so no Present key acts while
+// you type. Enter applies, Shift+Enter adds a line, Esc closes the box only.
+function AiEditBox({ testid, boxRef, prompt, image, running, onPrompt, onImage, onClearImage, onApply, onClose, style }) {
+  const taRef = useRef(null);
+  // The textarea grows from 1 to 4 lines (24 px each), then scrolls.
+  useLayoutEffect(() => {
+    const el = taRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${Math.min(el.scrollHeight, 96)}px`;
+  }, [prompt, running]);
+  const onPaste = (e) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    for (const item of items) {
+      if (!item.type.startsWith("image/")) continue;
+      e.preventDefault(); e.stopPropagation();
+      const reader = new FileReader();
+      reader.onload = () => onImage({ base64: reader.result.split(",")[1], preview: reader.result });
+      reader.readAsDataURL(item.getAsFile());
+      break;
+    }
+  };
+  const dim = { fontFamily: FONT.mono, fontSize: 12, color: "rgba(255,255,255,0.45)" };
+  const ok = !!prompt.trim();
+  return (
+    <div ref={boxRef} data-testid={testid} role="group" aria-label="AI edit slide" onClick={(e) => e.stopPropagation()}
+      style={{ boxSizing: "border-box", display: "flex", alignItems: running ? "center" : "flex-start", gap: 10, padding: "10px 12px", borderRadius: 10, background: "rgba(0,0,0,0.78)", backdropFilter: "blur(8px)", border: `1px solid ${T.accent}30`, color: "#fff", fontFamily: FONT.display, ...style }}>
+      {running ? <>
+        <span aria-hidden="true" style={{ display: "inline-block", fontSize: 16, animation: "spin 1.5s linear infinite" }}>✨</span>
+        <span data-testid={`${testid}-running`} role="status" style={{ fontFamily: FONT.mono, fontSize: 13, color: T.accent }}>Editing slide…</span>
+      </> : <>
+        <span aria-hidden="true" style={{ fontSize: 16, lineHeight: "24px" }}>✨</span>
+        <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 6 }}>
+          <textarea ref={taRef} data-testid={`${testid}-input`} autoFocus rows={1} value={prompt} aria-label="Describe the change to this slide" placeholder="Describe the change to this slide… (paste image)"
+            onChange={(e) => onPrompt(e.target.value)} onPaste={onPaste}
+            onKeyDown={(e) => { e.stopPropagation(); if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); if (ok) onApply(); } else if (e.key === "Escape") { e.preventDefault(); onClose(); } }}
+            style={{ width: "100%", boxSizing: "border-box", resize: "none", padding: 0, margin: 0, background: "transparent", border: "none", outline: "none", color: "#fff", fontFamily: FONT.body, fontSize: 16, lineHeight: "24px", overflowY: "auto" }} />
+          {image && <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <img src={image.preview} alt="Pasted reference" style={{ height: 28, borderRadius: 4, objectFit: "cover" }} />
+            <button type="button" aria-label="Remove image" onClick={onClearImage} style={{ all: "unset", cursor: "pointer", ...dim, fontSize: 13 }}>✕</button>
+          </div>}
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flex: "none" }}>
+          <button type="button" data-testid={`${testid}-apply`} onClick={onApply} disabled={!ok} style={{ background: T.accent, color: "#fff", border: "none", borderRadius: 6, padding: "6px 14px", fontFamily: FONT.display, fontSize: 14, fontWeight: 700, cursor: ok ? "pointer" : "default", opacity: ok ? 1 : 0.5 }}>✨ Apply</button>
+          <span aria-hidden="true" style={dim}>Esc</span>
+          <button type="button" data-testid={`${testid}-close`} aria-label="Close AI edit" title="Close (Esc)" onClick={onClose} style={{ all: "unset", cursor: "pointer", ...dim, fontSize: 14, padding: "0 2px" }}>✕</button>
+        </div>
+      </>}
+    </div>
+  );
+}
+
 function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, branding, guidelines, isMobile, fontScale, actionsRef, onRibbonUpdate }) {
   const deckEpochRef = useRef(state._deckEpoch);
   deckEpochRef.current = state._deckEpoch;
@@ -10826,6 +10915,12 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
   const [quickEditPrompt, setQuickEditPrompt] = useState("");
   const [quickEditing, setQuickEditing] = useState(false);
   const [quickEditImage, setQuickEditImage] = useState(null); // { base64, preview }
+  const showQuickEditRef = useRef(false);
+  showQuickEditRef.current = showQuickEdit;
+  const fullscreenRef = useRef(fullscreen);
+  fullscreenRef.current = fullscreen;
+  const aiDockRef = useRef(null);
+  const [aiDockLift, setAiDockLift] = useState(null); // { bottom, h }: numbers (px)
   const [showGallery, setShowGallery] = useState(false);
   // CR07: editor-only review cycle — arrow keys skip slides marked `reviewed`.
   // Distinct from state.reviewMode (comments review), which owns that name.
@@ -11147,6 +11242,38 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
   }, []);
   useEffect(() => () => clearTimeout(undoToastTimer.current), []);
   useEffect(() => { if (!fullscreen) closeUndoToast(); }, [fullscreen]);
+  // Present / Presenter AI Edit (v13.85): E or the Presenter chip opens the
+  // Quick Edit fields (AiEditBox) over Present (bottom right) or under the
+  // Presenter preview. The same runQuickEdit flow as the editor box.
+  const closeAiEdit = () => { setShowQuickEdit(false); setQuickEditImage(null); if (fullscreenRef.current) containerRef.current?.focus({ preventScroll: true }); };
+  const aiEditToggleRef = useRef(null);
+  aiEditToggleRef.current = () => {
+    if (showQuickEditRef.current) { closeAiEdit(); return; }
+    if (isStudent) return; // student mode: no editing
+    if (!aiOk) { showNavToast(VELA_AI_UNAVAILABLE_MSG); return; }
+    if (presSlides[slideIndex]?._virtual) { showNavToast("Title card can't be AI-edited"); return; }
+    setShowNewSlide(false); setQuickEditPrompt(""); setQuickEditImage(null); setShowQuickEdit(true);
+  };
+  // Entering or leaving Present closes the box: an editor box never opens on the audience screen.
+  useEffect(() => { setShowQuickEdit(false); setQuickEditImage(null); }, [fullscreen]);
+  const aiDockOn = fullscreen && !showPresenterView && !showGallery && (showQuickEdit || quickEditing);
+  // The dock sits right-aligned just above the slide-number chip, which the
+  // scaled slide draws at bottom 16 (about 20 high, slide units): 44 slide
+  // units over the slide's bottom edge, plus 8 px. Numbers only.
+  useLayoutEffect(() => {
+    if (!aiDockOn) return;
+    const measure = () => {
+      const slide = slideRef.current, dock = aiDockRef.current, area = dock?.offsetParent;
+      if (!slide || !dock || !area || !slide.offsetWidth) return;
+      const r = slide.getBoundingClientRect(), a = area.getBoundingClientRect();
+      const bottom = Math.round(Math.max(0, a.bottom - r.bottom) + 44 * (r.width / slide.offsetWidth) + 8);
+      const h = dock.offsetHeight;
+      setAiDockLift((p) => (p && p.bottom === bottom && p.h === h ? p : { bottom, h }));
+    };
+    measure();
+    window.addEventListener("resize", measure);
+    return () => window.removeEventListener("resize", measure);
+  });
   // Undo by any path (toast button, Ctrl/Cmd+Z): the lanes object is the one
   // from before the action. Close the toast and show the restored slide (the
   // UNDO clamp does not know the title-card offset). Any other deck change
@@ -11589,7 +11716,14 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       if (e.key === "F5") { e.preventDefault(); e.stopPropagation(); if (!fullscreen) { stopAlternatives(); dispatch({ type: "SET_FULLSCREEN", value: true }); } }
       // E → quick edit current slide (not in input/textarea)
       if (e.key === "e" && !e.metaKey && !e.ctrlKey && !e.shiftKey && slides.length > 0 && !["INPUT", "TEXTAREA"].includes(document.activeElement?.tagName)) {
-        e.preventDefault(); setShowNewSlide(false); setShowQuickEdit((v) => !v); setQuickEditPrompt(""); setQuickEditImage(null);
+        e.preventDefault();
+        // Present / Presenter: the AI Edit dock or box. Not while a dialog or
+        // the gallery is open; a held key acts once.
+        if (fullscreen) {
+          if (!e.altKey && !e.repeat && VELA_OPEN_CHROME.modals.size === 0 && !sessionDialogOpenRef.current && !showGalleryRef.current && !document.activeElement?.isContentEditable) aiEditToggleRef.current?.();
+          return;
+        }
+        setShowNewSlide(false); setShowQuickEdit((v) => !v); setQuickEditPrompt(""); setQuickEditImage(null);
       }
       // N → new slide by prompt
       if (e.key === "n" && !e.metaKey && !e.ctrlKey && !e.shiftKey && !["INPUT", "TEXTAREA"].includes(document.activeElement?.tagName)) {
@@ -11629,6 +11763,9 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
       if (fullscreen && e.key === "E" && e.shiftKey && !e.metaKey && !e.ctrlKey && !["INPUT", "TEXTAREA"].includes(document.activeElement?.tagName)) {
         e.preventDefault(); setPresentEdit((v) => { showNavToast(v ? "Edit mode OFF" : "Edit mode ON"); return !v; });
       }
+      // An open AI Edit dock / box closes first; Present and the Presenter View stay.
+      // (The gallery hides the dock, so with the gallery open Esc closes the gallery first.)
+      if (e.key === "Escape" && fullscreen && showQuickEditRef.current && !showGalleryRef.current && VELA_OPEN_CHROME.modals.size === 0) { e.preventDefault(); closeAiEdit(); return; }
       // An open Present TOC panel closes first; Present stays.
       if (e.key === "Escape" && fullscreen && VELA_OPEN_CHROME.panels.size > 0) { e.preventDefault(); window.dispatchEvent(new Event("vela-close-panel")); return; }
       if (e.key === "Escape" && showGalleryRef.current) { e.preventDefault(); setGallery(false); return; }
@@ -11761,6 +11898,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
     const onFsChange = () => {
       if (document.fullscreenElement || !fullscreen) return;
       if (sessionDialogOpenRef.current) { setSessionDialogOpen(false); return; } // browser Esc: the session dialog closes first
+      if (showQuickEditRef.current && !showGalleryRef.current) { setShowQuickEdit(false); setQuickEditImage(null); return; } // then the AI Edit dock / box
       if (VELA_OPEN_CHROME.zooms.size > 0) { window.dispatchEvent(new Event("vela-close-zoom")); return; }
       if (VELA_OPEN_CHROME.panels.size > 0) { window.dispatchEvent(new Event("vela-close-panel")); return; }
       if (showGalleryRef.current) { setGallery(false); return; }
@@ -11841,7 +11979,12 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
 
   // ── Quick Edit (single slide, prompt-based) ──
   const runQuickEdit = async () => {
-    if (!aiOk || !quickEditPrompt.trim() || quickEditing || !slides[slideIndex]) return;
+    // The deck index: in Present, slideIndex counts the title card (presOffset).
+    // The edit belongs to the slide where it started (module id + slide object).
+    const real = slideIndex - presOffset;
+    const origin = real >= 0 ? slides[real] : null;
+    const originId = concept.id;
+    if (!aiOk || !quickEditPrompt.trim() || quickEditing || !origin) return;
     const operationEpoch = state._deckEpoch;
     const operationOwner = claimOperation("quickEdit");
     const operationIsCurrent = () => ownsOperation("quickEdit", operationOwner, operationEpoch);
@@ -11849,16 +11992,30 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
     dispatch({ type: "SET_AI_WORK", value: { itemId: concept.id, slideIdx: slideIndex } }); // CR5
     try {
       const layoutStats = computeSlideLayoutStats(slideRef.current);
-      const result = await quickEditSlide(slides[slideIndex], concept.title, slideIndex + 1, slides.length, quickEditPrompt.trim(), branding, guidelines, quickEditImage?.base64 || null, layoutStats);
+      const result = await quickEditSlide(origin, concept.title, real + 1, slides.length, quickEditPrompt.trim(), branding, guidelines, quickEditImage?.base64 || null, layoutStats);
       if (!operationIsCurrent()) return;
       if (result) {
+        // Find the origin slide again in the live lanes, by identity
+        // (detourReturnFind). Gone or replaced while the AI worked: drop the
+        // result. It must never go to another slide.
+        const live = lanesRef.current;
+        const found = detourReturnFind(live, { id: originId, slide: origin });
+        if (!found) {
+          // Present: the Present toast; the editor: its own toast (paste-notice).
+          showNavToast("Slide changed — AI edit discarded", null, !fullscreenRef.current);
+          setShowQuickEdit(false); setQuickEditPrompt(""); setQuickEditImage(null);
+          return;
+        }
         if (quickEditImage) replacePastedImage(result, quickEditImage.preview);
         const ts = new Date().toLocaleString("en-GB", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
         const logEntry = `[✏️ ${ts}] prompt: "${quickEditPrompt.trim()}"${quickEditImage ? " 📎" : ""}`;
-        const existing = slides[slideIndex]?.notes?.trim() || "";
+        const existing = origin?.notes?.trim() || "";
         result.notes = existing ? `${existing}\n${logEntry}` : logEntry;
         setRevealKey(`qe-${Date.now()}`);
-        dispatch({ type: "UPDATE_SLIDE", id: concept.id, index: slideIndex, patch: result });
+        // UPDATE_SLIDE runs sanitizeSlide on the result (part-reducer.jsx).
+        dispatch({ type: "UPDATE_SLIDE", id: originId, index: found.raw, patch: result });
+        // Present: undo toast; the undo keeps you on the slide you are on now.
+        if (fullscreenRef.current) showUndoToast("Slide updated", { before: live, at: { id: conceptIdRef.current, index: slideIndexRef.current }, detour: detourRef.current });
         setShowQuickEdit(false);
         setQuickEditPrompt("");
         setQuickEditImage(null);
@@ -12165,6 +12322,26 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
     </div>
   ) : null;
 
+  // Present toasts. With the Presenter View open they render inside it (it
+  // covers the Present overlay), so they stay visible there.
+  const presentToasts = <>
+        {navToast && <div className={navToast.phase === "in" ? "nav-toast-in" : "nav-toast-out"} style={{ position: "absolute", bottom: 20, left: 0, right: 0, display: "flex", justifyContent: "center", zIndex: 20, pointerEvents: "none" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 20px", borderRadius: 8, background: "rgba(0,0,0,0.78)", backdropFilter: "blur(8px)", border: `1px solid ${T.accent}30` }}>
+            {navToast.section && <span style={{ fontFamily: FONT.mono, fontSize: 10, color: T.accent, fontWeight: 600, letterSpacing: "0.05em", textTransform: "uppercase" }}>{navToast.section}</span>}
+            {navToast.section && <span style={{ color: T.textDim, fontSize: 13 }}>›</span>}
+            <span style={{ fontFamily: FONT.display, fontSize: 14, color: "#fff", fontWeight: 600 }}>{navToast.module}</span>
+          </div>
+        </div>}
+        {undoToast && <div data-testid="present-undo-toast" role="status" className={undoToast.phase === "in" ? "nav-toast-in" : "nav-toast-out"} style={{ position: "absolute", bottom: aiDockOn && aiDockLift ? aiDockLift.bottom + aiDockLift.h + 8 : navToast ? 64 : 20, left: 0, right: 0, display: "flex", justifyContent: "center", zIndex: 21, pointerEvents: "none" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "6px 10px 6px 20px", borderRadius: 8, background: "rgba(0,0,0,0.78)", backdropFilter: "blur(8px)", border: `1px solid ${T.accent}30` }}>
+            <span data-testid="present-undo-msg" style={{ fontFamily: FONT.display, fontSize: 14, color: "#fff", fontWeight: 600 }}>{undoToast.msg}</span>
+            <button data-testid="present-undo-btn" onClick={(e) => { e.stopPropagation(); e.currentTarget.blur(); dispatch({ type: "UNDO" }); }} style={{ pointerEvents: "auto", cursor: "pointer", background: T.accent + "30", border: `1px solid ${T.accent}60`, borderRadius: 6, padding: "3px 10px", fontFamily: FONT.display, fontSize: 13, fontWeight: 600, color: "#fff" }}>Undo</button>
+            <span data-testid="present-undo-hint" style={{ fontFamily: FONT.mono, fontSize: 12, color: "rgba(255,255,255,0.6)" }}>{typeof navigator !== "undefined" && /Mac|iPhone|iPad|iPod/.test(navigator.platform || "") ? "⌘Z" : "Ctrl+Z"}</span>
+          </div>
+        </div>}
+  </>;
+  const aiBoxProps = { prompt: quickEditPrompt, image: quickEditImage, running: quickEditing, onPrompt: setQuickEditPrompt, onImage: setQuickEditImage, onClearImage: () => setQuickEditImage(null), onApply: runQuickEdit, onClose: closeAiEdit };
+
   if (fullscreen) return (
     <div ref={containerRef} tabIndex={0} style={{ position: "fixed", inset: 0, zIndex: 9999, background: T.bg, display: "flex", flexDirection: "row", outline: "none" }}>
       {measureHarness}
@@ -12176,6 +12353,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
             .stg-N stagger reveal inside SlideContent, which keeps working as-is. */}
         <div key={slideIndex} className="slide-transition-fade" style={{ position: "relative", width: "100%", height: "100%" }}>
           <FullscreenSlide key={`deck-${state._deckEpoch}`} slide={presSlides[slideIndex]} index={slideIndex} total={presSlides.length} innerRef={slideRef} branding={presSlides[slideIndex]?._virtual ? null : branding} editable={!isStudent && !presSlides[slideIndex]?._virtual} onEdit={isStudent || presSlides[slideIndex]?._virtual ? undefined : handleSlideEdit} onBlockEdit={isStudent || presSlides[slideIndex]?._virtual ? undefined : runBlockEdit} blockEditing={isStudent ? null : blockEditing} fontScale={fontScale} mode="fill" forceEdit={presentEdit && !isStudent} displayIndex={globalSlideIndex - presOffset} displayTotal={globalSlideTotal} hideSlideNumber={detourOff} story={story} onStoryJump={story ? onStoryJump : undefined} onStoryZoomOut={story ? onStoryZoomOut : undefined} />
+          {quickEditing && aiWorkingHere && <div data-testid="present-ai-shimmer" className="vera-thinking" aria-hidden="true" style={{ position: "absolute", inset: 0, pointerEvents: "none", zIndex: 14 }} />}
         </div>
         {/* Session edge bar (v13.80): neutral fill up to the first of YOU / SHOULD
             BE, pace-colour gap between them, white tick = YOU (sessionBarGeom).
@@ -12248,21 +12426,9 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
         </>}
         </div>
         {!isMobile && !VELA_LOCAL_MODE && showCinemaTip && <CinemaTip onClose={() => setShowCinemaTip(false)} />}
-        {navToast && <div className={navToast.phase === "in" ? "nav-toast-in" : "nav-toast-out"} style={{ position: "absolute", bottom: 20, left: 0, right: 0, display: "flex", justifyContent: "center", zIndex: 20, pointerEvents: "none" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 20px", borderRadius: 8, background: "rgba(0,0,0,0.78)", backdropFilter: "blur(8px)", border: `1px solid ${T.accent}30` }}>
-            {navToast.section && <span style={{ fontFamily: FONT.mono, fontSize: 10, color: T.accent, fontWeight: 600, letterSpacing: "0.05em", textTransform: "uppercase" }}>{navToast.section}</span>}
-            {navToast.section && <span style={{ color: T.textDim, fontSize: 13 }}>›</span>}
-            <span style={{ fontFamily: FONT.display, fontSize: 14, color: "#fff", fontWeight: 600 }}>{navToast.module}</span>
-          </div>
-        </div>}
-        {undoToast && <div data-testid="present-undo-toast" role="status" className={undoToast.phase === "in" ? "nav-toast-in" : "nav-toast-out"} style={{ position: "absolute", bottom: navToast ? 64 : 20, left: 0, right: 0, display: "flex", justifyContent: "center", zIndex: 21, pointerEvents: "none" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "6px 10px 6px 20px", borderRadius: 8, background: "rgba(0,0,0,0.78)", backdropFilter: "blur(8px)", border: `1px solid ${T.accent}30` }}>
-            <span data-testid="present-undo-msg" style={{ fontFamily: FONT.display, fontSize: 14, color: "#fff", fontWeight: 600 }}>{undoToast.msg}</span>
-            <button data-testid="present-undo-btn" onClick={(e) => { e.stopPropagation(); e.currentTarget.blur(); dispatch({ type: "UNDO" }); }} style={{ pointerEvents: "auto", cursor: "pointer", background: T.accent + "30", border: `1px solid ${T.accent}60`, borderRadius: 6, padding: "3px 10px", fontFamily: FONT.display, fontSize: 13, fontWeight: 600, color: "#fff" }}>Undo</button>
-            <span data-testid="present-undo-hint" style={{ fontFamily: FONT.mono, fontSize: 12, color: "rgba(255,255,255,0.6)" }}>{typeof navigator !== "undefined" && /Mac|iPhone|iPad|iPod/.test(navigator.platform || "") ? "⌘Z" : "Ctrl+Z"}</span>
-          </div>
-        </div>}
+        {!showPresenterView && presentToasts}
         {detour && <DetourBar title={detourReturnName(lanes, detour.ret)} hints={!isMobile} bottom={20 + (navToast ? 44 : 0) + (undoToast ? 44 : 0)} onBack={() => detourBackRef.current()} onKeep={detourKeep} />}
+        {aiDockOn && <AiEditBox testid="present-ai-dock" boxRef={aiDockRef} {...aiBoxProps} style={{ position: "absolute", right: 20, bottom: aiDockLift ? aiDockLift.bottom : 72, width: 400, maxWidth: "90vw", zIndex: 23 }} />}
         {/* Floating Edit + New Slide cluster — REMOVED from the fullscreen/Present
             view (CR-03): this branch is the audience-facing Present surface, and a
             pencil/+ edit cluster here is edit chrome that must never be visible to
@@ -12296,6 +12462,7 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
         // NEXT on a story slide is its next step; after the last step, the next slide.
         const nextStory = story ? storyNext(story, storyN) : null;
         return <PresenterView current={presSlides[slideIndex]} next={nextStory ? presSlides[slideIndex] : nextIdx >= 0 ? presSlides[nextIdx] : null} currentStory={story} nextStory={nextStory || undefined} index={globalSlideIndex - presOffset} total={globalSlideTotal} duration={presSlides[slideIndex]?.duration || 0} elapsed={presentElapsed} branding={branding} onClose={() => setPresenterView(false)} detourReturn={detour ? detourReturnTitle(lanes, detour.ret) : null}
+          aiBox={showQuickEdit || quickEditing ? <AiEditBox testid="presenter-ai-box" {...aiBoxProps} style={{ flexShrink: 0 }} /> : null} aiThinking={quickEditing && aiWorkingHere} onAiEdit={isStudent ? undefined : () => aiEditToggleRef.current?.()} toasts={presentToasts}
           sessionCard={{ nowMs, session: sessionLive, pace: sessionPace, estimated: sessionSeq.est.estimated, youNum: sessionSeq.seq[paceIdx]?.num, shouldNum: sessionPace ? sessionSeq.seq[sessionPace.shouldIdx]?.num : undefined, onEditSession: () => setSessionDialogOpen(true) }} />;
       })()}
       {/* Session dialog INSIDE the Present root: App-level modals are outside the
@@ -24610,6 +24777,258 @@ uiSuite("present-detour-back", [
   }},
 ]);
 
+// v13.85 Present / Presenter AI Edit (E). The deferred agent transport makes
+// the AI path run for real offline. Deck: _pdhMain (module A has a title card).
+const _paeDock = () => _$("[data-testid='present-ai-dock']");
+const _paeOverlay = () => _$$("div").find((d) => { const cs = getComputedStyle(d); return cs.position === "fixed" && cs.zIndex === "9999"; }) || null;
+// Import gives modules new ids: "pdh-a" / "pdh-b" name the first / second module.
+const _paeMods = () => _hooks().getDeckTextsForTest() || [];
+const _paeId = (id) => (id === "pdh-a" ? _paeMods()[0]?.id : id === "pdh-b" ? _paeMods()[1]?.id : id);
+const _paeTexts = (id) => _paeMods().find((m) => m.id === _paeId(id))?.texts || null;
+const _paeAll = () => JSON.stringify(_hooks().getDeckTextsForTest());
+const _paeReply = (text) => JSON.stringify({ blocks: [{ type: "heading", text }], duration: 30 });
+const _paeOpen = async (id = "present-ai-dock") => {
+  document.activeElement?.blur?.(); _key("e");
+  return _waitFor(() => _$(`[data-testid='${id}-input']`), 1500).catch(() => { throw new Error(`E did not open ${id}`); });
+};
+const _paeApply = async (transport, prompt, id) => {
+  const ta = await _paeOpen(id);
+  _type(ta, prompt); _key("Enter");
+  await _waitFor(() => transport.pending() === 1, 1500).catch(() => { throw new Error("Enter did not start the AI edit"); });
+};
+const _paeRun = async (fn, ai = true) => {
+  const transport = ai ? _hooks().installDeferredAgentTransport?.() : null;
+  if ((ai && !transport) || !_hooks().getDeckTextsForTest) throw new Error("AI test hooks missing");
+  try { await _pdhStart(_pdhMain()); await fn(transport); }
+  finally {
+    if (transport) { while (transport.pending()) transport.rejectNext("cleanup"); transport.restore(); }
+    await _pdhEnd();
+  }
+};
+const _paeRect = (sel) => { const el = _$(sel); if (!el) throw new Error(`${sel} missing`); const r = el.getBoundingClientRect(); return { x: r.x, y: r.y, w: r.width, h: r.height, b: r.bottom }; };
+const _paeSame = (a, b) => ["x", "y", "w", "h"].every((k) => Math.abs(a[k] - b[k]) < 0.6);
+// Two on-screen rects must not intersect; `what` names them in the error.
+const _paeApart = (a, b, what) => {
+  if (!a.width || !a.height || !b.width || !b.height) throw new Error(`${what}: an element is not visible`);
+  if (a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom) throw new Error(`${what} overlap: [${Math.round(a.left)},${Math.round(a.top)},${Math.round(a.right)},${Math.round(a.bottom)}] / [${Math.round(b.left)},${Math.round(b.top)},${Math.round(b.right)},${Math.round(b.bottom)}]`);
+};
+// The visible toast pill (the toast row itself spans the full width).
+const _paeToastPill = () => { const t = _pdhToast(); if (!t?.firstElementChild) throw new Error("no undo toast"); return t.firstElementChild.getBoundingClientRect(); };
+// Nothing covers the centre of `el` (a click there reaches el).
+const _paeOnTop = (el, what) => {
+  if (!el) throw new Error(`${what} missing`);
+  const r = el.getBoundingClientRect(), hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+  if (!hit || !(el === hit || el.contains(hit))) throw new Error(`${what} is covered by ${hit?.tagName || "nothing"} ${hit?.getAttribute?.("data-testid") || ""}`);
+};
+
+uiSuite("present-ai-edit", [
+  { name: "PAE1: E opens the dock in Present: in the overlay, bottom right, just above the slide-number chip, no text under 12px", fn: () => _paeRun(async () => {
+    await _pdhSel(1, "PDHA1");
+    const ta = await _paeOpen();
+    if (document.activeElement !== ta) throw new Error("the dock textarea has no focus");
+    const dock = _paeDock(), r = dock.getBoundingClientRect(), overlay = _paeOverlay();
+    if (!overlay || !overlay.contains(dock)) throw new Error("the dock is not inside the Present overlay");
+    if (r.width < 200 || r.height < 30) throw new Error(`the dock is not visible: ${r.width}x${r.height}`);
+    if (innerWidth - r.right > 40 || r.left < innerWidth / 2) throw new Error(`the dock is not bottom right: ${r.left}-${r.right} of ${innerWidth}`);
+    const chip = _$$("*", overlay).find((el) => el.children.length === 0 && /^\d+ \/ \d+$/.test((el.textContent || "").trim()));
+    if (!chip) throw new Error("no slide-number chip");
+    const c = chip.getBoundingClientRect();
+    if (r.bottom > c.top) throw new Error(`the dock overlaps the slide-number chip (dock bottom ${r.bottom}, chip top ${c.top})`);
+    if (c.top - r.bottom > 40) throw new Error(`the dock is not directly above the chip (gap ${c.top - r.bottom})`);
+    const small = _$$("*", dock).filter((el) => (el.children.length === 0 && (el.textContent || "").trim() || el.tagName === "TEXTAREA") && parseFloat(getComputedStyle(el).fontSize) < 12);
+    if (small.length) throw new Error(`dock text under 12px: ${small.map((el) => el.tagName).join(",")}`);
+  }) },
+  { name: "PAE2: keys typed in the dock never act on Present; Esc closes the dock only", fn: () => _paeRun(async () => {
+    await _pdhSel(1, "PDHA1");
+    const ta = await _paeOpen();
+    _type(ta, "abc");
+    const p0 = _pdhPast(), s0 = JSON.stringify(_pdSel()), d0 = _paeAll();
+    for (const k of ["Delete", "Backspace", "h", "H", "b", "k", "ArrowRight", "ArrowLeft", " ", "e", "f", "g", "c", "t", "s", "r", "?"]) { ta.focus(); _key(k); await _wait(20); }
+    await _wait(200);
+    if (_pdhPast() !== p0 || _paeAll() !== d0) throw new Error("a key typed in the dock changed the deck");
+    if (JSON.stringify(_pdSel()) !== s0) throw new Error("a key typed in the dock moved the slide");
+    if (!_paeDock() || !_paeOverlay()) throw new Error("a key typed in the dock closed the dock or Present");
+    if (_$("[data-testid='presenter-view']") || _$("[data-vela-modal]")) throw new Error("a key typed in the dock opened a view or dialog");
+    ta.focus(); _key("Escape");
+    await _waitFor(() => !_paeDock(), 1000).catch(() => { throw new Error("Esc did not close the dock"); });
+    await _wait(200);
+    if (!_paeOverlay() || !_pdhOn("PDHA1")) throw new Error("Esc in the dock also left Present or moved the slide");
+  }) },
+  { name: "PAE3: Apply edits the right slide in a module with a title card; Slide updated toast; Undo button and Ctrl+Z each restore in one step", fn: () => _paeRun(async (tr) => {
+    await _pdhSel(1, "PDHA1");
+    await _paeApply(tr, "make it louder");
+    await _waitFor(() => _$("[data-testid='present-ai-dock-running']") && _$("[data-testid='present-ai-shimmer']"), 1000).catch(() => { throw new Error("no running state or no shimmer"); });
+    document.activeElement?.blur?.(); _key("e"); await _wait(80); _key("e"); await _wait(80); _key("Enter"); await _wait(80);
+    if (tr.pending() !== 1) throw new Error(`E during the run started another run (pending ${tr.pending()})`);
+    if (!_$("[data-testid='present-ai-dock-running']")) throw new Error("E during the run hid the running state");
+    const p0 = _pdhPast();
+    tr.resolveNext(_paeReply("PAE EDITED"));
+    await _waitFor(() => _paeTexts("pdh-a")?.[0] === "PAE EDITED", 2000).catch(() => { throw new Error(`the edit did not land on the first slide: ${_paeAll()}`); });
+    if (JSON.stringify(_paeTexts("pdh-a")) !== '["PAE EDITED","PDHA2"]' || JSON.stringify(_paeTexts("pdh-b")) !== '["PDHB1","PDHB2","PDHB3"]') throw new Error(`another slide changed: ${_paeAll()}`);
+    _pdhOneStep(p0);
+    await _waitFor(() => _pdhMsg() === "Slide updated", 1000).catch(() => { throw new Error("no Slide updated toast"); });
+    if (_paeDock()) throw new Error("the dock stays open after the edit");
+    // One undo step back from the count after the edit (the history can be at its cap).
+    const p1 = _pdhPast();
+    _click("[data-testid='present-undo-btn']");
+    await _waitFor(() => _paeTexts("pdh-a")?.[0] === "PDHA1" && !_pdhToast(), 1500).catch(() => { throw new Error("Undo did not restore the slide"); });
+    if (_pdhPast() !== p1 - 1) throw new Error("Undo is not one step");
+    await _pdhSel(1, "PDHA1");
+    await _paeApply(tr, "again");
+    tr.resolveNext(_paeReply("PAE EDITED 2"));
+    await _waitFor(() => _paeTexts("pdh-a")?.[0] === "PAE EDITED 2" && _pdhMsg() === "Slide updated", 2000).catch(() => { throw new Error("second edit did not land"); });
+    const p2 = _pdhPast();
+    document.activeElement?.blur?.(); _key("z", { ctrlKey: true });
+    await _waitFor(() => _paeTexts("pdh-a")?.[0] === "PDHA1" && !_pdhToast(), 1500).catch(() => { throw new Error("Ctrl+Z did not restore the slide"); });
+    if (_pdhPast() !== p2 - 1) throw new Error("Ctrl+Z is not one step");
+    await _pdhSel(1, "PDHA1");
+  }) },
+  { name: "PAE4: navigate away during the run: the result lands on the origin slide", fn: () => _paeRun(async (tr) => {
+    await _pdhSel(1, "PDHA1");
+    await _pdhStep("ArrowRight"); await _pdhSel(2, "PDHA2");
+    await _paeApply(tr, "edit A2");
+    await _pdhStep("ArrowRight");
+    await _waitFor(() => _pdSel()?.itemId === _paeId("pdh-b") && _pdhOn("PDHB1"), 1500).catch(() => { throw new Error("did not move to module B"); });
+    tr.resolveNext(_paeReply("PAE A2 EDITED"));
+    await _waitFor(() => _paeTexts("pdh-a")?.[1] === "PAE A2 EDITED", 2000).catch(() => { throw new Error(`the result did not land on the origin slide: ${_paeAll()}`); });
+    if (_paeTexts("pdh-a")[0] !== "PDHA1" || JSON.stringify(_paeTexts("pdh-b")) !== '["PDHB1","PDHB2","PDHB3"]') throw new Error(`another slide changed: ${_paeAll()}`);
+    if (_pdSel()?.itemId !== _paeId("pdh-b") || !_pdhOn("PDHB1")) throw new Error("the landing moved the view");
+  }) },
+  { name: "PAE5: origin slide deleted during the run: result dropped with a toast, no slide changed", fn: () => _paeRun(async (tr) => {
+    await _pdhSel(1, "PDHA1");
+    await _pdhStep("ArrowRight"); await _pdhSel(2, "PDHA2");
+    await _paeApply(tr, "edit then delete");
+    await _pdhStep("Delete");
+    await _waitFor(() => JSON.stringify(_paeTexts("pdh-a")) === '["PDHA1"]', 1500).catch(() => { throw new Error("Del did not delete the origin slide"); });
+    const d0 = _paeAll(), p0 = _pdhPast();
+    tr.resolveNext(_paeReply("PAE SHOULD DROP"));
+    await _waitFor(() => _pdhNav("Slide changed — AI edit discarded"), 2000).catch(() => { throw new Error("no discard toast"); });
+    await _wait(150);
+    if (_paeAll() !== d0 || _pdhPast() !== p0) throw new Error(`a dropped AI edit changed the deck: ${_paeAll()}`);
+  }) },
+  { name: "PAE6: Presenter view: chip and E open the box under the preview; the preview keeps its size; Esc closes the box, not the Presenter view", fn: () => _paeRun(async (tr) => {
+    await _pdhSel(1, "PDHA1");
+    await _pdhStep("s");
+    await _waitFor(() => _$("[data-testid='presenter-view']"), 1500).catch(() => { throw new Error("S did not open the Presenter view"); });
+    await _wait(250);
+    const r0 = _paeRect("[data-testid='presenter-current']");
+    _click(await _waitFor(() => _$("[data-testid='presenter-ai-edit']"), 1000));
+    const ta = await _waitFor(() => _$("[data-testid='presenter-ai-box-input']"), 1500).catch(() => { throw new Error("the chip did not open the box"); });
+    await _wait(150);
+    const r1 = _paeRect("[data-testid='presenter-current']"), box = _paeRect("[data-testid='presenter-ai-box']"), n = _paeRect("[data-testid='presenter-notes']");
+    if (!_paeSame(r0, r1)) throw new Error(`the preview changed size: ${JSON.stringify(r0)} -> ${JSON.stringify(r1)}`);
+    if (box.y < r1.b - 0.5 || n.y < box.b - 0.5) throw new Error("the box is not between the preview and the notes");
+    if (_paeDock()) throw new Error("the Present dock shows under the Presenter view");
+    ta.focus(); _key("Escape");
+    await _waitFor(() => !_$("[data-testid='presenter-ai-box']"), 1000).catch(() => { throw new Error("Esc did not close the box"); });
+    await _wait(150);
+    if (!_$("[data-testid='presenter-view']")) throw new Error("Esc in the box closed the Presenter view");
+    if (!_paeSame(r0, _paeRect("[data-testid='presenter-current']"))) throw new Error("the preview size changed after the box closed");
+    await _paeApply(tr, "presenter edit", "presenter-ai-box");
+    if (!_$("[data-testid='presenter-current']").classList.contains("vera-thinking")) throw new Error("no shimmer on the Presenter preview");
+    tr.resolveNext(_paeReply("PAE PRESENTER"));
+    await _waitFor(() => _paeTexts("pdh-a")?.[0] === "PAE PRESENTER", 2000).catch(() => { throw new Error("the Presenter edit did not land"); });
+    await _waitFor(() => _$("[data-testid='presenter-view'] [data-testid='present-undo-toast']"), 1000).catch(() => { throw new Error("no undo toast in the Presenter view"); });
+    await _paeOpen("presenter-ai-box");
+    document.activeElement?.blur?.(); _key("Escape");
+    await _waitFor(() => !_$("[data-testid='presenter-ai-box']"), 1000).catch(() => { throw new Error("Esc did not close the box first"); });
+    await _wait(100);
+    if (!_$("[data-testid='presenter-view']")) throw new Error("the first Esc closed the Presenter view");
+    _key("Escape");
+    await _waitFor(() => !_$("[data-testid='presenter-view']"), 1000).catch(() => { throw new Error("the second Esc did not close the Presenter view"); });
+    if (!_paeOverlay()) throw new Error("Esc left Present");
+  }) },
+  { name: "PAE7: AI not available: E shows the AI-unavailable toast, no box", fn: () => _paeRun(async () => {
+    await _pdhSel(1, "PDHA1");
+    document.activeElement?.blur?.(); _key("e");
+    await _waitFor(() => _pdhNav(VELA_AI_UNAVAILABLE_MSG), 1000).catch(() => { throw new Error("no AI-unavailable toast"); });
+    await _wait(150);
+    if (_paeDock()) throw new Error("the dock opened without AI");
+  }, false) },
+  { name: "PAE8: title card: E shows a toast, no box", fn: () => _paeRun(async () => {
+    await _pdhSel(1, "PDHA1");
+    await _pdhStep("ArrowLeft");
+    await _waitFor(() => _pdSel()?.slideIdx === 0 && !_pdhOn("PDHA1"), 1500).catch(() => { throw new Error("did not reach the title card"); });
+    document.activeElement?.blur?.(); _key("e");
+    await _waitFor(() => _pdhNav("Title card can't be AI-edited"), 1000).catch(() => { throw new Error("no title-card toast"); });
+    await _wait(150);
+    if (_paeDock()) throw new Error("the dock opened on the title card");
+  }) },
+  { name: "PAE9: editor E and Quick Edit are unchanged (editor box, current slide, no Present toast)", fn: () => _paeRun(async (tr) => {
+    await _exitFullscreen();
+    await _wait(200);
+    document.activeElement?.blur?.(); _key("e");
+    const ta = await _waitFor(() => _$("[data-testid='quick-edit-input']"), 1500).catch(() => { throw new Error("E did not open the editor Quick Edit box"); });
+    if (_paeDock()) throw new Error("the Present dock opened in the editor");
+    const sel = _pdSel();
+    _type(ta, "editor edit"); _click("[data-testid='quick-edit-apply']");
+    await _waitFor(() => tr.pending() === 1, 1500).catch(() => { throw new Error("Apply did not start the editor edit"); });
+    tr.resolveNext(_paeReply("PAE EDITOR"));
+    await _waitFor(() => _paeTexts(sel.itemId)?.[sel.slideIdx] === "PAE EDITOR", 2000).catch(() => { throw new Error(`the editor edit did not land on the current slide: ${_paeAll()}`); });
+    await _wait(100);
+    if (_pdhToast()) throw new Error("the editor shows the Present undo toast");
+    document.activeElement?.blur?.(); _key("e");
+    const ta2 = await _waitFor(() => _$("[data-testid='quick-edit-input']"), 1500);
+    ta2.focus(); _key("Escape");
+    await _waitFor(() => !_$("[data-testid='quick-edit-input']"), 1000).catch(() => { throw new Error("Esc did not close the editor box"); });
+  }) },
+  { name: "PAE10: Presenter view: the Slide updated toast never covers the open box or its buttons", fn: () => _paeRun(async (tr) => {
+    await _pdhSel(1, "PDHA1");
+    await _pdhStep("s");
+    await _waitFor(() => _$("[data-testid='presenter-view']"), 1500).catch(() => { throw new Error("S did not open the Presenter view"); });
+    await _wait(250);
+    await _paeApply(tr, "presenter toast", "presenter-ai-box");
+    tr.resolveNext(_paeReply("PAE P TOAST"));
+    await _waitFor(() => _paeTexts("pdh-a")?.[0] === "PAE P TOAST" && _pdhMsg() === "Slide updated", 2000).catch(() => { throw new Error("the Presenter edit did not land with a toast"); });
+    await _paeOpen("presenter-ai-box");
+    await _wait(200);
+    if (!_pdhToast()) throw new Error("the toast closed when the box opened");
+    const box = _$("[data-testid='presenter-ai-box']"), t = _paeToastPill();
+    _paeApart(t, box.getBoundingClientRect(), "toast and Presenter box");
+    if (t.top < 0) throw new Error("the toast is off screen");
+    _paeOnTop(_$("[data-testid='presenter-ai-box-apply']"), "the Apply button");
+    _paeOnTop(_$("[data-testid='presenter-ai-box-close']"), "the box close button");
+    _paeOnTop(_$("[data-testid='present-undo-btn']"), "the Undo button");
+  }) },
+  { name: "PAE11: Present: dock, Slide updated toast and detour bar together never overlap (or cover the slide-number chip)", fn: () => _paeRun(async (tr) => {
+    await _pdhSel(1, "PDHA1");
+    await _pdbJump("PDHB3", "PDHB3");
+    if (!_pdbBar()) throw new Error("no detour bar after the TOC jump");
+    await _paeApply(tr, "detour edit");
+    tr.resolveNext(_paeReply("PAE DETOUR"));
+    await _waitFor(() => _paeTexts("pdh-b")?.[2] === "PAE DETOUR" && _pdhMsg() === "Slide updated", 2000).catch(() => { throw new Error(`the edit did not land with a toast: ${_paeAll()}`); });
+    await _paeOpen();
+    await _wait(200);
+    if (!_pdhToast() || !_pdbBar()) throw new Error("the toast or the detour bar closed when the dock opened");
+    const dock = _paeDock().getBoundingClientRect(), t = _paeToastPill(), bar = _pdbBar().getBoundingClientRect();
+    const chip = _$$("*", _paeOverlay()).find((el) => el.children.length === 0 && /^\d+ \/ \d+$/.test((el.textContent || "").trim()));
+    _paeApart(dock, t, "dock and toast");
+    _paeApart(dock, bar, "dock and detour bar");
+    _paeApart(t, bar, "toast and detour bar");
+    if (chip) _paeApart(dock, chip.getBoundingClientRect(), "dock and slide-number chip");
+    _paeOnTop(_$("[data-testid='present-ai-dock-apply']"), "the dock Apply button");
+    _paeOnTop(_$("[data-testid='present-undo-btn']"), "the Undo button");
+    _paeOnTop(_$("[data-testid='detour-back']"), "the detour Back button");
+  }) },
+  { name: "PAE12: editor: origin slide deleted during the run: result dropped with the editor toast", fn: () => _paeRun(async (tr) => {
+    await _exitFullscreen();
+    await _wait(200);
+    document.activeElement?.blur?.(); _key("e");
+    const ta = await _waitFor(() => _$("[data-testid='quick-edit-input']"), 1500).catch(() => { throw new Error("E did not open the editor Quick Edit box"); });
+    _type(ta, "edit then delete"); _click("[data-testid='quick-edit-apply']");
+    await _waitFor(() => tr.pending() === 1, 1500).catch(() => { throw new Error("Apply did not start the editor edit"); });
+    const before = _paeAll();
+    document.activeElement?.blur?.(); _key("Delete");
+    await _waitFor(() => _paeAll() !== before, 1500).catch(() => { throw new Error("the Delete key did not take the slide out"); });
+    const d0 = _paeAll(), p0 = _pdhPast();
+    tr.resolveNext(_paeReply("PAE EDITOR DROP"));
+    await _waitFor(() => (_$("[data-testid='paste-notice']")?.textContent || "").includes("Slide changed — AI edit discarded"), 2000).catch(() => { throw new Error("no editor discard toast"); });
+    await _wait(150);
+    if (_paeAll() !== d0 || _pdhPast() !== p0) throw new Error(`a dropped AI edit changed the deck: ${_paeAll()}`);
+    if (_$("[data-testid='quick-edit-input']")) throw new Error("the editor box stays open after the discard");
+  }) },
+]);
+
 // ━━━ UI TEST RUNNER COMPONENT ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 // Demo deck guard — UI tests only run against the original demo deck
@@ -32270,6 +32689,7 @@ function ShortcutHelp({ onClose }) {
     { title: "AI Tools", items: [
       ["Shift+I", "Quick improve slide via Vera"],
       ["E", "Quick edit slide by prompt"],
+      ["E", "AI edit slide (Present / Presenter)"],
       ["N", "New slide by prompt"],
       ["1 – 4", "Apply variant (preview stays open)"],
       ["0", "Back to original"],
@@ -33102,6 +33522,11 @@ export default function App() {
         sanitized.slideIndex = 0;
         dispatch({ type: "LOAD", payload: sanitized });
         return true;
+      },
+      // First-block text of every slide, per module (Present AI Edit suite).
+      getDeckTextsForTest: () => {
+        const s = _localSyncState.current;
+        return s ? (s.lanes || []).flatMap((l) => (l.items || []).map((i) => ({ id: i.id, texts: (i.slides || []).map((sl) => sl?.blocks?.[0]?.text ?? null) }))) : null;
       },
       getDeckStateForTest: () => {
         const s = _localSyncState.current;
