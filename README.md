@@ -19,7 +19,7 @@ Create, edit, and present beautiful slide decks — entirely through conversatio
 
 > **No human has reviewed the source code.**
 >
-> Every line of Vela — 14,000+ lines of JSX, Python CLI tools, and build scripts — was generated entirely by AI (Claude). The codebase is validated by extensive AI code reviews, 270+ automated tests, and static analysis, but no human has ever read or audited the code.
+> Every line of Vela — 33,000+ lines of JSX, Python CLI tools, and build scripts — was generated entirely by AI (Claude). The codebase is validated by extensive AI code reviews, 270+ automated tests, and static analysis, but no human has ever read or audited the code.
 >
 > **You are responsible for your own review before using this in any production or sensitive context.**
 >
@@ -129,7 +129,7 @@ Vela ships as a **skill** — a structured prompt + reference architecture (mark
 └──────────────────────────────────────────────────┘
 ```
 
-The Vela engine is a **14,000+ line React application**. The same engine renders in three runtimes — Claude.ai's artifact sandbox, a local browser server, and the Neutralino desktop window — with Vera transparently routed to whichever AI backend is available (artifact proxy, channel bridge to a local coding-agent CLI, or the desktop's bundled adapter). No servers, no deploys, no accounts; your data stays where you put it.
+The Vela engine is a **33,000+ line React application**. The same engine renders in three runtimes — Claude.ai's artifact sandbox, a local browser server, and the Neutralino desktop window — with Vera transparently routed to whichever AI backend is available (artifact proxy, channel bridge to a local coding-agent CLI, or the desktop's bundled adapter). No servers, no deploys, no accounts; your data stays where you put it.
 
 ---
 
@@ -151,7 +151,7 @@ Code blocks ship with a one-click copy button. Callouts can be set to `reveal: t
 Decks use the `.vela` extension — a standard JSON file with a dedicated identity. All CLI tools, the local server, and imports recognize both `.vela` and `.json`.
 
 ### Presenter Mode
-Fullscreen presentation with arrow keys (Up/Down/Left/Right), Space, and Escape — PowerPoint-style navigation across slides and modules. Designed for 16:9 projection.
+Fullscreen presentation with arrow keys (Up/Down/Left/Right), Space, and Escape — PowerPoint-style navigation across slides and modules. Designed for 16:9 projection. Includes slide search (Ctrl+E), a session end time with clock and pace guidance, and story mode for image slides. On phones, slides switch to a one-column portrait layout.
 
 ### Vector PDF Export
 Canvas-rendered PDF output with clickable links, branding overlays, and watermarks. Every slide exports as a crisp vector page.
@@ -196,7 +196,7 @@ Once a Vela artifact is running, click the Vera button to open the chat panel. Y
 
 Try the self-demonstrating deck — slides that showcase every block type, with Vera ready for hands-on editing:
 
-**[▶ Open Vela Slides v12 Live Demo](https://claude.ai/public/artifacts/327281d4-4331-4ff8-bdbf-a436b698fe73)** · [`skills/vela-slides/examples/vela-demo.vela`](skills/vela-slides/examples/vela-demo.vela)
+**[▶ Open Vela Slides v12 Live Demo](https://claude.ai/public/artifacts/327281d4-4331-4ff8-bdbf-a436b698fe73)** · [`examples/vela-demo.vela`](examples/vela-demo.vela)
 
 See [`examples/`](examples/) for themed sample decks (startup pitch, tech talk, course, business report).
 
