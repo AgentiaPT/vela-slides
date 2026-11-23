@@ -47,6 +47,89 @@ def skip(name, reason=""):
     print(f"  ⏭️  {name}{f' — {reason}' if reason else ''}")
 
 
+# ━━━ Node-suite prefetch (unit-gate wall time) ━━━━━━━━━━━━━━━━━━━━━
+# The unit gate runs ~25 independent `node tests/*.cjs` suites. Each one only
+# reads repo files and writes nothing that another test reads, so --unit starts
+# them in a small thread pool at the beginning, and each call site collects the
+# result of its own EXACT command (argv + env + kwargs). A command that was not
+# prefetched, or whose arguments differ, runs synchronously as before, so a
+# drift between this list and the call sites only costs time: it can never skip
+# a suite or change an assertion. Each prefetched result is used once.
+from concurrent.futures import ThreadPoolExecutor
+_PREFETCH = {}
+_PREFETCH_POOL = None
+
+def _prefetch_key(argv, kwargs):
+    env = kwargs.get("env")
+    rest = tuple(sorted((k, v) for k, v in kwargs.items() if k != "env"))
+    return (tuple(argv), tuple(sorted(env.items())) if env is not None else None, rest)
+
+def prefetch_run(argv, **kwargs):
+    global _PREFETCH_POOL
+    if _PREFETCH_POOL is None:
+        _PREFETCH_POOL = ThreadPoolExecutor(max_workers=max(2, min(4, os.cpu_count() or 2)))
+    key = _prefetch_key(argv, kwargs)
+    if key not in _PREFETCH:
+        _PREFETCH[key] = _PREFETCH_POOL.submit(subprocess.run, argv, **kwargs)
+
+def run_prefetched(argv, **kwargs):
+    """Drop-in for subprocess.run: returns the prefetched result of this exact
+    command if there is one (re-raising its exception), else runs it now."""
+    fut = _PREFETCH.pop(_prefetch_key(argv, kwargs), None)
+    if fut is None:
+        return subprocess.run(argv, **kwargs)
+    return fut.result()
+
+def jsdom_node_env():
+    """Env for the jsdom suites: CI installs jsdom at the repo root; local dev
+    may have it in /tmp."""
+    env = os.environ.copy()
+    env["NODE_PATH"] = os.pathsep.join(filter(None, [
+        env.get("NODE_PATH", ""),
+        os.path.join(REPO_ROOT, "node_modules"),
+        "/tmp/node_modules",
+    ]))
+    return env
+
+# Plain `node tests/<suite>.cjs` lifeboat suites (one per change request), run by
+# test_security(). Module level so prefetch_node_suites() uses the same list.
+NODE_LIFEBOAT_SUITES = [
+    ("tests/test_export_robustness.cjs",  "Export robustness (CR1 str.includes)"),
+    ("tests/test_modal_scroll.cjs",       "Modal scroll/overflow (CR3 release notes)"),
+    ("tests/test_storage_warning.cjs",    "Artifact storage warning (CR2)"),
+    ("tests/test_block_toolbar_clip.cjs", "Block toolbar clip (CR4)"),
+    ("tests/test_icon_picker_escape.cjs", "Icon picker Escape (CR5)"),
+    ("tests/test_deck_key_allowlist.cjs", "Deck-ingress key allowlist (drop/survive/clamp/depth)"),
+    ("tests/test_story_logic.cjs",        "Story images (state machine, drop filter, grid plans)"),
+    ("tests/test_narrow_layout.cjs",      "Narrow (portrait) layout rules (grid columns, flow direction, safe widths)"),
+    ("tests/test_reducer.cjs",            "Reducer state transitions (62 actions + UNDO/REDO)"),
+    ("tests/test_engine_tools.cjs",       "Vera engine tools + ReAct caps (G1/G3/G4)"),
+    ("tests/test_block_render.cjs",       "Block renderers (27 types via renderToStaticMarkup)"),
+    ("tests/test_underline.cjs",          "++underline++ inline format (strict delimiters, edit round trip)"),
+    ("tests/test_markdown_export.cjs",    "Markdown export deckToMarkdown (G7)"),
+    ("tests/test_fs_guard.cjs",           "Desktop fs-guard (frozen surface + root allowlist)"),
+    ("tests/test_deck_io_save.cjs",       "Desktop save state machine (CR3 no-swallow/retry/verify/echo-guard)"),
+    ("tests/test_nl_window_agents.cjs",   "Desktop window title/refocus + agent probe retry (meridian CR16/CR18/CR19)"),
+    ("tests/test_deck_id_stable.cjs",     "Deck open keeps lane/module ids + timestamps (meridian CR01)"),
+    ("tests/test_ai_cancel_owner.cjs",    "AI-op cancel owner-token aiWork clearing (timing + Alternatives)"),
+    ("tests/test_ai_slide_selection.cjs", "AI slide adder selection race (atomic SELECT + stale-deck isolation)"),
+]
+
+def prefetch_node_suites():
+    """Start the unit gate's plain node suites now; slowest first."""
+    t = lambda name: os.path.join(REPO_ROOT, "tests", name)
+    plain = dict(capture_output=True, text=True, timeout=60)
+    prefetch_run(["node", t("test_standalone_html.cjs")], **plain)
+    prefetch_run(["node", t("test_svg_mxss.cjs")], env=jsdom_node_env(), **plain)
+    prefetch_run(["node", t("test_data_image_uri.cjs")], env=jsdom_node_env(), **plain)
+    for fname, _label in sorted(NODE_LIFEBOAT_SUITES, key=lambda e: e[0] not in (
+            "tests/test_nl_window_agents.cjs", "tests/test_deck_io_save.cjs",
+            "tests/test_underline.cjs", "tests/test_block_render.cjs")):
+        prefetch_run(["node", os.path.join(REPO_ROOT, fname)], **plain)
+    for name in ("test_image_preserve.cjs", "test_ux_logic.cjs", "test_css_exfil.cjs"):
+        prefetch_run(["node", t(name)], **plain)
+
+
 # ━━━ Unit Tests ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 def test_unit():
@@ -409,15 +492,9 @@ def test_security():
     # runs the sanitizer and asserts no live handler materializes.
     mxss_script = os.path.join(REPO_ROOT, "tests", "test_svg_mxss.cjs")
     if os.path.exists(mxss_script):
-        env = os.environ.copy()
-        # CI installs jsdom at the repo root; local dev may have it in /tmp.
-        env["NODE_PATH"] = os.pathsep.join(filter(None, [
-            env.get("NODE_PATH", ""),
-            os.path.join(REPO_ROOT, "node_modules"),
-            "/tmp/node_modules",
-        ]))
+        env = jsdom_node_env()
         try:
-            r = subprocess.run(
+            r = run_prefetched(
                 ["node", mxss_script],
                 capture_output=True, text=True, timeout=60, env=env,
             )
@@ -443,14 +520,9 @@ def test_security():
     # routed through sanitizeSvgMarkup and non-image data: types are dropped.
     dimg_script = os.path.join(REPO_ROOT, "tests", "test_data_image_uri.cjs")
     if os.path.exists(dimg_script):
-        env = os.environ.copy()
-        env["NODE_PATH"] = os.pathsep.join(filter(None, [
-            env.get("NODE_PATH", ""),
-            os.path.join(REPO_ROOT, "node_modules"),
-            "/tmp/node_modules",
-        ]))
+        env = jsdom_node_env()
         try:
-            r = subprocess.run(
+            r = run_prefetched(
                 ["node", dimg_script],
                 capture_output=True, text=True, timeout=60, env=env,
             )
@@ -476,7 +548,7 @@ def test_security():
     imgpres_script = os.path.join(REPO_ROOT, "tests", "test_image_preserve.cjs")
     if os.path.exists(imgpres_script):
         try:
-            r = subprocess.run(["node", imgpres_script], capture_output=True, text=True, timeout=60)
+            r = run_prefetched(["node", imgpres_script], capture_output=True, text=True, timeout=60)
             if r.returncode == 0:
                 m = re.search(r'(\d+)\s+passed,\s+(\d+)\s+failed', r.stdout)
                 count = m.group(1) if m else "?"
@@ -496,7 +568,7 @@ def test_security():
     uxlogic_script = os.path.join(REPO_ROOT, "tests", "test_ux_logic.cjs")
     if os.path.exists(uxlogic_script):
         try:
-            r = subprocess.run(["node", uxlogic_script], capture_output=True, text=True, timeout=60)
+            r = run_prefetched(["node", uxlogic_script], capture_output=True, text=True, timeout=60)
             if r.returncode == 0:
                 m = re.search(r'(\d+)\s+passed,\s+(\d+)\s+failed', r.stdout)
                 count = m.group(1) if m else "?"
@@ -519,7 +591,7 @@ def test_security():
     standalone_script = os.path.join(REPO_ROOT, "tests", "test_standalone_html.cjs")
     if os.path.exists(standalone_script):
         try:
-            r = subprocess.run(["node", standalone_script], capture_output=True, text=True, timeout=60)
+            r = run_prefetched(["node", standalone_script], capture_output=True, text=True, timeout=60)
             if r.returncode == 0:
                 m = re.search(r'(\d+)\s+passed,\s+(\d+)\s+failed', r.stdout)
                 count = m.group(1) if m else "?"
@@ -542,31 +614,11 @@ def test_security():
     #   storage warning  (CR2): artifact-mode backup/local-storage notice + dismiss test-ids
     #   block toolbar    (CR4): hover-toolbar clipping containers no longer crop the tool circles
     #   icon picker esc  (CR5): IconPicker inputs let Escape reach the modal (don't swallow it)
-    for fname, label in [
-        ("tests/test_export_robustness.cjs",  "Export robustness (CR1 str.includes)"),
-        ("tests/test_modal_scroll.cjs",       "Modal scroll/overflow (CR3 release notes)"),
-        ("tests/test_storage_warning.cjs",    "Artifact storage warning (CR2)"),
-        ("tests/test_block_toolbar_clip.cjs", "Block toolbar clip (CR4)"),
-        ("tests/test_icon_picker_escape.cjs", "Icon picker Escape (CR5)"),
-        ("tests/test_deck_key_allowlist.cjs", "Deck-ingress key allowlist (drop/survive/clamp/depth)"),
-        ("tests/test_story_logic.cjs",        "Story images (state machine, drop filter, grid plans)"),
-        ("tests/test_narrow_layout.cjs",      "Narrow (portrait) layout rules (grid columns, flow direction, safe widths)"),
-        ("tests/test_reducer.cjs",            "Reducer state transitions (62 actions + UNDO/REDO)"),
-        ("tests/test_engine_tools.cjs",       "Vera engine tools + ReAct caps (G1/G3/G4)"),
-        ("tests/test_block_render.cjs",       "Block renderers (27 types via renderToStaticMarkup)"),
-        ("tests/test_underline.cjs",          "++underline++ inline format (strict delimiters, edit round trip)"),
-        ("tests/test_markdown_export.cjs",    "Markdown export deckToMarkdown (G7)"),
-        ("tests/test_fs_guard.cjs",           "Desktop fs-guard (frozen surface + root allowlist)"),
-        ("tests/test_deck_io_save.cjs",       "Desktop save state machine (CR3 no-swallow/retry/verify/echo-guard)"),
-        ("tests/test_nl_window_agents.cjs",   "Desktop window title/refocus + agent probe retry (meridian CR16/CR18/CR19)"),
-        ("tests/test_deck_id_stable.cjs",     "Deck open keeps lane/module ids + timestamps (meridian CR01)"),
-        ("tests/test_ai_cancel_owner.cjs",    "AI-op cancel owner-token aiWork clearing (timing + Alternatives)"),
-        ("tests/test_ai_slide_selection.cjs", "AI slide adder selection race (atomic SELECT + stale-deck isolation)"),
-    ]:
+    for fname, label in NODE_LIFEBOAT_SUITES:
         script = os.path.join(REPO_ROOT, fname)
         if os.path.exists(script):
             try:
-                r = subprocess.run(["node", script], capture_output=True, text=True, timeout=60)
+                r = run_prefetched(["node", script], capture_output=True, text=True, timeout=60)
                 if r.returncode == 0:
                     m = re.search(r'(\d+)\s+passed,\s+(\d+)\s+failed', r.stdout)
                     count = m.group(1) if m else "?"
@@ -767,7 +819,7 @@ def test_css_color_exfil():
     css_script = os.path.join(REPO_ROOT, "tests", "test_css_exfil.cjs")
     if os.path.exists(css_script):
         try:
-            r = subprocess.run(["node", css_script], capture_output=True, text=True, timeout=60)
+            r = run_prefetched(["node", css_script], capture_output=True, text=True, timeout=60)
             if r.returncode == 0:
                 m = re.search(r'(\d+)\s+passed,\s+(\d+)\s+failed', r.stdout)
                 ok(f"CSS exfil behavioral round-trip ({m.group(1) if m else '?'} checks)")
@@ -5113,7 +5165,10 @@ def test_svg_style_recurrence_guards():
          '\nconst _dead = { name: "SECURITY: overlay app chrome deadcode", fn: async () => { const h = document.createElement("div"); sanitizeSvgMarkup("<rect/>"); getComputedStyle(h); return true; } };\n',
          "dead-code-token neuter (getComputedStyle present but return true)"),
     ]
-    for fname, needle, repl, label in idioms:
+    # Each idiom lints its own throwaway copy of the parts. The lint runs are
+    # independent processes, so they run in a small thread pool; results are
+    # still reported in idiom order, one ok/fail per idiom as before.
+    def lint_idiom(fname, needle, repl):
         tmp = tempfile.mkdtemp()
         try:
             dst = os.path.join(tmp, "parts")
@@ -5126,16 +5181,23 @@ def test_svg_style_recurrence_guards():
             elif needle in s:
                 mutated = s.replace(needle, repl, 1)
             else:
-                fail(f"recurrence guards: fixture needle missing for '{label}'")
-                continue
+                return None  # fixture needle missing
             with open(fp, "w", encoding="utf-8") as f:
                 f.write(mutated)
-            if not lint_clean(dst):
+            return lint_clean(dst)
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    with ThreadPoolExecutor(max_workers=max(2, min(4, os.cpu_count() or 2))) as pool:
+        futures = [pool.submit(lint_idiom, fname, needle, repl) for fname, needle, repl, _label in idioms]
+        for (_fname, _needle, _repl, label), fut in zip(idioms, futures):
+            clean = fut.result()
+            if clean is None:
+                fail(f"recurrence guards: fixture needle missing for '{label}'")
+            elif not clean:
                 ok(f"recurrence guards: lint rejects {label}")
             else:
                 fail(f"recurrence guards: lint MUST reject {label}")
-        finally:
-            shutil.rmtree(tmp, ignore_errors=True)
 
     # R7B: a decoy sanitizer (a clean copy — even inside a /* */ comment — so a
     # first-match extraction tests it while the real one re-admits <style>) must make
@@ -5191,6 +5253,7 @@ if __name__ == "__main__":
     print("⛵ Vela Slides Test Suite\n")
 
     if run_unit:
+        prefetch_node_suites()
         test_unit()
         test_security()
         test_css_color_exfil()
