@@ -2015,7 +2015,16 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
         </div>
         {!isMobile && !VELA_LOCAL_MODE && showCinemaTip && <CinemaTip onClose={() => setShowCinemaTip(false)} />}
         {!showPresenterView && presentToasts}
-        {detour && <DetourBar title={detourReturnName(lanes, detour.ret)} hints={!isMobile} bottom={20 + (navToast ? 44 : 0) + (undoToast ? 44 : 0)} onBack={() => detourBackRef.current()} onKeep={detourKeep} />}
+        {detour && (() => {
+          // Clear the branding footer strip and a bottom-left logo (the same rule
+          // as the clock chip), then the clock chip itself, then any toast.
+          // presentClockBottom reads only booleans and clamped numbers.
+          const branded = !!branding?.enabled && !presSlides[slideIndex]?._virtual;
+          const base = branded ? presentClockBottom(branding) : "20px";
+          const lift = (clockOn && !showPresenterView && !showGallery ? 40 : 0) + (navToast ? 44 : 0) + (undoToast ? 44 : 0);
+          const bottom = lift ? `calc(${base} + ${lift}px)` : base;
+          return <DetourBar title={detourReturnName(lanes, detour.ret)} hints={!isMobile} bottom={bottom} onBack={() => detourBackRef.current()} onKeep={detourKeep} />;
+        })()}
         {aiDockOn && <AiEditBox testid="present-ai-dock" boxRef={aiDockRef} {...aiBoxProps} style={{ position: "absolute", right: 20, bottom: aiDockLift ? aiDockLift.bottom : 72, width: 400, maxWidth: "90vw", zIndex: 23 }} />}
         {/* Floating Edit + New Slide cluster — REMOVED from the fullscreen/Present
             view (CR-03): this branch is the audience-facing Present surface, and a

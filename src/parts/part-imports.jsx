@@ -138,8 +138,9 @@ const velaClipboardReadSlides = async () => {
   return [];
 };
 
-const VELA_VERSION = "13.87";
+const VELA_VERSION = "13.88";
 const VELA_CHANGELOG = [
+  { v: "13.88", d: ["Present: the Back / Keep here bar now sits above the branding footer, a bottom-left logo and the clock."] },
   { v: "13.87", d: ["Review: a fast second R now closes the Comments panel reliably."] },
   { v: "13.86", d: ["Present: Keep here on a hidden slide from a jump now stays on that slide.", "Present: Esc on a zoomed story image zooms out first, then goes back.", "Present: H on a hidden slide from a jump shows its slide number again.", "Present: Undo of an AI edit shows the edited slide.", "Present: Del, Backspace and H do nothing in Student mode.", "Presenter view: the detour badge shows the correct keys."] },
   { v: "13.85", d: ["Present and Presenter view: E or ✨ AI Edit opens the AI slide edit box; Enter applies, Esc closes the box only.", "Present: an AI edit shows an undo toast (Undo button or Ctrl/⌘+Z).", "AI edit: the result goes to the slide where the edit started; if that slide changes first, the result is dropped."] },
