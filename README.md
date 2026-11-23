@@ -151,7 +151,7 @@ Code blocks ship with a one-click copy button. Callouts can be set to `reveal: t
 Decks use the `.vela` extension — a standard JSON file with a dedicated identity. All CLI tools, the local server, and imports recognize both `.vela` and `.json`.
 
 ### Presenter Mode
-Fullscreen presentation with arrow keys (Up/Down/Left/Right), Space, and Escape — PowerPoint-style navigation across slides and modules. Designed for 16:9 projection.
+Fullscreen presentation with arrow keys (Up/Down/Left/Right), Space, and Escape — PowerPoint-style navigation across slides and modules. Designed for 16:9 projection. While presenting, press `Delete` to remove or `H` to hide the current slide (both undoable), jump anywhere from the slides TOC (`Ctrl+E`) and return with **Back** (`B`) or stay with **Keep here** (`K`), and press `E` for an AI edit of the current slide — also available in Presenter view.
 
 ### Vector PDF Export
 Canvas-rendered PDF output with clickable links, branding overlays, and watermarks. Every slide exports as a crisp vector page.
