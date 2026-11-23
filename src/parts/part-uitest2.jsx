@@ -7787,6 +7787,32 @@ uiSuite("present-detour-back", [
       if (!_pdbBar()) throw new Error("the bar closed after the undo");
     } finally { await _pdhEnd(); }
   }},
+  { name: "PDB-BR: with branding the bar sits above the footer strip; with the clock on it sits above the clock chip", fn: async () => {
+    try {
+      const d = _pdbDeck();
+      d.branding = { enabled: true, footerLeft: "PDBFOOTMARK", footerRight: "auto" };
+      await _pdhStart(d);
+      await _pdhStep("ArrowRight");
+      await _pdbAt("pdb-a", 2, "PDBA2");
+      await _pdbJump("PDBB3", "PDBB3");
+      const bar = _pdbBar();
+      if (!bar) throw new Error("no bar after a jump");
+      const foot = await _waitFor(() => _$$("div,span").filter((el) => el.children.length === 0 && (el.textContent || "").trim() === "PDBFOOTMARK").pop(), 1500)
+        .catch(() => { throw new Error("no branding footer text"); });
+      // The footer strip is the text's parent row; compare with its top edge.
+      const strip = foot.parentElement || foot;
+      const bb = bar.getBoundingClientRect(), fb = strip.getBoundingClientRect();
+      if (bb.bottom > fb.top + 0.5) throw new Error(`bar bottom ${bb.bottom.toFixed(1)} overlaps the footer strip top ${fb.top.toFixed(1)}`);
+      await _clkOn().catch(() => { throw new Error("the clock chip did not show"); });
+      await _wait(150);
+      const cb = _clkChip().getBoundingClientRect(), b2 = _pdbBar().getBoundingClientRect();
+      if (b2.bottom > cb.top + 0.5) throw new Error(`bar bottom ${b2.bottom.toFixed(1)} overlaps the clock chip top ${cb.top.toFixed(1)}`);
+    } finally {
+      if (_clkBtn()?.getAttribute("aria-pressed") === "true") { _click(_clkBtn()); await _wait(150); }
+      try { localStorage.removeItem(VELA_PRESENT_CLOCK_KEY); } catch {}
+      await _pdhEnd();
+    }
+  }},
 ]);
 
 // v13.85 Present / Presenter AI Edit (E). The deferred agent transport makes

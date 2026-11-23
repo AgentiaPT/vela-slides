@@ -109,6 +109,8 @@ NODE_LIFEBOAT_SUITES = [
     ("tests/test_markdown_export.cjs",    "Markdown export deckToMarkdown (G7)"),
     ("tests/test_fs_guard.cjs",           "Desktop fs-guard (frozen surface + root allowlist)"),
     ("tests/test_deck_io_save.cjs",       "Desktop save state machine (CR3 no-swallow/retry/verify/echo-guard)"),
+    ("tests/test_nl_reconnect.cjs",       "Desktop save/file sync recovery after the native socket drops (sleep/hibernate)"),
+    ("tests/test_sync_conflict.cjs",      "Desktop sync-conflict dialog (modal, text-only, fixed errors)"),
     ("tests/test_nl_window_agents.cjs",   "Desktop window title/refocus + agent probe retry (meridian CR16/CR18/CR19)"),
     ("tests/test_deck_id_stable.cjs",     "Deck open keeps lane/module ids + timestamps (meridian CR01)"),
     ("tests/test_ai_cancel_owner.cjs",    "AI-op cancel owner-token aiWork clearing (timing + Alternatives)"),

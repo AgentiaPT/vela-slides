@@ -341,21 +341,21 @@ add_lane add_item batch_add_items remove_item remove_lane rename_item rename_lan
 
 ## Navigability debt (WARN — candidates for banners or splits)
 
-- part-imports.jsx: 929-line unbannered stretch after line 525
+- part-imports.jsx: 929-line unbannered stretch after line 527
 - part-blocks.jsx: 828-line unbannered stretch after line 1422
 - part-canvas.jsx: 688-line unbannered stretch after line 153
 - part-canvas.jsx: 358-line unbannered stretch after line 856
 - part-slides.jsx: 568-line unbannered stretch after line 396
 - part-slides.jsx: 368-line unbannered stretch after line 1031
 - part-slidepanel.jsx: 372-line unbannered stretch after line 568
-- part-slidepanel.jsx: 521-line unbannered stretch after line 1808
+- part-slidepanel.jsx: 530-line unbannered stretch after line 1808
 - part-uitest.jsx: 616-line unbannered stretch after line 1255
 - part-uitest2.jsx: 448-line unbannered stretch after line 2
 - part-uitest2.jsx: 593-line unbannered stretch after line 1457
 - part-uitest2.jsx: 858-line unbannered stretch after line 2376
 - part-uitest2.jsx: 376-line unbannered stretch after line 4162
 - part-uitest2.jsx: 1098-line unbannered stretch after line 4538
-- part-uitest2.jsx: 986-line unbannered stretch after line 7071
+- part-uitest2.jsx: 1012-line unbannered stretch after line 7071
 - part-demo.jsx: 407-line unbannered stretch after line 510
 - part-demo.jsx: 373-line unbannered stretch after line 917
 - part-pdf.jsx: 414-line unbannered stretch after line 582
@@ -363,4 +363,4 @@ add_lane add_item batch_add_items remove_item remove_lane rename_item rename_lan
 - part-pdf-vector.jsx: 490-line unbannered stretch after line 459
 - part-pdf-vector.jsx: 551-line unbannered stretch after line 1214
 - part-pptx.jsx: no level-1 banners (1191 lines)
-- part-app.jsx: 358-line unbannered stretch after line 1070
+- part-app.jsx: 358-line unbannered stretch after line 1076

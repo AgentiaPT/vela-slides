@@ -413,5 +413,252 @@ class FsGuardHardeningInvariants(unittest.TestCase):
         self.assertIn('n.split("/").includes("..")', self.js)
 
 
+_JS_REGEX_BEFORE = set("(,=:[!&|?{};+-*%<>~^")
+_JS_REGEX_WORDS = {"return", "typeof", "case", "in", "of", "void", "delete", "new", "throw", "yield", "await", "else"}
+
+
+def strip_js_comments(src):
+    """Remove block and line comments. A small scanner: it skips strings,
+    template literals and regex literals, so a "//" or "/*" inside them is
+    kept, and the code after such a string is kept too. Limits (enough for our
+    shell files, see test_strip_js_comments_keeps_code_after_a_string_with_slashes):
+    a "${...}" in a template literal is not parsed, and a "/" is taken as a
+    regex start only after an operator, a bracket or a keyword."""
+    out = []
+    i, n = 0, len(src)
+    prev, word = "", ""  # last code character and last word, for the regex rule
+    while i < n:
+        c = src[i]
+        if c in "'\"`":
+            j = i + 1
+            while j < n and src[j] != c and (c == "`" or src[j] != "\n"):
+                j += 2 if src[j] == "\\" else 1
+            out.append(src[i:j + 1])
+            i, prev, word = j + 1, c, ""
+            continue
+        if src.startswith("//", i):
+            j = src.find("\n", i)
+            i = n if j < 0 else j
+            out.append(" ")
+            continue
+        if src.startswith("/*", i):
+            j = src.find("*/", i + 2)
+            i = n if j < 0 else j + 2
+            out.append(" ")
+            continue
+        if c == "/" and (prev == "" or prev in _JS_REGEX_BEFORE or word in _JS_REGEX_WORDS):
+            j, in_class = i + 1, False
+            while j < n and src[j] != "\n" and (in_class or src[j] != "/"):
+                if src[j] == "\\":
+                    j += 1
+                elif src[j] == "[":
+                    in_class = True
+                elif src[j] == "]":
+                    in_class = False
+                j += 1
+            if j < n and src[j] == "/":
+                out.append(src[i:j + 1])
+                i, prev, word = j + 1, "/", ""
+                continue
+        if c.isalnum() or c in "_$":
+            j = i
+            while j < n and (src[j].isalnum() or src[j] in "_$"):
+                j += 1
+            word = src[i:j]
+            out.append(word)
+            i, prev = j, "a"
+            continue
+        out.append(c)
+        if not c.isspace():
+            prev, word = c, ""
+        i += 1
+    return "".join(out)
+
+
+class ReconnectRecoverySourcePins(unittest.TestCase):
+    """Source-level pins for the sleep/hibernate recovery change (nl-socket.js,
+    sync-conflict.js, deck-io.js). The behaviour is tested in
+    tests/test_nl_reconnect.cjs and tests/test_sync_conflict.cjs. These pins fail
+    when a change widens the native surface by accident: a new native method, a
+    looser CSP, a mode other than "window" or a reusable token, a new
+    filesystem.readFile call site (also through an alias, a bracket access or a
+    destructured name), an HTML sink in a shell script, a console or native call
+    in nl-socket.js, a debug.log call of ours, or a resync wait that is shorter
+    than the app save debounce. Comments are removed before each search."""
+
+    JS = os.path.join(NEU, "resources", "js")
+
+    # The exact allowlist at the time of the change. A new entry must be a
+    # deliberate change that updates this list and SECURITY.md.
+    EXPECTED_ALLOW_LIST = [
+            "app.exit",
+            "window.focus",
+            "window.setTitle",
+            "window.setFullScreen",
+            "window.exitFullScreen",
+            "window.maximize",
+            "window.unmaximize",
+            "window.isMaximized",
+            "os.showFolderDialog",
+            "os.getEnv",
+            "filesystem.readFile",
+            "filesystem.writeFile",
+            "filesystem.readDirectory",
+            "filesystem.createDirectory",
+            "filesystem.getStats",
+            "filesystem.createWatcher",
+            "filesystem.removeWatcher",
+            "filesystem.remove",
+            "filesystem.move",
+            "storage.getKeys",
+            "storage.getData",
+            "storage.setData",
+            "events.on",
+            "events.off",
+            "extensions.getStats",
+            "debug.log"
+    ]
+
+    EXPECTED_CSP = "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' ws://localhost:* wss://localhost:* http://localhost:* https://localhost:* https://raw.githubusercontent.com/agentiapt/vela-slides/main/vela-neutralino/update-manifest.json; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'"
+
+    def js(self, name):
+        return read("vela-neutralino", "resources", "js", name)
+
+    def test_native_allow_list_is_unchanged(self):
+        cfg = json.loads(read("vela-neutralino", "neutralino.config.json"))
+        self.assertEqual(cfg["nativeAllowList"], self.EXPECTED_ALLOW_LIST)
+
+    def test_csp_is_unchanged(self):
+        html = read("vela-neutralino", "resources", "index.html")
+        m = re.search(r'http-equiv="Content-Security-Policy"\s+content="([^"]*)"', html)
+        self.assertIsNotNone(m, "CSP meta tag not found")
+        self.assertEqual(m.group(1), self.EXPECTED_CSP)
+
+    def test_window_mode_and_one_time_token(self):
+        cfg = json.loads(read("vela-neutralino", "neutralino.config.json"))
+        self.assertEqual(cfg.get("defaultMode"), "window")
+        self.assertEqual(cfg.get("tokenSecurity"), "one-time")
+
+    # Every shell script of ours (the pinned client library neutralino.js is
+    # excluded). An explicit list: a glob that finds nothing (a moved folder)
+    # would make every loop below pass without a check.
+    EXPECTED_SHELL_JS = [
+        "agents-bridge.js", "config-store.js", "deck-io.js", "deck-warning.js",
+        "fs-guard.js", "nl-boot.js", "nl-socket.js", "script-escape.js",
+        "storage-shim.js", "sync-conflict.js", "trust.js", "update-check.js",
+        "window-glue.js",
+    ]
+
+    def test_shell_js_file_set_is_the_expected_list(self):
+        found = sorted(
+            os.path.basename(p) for p in glob.glob(os.path.join(self.JS, "*.js"))
+            if os.path.basename(p) != "neutralino.js")
+        self.assertEqual(found, sorted(self.EXPECTED_SHELL_JS))
+
+    def shell_sources(self):
+        out = {}
+        for name in self.EXPECTED_SHELL_JS:
+            with open(os.path.join(self.JS, name), encoding="utf-8") as f:
+                out[name] = strip_js_comments(f.read())
+        self.assertEqual(len(out), len(self.EXPECTED_SHELL_JS))
+        return out
+
+    def test_strip_js_comments_keeps_code_after_a_string_with_slashes(self):
+        src = ('const a = "x // y"; readFile(a); // gone\n'
+               "const u = 'http://h/p'; const r = /[\"']\\/\\//g; keep2();\n"
+               "const t = `a // b`; keep3(); /* gone2 */ keep4();\n"
+               "const q = 4 / 2; keep5(); // gone3\n")
+        out = strip_js_comments(src)
+        for kept in ("readFile(a);", '"x // y"', "'http://h/p'", "keep2();", "`a // b`",
+                     "keep3();", "keep4();", "4 / 2", "keep5();"):
+            self.assertIn(kept, out)
+        for gone in ("gone", "gone2", "gone3"):
+            self.assertNotIn(gone, out)
+
+    # The read sites at the time of the change. deck-io.js reads every deck
+    # through readDeckText (one place to audit); fs-guard.js names the methods
+    # it guards. A new site must be a deliberate change that updates this map.
+    EXPECTED_READ_TOKENS = {
+        "agents-bridge.js": 2,
+        "config-store.js": 1,
+        "deck-io.js": 1,
+        "fs-guard.js": 2,
+        "trust.js": 1,
+    }
+
+    def test_read_file_sites_across_shell_js(self):
+        # Count the bare names, so a call through an alias (fsx.readFile), a
+        # bracket access (fs["readFile"]) or a destructured name ({ readFile })
+        # also counts.
+        got = {}
+        for name, src in self.shell_sources().items():
+            n = len(re.findall(r"\bread(?:Binary)?File\b", src))
+            if n:
+                got[name] = n
+        self.assertEqual(got, self.EXPECTED_READ_TOKENS)
+        dm = re.findall(r"Neutralino\.filesystem\.readFile\(", self.shell_sources()["deck-io.js"])
+        self.assertEqual(len(dm), 1, "deck-io.js must call readFile in exactly one place")
+
+    def test_filesystem_is_not_aliased_outside_fs_guard(self):
+        # A reference to the filesystem namespace that is not a direct method
+        # call (an alias, a bracket access, a destructuring) can hide a read
+        # from the pin above. Only fs-guard.js wraps the namespace.
+        alias = re.compile(
+            r"\bfilesystem\b(?!\s*\.\s*[A-Za-z_$][\w$]*\s*\()"
+            r"|\bNeutralino\s*\[|\[\s*[\"'`]filesystem[\"'`]\s*\]")
+        for name, src in self.shell_sources().items():
+            hits = alias.findall(src)
+            if name == "fs-guard.js":
+                self.assertEqual(len(hits), 2, "fs-guard.js filesystem references changed")
+            else:
+                self.assertEqual(hits, [], f"{name} references Neutralino.filesystem other than by a direct call")
+
+    def test_shell_js_has_no_html_sink(self):
+        sinks = re.compile(
+            r"\binnerHTML\b|\bouterHTML\b|\binsertAdjacentHTML\b|\bdocument\s*\.\s*write(?:ln)?\b"
+            r"|\bcreateContextualFragment\b|\bDOMParser\b|\bsrcdoc\b|\bsetHTMLUnsafe\b"
+            r"|\bparseHTMLUnsafe\b|\bsetHTML\b|\bouterText\s*=|\bjavascript:")
+        for name, src in self.shell_sources().items():
+            m = sinks.search(src)
+            self.assertIsNone(m, f"{name} uses an HTML sink: {m.group(0) if m else ''}")
+
+    def test_nl_socket_has_no_console_and_no_native_call(self):
+        # The connect URL holds the token: the module has no console call at all,
+        # and it makes no native call (it only owns the socket).
+        # Comments are removed first: the header comment names Neutralino.init().
+        src = strip_js_comments(self.js("nl-socket.js"))
+        self.assertNotIn("console.", src)
+        self.assertNotIn("Neutralino.", src)
+
+    def test_debug_log_call_sites_are_unchanged(self):
+        # debug.log is in the allowlist for the client library only. No file of
+        # ours may call it (the pinned client file is excluded).
+        total = 0
+        for name in self.EXPECTED_SHELL_JS:
+            with open(os.path.join(self.JS, name), encoding="utf-8") as f:
+                total += len(re.findall(r"\bdebug\.log\s*\(", f.read()))
+        self.assertEqual(total, 0)
+
+    def test_resync_wait_is_longer_than_the_app_save_debounce(self):
+        # resync waits so that the last edit before a drop reaches deck-io first.
+        m = re.search(r"const\s+RESYNC_QUIET_MS\s*=\s*(\d+)\s*;", self.js("deck-io.js"))
+        self.assertIsNotNone(m, "RESYNC_QUIET_MS not found in deck-io.js")
+        app = read("src", "parts", "part-app.jsx")
+        d = re.search(r"flushLocalStateRef\.current\?\.\(null\),\s*(\d+)\)", app)
+        self.assertIsNotNone(d, "app save debounce not found in part-app.jsx")
+        self.assertGreater(int(m.group(1)), int(d.group(1)))
+
+    def test_heartbeat_bound_is_longer_than_the_native_call_bound(self):
+        # The runtime answers native calls one at a time, so a heartbeat can
+        # wait behind a slow disk call that deck-io bounds by
+        # NATIVE_CALL_TIMEOUT_MS. A shorter heartbeat bound takes that wait as
+        # a dead socket and drops a healthy connection.
+        hb = re.search(r"const\s+HEARTBEAT_TIMEOUT_MS\s*=\s*(\d+)\s*;", self.js("nl-socket.js"))
+        nc = re.search(r"const\s+NATIVE_CALL_TIMEOUT_MS\s*=\s*(\d+)\s*;", self.js("deck-io.js"))
+        self.assertIsNotNone(hb, "HEARTBEAT_TIMEOUT_MS not found in nl-socket.js")
+        self.assertIsNotNone(nc, "NATIVE_CALL_TIMEOUT_MS not found in deck-io.js")
+        self.assertGreater(int(hb.group(1)), int(nc.group(1)))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -33,6 +33,10 @@ bash scripts/run.sh            # neu run — opens a window with the placeholder
 bash scripts/build.sh          # neu build --release — produces dist/vela/ per OS
 ```
 
+## Sleep and hibernate
+
+After the PC sleeps or hibernates, Vela reconnects to its native runtime by itself (in the default window mode). It saves pending edits and reloads changes made to the deck file outside Vela. If the file also changed in Vela, Vela asks you to choose a version. Both versions are kept: the other one is saved as a `.conflict-<timestamp>.vela` file next to the deck. If a choice cannot be completed (for example, the disk cannot be read), **Keep editing** closes the dialog with saves paused; Vela asks again later. While edits wait to save, Vela does not open another deck. If the runtime itself has frozen, restart the app.
+
 ## Debugging
 
 DevTools is **off by default** so release builds ship clean. To re-enable while debugging, flip `modes.window.enableInspector` to `true` in `neutralino.config.json` and re-run.

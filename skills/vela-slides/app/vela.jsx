@@ -138,9 +138,11 @@ const velaClipboardReadSlides = async () => {
   return [];
 };
 
-const VELA_VERSION = "13.87";
+const VELA_VERSION = "13.89";
 const VELA_CHANGELOG = [
-  { v: "13.87", d: ["Dev: headless UI test battery runs about 2.5x faster (compressed page timers, same tests).", "Dev: security tests and waits on real file or image work keep real time.", "Dev: weekly real-time battery run in CI as a safety net.", "Dev: top-bar fit tests check each measured level edge instead of a full width sweep (faster, stricter)."] },
+  { v: "13.89", d: ["Dev: headless UI test battery runs about 2.5x faster (compressed page timers, same tests).", "Dev: security tests and waits on real file or image work keep real time.", "Dev: weekly real-time battery run in CI as a safety net.", "Dev: top-bar fit tests check each measured level edge instead of a full width sweep (faster, stricter)."] },
+  { v: "13.88", d: ["Present: the Back / Keep here bar now sits above the branding footer, a bottom-left logo and the clock."] },
+  { v: "13.87", d: ["Review: a fast second R now closes the Comments panel reliably."] },
   { v: "13.86", d: ["Present: Keep here on a hidden slide from a jump now stays on that slide.", "Present: Esc on a zoomed story image zooms out first, then goes back.", "Present: H on a hidden slide from a jump shows its slide number again.", "Present: Undo of an AI edit shows the edited slide.", "Present: Del, Backspace and H do nothing in Student mode.", "Presenter view: the detour badge shows the correct keys."] },
   { v: "13.85", d: ["Present and Presenter view: E or ✨ AI Edit opens the AI slide edit box; Enter applies, Esc closes the box only.", "Present: an AI edit shows an undo toast (Undo button or Ctrl/⌘+Z).", "AI edit: the result goes to the slide where the edit started; if that slide changes first, the result is dropped."] },
   { v: "13.84", d: ["Present: a jump from the slides TOC or search shows a Back / Keep here bar (bottom left).", "Present: Back (B, Esc or Alt+←) returns to the slide before the first jump; Keep here (K) closes the bar.", "Present: arrows, space and wheel now move on from the found slide; the bar stays."] },
@@ -12453,7 +12455,16 @@ function SlidePanel({ state, concept, slideIndex, fullscreen, dispatch, lanes, b
         </div>
         {!isMobile && !VELA_LOCAL_MODE && showCinemaTip && <CinemaTip onClose={() => setShowCinemaTip(false)} />}
         {!showPresenterView && presentToasts}
-        {detour && <DetourBar title={detourReturnName(lanes, detour.ret)} hints={!isMobile} bottom={20 + (navToast ? 44 : 0) + (undoToast ? 44 : 0)} onBack={() => detourBackRef.current()} onKeep={detourKeep} />}
+        {detour && (() => {
+          // Clear the branding footer strip and a bottom-left logo (the same rule
+          // as the clock chip), then the clock chip itself, then any toast.
+          // presentClockBottom reads only booleans and clamped numbers.
+          const branded = !!branding?.enabled && !presSlides[slideIndex]?._virtual;
+          const base = branded ? presentClockBottom(branding) : "20px";
+          const lift = (clockOn && !showPresenterView && !showGallery ? 40 : 0) + (navToast ? 44 : 0) + (undoToast ? 44 : 0);
+          const bottom = lift ? `calc(${base} + ${lift}px)` : base;
+          return <DetourBar title={detourReturnName(lanes, detour.ret)} hints={!isMobile} bottom={bottom} onBack={() => detourBackRef.current()} onKeep={detourKeep} />;
+        })()}
         {aiDockOn && <AiEditBox testid="present-ai-dock" boxRef={aiDockRef} {...aiBoxProps} style={{ position: "absolute", right: 20, bottom: aiDockLift ? aiDockLift.bottom : 72, width: 400, maxWidth: "90vw", zIndex: 23 }} />}
         {/* Floating Edit + New Slide cluster — REMOVED from the fullscreen/Present
             view (CR-03): this branch is the audience-facing Present surface, and a
@@ -24964,6 +24975,32 @@ uiSuite("present-detour-back", [
       if (!_pdbBar()) throw new Error("the bar closed after the undo");
     } finally { await _pdhEnd(); }
   }},
+  { name: "PDB-BR: with branding the bar sits above the footer strip; with the clock on it sits above the clock chip", fn: async () => {
+    try {
+      const d = _pdbDeck();
+      d.branding = { enabled: true, footerLeft: "PDBFOOTMARK", footerRight: "auto" };
+      await _pdhStart(d);
+      await _pdhStep("ArrowRight");
+      await _pdbAt("pdb-a", 2, "PDBA2");
+      await _pdbJump("PDBB3", "PDBB3");
+      const bar = _pdbBar();
+      if (!bar) throw new Error("no bar after a jump");
+      const foot = await _waitFor(() => _$$("div,span").filter((el) => el.children.length === 0 && (el.textContent || "").trim() === "PDBFOOTMARK").pop(), 1500)
+        .catch(() => { throw new Error("no branding footer text"); });
+      // The footer strip is the text's parent row; compare with its top edge.
+      const strip = foot.parentElement || foot;
+      const bb = bar.getBoundingClientRect(), fb = strip.getBoundingClientRect();
+      if (bb.bottom > fb.top + 0.5) throw new Error(`bar bottom ${bb.bottom.toFixed(1)} overlaps the footer strip top ${fb.top.toFixed(1)}`);
+      await _clkOn().catch(() => { throw new Error("the clock chip did not show"); });
+      await _wait(150);
+      const cb = _clkChip().getBoundingClientRect(), b2 = _pdbBar().getBoundingClientRect();
+      if (b2.bottom > cb.top + 0.5) throw new Error(`bar bottom ${b2.bottom.toFixed(1)} overlaps the clock chip top ${cb.top.toFixed(1)}`);
+    } finally {
+      if (_clkBtn()?.getAttribute("aria-pressed") === "true") { _click(_clkBtn()); await _wait(150); }
+      try { localStorage.removeItem(VELA_PRESENT_CLOCK_KEY); } catch {}
+      await _pdhEnd();
+    }
+  }},
 ]);
 
 // v13.85 Present / Presenter AI Edit (E). The deferred agent transport makes
@@ -34426,17 +34463,23 @@ export default function App() {
     return () => window.removeEventListener("keydown", handler);
   }, []);
 
-  // Review mode toggle via custom event (keyboard shortcut R)
+  // Review mode toggle via custom event (keyboard shortcut R). The handler reads
+  // the mode from a ref, not from the render's closure: a listener bound to an old
+  // render (React re-binds it only after paint) read a stale mode, so a second R
+  // pressed in that gap opened the panel again instead of closing it.
+  const reviewModeRef = useRef(state.reviewMode);
+  reviewModeRef.current = state.reviewMode;
   useEffect(() => {
     const h = () => {
-      const entering = !state.reviewMode;
+      const entering = !reviewModeRef.current;
+      reviewModeRef.current = entering; // a second R before the next render sees this
       dispatch({ type: "SET_REVIEW_MODE", value: entering });
       if (entering) { dispatch({ type: "SET_COMMENTS_PANEL", open: true }); dispatch({ type: "SET_CHAT", open: false }); }
       else { dispatch({ type: "SET_COMMENTS_PANEL", open: false }); }
     };
     window.addEventListener("vela-toggle-review", h);
     return () => window.removeEventListener("vela-toggle-review", h);
-  }, [state.reviewMode]);
+  }, []);
 
   let selectedConcept = null;
   for (const l of state.lanes) { const f = l.items.find((i) => i.id === state.selectedId); if (f) { selectedConcept = f; break; } }
