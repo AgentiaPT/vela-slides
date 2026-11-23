@@ -162,6 +162,11 @@ Deck saves on the desktop shell verify what actually landed on disk instead of t
 | Tri-state outcome | A save reports confirmed / unverifiable / failed rather than collapsing "couldn't verify" into a silent success |
 | Watcher echo suppression | The file-change watcher confirms a signature hit against the exact written text before treating an event as its own echo, closing a window where a genuine external edit could be swallowed |
 | Bounded watcher reads | Watcher-triggered reads are size-capped and stat-checked before any file content is read, through a single audited read path |
+| Native connection recovery | After sleep or hibernate, a reconnect layer (window mode only) reopens the runtime socket to the same URL. It adds no native method and leaves `nativeAllowList`, the CSP and `fs-guard` unchanged. Saves are held while the socket is down and are never reported as saved before the runtime confirms them |
+| Untrusted resync reads | After a reconnect, the re-read of the open deck passes the same size limit, a regular-file check, a deck-shape check and the app sanitizer before it loads |
+| Conflict handling | If the file and Vela both changed, saves pause and the user chooses. The other version is first written to a `.conflict-<timestamp>.vela` copy and read back. A deck switch is refused while edits wait to save |
+
+Full detail and residual limits: [`vela-neutralino/SECURITY.md`](../vela-neutralino/SECURITY.md) ("Native connection recovery").
 
 ### Supply Chain Security
 
