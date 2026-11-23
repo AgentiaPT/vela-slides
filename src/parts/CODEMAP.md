@@ -341,7 +341,7 @@ add_lane add_item batch_add_items remove_item remove_lane rename_item rename_lan
 
 ## Navigability debt (WARN — candidates for banners or splits)
 
-- part-imports.jsx: 929-line unbannered stretch after line 524
+- part-imports.jsx: 929-line unbannered stretch after line 525
 - part-blocks.jsx: 828-line unbannered stretch after line 1422
 - part-canvas.jsx: 688-line unbannered stretch after line 153
 - part-canvas.jsx: 358-line unbannered stretch after line 856
@@ -363,4 +363,4 @@ add_lane add_item batch_add_items remove_item remove_lane rename_item rename_lan
 - part-pdf-vector.jsx: 490-line unbannered stretch after line 459
 - part-pdf-vector.jsx: 551-line unbannered stretch after line 1214
 - part-pptx.jsx: no level-1 banners (1191 lines)
-- part-app.jsx: 358-line unbannered stretch after line 1070
+- part-app.jsx: 358-line unbannered stretch after line 1076

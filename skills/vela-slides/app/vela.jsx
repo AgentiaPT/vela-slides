@@ -138,8 +138,9 @@ const velaClipboardReadSlides = async () => {
   return [];
 };
 
-const VELA_VERSION = "13.86";
+const VELA_VERSION = "13.87";
 const VELA_CHANGELOG = [
+  { v: "13.87", d: ["Review: a fast second R now closes the Comments panel reliably."] },
   { v: "13.86", d: ["Present: Keep here on a hidden slide from a jump now stays on that slide.", "Present: Esc on a zoomed story image zooms out first, then goes back.", "Present: H on a hidden slide from a jump shows its slide number again.", "Present: Undo of an AI edit shows the edited slide.", "Present: Del, Backspace and H do nothing in Student mode.", "Presenter view: the detour badge shows the correct keys."] },
   { v: "13.85", d: ["Present and Presenter view: E or ✨ AI Edit opens the AI slide edit box; Enter applies, Esc closes the box only.", "Present: an AI edit shows an undo toast (Undo button or Ctrl/⌘+Z).", "AI edit: the result goes to the slide where the edit started; if that slide changes first, the result is dropped."] },
   { v: "13.84", d: ["Present: a jump from the slides TOC or search shows a Back / Keep here bar (bottom left).", "Present: Back (B, Esc or Alt+←) returns to the slide before the first jump; Keep here (K) closes the bar.", "Present: arrows, space and wheel now move on from the found slide; the bar stays."] },
@@ -34342,17 +34343,23 @@ export default function App() {
     return () => window.removeEventListener("keydown", handler);
   }, []);
 
-  // Review mode toggle via custom event (keyboard shortcut R)
+  // Review mode toggle via custom event (keyboard shortcut R). The handler reads
+  // the mode from a ref, not from the render's closure: a listener bound to an old
+  // render (React re-binds it only after paint) read a stale mode, so a second R
+  // pressed in that gap opened the panel again instead of closing it.
+  const reviewModeRef = useRef(state.reviewMode);
+  reviewModeRef.current = state.reviewMode;
   useEffect(() => {
     const h = () => {
-      const entering = !state.reviewMode;
+      const entering = !reviewModeRef.current;
+      reviewModeRef.current = entering; // a second R before the next render sees this
       dispatch({ type: "SET_REVIEW_MODE", value: entering });
       if (entering) { dispatch({ type: "SET_COMMENTS_PANEL", open: true }); dispatch({ type: "SET_CHAT", open: false }); }
       else { dispatch({ type: "SET_COMMENTS_PANEL", open: false }); }
     };
     window.addEventListener("vela-toggle-review", h);
     return () => window.removeEventListener("vela-toggle-review", h);
-  }, [state.reviewMode]);
+  }, []);
 
   let selectedConcept = null;
   for (const l of state.lanes) { const f = l.items.find((i) => i.id === state.selectedId); if (f) { selectedConcept = f; break; } }

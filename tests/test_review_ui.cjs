@@ -257,7 +257,7 @@ async function settle() {
 // ── Test suites ─────────────────────────────────────────────────────
 
 async function runTests() {
-  console.log('\n⛵ Vela Review Mode — UI Tests (32)\n');
+  console.log('\n⛵ Vela Review Mode — UI Tests (33)\n');
 
   // ── 1. Panel Basics ──
   await test('Review button visible in header', async () => {
@@ -485,6 +485,24 @@ async function runTests() {
     await page.evaluate(() => document.activeElement?.blur());
     await page.keyboard.press('r');
     await expectPanel(false);
+  });
+
+  // Regression: two R presses before React re-renders must toggle twice. The old
+  // handler read the mode from a stale render closure, so the second press was
+  // lost (the CI flake of the test above on slow runners).
+  await test('Two R presses in one task toggle twice', async () => {
+    await page.evaluate(() => document.activeElement?.blur());
+    const before = await isPanelOpen();
+    await page.evaluate(() => {
+      for (let i = 0; i < 2; i++) window.dispatchEvent(new KeyboardEvent('keydown', { key: 'r', bubbles: true }));
+    });
+    await settle(); await settle();
+    const after = await isPanelOpen();
+    if (after !== before) throw new Error(`panel open ${before} -> ${after} after two presses (expected unchanged)`);
+    await page.evaluate(() => { window.dispatchEvent(new KeyboardEvent('keydown', { key: 'r', bubbles: true })); });
+    await expectPanel(!before);
+    await page.evaluate(() => { window.dispatchEvent(new KeyboardEvent('keydown', { key: 'r', bubbles: true })); });
+    await expectPanel(before);
   });
 
   // ── 9. Fullscreen Hides Badge ──
