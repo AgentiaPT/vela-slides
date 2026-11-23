@@ -21,6 +21,26 @@ const _$ = (sel, root = document) => root.querySelector(sel);
 const _$$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
 const _$text = (text, tag = "*") => _$$(tag).find((el) => el.textContent?.includes(text));
 const _wait = (ms) => new Promise((r) => setTimeout(r, ms));
+// Headless time compression (vela-drive.js uitests) wraps setTimeout/setInterval
+// so fixed waits run faster. A wait that gives real-world async work (file read,
+// image decode, network) time to land must NOT shrink, or a late result arrives
+// after the assertion and a regression passes. _waitReal uses the unwrapped timer
+// the harness saves; without a harness it is plain setTimeout.
+let _realSetTimeout = () => setTimeout;
+let _setTimeScaleOverride = () => {};
+// VELA:DEV-ONLY:BEGIN
+_realSetTimeout = () => (typeof window !== "undefined" && window.__velaRealSetTimeout) || setTimeout;
+// Speed-up factor the harness shim reads live (1 = real time; null = harness default).
+_setTimeScaleOverride = (v) => { if (typeof window !== "undefined") window.__velaTimeScaleOverride = v; };
+// VELA:DEV-ONLY:END
+const _waitReal = (ms) => new Promise((r) => _realSetTimeout()(r, ms));
+const _nextFrame = () => new Promise((r) => {
+  // One animation frame; the timer is a fallback for a hidden tab (no rAF).
+  let done = false;
+  const go = () => { if (!done) { done = true; r(); } };
+  requestAnimationFrame(go);
+  setTimeout(go, 100);
+});
 const _waitFor = async (fn, timeout = 3000, interval = 50) => {
   const start = Date.now();
   while (Date.now() - start < timeout) {
@@ -114,12 +134,17 @@ async function runUITests(onProgress) {
   const allResults = [];
   let total = UI_TEST_SUITES.reduce((s, suite) => s + suite.tests.length, 0);
   let done = 0, passed = 0, failed = 0, skipped = 0;
+  const _secPat = /saniti[sz]|xss|security|redress|clickjack|<style>/i;
 
   for (const suite of UI_TEST_SUITES) {
+    // Security suites/tests observe real browser behaviour (resource fetches,
+    // script runs): keep their timers at real time under headless compression.
+    _setTimeScaleOverride(_secPat.test(suite.name) ? 1 : null);
     if (typeof suite.setup === "function") {
       try { await suite.setup(); } catch {}
     }
     for (const test of suite.tests) {
+      _setTimeScaleOverride(_secPat.test(suite.name) || _secPat.test(test.name) ? 1 : null);
       done++;
       if (onProgress) onProgress({ done, total, suite: suite.name, test: test.name, phase: "running", passed, failed, skipped, results: allResults });
       const t0 = performance.now();
@@ -133,18 +158,17 @@ async function runUITests(onProgress) {
         // itself the tampering signal, so FAIL instead of skip. This is RUNTIME
         // enforcement on the actual test object, immune to the source-parse dodges
         // (comment padding, property order) that a static lint check can be fooled by.
-        const _secPat = /saniti[sz]|xss|security|redress|clickjack|<style>/i;
         if (_secPat.test(suite.name) || _secPat.test(test.name)) {
           failed++;
           allResults.push({ suite: suite.name, name: test.name, pass: false, error: "security test must not be requiresAI-skippable (would let a sanitizer regression pass CI by skipping)", ms: Math.round(performance.now() - t0) });
           if (onProgress) onProgress({ done, total, suite: suite.name, test: test.name, phase: "done", passed, failed, skipped, results: [...allResults] });
-          await _wait(20);
+          await _nextFrame();
           continue;
         }
         skipped++;
         allResults.push({ suite: suite.name, name: test.name, pass: "skip", error: "AI unavailable — skipped", ms: Math.round(performance.now() - t0) });
         if (onProgress) onProgress({ done, total, suite: suite.name, test: test.name, phase: "done", passed, failed, skipped, results: [...allResults] });
-        await _wait(20);
+        await _nextFrame();
         continue;
       }
       try {
@@ -168,9 +192,10 @@ async function runUITests(onProgress) {
         allResults.push({ suite: suite.name, name: test.name, pass: false, error: e?.message || String(e), ms: Math.round(performance.now() - t0) });
       }
       if (onProgress) onProgress({ done, total, suite: suite.name, test: test.name, phase: "done", passed, failed, skipped, results: [...allResults] });
-      await _wait(20);
+      await _nextFrame();
     }
   }
+  _setTimeScaleOverride(null);
   return allResults;
 }
 

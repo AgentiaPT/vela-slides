@@ -64,6 +64,9 @@ run_gate() {
     e2e)      node tests/test_review_ui.cjs ;;
     pptx)     pptx ;;
     uib)      uibattery ;;
+    # Real-time safety net for `uib` (page timers not compressed). Not in the
+    # serial/parallel lists; run weekly by .github/workflows/uitest-realtime.yml.
+    uibrt)    ( export VELA_UITEST_TIMESCALE=1; uibattery ) ;;
     journey)  node tests/test_journey_e2e.cjs ;;
     dnd)      node tests/test_dnd_e2e.cjs ;;
     pdf)      node tests/test_pdf_export.cjs ;;

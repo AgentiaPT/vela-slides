@@ -2217,6 +2217,43 @@ const _mrdSwitchTo = async (where, mode) => {
   _click(btn);
 };
 const _mrdGalleryOpen = () => !!_$("[data-testid='gallery-close']");
+// Top-bar boundary values (CR13 fit tests below). The top bar fits itself to its
+// own measured width, so forcing the header width stands in for a window resize.
+// The density level (data-hdr-level 0..4) is a step function of that width, and
+// fitHeader makes it monotone (a wider bar never gets a lower level). The steps
+// depend on the title and the font, so the tests measure them: a coarse scan,
+// then bisection to the exact 1 px edge of each step.
+const _hdrFrames = () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+const _hdrSettle = async (h, w) => {
+  h.style.width = `${w}px`;
+  for (let f = 0; f < 3; f++) await _hdrFrames();
+  return h.dataset.hdrLevel;
+};
+// levels: Map width -> level of the widths measured so far. probe(w) settles at w
+// and returns its level; each probe is added to levels. Returns the edges
+// [{ w, from, to }]: w is the first width at level `to`, w - 1 is at `from`.
+// A level change of more than one step inside one scan interval gives one edge
+// per step. A level that drops as the width grows is an error in bad.
+const _hdrEdges = async (levels, probe, bad) => {
+  const edges = [];
+  const xs = [...levels.keys()].sort((a, b) => a - b);
+  for (let i = 1; i < xs.length; i++) {
+    const a = xs[i - 1], b = xs[i], la = +levels.get(a), lb = +levels.get(b);
+    if (lb < la) { bad.push(`level drops ${la}->${lb} from ${a}px to ${b}px`); continue; }
+    for (let k = la + 1; k <= lb; k++) {
+      let lo = a, hi = b;
+      for (const [x, l] of levels) if (x > lo && x < hi) { if (+l < k) lo = x; else hi = x; }
+      while (hi - lo > 1) {
+        const mid = Math.floor((lo + hi) / 2);
+        const l = await probe(mid);
+        levels.set(mid, l);
+        if (+l < k) lo = mid; else hi = mid;
+      }
+      if (!edges.some((e) => e.w === hi)) edges.push({ w: hi, from: levels.get(lo), to: levels.get(hi) });
+    }
+  }
+  return edges;
+};
 uiSuite("meridian-CR13 View Switcher", [
   { name: "View switcher renders next to Present in the editor", fn: async () => {
     await _waitFor(() => _$("[data-testid='view-switch']") && _$("[data-testid='present-btn']"), 2000);
@@ -2238,36 +2275,52 @@ uiSuite("meridian-CR13 View Switcher", [
     if (w < need) throw new Error(`deck title squeezed to ${Math.round(w)}px at ${window.innerWidth}px wide`);
     if (h.scrollWidth > h.clientWidth + 1) throw new Error(`header overflows (${h.scrollWidth} > ${h.clientWidth})`);
   }},
-  { name: "Top bar fits on one line at every width 1024-1920 (8px sweep)", fn: async () => {
-    // The top bar fits itself to its own measured width, so forcing the header
-    // width stands in for a window resize. Sweeps up, then down (hysteresis).
+  { name: "Top bar fits on one line at every width 1024-1920 (level edges ±1 px, 64px grid up and down)", fn: async () => {
+    // Boundary values in place of an 8 px sweep. Inside one level the bar content
+    // is fixed: the same labels and gaps, and at level >= 1 the action group does
+    // not shrink. Only the title (flex-shrink, ellipsis, min width) and the spacer
+    // (flex 1) take the free width, and both only grow with it; at level 0 the
+    // action group shrinks too, which also only eases as the width grows. So
+    // each check is hardest at the narrowest width of a level: 1024 or a level
+    // edge w (the first width at the new level). Check w - 1 (the widest width
+    // of the level below), w and w + 1, and a 64 px grid up, then down on offset
+    // widths (hysteresis) between the edges. Level 4 must show the whole title.
     const h = await _waitFor(() => _$("header"), 2000);
-    const frames = () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
     const prev = h.style.width;
     const bad = [];
+    const levels = new Map(), seen = new Set();
+    const check = async (w) => {
+      const lvl = await _hdrSettle(h, w);
+      seen.add(w);
+      const btns = _$$("button", h).filter((b) => b.offsetParent && !b.closest("[role='group']"));
+      const minH = Math.min(...btns.map((b) => b.offsetHeight));
+      const wrapped = btns.filter((b) => b.offsetHeight > minH + 8).map((b) => b.title || b.textContent.trim());
+      const t = _$$("span", h).find((s) => s.title && s.title === s.textContent);
+      const vs = _$("[data-testid='view-switch']", h);
+      const hr = h.getBoundingClientRect(), vr = vs ? vs.getBoundingClientRect() : null;
+      const errs = [];
+      if (h.scrollWidth > h.clientWidth + 1) errs.push(`overflow ${h.scrollWidth}>${h.clientWidth}`);
+      if (wrapped.length) errs.push(`wrapped: ${wrapped.join(", ")}`);
+      if (!t || t.getBoundingClientRect().width < Math.min(120, t.scrollWidth) - 1) errs.push(`title ${t ? Math.round(t.getBoundingClientRect().width) : "missing"}px`);
+      if (!vr || vr.width < 60 || vr.left < hr.left || vr.right > hr.right + 1) errs.push("view switch not fully shown");
+      // Content that runs into the end padding does not change scrollWidth.
+      const flow = Array.from(h.children).filter((e) => { const cs = getComputedStyle(e); return cs.display !== "none" && cs.position !== "absolute" && cs.position !== "fixed"; });
+      const past = Math.max(...flow.map((e) => e.getBoundingClientRect().right)) - (hr.right - parseFloat(getComputedStyle(h).paddingRight));
+      if (past > 1) errs.push(`content ${Math.round(past)}px into the end padding`);
+      if (lvl === "4" && t && t.getBoundingClientRect().width < t.scrollWidth - 1) errs.push(`title cut to ${Math.round(t.getBoundingClientRect().width)}px at level 4`);
+      if (errs.length) bad.push(`${w}px: ${errs.join("; ")}`);
+      return lvl;
+    };
     try {
-      for (const dir of [1, -1]) {
-        for (let i = 0; i <= 112; i++) {
-          const w = dir > 0 ? 1024 + i * 8 : 1920 - i * 8;
-          h.style.width = `${w}px`;
-          for (let f = 0; f < 3; f++) await frames();
-          const btns = _$$("button", h).filter((b) => b.offsetParent && !b.closest("[role='group']"));
-          const minH = Math.min(...btns.map((b) => b.offsetHeight));
-          const wrapped = btns.filter((b) => b.offsetHeight > minH + 8).map((b) => b.title || b.textContent.trim());
-          const t = _$$("span", h).find((s) => s.title && s.title === s.textContent);
-          const vs = _$("[data-testid='view-switch']", h);
-          const hr = h.getBoundingClientRect(), vr = vs ? vs.getBoundingClientRect() : null;
-          const errs = [];
-          if (h.scrollWidth > h.clientWidth + 1) errs.push(`overflow ${h.scrollWidth}>${h.clientWidth}`);
-          if (wrapped.length) errs.push(`wrapped: ${wrapped.join(", ")}`);
-          if (!t || t.getBoundingClientRect().width < Math.min(120, t.scrollWidth) - 1) errs.push(`title ${t ? Math.round(t.getBoundingClientRect().width) : "missing"}px`);
-          if (!vr || vr.width < 60 || vr.left < hr.left || vr.right > hr.right + 1) errs.push("view switch not fully shown");
-          if (errs.length) bad.push(`${w}px: ${errs.join("; ")}`);
-        }
-      }
+      for (let w = 1024; w <= 1920; w += 64) levels.set(w, await check(w));
+      for (let w = 1888; w >= 1056; w -= 64) levels.set(w, await check(w));
+      levels.set(1024, await check(1024));
+      // _hdrEdges checks each bisection probe, so w - 1 and w are always checked.
+      const edges = await _hdrEdges(levels, check, bad);
+      for (const e of edges) if (e.w + 1 <= 1920 && !seen.has(e.w + 1)) await check(e.w + 1);
     } finally {
       h.style.width = prev;
-      await frames();
+      await _hdrFrames();
     }
     if (bad.length) throw new Error(`${bad.length} widths fail — ${bad.slice(0, 4).join(" | ")}`);
   }},
@@ -2617,7 +2670,6 @@ uiSuite("meridian-CR17 link badge placement", [
 uiSuite("meridian-CR13 top bar level has no history", [
   { name: "Level at each width equals the level after a fresh jump (sweep down, then up)", fn: async () => {
     const h = await _waitFor(() => _$("header[data-hdr-level]"), 2000);
-    const frames = () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
     // Read the level from what is drawn (hidden labels sit at zero width), and
     // check that it agrees with the header's own data-hdr-level.
     const hiddenLabel = (sel) => _$$(sel, h).some((e) => e.style.width === "0px");
@@ -2628,38 +2680,44 @@ uiSuite("meridian-CR13 top bar level has no history", [
       return _$("[data-testid='present-btn']", h)?.parentElement?.style.flexShrink === "1" ? "0" : "1";
     };
     const settle = async (w) => {
-      h.style.width = `${w}px`;
-      for (let f = 0; f < 3; f++) await frames();
-      const lvl = drawnLevel();
-      if (h.dataset.hdrLevel !== lvl) throw new Error(`${w}px: data-hdr-level ${h.dataset.hdrLevel} but drawn level ${lvl}`);
+      const lvl = await _hdrSettle(h, w);
+      const drawn = drawnLevel();
+      if (lvl !== drawn) throw new Error(`${w}px: data-hdr-level ${lvl} but drawn level ${drawn}`);
       return lvl;
     };
-    const widths = [1000];
-    for (let w = 1024; w <= 1920; w += 32) widths.push(w);
-    widths.push(1440);
     const prev = h.style.width;
     const bad = [];
     try {
-      // "Fresh" reference: jump to the width from a narrow bar (the boot level is low).
-      const fresh = {};
-      for (const w of widths) { await settle(700); fresh[w] = await settle(w); }
-      for (const w of widths) { await settle(2400); const got = await settle(w); if (got !== fresh[w]) bad.push(`${w}px from wide: ${got} vs fresh ${fresh[w]}`); }
-      const down = [...widths].sort((a, b) => b - a);
-      for (const w of down) { const got = await settle(w); if (got !== fresh[w]) bad.push(`${w}px sweep down: ${got} vs fresh ${fresh[w]}`); }
-      for (const w of [...down].reverse()) { const got = await settle(w); if (got !== fresh[w]) bad.push(`${w}px sweep up: ${got} vs fresh ${fresh[w]}`); }
+      // "Fresh" reference: a 64 px scan up from a narrow bar (the boot level is
+      // low), then bisection to the exact edge of each level step. A level that
+      // depends on history differs near a step: a width band next to the edge
+      // gets one level from a narrower bar and another from a wider bar. Any
+      // such band holds w - 1 or w (1 px), so check both directions there, and
+      // at w - 8 and w + 8, against the fresh level.
+      const fresh = new Map();
+      await settle(700);
+      for (const w of [1000, ...Array.from({ length: 15 }, (_, i) => 1024 + i * 64)]) fresh.set(w, await settle(w));
+      const edges = await _hdrEdges(fresh, settle, bad);
+      const freshAt = (x) => fresh.get(Math.max(...[...fresh.keys()].filter((k) => k <= x)));
+      const pts = [...new Set(edges.flatMap((e) => [e.w - 8, e.w - 1, e.w, e.w + 8]))].filter((x) => x >= 1000 && x <= 1920).sort((a, b) => a - b);
+      if (!edges.length) bad.push("no level edge found in 1000-1920px");
+      await settle(2400);
+      for (const w of [...pts].reverse()) { const got = await settle(w); if (got !== freshAt(w)) bad.push(`${w}px sweep down: ${got} vs fresh ${freshAt(w)}`); }
+      await settle(700);
+      for (const w of pts) { const got = await settle(w); if (got !== freshAt(w)) bad.push(`${w}px sweep up: ${got} vs fresh ${freshAt(w)}`); }
       // The reported case: a narrow bar that grows must get its labels back.
       await settle(1000);
       const grown = await settle(1440);
-      if (grown !== fresh[1440]) bad.push(`1000->1440: ${grown} vs fresh ${fresh[1440]}`);
+      if (grown !== freshAt(1440)) bad.push(`1000->1440: ${grown} vs fresh ${freshAt(1440)}`);
       // No flapping: the level stays put over many frames at a fixed width.
       for (const w of [1024, 1440, 1920]) {
         const first = await settle(w);
-        for (let f = 0; f < 6; f++) { await frames(); if (h.dataset.hdrLevel !== first) { bad.push(`${w}px flaps ${first}->${h.dataset.hdrLevel}`); break; } }
+        for (let f = 0; f < 6; f++) { await _hdrFrames(); if (h.dataset.hdrLevel !== first) { bad.push(`${w}px flaps ${first}->${h.dataset.hdrLevel}`); break; } }
       }
-      if (fresh[1920] !== "4") bad.push(`1920px level ${fresh[1920]}, want 4`);
+      if (freshAt(1920) !== "4") bad.push(`1920px level ${freshAt(1920)}, want 4`);
     } finally {
       h.style.width = prev;
-      await frames();
+      await _hdrFrames();
     }
     if (bad.length) throw new Error(`${bad.length} mismatches — ${bad.slice(0, 4).join(" | ")}`);
   }},
@@ -3386,7 +3444,7 @@ uiSuite("tideline-CR22-CR25 image placement", [
     const before = _m1RowTitles(), i = before.indexOf("TL-RACE-A");
     await _tlPasteBig();
     _click(_tocRows()[i].querySelector("[data-testid='toc-slide-delete']"));
-    await _wait(2500);
+    await _waitReal(2500);
     const after = _m1RowTitles();
     const want = before.filter((_, k) => k !== i).join("|");
     await _mrdUndoTo(past);
@@ -3399,7 +3457,7 @@ uiSuite("tideline-CR22-CR25 image placement", [
     await _tlPasteBig();
     document.activeElement?.blur?.();
     _key("z", { ctrlKey: true });
-    await _wait(2500);
+    await _waitReal(2500);
     const vp = _mrdViewport(), text = vp.textContent, imgs = vp.querySelectorAll("img").length;
     await _mrdUndoTo(past);
     if (text.includes("TL-RACE-B-E1") || !text.includes("TL-RACE-B")) throw new Error("the undone edit came back");
@@ -3419,7 +3477,7 @@ uiSuite("tideline-CR22-CR25 image placement", [
     const blob = await new Promise((r) => cv.toBlob(r, "image/png"));
     const dt = new DataTransfer(); dt.items.add(new File([blob], "c.png", { type: "image/png" }));
     ed.dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true }));
-    await _wait(1200);
+    await _waitReal(1200);
     const stillEditing = document.activeElement === ed;
     ed.blur();
     await _wait(300);
@@ -3704,7 +3762,7 @@ uiSuite("review-fix-image", [
       const notice = await _waitFor(() => document.querySelector("[data-testid='paste-notice']"), 4000).catch(() => null);
       let got = [];
       await _waitFor(() => { got = Array.from(_mrdViewport().querySelectorAll("img")).filter((im) => im.complete && im.naturalWidth > 0).map((im) => im.naturalWidth); return got.length >= 2; }, 6000).catch(() => {});
-      await _wait(400);
+      await _waitReal(400);
       const imageBlocks = _mrdViewport().querySelectorAll("[data-block-type='image']").length;
       if (imageBlocks !== 2) throw new Error(`${imageBlocks} image block(s) on the slide (expected 2)`);
       if (got.join(",") !== "140,220") throw new Error(`images on the slide: ${got.join(",") || "none"} (expected 140,220 in paste order)`);
@@ -3973,7 +4031,7 @@ uiSuite("hunt1-fix-image", [
       _h1Paste([await _rfiPng(140, 90, 1)]);
       const notice = await _waitFor(() => document.querySelector("[data-testid='paste-notice']"), 4000).catch(() => null);
       await _waitFor(() => _h1Imgs(_mrdViewport()).length >= 1, 5000).catch(() => {});
-      await _wait(400);
+      await _waitReal(400);
       const n = _mrdViewport().querySelectorAll("[data-block-type='image']").length;
       if (n !== 1) throw new Error(`${n} image block(s) on the slide (expected 1)`);
       if (!notice) throw new Error("no notice for the image that could not be pasted");
@@ -4016,7 +4074,7 @@ uiSuite("hunt1-fix-image", [
       files.forEach((f) => _h1Paste([f]));
       _click(rows[1]);
       await _waitFor(() => { const s = _hooks().getSelection(); return s && s.itemId !== from.itemId; }, 2000);
-      await _wait(2500);
+      await _waitReal(2500);
       _click(rows[0]);
       await _waitFor(() => { const s = _hooks().getSelection(); return s && s.itemId === from.itemId; }, 2000);
       const vp = await _waitFor(() => { const v = _mrdViewport(); return v?.textContent.includes("H1-HI8") && _h1Imgs(v).length >= 3 ? v : null; }, 4000).catch(() => null);
@@ -4776,7 +4834,7 @@ uiSuite("wp5-image-drop", [
     try {
       _wp5Drop(_mrdViewport(), [await _rfiPng(200, 100, 0), vela]);
       await _waitFor(() => _wp5Deck().deckTitle === "WP5 mixed deck", 5000).catch(() => { throw new Error(`deck not loaded, title is ${JSON.stringify(_wp5Deck().deckTitle)}`); });
-      await _wait(300);
+      await _waitReal(300);
       if (_wp5Deck().firstBlockText !== "WP5 MIXED DECK") throw new Error("loaded deck content is wrong");
       const n = _wp5ImgSrcs().length;
       if (n !== 0) throw new Error(`mixed drop added ${n} image(s) to the loaded deck`);

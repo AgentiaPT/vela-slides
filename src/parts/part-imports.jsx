@@ -138,8 +138,9 @@ const velaClipboardReadSlides = async () => {
   return [];
 };
 
-const VELA_VERSION = "13.88";
+const VELA_VERSION = "13.89";
 const VELA_CHANGELOG = [
+  { v: "13.89", d: ["Dev: headless UI test battery runs about 2.5x faster (compressed page timers, same tests).", "Dev: security tests and waits on real file or image work keep real time.", "Dev: weekly real-time battery run in CI as a safety net.", "Dev: top-bar fit tests check each measured level edge instead of a full width sweep (faster, stricter)."] },
   { v: "13.88", d: ["Present: the Back / Keep here bar now sits above the branding footer, a bottom-left logo and the clock."] },
   { v: "13.87", d: ["Review: a fast second R now closes the Comments panel reliably."] },
   { v: "13.86", d: ["Present: Keep here on a hidden slide from a jump now stays on that slide.", "Present: Esc on a zoomed story image zooms out first, then goes back.", "Present: H on a hidden slide from a jump shows its slide number again.", "Present: Undo of an AI edit shows the edited slide.", "Present: Del, Backspace and H do nothing in Student mode.", "Presenter view: the detour badge shows the correct keys."] },
