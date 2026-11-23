@@ -214,6 +214,109 @@ acknowledgment before the deck mounts.
    and the response body is checked after read. This prevents memory
    exhaustion from a compromised endpoint serving a large response.
 
+## Native connection recovery (sleep / hibernate)
+
+After sleep, hibernate or a network change, the WebSocket to the Neutralino
+runtime can drop. The pinned client (v6.9.0) opens this socket once, at
+startup, and never opens another. Without a fix, native calls wait forever and
+saves stop with no error. The shell adds a small reconnecting layer under the
+pinned client:
+
+- **Window mode only.** The layer installs its hook only when the runtime
+  reports the shipped `window` mode. In that mode the runtime and the webview
+  are one process, so no other program can take the port while the page lives.
+  In any other mode there is no hook and the shell keeps the old behaviour (no
+  reconnect).
+- **Same URL only.** During `Neutralino.init()` only, the shell captures the one
+  runtime socket whose URL has the exact runtime shape, and opens a new socket
+  to that same URL when the old one drops. Any other WebSocket is passed
+  through unchanged. The hook is removed right after init, so it never sees
+  later sockets.
+- **No new capability.** No native method is added. The `nativeAllowList`, the
+  CSP and `fs-guard` are unchanged. The pinned client file is unchanged, and
+  its checksum control still applies. The liveness check after a wake is
+  `Neutralino.extensions.getStats()` (not `filesystem.getStats`). It is
+  already in the allowlist and it does not touch the disk. But the runtime
+  answers native calls one at a time, so the check can wait in the runtime's
+  queue behind a slow disk call. Its time limit (20 s) is therefore longer than
+  the time limit of one deck save call (15 s). Any answer counts as alive; only
+  no answer within the time limit counts as a dead socket. A time-out for a
+  socket that was already replaced does not drop the new socket.
+- **Token.** The connect token stays inside the closure. The shell code does
+  not log it, store it, or put the URL in an error or a status message. The
+  webview developer tools can show the socket URL, which holds the token; the
+  shipped config disables the inspector (`enableInspector: false`).
+- **No invented results.** The layer never settles a native call itself. A call
+  that was in flight on a dropped socket stays unsettled, as in the pinned
+  client without the layer. The deck save path puts its own time limit on each
+  native call and retries; it never reports a success it did not receive.
+- **Disk content is untrusted on resync.** When the connection returns, the
+  shell re-reads the open deck file. The read passes a size limit (the same
+  limit as an outside change seen by the file watcher), a regular-file check,
+  a JSON parse with a deck-shape check, and then the app sanitizer. Its content
+  is never run. A file that fails a check is not loaded. If Vela has unsaved
+  edits at that time, it does not write them blind: saves stay held and Vela
+  re-reads the file later, until a read completes or the user opens another
+  deck. If the file is missing, Vela does not make it again on its own: the
+  conflict dialog asks the user first.
+- **Outside changes.** If the file changed on disk and Vela has no unsaved
+  edits, Vela loads the file. If both changed, saves pause and a dialog asks the
+  user to choose. The dialog is shell chrome: a native modal dialog above all
+  app content where the webview supports it, else an element above every
+  z-index. Its styles key on an attribute that deck content cannot carry, not
+  on an id. It shows the file name as plain text only, and no key reaches the
+  app while it is open. Both versions are kept. The other version is written to
+  a new `<deck>.conflict-<timestamp>.vela` file next to the deck, and is read
+  back before the chosen version replaces the deck. Only a file that parses as
+  a deck is copied.
+- **Copy name checks and their limit.** A copy name is used only when the
+  runtime reports no entry at that path and the folder listing has no entry
+  with that name (any type, case-insensitive). The native file API has no
+  exclusive-create mode and no option to refuse a link. The name check and the
+  write are not one atomic step; a local process with write access to the deck
+  folder can race them. This is the same trust level as
+  the deck file itself: such a process can already change the deck.
+- **Keep editing.** If a choice fails (for example, the disk cannot be read),
+  the dialog shows a third button, "Keep editing (saves stay paused)". It
+  closes the dialog with saves still paused, so a disk that stays unreadable
+  cannot trap the user. The user can still copy or export the deck. Vela shows
+  the dialog again at the next resync or Retry.
+- **Held edits block a deck switch.** While edits wait for the connection, or
+  while a conflict is open, Vela refuses to open another deck, create a new
+  deck or change the folder ("Unsaved changes are waiting to save"). This keeps
+  a held edit from being dropped or written into a different file.
+- **Honest failure.** If the native process itself is frozen or has exited, the
+  webview cannot repair it. The save status stays "Reconnecting", the edits
+  stay pending in memory, and reconnect attempts continue. If this persists,
+  the user must restart the app. Pending edits are not reported as saved.
+
+### Manual smoke test (Windows)
+
+No Neutralino runtime runs in CI. Run these steps on Windows before a release
+that changes the desktop shell:
+
+1. Open a deck, edit a slide, and wait for "saved". Check the file on disk.
+2. Put the PC to sleep and wake it. Repeat 3 times. After each wake, edit a
+   slide, wait for "saved", and check the file on disk.
+3. Hibernate the PC and resume it. Repeat 3 times. Run the same check as step 2.
+4. While Vela is open, edit the deck in a second editor. Confirm that Vela
+   reloads the outside change after a sleep and after a hibernate.
+5. Conflict case. The PC cannot run Vela or the second editor while it sleeps,
+   so make both changes in the short time after a wake, before Vela has
+   reconnected and re-read the file. Wake the PC, at once make an edit in Vela,
+   and then save a change to the same file in the second editor while the save
+   status still shows "Reconnecting" (or within about one second). If Vela
+   reconnects first, the case does not occur; repeat it. Confirm that the "File
+   changed on disk" dialog appears. Repeat the case for both choices:
+   - "Keep my Vela version": confirm that a `<deck>.conflict-<timestamp>.vela`
+     file appears next to the deck, that it holds the other (disk) version, and
+     that the deck shows your version.
+   - "Load the file version": confirm that the copy holds your version and that
+     the deck shows the disk version.
+6. Confirm that the window stays responsive after each wake. Confirm that
+   Escape and Ctrl+O do nothing while the dialog is open, and that keys typed
+   while it is open do not change the deck.
+
 ## Known gap / path to strict CSP
 
 `script-src` still allows `'unsafe-inline'` and `'unsafe-eval'` because the

@@ -652,7 +652,7 @@ const PATH = "/decks/a.vela";
     const boot = fs.readFileSync(path.join(__dirname, "..", "vela-neutralino", "resources", "js", "nl-boot.js"), "utf8");
     const html = fs.readFileSync(path.join(__dirname, "..", "vela-neutralino", "resources", "index.html"), "utf8");
     const close = boot.slice(boot.indexOf("async function closePicker("), boot.indexOf("async function showPickerError("));
-    assert(/catch \(e\) \{[\s\S]*showPickerError\(selectedPath\)/.test(close), "closePicker catch does not surface the error");
+    assert(/catch \(e\) \{[\s\S]*showPickerError\(selectedPath[,)]/.test(close), "closePicker catch does not surface the error");
     const fn = boot.slice(boot.indexOf("async function showPickerError("), boot.indexOf("function promptForDeck("));
     assert(/errorEl\.textContent = /.test(fn) && !/innerHTML/.test(fn), "error text not set via textContent");
     assert(/split\("\/"\)\.pop\(\)/.test(fn), "error does not reduce the path to a basename");
