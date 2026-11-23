@@ -128,7 +128,7 @@ that symbol in the named part for the line. No line numbers here — they rot.
 - Product Tour Suite: _productTourSetup
 - meridian CR04 / CR14 / CR07 (sprint "meridian"): _m1RowTitles _m1Undo _m1ClickRow
 - meridian-CR10 / meridian-CR11: fullscreen nav icons keep a visible chip: _mrdIsLightTheme _mrdCheckNavGlyphs
-- meridian-CR13: editor|presenter|gallery view switcher next to Present: _mrdSeg _mrdActive _mrdOnTop _mrdSwitchTo _mrdGalleryOpen
+- meridian-CR13: editor|presenter|gallery view switcher next to Present: _mrdSeg _mrdActive _mrdOnTop _mrdSwitchTo _mrdGalleryOpen _hdrFrames _hdrSettle _hdrEdges
 - Sprint meridian (C3): split image alignment, accent 0, docked branding: _mrdSvg _mrdViewport _mrdFrame _mrdInject _mrdSetRange _mrdOpenBranding _mrdCloseBranding _mrdUndoTo _mrdHover _mrdUnhover _mrdCr15Clear _meridianF8SlowSave _tlEditNode _tlEdit _tidelineTocDrag _tidelineFire _tidelineHold _tidelineRows _tidelineTitle
 - Sprint tideline (CR22-CR25): image paste placement stress test: _tlAspects _tlBases _tlPaste _tlMeasure _tlCase
 - Review fixes: app markers, inline paste, cols AI edit, review cycle,: _rfxPast _rfxPlant _tlColors _tlCanvas _tlPasteCanvas _tlPasteBig _tlLoaded _tlStressMeasure _tlStressCase
@@ -352,10 +352,10 @@ add_lane add_item batch_add_items remove_item remove_lane rename_item rename_lan
 - part-uitest.jsx: 616-line unbannered stretch after line 1255
 - part-uitest2.jsx: 448-line unbannered stretch after line 2
 - part-uitest2.jsx: 593-line unbannered stretch after line 1457
-- part-uitest2.jsx: 853-line unbannered stretch after line 2323
-- part-uitest2.jsx: 376-line unbannered stretch after line 4104
-- part-uitest2.jsx: 1098-line unbannered stretch after line 4480
-- part-uitest2.jsx: 986-line unbannered stretch after line 7013
+- part-uitest2.jsx: 858-line unbannered stretch after line 2376
+- part-uitest2.jsx: 376-line unbannered stretch after line 4162
+- part-uitest2.jsx: 1098-line unbannered stretch after line 4538
+- part-uitest2.jsx: 986-line unbannered stretch after line 7071
 - part-demo.jsx: 407-line unbannered stretch after line 510
 - part-demo.jsx: 373-line unbannered stretch after line 917
 - part-pdf.jsx: 414-line unbannered stretch after line 582
