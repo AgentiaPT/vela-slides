@@ -47,6 +47,37 @@ const NATIVE_CALL_TIMEOUT_MS = 15000;
 // may be unsettled at a time: past the cap the native side is plainly stuck, so we
 // do not queue more writes (and more deck copies in memory) behind it.
 const MAX_STRAY_WRITES = 3;
+// How long a retired stray (sent on a closed socket) stays known for text matching.
+// Closing the socket does not cancel a write the runtime already received: on a slow
+// disk it can still land after the reconnect, and it must then be repaired, not
+// loaded as an outside edit (that would undo a newer confirmed save). A write that
+// lands later than this is not realistic. The limit keeps the other risk small: an
+// outside write of the same old bytes (for example a restored conflict copy) is
+// taken for our own stray only inside this window.
+const RETIRED_STRAY_TTL_MS = 10 * 60 * 1000;
+// Quiet time before a resync (after a reconnect or a wake) reads the disk. It must
+// stay longer than the app's own save debounce (600 ms, localSyncTimer in
+// part-app.jsx): the last edit made before the drop then arrives as pendingDeck
+// BEFORE resync decides "ours", "external" or "conflict". A shorter wait can see
+// no pending edit and load the disk version over an edit that is still on its way.
+const RESYNC_QUIET_MS = 800;
+// Most attempts to find a free name for a conflict copy (base name, then -2 … -20).
+const CONFLICT_COPY_MAX = 20;
+// Cap of the deck-name part of a conflict copy name, in UTF-8 bytes. Most file
+// systems limit ONE name to 255 bytes; a cap by characters lets a long CJK or
+// emoji name pass 255 bytes, and then every copy fails. 150 + the suffix
+// ".conflict-YYYYMMDD-HHMMSS-20.vela" stays well under 255.
+const CONFLICT_STEM_MAX_BYTES = 150;
+// A resync that finds an external change but no pending edit always waits this
+// long once, then looks again. The app debounces its own saves (600 ms), so an
+// edit can still be on its way even when the app did not call saveCurrent
+// recently; loading the file over it would lose it.
+const APP_EDIT_GRACE_MS = 1500;
+// Delays between resync retries while saves are held because the deck file
+// could not be read or is not a deck (see blockSync). The last value repeats.
+const SYNC_RETRY_DELAYS = [2000, 5000, 15000, 30000];
+// Fixed text for a deck switch refused while unsaved edits are held.
+const SAVE_HELD_MSG = "Unsaved changes are waiting to save";
 
 const state = {
   folder: null,
@@ -65,9 +96,63 @@ const state = {
   saveWaiter: null,   // { deck, resolve } — the promise saveCurrent returned for pendingDeck
   flushChain: Promise.resolve(), // tail of the serialized flush runs (see flushSave)
   writeSeq: 0,        // order of every write attempt issued by a save
-  strays: [],         // [{ seq, path, text, landed }] timed-out writes that may still land
+  strays: [],         // [{ seq, path, text, landed, epoch, retired }] timed-out writes that may still land
   confirmed: new Map(), // path → { seq, text, deck } newest confirmed write while an older stray exists
+  conn: null,         // native connection view from nl-boot ({state, epoch, onChange, suspect}); null = old behaviour
+  lastEpoch: 0,       // connection epoch deck-io has seen (a larger epoch = a reconnect)
+  paused: false,      // true while a sync conflict waits for the user's choice: no save, no reload
+  conflict: null,     // { path } of the open conflict
+  onConflict: null,   // set by nl-boot — receives the deck basename only
+  onConflictCleared: null, // set by nl-boot — the conflict was cleared by a deck switch (close the dialog)
+  conflictReason: null, // fixed code of the last failed conflict choice (see resolveConflict)
+  syncBlocked: false, // true while saves are held because a resync could not read or parse the file
+  syncRetryTimer: null, // timer of the next resync retry while syncBlocked
+  syncRetryIdx: 0,    // index into SYNC_RETRY_DELAYS
+  appReady: false,    // set by nl-boot after the app mounted (see setAppReady)
+  resyncWanted: false, // a resync was asked for before the app was ready
+  lastCopyPath: null,  // path of the newest verified conflict copy (shell side only, never emitted)
+  inflight: null,     // { path, text } of the save write in flight (watcher: our bytes, not a conflict)
+  resyncQueued: false, // a resync is queued and has not started yet (de-duplicates bursts)
+  resyncRun: null,    // the promise of that queued resync
 };
+
+// True when a connection is attached and it is not open. Without a connection
+// (old boot, old tests) this is always false, so the old behaviour is unchanged.
+function connDown() {
+  return !!state.conn && state.conn.state() !== "connected";
+}
+
+// Connection epoch NOW. A write records it when it is ISSUED: a write sent before
+// a drop that times out after the reconnect is still an old-connection write.
+function connEpoch() {
+  return state.conn ? state.conn.epoch() : 0;
+}
+
+// A deck switch drops the pending save. While that save is HELD (the socket
+// is down, or a conflict waits for the user) the user saw no "failed" for it, so
+// dropping it would lose edits without a word. Refuse the switch instead; the
+// caller shows the fixed message. Must run before the switch changes any state.
+function saveHeld() {
+  return !!state.pendingDeck && (connDown() || state.paused);
+}
+function refuseIfHeld() {
+  if (!saveHeld()) return;
+  console.warn("[deck-io] deck switch refused: unsaved changes are held");
+  const e = new Error(SAVE_HELD_MSG);
+  e.code = "VELA_SAVE_HELD";
+  throw e;
+}
+
+// A deck switch ends the conflict and the held sync of the old deck. When a
+// conflict was open, tell nl-boot so it closes the dialog (else the dialog stays
+// on a deck that is gone, and its choices can only fail).
+function clearConflictForSwitch() {
+  const was = state.paused || !!state.conflict;
+  state.paused = false;
+  state.conflict = null;
+  clearSyncBlock();
+  if (was && typeof state.onConflictCleared === "function") { try { state.onConflictCleared(); } catch {} }
+}
 
 // Race a native call against NATIVE_CALL_TIMEOUT_MS. The rejection carries
 // `timedOut: true` so the caller can tell "no answer" from a real error.
@@ -79,7 +164,10 @@ function withTimeout(p) {
   return Promise.race([Promise.resolve(p), timer]).finally(() => clearTimeout(t));
 }
 
-function unsettledStrays() { return state.strays.filter((s) => !s.landed).length; }
+// Retired strays (sent on an older connection, see retireOldStrays) do not count:
+// that socket is gone, so they cannot block the MAX_STRAY_WRITES fail-fast check
+// for good. They stay in the list so a late landing is still recognised.
+function unsettledStrays() { return state.strays.filter((s) => !s.landed && !s.retired).length; }
 
 function forgetStrays(list) {
   state.strays = state.strays.filter((s) => !list.includes(s));
@@ -93,13 +181,33 @@ function forgetStrays(list) {
 // When the stray settles as written (or the watcher sees its exact bytes on disk),
 // repairAfterStray re-writes the newest confirmed bytes for that path. A stray that
 // settles as failed wrote nothing and is forgotten.
-function trackStray(writePromise, seq, path, text) {
-  const s = { seq, path, text, landed: false };
+function trackStray(writePromise, seq, path, text, epoch) {
+  const s = { seq, path, text, landed: false, epoch, retired: false, at: Date.now() };
   state.strays.push(s);
   Promise.resolve(writePromise).then(
     () => { s.landed = true; scheduleRepair(path); },
     () => { if (!s.landed) forgetStrays([s]); },
   );
+}
+
+// After a reconnect, a stray sent on an older connection gets no answer any more.
+// Retire it so it stops counting toward MAX_STRAY_WRITES (else three drops block
+// every later save for good). Keep at most MAX_STRAY_WRITES retired entries in
+// memory; each one holds a full deck text. Retired strays stay known for text
+// matching for RETIRED_STRAY_TTL_MS (see there), then they are forgotten.
+function retireOldStrays() {
+  if (!state.conn) return;
+  const ep = state.conn.epoch();
+  for (const s of state.strays) if (!s.landed && !s.retired && s.epoch < ep) s.retired = true;
+  pruneRetiredStrays();
+  const retired = state.strays.filter((s) => s.retired && !s.landed);
+  if (retired.length > MAX_STRAY_WRITES) forgetStrays(retired.slice(0, retired.length - MAX_STRAY_WRITES));
+}
+
+function pruneRetiredStrays() {
+  const now = Date.now();
+  const old = state.strays.filter((s) => s.retired && !s.landed && now - (s.at || 0) > RETIRED_STRAY_TTL_MS);
+  if (old.length) forgetStrays(old);
 }
 
 // Repairs run on the same serialized chain as saves, so a repair never races a
@@ -111,6 +219,11 @@ function scheduleRepair(path) {
 }
 
 async function repairAfterStray(path) {
+  // WHY: a repair writes without asking the user. No write while a conflict waits
+  // for the user (paused), while a resync could not read the file (syncBlocked),
+  // or while the socket is down (the call would queue and go out later, over
+  // what is on disk then). The landed strays stay; a later resync repairs them.
+  if (repairHeld()) return;
   const landed = state.strays.filter((s) => s.path === path && s.landed);
   if (!landed.length) return;
   const good = state.confirmed.get(path);
@@ -120,9 +233,21 @@ async function repairAfterStray(path) {
   if (!older.length) return;
   let text = null;
   try { text = await withTimeout(readDeckText(path)); } catch { text = null; }
+  // The state can change during the read: check the gate again.
+  if (repairHeld()) return;
+  if (text === null) {
+    // WHY: we could not see the disk, so we cannot know if it holds the stray or
+    // an outside edit. Never write blind. Re-arm the newest bytes as pending (the
+    // next save or Retry writes them through the normal gated path) and say so.
+    forgetStrays(older);
+    console.error("[deck-io] repair after a late write: the file could not be read:", path);
+    rearmGood(path, good);
+    return;
+  }
   // Disk still holds the confirmed bytes, or a later external edit: do not touch it.
-  if (text === good.text || (text !== null && !older.some((s) => s.text === text))) { forgetStrays(older); return; }
+  if (text === good.text || !older.some((s) => s.text === text)) { forgetStrays(older); return; }
   const seq = ++state.writeSeq;
+  const ep = connEpoch();
   let w = null;
   try {
     state.lastWriteAt = Date.now();
@@ -134,15 +259,24 @@ async function repairAfterStray(path) {
     forgetStrays(older);
   } catch (e) {
     forgetStrays(older);
-    if (e && e.timedOut && w) trackStray(w, seq, path, good.text);
-    // Could not put the newest bytes back. Re-arm them as pending (when nothing
-    // newer is pending) so the next autosave or Retry writes them, and say so.
+    if (e && e.timedOut && w) trackStray(w, seq, path, good.text, ep);
     console.error("[deck-io] repair after a late write failed:", path, e);
-    if (!state.pendingDeck && !state.switching && path === state.currentPath) {
-      state.pendingDeck = good.deck; state.pendingPath = path;
-    }
-    emitStatus({ state: "failed", path, at: Date.now() });
+    rearmGood(path, good);
   }
+}
+
+// True when a repair must not touch the disk now (see repairAfterStray).
+function repairHeld() {
+  return state.paused || state.syncBlocked || connDown();
+}
+
+// Could not put the newest bytes back. Re-arm them as pending (when nothing
+// newer is pending) so the next autosave or Retry writes them, and say so.
+function rearmGood(path, good) {
+  if (!state.pendingDeck && !state.switching && path === state.currentPath) {
+    state.pendingDeck = good.deck; state.pendingPath = path;
+  }
+  emitStatus({ state: "failed", path, at: Date.now() });
 }
 
 // Settle the promise saveCurrent returned (true = write confirmed on disk).
@@ -262,21 +396,25 @@ async function readDeckText(path) {
   return await Neutralino.filesystem.readFile(path);
 }
 
-async function readDeck(path) {
-  return JSON.parse(await readDeckText(path));
-}
-
 async function openDeck(path) {
+  refuseIfHeld();
   // Read and parse the new deck FIRST. If that fails (missing file, malformed
   // .vela), the current deck must stay exactly as it was: its pending save still
   // flushes and its watcher keeps running. The error goes to the caller.
-  const deck = await readDeck(path);
+  // The text is kept: it becomes the sync baseline below.
+  // Bounded: a read sent on a socket that then drops never settles. Unbounded, the
+  // switch would wait for good (the failure is thrown before anything changes).
+  const text = await withTimeout(readDeckText(path));
+  const deck = JSON.parse(text);
+  refuseIfHeld(); // the state can change during the read
   // Cancel any pending save from the previous deck BEFORE changing
   // currentPath — otherwise flushSave() writes old data to the new file.
   if (state.saveTimer) { clearTimeout(state.saveTimer); state.saveTimer = null; }
   state.pendingDeck = null;
   state.pendingPath = null;
   settleWaiter(undefined, false); // the dropped save was not written
+  // A conflict belongs to the deck it was found on. The user chose another deck.
+  clearConflictForSwitch();
   // Reject saves for the duration of the switch. The React app still holds the
   // PREVIOUS deck and its debounced autosave (__velaSendDeckUpdate) can fire
   // during the awaits below — after currentPath has advanced to `path`. Without
@@ -288,7 +426,12 @@ async function openDeck(path) {
   try {
     await stopWatcher();
     state.currentPath = path;
-    await Neutralino.storage.setData(LAST_DECK_KEY, path);
+    // Sync baseline = the bytes the app now shows. resync compares the disk with
+    // it: equal → nothing changed outside Vela. Without it, the first resync after
+    // a reconnect sees "external change" and can raise a false conflict.
+    state.lastWrittenSig = sigOf(text);
+    state.lastWrittenText = text;
+    rememberLastDeck(path);
     if (state.onDeckLoaded) state.onDeckLoaded(deck, path);
     startWatcher();
     return deck;
@@ -322,6 +465,29 @@ function flushSave() {
   return run;
 }
 
+// Save gate. Returns true when this run must NOT write now; pending stays and the
+// waiter stays open (the save is held, not failed).
+// - paused: a sync conflict waits for the user. A write now would replace the
+//   file version the user has not seen yet (data loss).
+// - connection down: the client queues the call on a closed socket and it never
+//   settles, or it goes out on a socket the runtime no longer reads. Hold the
+//   save; the "connected" handler (attachConnection) flushes it or resyncs.
+// - syncBlocked: a resync could not read the file or it is not a deck. A write
+//   now would replace content we could not see (see blockSync).
+function saveGated(path) {
+  if (state.paused) return true;
+  if (state.syncBlocked) {
+    emitStatus({ state: "failed", path, at: Date.now() });
+    return true;
+  }
+  if (connDown()) {
+    // "closed" is terminal (for example an invalid token): no reconnect comes.
+    emitStatus({ state: state.conn.state() === "closed" ? "failed" : "reconnecting", path, at: Date.now() });
+    return true;
+  }
+  return false;
+}
+
 async function flushSaveOnce() {
   const deck = state.pendingDeck;
   const path = state.pendingPath;
@@ -330,6 +496,8 @@ async function flushSaveOnce() {
   // write is never lost. It is cleared only after a CONFIRMED successful write,
   // and only if a newer edit hasn't superseded it in the meantime. This is the
   // core "keep-pending-on-failure" guarantee behind the Retry affordance.
+  // Gate before any status or write: see saveGated.
+  if (saveGated(path)) return;
   const json = JSON.stringify(deck, null, 2);
   const bytes = byteLen(json);
   const sig = sigOf(json);
@@ -344,12 +512,18 @@ async function flushSaveOnce() {
     (state.pendingDeck && state.pendingDeck !== deck);
   for (let i = 0; i < attempts; i++) {
     if (stale()) { settleWaiter(deck, false); return; }
+    // The socket can drop between two attempts: do not burn the retries on it.
+    if (i > 0 && saveGated(path)) return;
     const seq = ++state.writeSeq;
+    const ep = connEpoch();
     let w = null;
     try {
       // Native side plainly stuck: fail fast instead of queuing one more write.
       if (unsettledStrays() >= MAX_STRAY_WRITES) throw new Error("earlier writes still unanswered");
       state.lastWriteAt = Date.now();
+      // The watcher can see these bytes before the write answers (slow disk). They
+      // are ours: see onWatchEvent (else a pending edit makes them a false conflict).
+      state.inflight = { path, text: json };
       w = Neutralino.filesystem.writeFile(path, json);
       await withTimeout(w);
       // Stamp again AFTER the write resolves so the watcher-echo window is
@@ -384,7 +558,10 @@ async function flushSaveOnce() {
         // No answer from the native side. Do not retry inside this run (that only
         // stacks more unanswered writes): end it as failed so later saves and Retry
         // go ahead. The write may still land; trackStray repairs that case.
-        if (w) trackStray(w, seq, path, json);
+        if (w) trackStray(w, seq, path, json, ep);
+        // A silent socket is the usual cause: ask the connection to check itself
+        // now instead of waiting for the next focus or wake event.
+        if (state.conn) { try { state.conn.suspect(); } catch {} }
         if (stale()) { settleWaiter(deck, false); return; }
         break;
       }
@@ -397,6 +574,8 @@ async function flushSaveOnce() {
         try { await withTimeout(Neutralino.filesystem.getStats(state.folder)); conn = false; } catch {}
       }
       if (i < attempts - 1 && !stale()) await new Promise((r) => setTimeout(r, SAVE_RETRY_DELAYS[i]));
+    } finally {
+      if (state.inflight && state.inflight.text === json) state.inflight = null;
     }
   }
   // Final failure — KEEP pendingDeck/pendingPath so the next autosave or a
@@ -406,7 +585,11 @@ async function flushSaveOnce() {
   // only the state + basename.
   console.error("[deck-io] save failed:", path, lastErr);
   settleWaiter(deck, false);
-  emitStatus({ state: conn ? "reconnecting" : "failed", path, at: Date.now() });
+  // A call on a dropped socket never answers; it ends here by the timeout. While
+  // the connection is coming back, say "reconnecting" (the reconnect resyncs and
+  // writes pending). "closed" is terminal: "failed".
+  const down = connDown() && state.conn.state() !== "closed";
+  emitStatus({ state: conn || down ? "reconnecting" : "failed", path, at: Date.now() });
 }
 
 // Bypass the debounce and immediately re-attempt the pending write. Wired to
@@ -417,6 +600,10 @@ async function flushSaveOnce() {
 // argument passed by a caller is ignored.
 async function flushNow() {
   if (state.saveTimer) { clearTimeout(state.saveTimer); state.saveTimer = null; }
+  // Saves are held by an open conflict or by a failed resync read: a write is not
+  // what is needed. Re-check the disk instead; with an open conflict this asks
+  // the user again (see resyncOnce).
+  if (state.paused || state.syncBlocked) return resync();
   return flushSave();
 }
 
@@ -430,10 +617,19 @@ async function startWatcher() {
   }
 }
 
+// Remember the open deck for the next launch. Best effort and NOT awaited: it is
+// not needed for the switch, and awaiting it inside a switch (after currentPath
+// moved) let a call that never settles (socket dropped) keep `switching` true for
+// good, so every later save was dropped with no status.
+function rememberLastDeck(path) {
+  try { Promise.resolve(Neutralino.storage.setData(LAST_DECK_KEY, path)).catch(() => {}); } catch {}
+}
+
 async function stopWatcher() {
   if (state.watcherId == null) return;
   try {
-    await Neutralino.filesystem.removeWatcher(state.watcherId);
+    // Bounded for the same reason as rememberLastDeck: a deck switch awaits it.
+    await withTimeout(Neutralino.filesystem.removeWatcher(state.watcherId));
   } catch {}
   Neutralino.events.off("watchFile", onWatchEvent);
   state.watcherId = null;
@@ -445,6 +641,9 @@ function onWatchEvent(evt) {
   // Editors that save via atomic-rename (VS Code, many Claude Code tools)
   // surface as "moved" or "add" rather than "modified", so we accept all
   // three write-shaped actions.
+  // During a sync conflict the user decides which version wins. A reload here
+  // would replace the app's unsaved version before that choice (data loss).
+  if (state.paused) return;
   const payload = evt && evt.detail;
   if (!payload || !state.currentPath) return;
   const changed = `${payload.dir}/${payload.filename}`.replace(/\\/g, "/");
@@ -456,6 +655,9 @@ function onWatchEvent(evt) {
   //    first meant every one of our own saves paid a full file read.
   if (Date.now() - state.lastWriteAt < WATCHER_IGNORE_MS) return;
   const path = state.currentPath;
+  // Each await below can let a conflict open, the user switch decks, or a
+  // switch start. Re-check after every await; a stale event does nothing.
+  const live = () => !state.paused && path === state.currentPath && !state.switching;
   (async () => {
     // 2) Bound the read BEFORE it happens. The watcher fires for whatever landed
     //    in the folder; an arbitrarily large file must not be pulled into memory
@@ -465,12 +667,14 @@ function onWatchEvent(evt) {
       const st = await Neutralino.filesystem.getStats(path);
       if (st && typeof st.size === "number") size = st.size;
     } catch { /* no size available — fall through to the read */ }
+    if (!live()) return;
     if (size != null && size > MAX_DECK_BYTES) {
       console.warn(`[deck-io] ignoring external change: ${size} bytes exceeds the ${MAX_DECK_BYTES}-byte deck limit`, path);
       return;
     }
     // 3) Now read, through the single audited entry point.
     const text = await readDeckText(path);
+    if (!live()) return;
     // 3b) Close the stat→read TOCTOU: a local writer can grow the file past the
     //     cap AFTER the getStats above but BEFORE this read, so the size we just
     //     read is the only trustworthy measure. Re-check the actual bytes and
@@ -488,17 +692,491 @@ function onWatchEvent(evt) {
     if (state.lastWrittenSig && sigOf(text) === state.lastWrittenSig && text === state.lastWrittenText) return;
     // A stray (timed-out) write of ours landed late. It is our own older bytes, not
     // an external edit: do not reload it into the app; put the newest bytes back.
+    pruneRetiredStrays();
     const stray = state.strays.find((s) => s.path === path && s.text === text);
     if (stray) { stray.landed = true; scheduleRepair(path); return; }
-    const deck = JSON.parse(text);
-    // D5/CR3: adopt the just-loaded external content as the new echo baseline.
-    // Without this the baseline only ever tracks OUR writes, so a later external
-    // revert to a byte-exact previously-Vela-written state would match the stale
-    // baseline and be wrongly dropped as "our own echo" (app/disk divergence).
-    state.lastWrittenSig = sigOf(text);
-    state.lastWrittenText = text;
-    if (state.onDeckLoaded) state.onDeckLoaded(deck, path, { external: true });
+    // Our save write in flight (slow disk): its bytes, not an outside edit.
+    if (state.inflight && state.inflight.path === path && state.inflight.text === text) return;
+    // Only a Full-format deck (a "lanes" array) is given to the app; the app
+    // ignores anything else, so loading it would only move the baseline.
+    const deck = parseDeckObject(text);
+    if (!deck) { console.warn("[deck-io] external change is not a valid deck; nothing loaded"); return; }
+    // An unsaved edit exists for this file. Loading the file would replace
+    // it, and its later write would replace the file: the same conflict as in
+    // resync. Let the user choose.
+    if (pendingFor(path)) { raiseConflict(path); return; }
+    // D5/CR3: adopt the just-loaded external content as the new echo baseline
+    // (adoptExternal). Without this the baseline only ever tracks OUR writes, so a
+    // later external revert to a byte-exact previously-Vela-written state would
+    // match the stale baseline and be wrongly dropped as "our own echo".
+    if (!adoptExternal(path, text, deck)) {
+      console.warn("[deck-io] external change not applied: the app is not ready");
+      // WHY: the change is not in the app and the watcher sends no second
+      // event for it. Ask for a resync: setAppReady runs it when the app is
+      // mounted (as resync does, retry later if the app is ready already).
+      if (state.appReady) scheduleSyncRetry(); else state.resyncWanted = true;
+    }
   })().catch((e) => console.warn("[deck-io] external reload failed:", e));
+}
+
+function pendingFor(path) {
+  return !!state.pendingDeck && state.pendingPath === path;
+}
+
+// Both sides changed: the file on disk and the app's unsaved edit. Writing the
+// edit would destroy the file version; loading the file would destroy the edit.
+// Pause both and let the user choose (nl-boot shows the dialog). Without a
+// handler (no dialog): keep pending, say "failed", do not pause.
+function raiseConflict(path) {
+  clearSyncBlock();
+  emitStatus({ state: "failed", path, at: Date.now() });
+  console.warn("[deck-io] deck changed on disk while Vela had unsaved edits");
+  if (typeof state.onConflict === "function") {
+    state.paused = true;
+    state.conflict = { path };
+    // Basename only: the absolute path stays on this side of the boundary.
+    try { state.onConflict(baseName(path)); } catch {}
+  }
+}
+
+// Apply an external version of the deck: give it to the app, then make it the
+// baseline. Returns false when the app reports that it did not apply it (not
+// mounted yet): then NOTHING changes (no baseline move, pending kept), so the
+// app's next save cannot be mistaken for "based on the file version".
+// When it is applied, the app shows the file version, so an older pending
+// deck for this path is dropped (else a later flush writes it over the file),
+// and the confirmed bytes and strays of this path are forgotten (else a stray
+// landing later makes repairAfterStray write our older bytes over the file).
+function adoptExternal(path, text, deck) {
+  let applied;
+  try { applied = state.onDeckLoaded ? state.onDeckLoaded(deck, path, { external: true }) : undefined; }
+  catch { applied = false; }
+  if (applied === false) return false;
+  if (state.pendingPath === path) {
+    if (state.saveTimer) { clearTimeout(state.saveTimer); state.saveTimer = null; }
+    state.pendingDeck = null;
+    state.pendingPath = null;
+    settleWaiter(undefined, false); // the dropped save was not written
+  }
+  forgetStrays(state.strays.filter((s) => s.path === path));
+  state.confirmed.delete(path);
+  state.lastWrittenSig = sigOf(text);
+  state.lastWrittenText = text;
+  return true;
+}
+
+// A resync could not read the deck file, or it is not a deck, while an edit
+// is pending. A write now would replace content we could not see. Hold saves
+// ("failed" on the pill) and retry the resync with a backoff. Cleared by a resync
+// that completes, by a deck switch, or by a conflict choice.
+function blockSync(path) {
+  state.syncBlocked = true;
+  emitStatus({ state: "failed", path, at: Date.now() });
+  scheduleSyncRetry();
+}
+
+function scheduleSyncRetry() {
+  if (state.syncRetryTimer) return;
+  const d = SYNC_RETRY_DELAYS[Math.min(state.syncRetryIdx, SYNC_RETRY_DELAYS.length - 1)];
+  state.syncRetryIdx++;
+  state.syncRetryTimer = setTimeout(() => { state.syncRetryTimer = null; resync(); }, d);
+}
+
+function clearSyncBlock() {
+  state.syncBlocked = false;
+  if (state.syncRetryTimer) { clearTimeout(state.syncRetryTimer); state.syncRetryTimer = null; }
+  state.syncRetryIdx = 0;
+}
+
+// ── Resync after a reconnect or a wake ──
+// While the socket is down, watcher events go nowhere and the runtime can lose
+// its watcher. So after a reconnect we cannot trust that "no event" means "no
+// change": re-arm the watcher and compare the disk with the baseline directly.
+
+// Re-create the folder watcher on the live connection. Every native call is
+// bounded: a call that never answers must not stop the serialized chain.
+async function rearmWatcher() {
+  if (!state.folder) return;
+  try {
+    Neutralino.events.off("watchFile", onWatchEvent);
+    const old = state.watcherId;
+    state.watcherId = null;
+    if (old != null) { try { await withTimeout(Neutralino.filesystem.removeWatcher(old)); } catch {} }
+    state.watcherId = await withTimeout(Neutralino.filesystem.createWatcher(state.folder));
+    Neutralino.events.on("watchFile", onWatchEvent);
+  } catch {
+    // Fixed text only. Resync continues: the direct disk compare below still runs.
+    console.warn("[deck-io] watcher could not be re-armed after reconnect");
+  }
+}
+
+// Read the deck file for a resync or a conflict choice. The disk content is
+// UNTRUSTED (any local process can write the folder): bound the size BEFORE the
+// read and again AFTER it (the file can grow between stat and read), so an
+// oversized file never reaches JSON.parse. Returns { ok: true, text } or
+// { ok: false, reason: "missing" | "oversize" | "unreadable" }. The raw error is
+// not returned: it must not reach a status or the renderer.
+async function readForSync(path) {
+  let size = null;
+  try {
+    const st = await withTimeout(Neutralino.filesystem.getStats(path));
+    // Only a regular file is a deck. A directory or another kind of entry
+    // at the deck path (the runtime stats the symlink target) is never read.
+    if (!st || st.isFile !== true) return { ok: false, reason: "unreadable" };
+    if (typeof st.size === "number") size = st.size;
+  } catch (e) {
+    // Only the runtime's "no such path" code means missing. Anything else (a
+    // timeout, a guard refusal) is "unreadable": fail closed.
+    return { ok: false, reason: e && e.code === "NE_FS_NOPATHE" ? "missing" : "unreadable" };
+  }
+  if (size != null && size > MAX_DECK_BYTES) return { ok: false, reason: "oversize" };
+  let text;
+  try { text = await withTimeout(readDeckText(path)); } catch { return { ok: false, reason: "unreadable" }; }
+  if (typeof text !== "string") return { ok: false, reason: "unreadable" };
+  if (byteLen(text) > MAX_DECK_BYTES) return { ok: false, reason: "oversize" };
+  return { ok: true, text };
+}
+
+// A parsed deck must be a plain JSON object with a "lanes" array (Full format,
+// what the app's receive hook accepts; it ignores any other shape). Anything else
+// is malformed and is never given to the app, never adopted as the baseline, and
+// never copied as a conflict copy.
+function parseDeckObject(text) {
+  let deck;
+  try { deck = JSON.parse(text); } catch { return null; }
+  return deck && typeof deck === "object" && !Array.isArray(deck) && Array.isArray(deck.lanes) ? deck : null;
+}
+
+// Public, no arguments: an operation, not a capability. A burst of calls while
+// one resync waits in the queue shares that one run.
+function resync() {
+  if (state.resyncQueued && state.resyncRun) return state.resyncRun;
+  state.resyncQueued = true;
+  // On the same serialized chain as saves and repairs: a resync never races a
+  // write, and it decides only after the run in flight has ended.
+  const run = state.flushChain.then(resyncOnce);
+  state.flushChain = run.catch(() => {});
+  state.resyncRun = run.catch(() => { console.warn("[deck-io] resync failed"); });
+  return state.resyncRun;
+}
+
+async function resyncOnce() {
+  state.resyncQueued = false;
+  // Before the app is mounted it cannot take an external load (the update
+  // is lost but the baseline moves). Remember the request; setAppReady runs it.
+  if (!state.appReady) { state.resyncWanted = true; return; }
+  const path = state.currentPath;
+  // A conflict is still open (the user closed the dialog with "keep
+  // editing"). Ask again, so the user can still choose.
+  if (state.paused) {
+    if (state.conflict && state.conflict.path === path && typeof state.onConflict === "function") {
+      try { state.onConflict(baseName(path)); } catch {}
+    }
+    return;
+  }
+  // Each await below can let the user switch decks, a conflict open, or the
+  // socket drop. Re-check after every await; a stale resync does nothing (the
+  // next reconnect starts a new one).
+  const live = () => path === state.currentPath && !state.switching && !state.paused && !connDown();
+  if (!path || !live()) return;
+  await new Promise((r) => setTimeout(r, RESYNC_QUIET_MS));
+  if (!live()) return;
+  await rearmWatcher();
+  if (!live()) return;
+  const disk = await readForSync(path);
+  if (!live()) return;
+
+  // A timed-out write of ours can be what is on disk now.
+  pruneRetiredStrays();
+  let strayMatched = false;
+  if (disk.ok) {
+    for (const s of state.strays) {
+      if (s.path === path && s.text === disk.text) { s.landed = true; strayMatched = true; }
+    }
+  }
+  retireOldStrays();
+  const pendingHere = () => pendingFor(path);
+
+  if (!disk.ok) {
+    // Never load and never write on a failed read: a write could replace a file
+    // we could not see, a load could replace the app's deck with nothing.
+    // A missing file with a pending edit: do not recreate it blindly, let the
+    // user choose. WHY a conflict and not blockSync: a retry finds the file
+    // missing again, so saves stay held with no exit; "mine" writes the edit
+    // (no copy: nothing to keep). Any other failed read with a pending edit:
+    // hold saves and retry (see blockSync).
+    if (pendingHere() && disk.reason === "missing") { raiseConflict(path); return; }
+    if (pendingHere()) blockSync(path); else clearSyncBlock();
+    console.warn("[deck-io] resync: deck file not usable (" + disk.reason + "); nothing loaded or written");
+    return;
+  }
+  const text = disk.text;
+
+  if (text === state.lastWrittenText || strayMatched) {
+    // The disk holds our own bytes: nothing changed outside Vela.
+    clearSyncBlock();
+    if (pendingHere()) {
+      await flushSaveOnce(); // already on the chain: call the run body directly
+      // The landed stray is now older than the confirmed write: let the repair
+      // check the disk and forget it.
+      if (strayMatched) await repairAfterStray(path);
+    } else if (strayMatched) {
+      // No newer confirmed write exists: the stray bytes are the newest we sent.
+      // Adopt them as baseline, else the next resync reloads our own bytes.
+      if (!state.confirmed.has(path)) { state.lastWrittenSig = sigOf(text); state.lastWrittenText = text; }
+      await repairAfterStray(path);
+    } else if (!state.saveStatus || state.saveStatus.state !== "saved") {
+      emitStatus({ state: "saved", path, at: Date.now() });
+    }
+    return;
+  }
+
+  // External change. Malformed content (not a Full-format deck) is handled like
+  // a failed read.
+  const deck = parseDeckObject(text);
+  if (!deck) {
+    if (pendingHere()) blockSync(path); else clearSyncBlock();
+    console.warn("[deck-io] resync: deck file is not a valid deck; nothing loaded or written");
+    return;
+  }
+  if (pendingHere()) { raiseConflict(path); return; }
+  // No pending edit now, but the app debounces its saves: an edit can still
+  // be on its way. Wait once and look again; an edit that arrives is a
+  // conflict, not something to load over. WHY always: the first edit after a
+  // quiet time has no earlier saveCurrent call to show that it is coming.
+  await new Promise((r) => setTimeout(r, APP_EDIT_GRACE_MS));
+  if (!live()) return;
+  if (pendingHere()) { raiseConflict(path); return; }
+  // No unsaved edit: the file version wins, as for a live watcher event.
+  if (!adoptExternal(path, text, deck)) {
+    // The app did not take it (not mounted yet). Nothing changed: try again.
+    console.warn("[deck-io] resync: external change not applied: the app is not ready");
+    scheduleSyncRetry();
+    return;
+  }
+  clearSyncBlock();
+  emitStatus({ state: "saved", path, at: Date.now() });
+}
+
+// Local time stamp YYYYMMDD-HHMMSS for a conflict copy name.
+function conflictStamp(d) {
+  const p = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
+}
+
+// Keep the version that is about to be replaced as a new file next to the deck.
+// Returns true only when the copy is on disk and read back byte-identical.
+// Guards (each one protects the "keep both versions" promise):
+// - The name comes only from the deck basename, a time stamp and a counter. No
+//   deck content goes into a path. Separators and control characters are removed
+//   so the name cannot leave the deck folder or confuse the platform.
+// - An existing file is never overwritten: a name that stats OK is skipped.
+// - Only a "no such path" probe error means "free". Any other probe error
+//   gives no answer about the name: stop (fail closed) instead of guessing.
+// - The runtime stats and writes THROUGH a symlink, so a dangling symlink
+//   at a candidate name stats as "no such path" and the write would create its
+//   target, possibly outside the folder. A name is free only if the folder
+//   listing ALSO has no entry with that name (any type; a dangling symlink is
+//   listed as OTHER). Compared case- and Unicode-normalization-insensitively,
+//   as Windows and macOS resolve names. A failed listing: fail closed.
+// - "unknown" from verifyWrite is a failure: an unproven copy must not let the
+//   caller replace the other version.
+// Residual (no exclusive create, no no-follow open in the runtime API): a
+// symlink planted between the check and the write is still followed.
+async function writeConflictCopy(path, text) {
+  if (typeof text !== "string" || byteLen(text) > MAX_DECK_BYTES) return false;
+  const p = String(path == null ? "" : path);
+  const cut = Math.max(p.lastIndexOf("/"), p.lastIndexOf("\\"));
+  if (cut <= 0) return false;
+  const dir = p.slice(0, cut);
+  let stem = baseName(p).replace(/\.(vela|json)$/i, "").replace(/[\/\\\u0000-\u001f\u007f]/g, "");
+  stem = capUtf8(stem, CONFLICT_STEM_MAX_BYTES);
+  if (!stem) stem = "deck";
+  const ts = conflictStamp(new Date());
+  const r = await writeConflictCopyAs(dir, stem, ts, text);
+  if (r === "ok") return true;
+  // The platform can still refuse a long name (a short path limit, a long
+  // folder path). Try once more with the short stem "deck". Not after a timeout:
+  // the native side does not answer, a second try only queues more calls.
+  if (r === "retry" && stem !== "deck") return (await writeConflictCopyAs(dir, "deck", ts, text)) === "ok";
+  return false;
+}
+
+// Cut a string to at most maxBytes UTF-8 bytes, at a code point boundary.
+function capUtf8(str, maxBytes) {
+  let out = "", n = 0;
+  for (const ch of str) {
+    const b = byteLen(ch);
+    if (n + b > maxBytes) break;
+    out += ch; n += b;
+  }
+  return out;
+}
+
+function nameKey(n) {
+  let s = String(n == null ? "" : n);
+  try { s = s.normalize("NFC"); } catch {}
+  return s.toLowerCase();
+}
+
+// One copy attempt with a given stem. Returns "ok", "retry" (a write or verify
+// failed, or no free name), or "stop" (no answer from the native side, or a
+// probe or listing gave no answer: fail closed).
+async function writeConflictCopyAs(dir, stem, ts, text) {
+  let names;
+  try {
+    const list = await withTimeout(Neutralino.filesystem.readDirectory(dir));
+    if (!Array.isArray(list)) return "stop";
+    names = new Set(list.map((e) => nameKey(e && e.entry)));
+  } catch { return "stop"; }
+  for (let n = 1; n <= CONFLICT_COPY_MAX; n++) {
+    const name = `${stem}.conflict-${ts}${n === 1 ? "" : "-" + n}.vela`;
+    if (names.has(nameKey(name))) continue; // an entry (of any type) has this name
+    const target = `${dir}/${name}`;
+    try {
+      await withTimeout(Neutralino.filesystem.getStats(target));
+      continue; // the name is taken
+    } catch (e) {
+      // WHY: only the runtime's "no such path" code proves the name is free
+      // (the same rule readForSync uses for "missing"). Any other rejection (a
+      // timeout, a guard refusal, an unknown error) gives no answer, and the
+      // file may exist. Fail closed: never overwrite a file that may exist.
+      if (!e || e.code !== "NE_FS_NOPATHE") return "stop";
+    }
+    // A call made while the socket is down is queued and sent later, after the
+    // name was checked: do not write then.
+    if (connDown()) return "stop";
+    try {
+      await withTimeout(Neutralino.filesystem.writeFile(target, text));
+      if ((await verifyWrite(target, byteLen(text), text)) !== "verified") return "retry";
+      state.lastCopyPath = target; // read by the "file" retry (see resolveConflictOnce)
+      return "ok";
+    } catch (e) {
+      return e && e.timedOut ? "stop" : "retry";
+    }
+  }
+  return "retry";
+}
+
+// Public: the user's answer to a sync conflict. Only "mine" or "file". Returns
+// Promise<boolean>: true = the conflict is closed. On false nothing was replaced,
+// and deckIO.conflictReason() gives a fixed code for why:
+// "stale" (no open conflict on this deck), "offline" (socket down),
+// "unreadable" (the file could not be read, or it is not a deck),
+// "copy" (the copy could not be written and proven), "app" (the app did not
+// take the file version).
+function resolveConflict(choice) {
+  if (choice !== "mine" && choice !== "file") return Promise.resolve(false);
+  const run = state.flushChain.then(() => resolveConflictOnce(choice));
+  state.flushChain = run.catch(() => {});
+  return run.catch(() => false);
+}
+
+async function resolveConflictOnce(choice) {
+  const path = state.currentPath;
+  const fail = (reason) => { state.conflictReason = reason; return false; };
+  // The same conflict must still be open, on the open deck, with a live socket.
+  const open = () => state.paused && !!state.conflict && state.conflict.path === path &&
+    path === state.currentPath && !state.switching;
+  const live = () => open() && !connDown();
+  if (!path || !open()) return fail("stale");
+  if (!live()) return fail("offline");
+  // Re-read now: the file can have changed again since the conflict opened.
+  const disk = await readForSync(path);
+  if (!open()) return fail("stale");
+  if (!live()) return fail("offline");
+
+  if (choice === "mine") {
+    // A missing file has nothing to keep. Any other failed read: we cannot copy
+    // what we cannot read, so we must not replace it.
+    if (!disk.ok && disk.reason !== "missing") return fail("unreadable");
+    if (disk.ok) {
+      // Copy only a real deck. The deck path can be a symlink to a file
+      // that is not a deck; its bytes must never be copied into the folder.
+      if (!parseDeckObject(disk.text)) return fail("unreadable");
+      if (!(await writeConflictCopy(path, disk.text))) return fail("copy");
+      // The file version is safe in the copy. From here the conflict IS
+      // resolved: never return false (the dialog would show "nothing was
+      // replaced", which is not true any more, and could not close).
+      // The copied version is now the accepted baseline: a later resync that
+      // finds it still on disk (our write failed or waits for the socket) must
+      // write pending, not raise this conflict again.
+      state.lastWrittenSig = sigOf(disk.text);
+      state.lastWrittenText = disk.text;
+    }
+    state.paused = false;
+    state.conflict = null;
+    state.conflictReason = null;
+    clearSyncBlock();
+    // Write the app's version. A failed write keeps pending and the status says
+    // "failed" (the pill offers Retry); a socket that dropped holds it.
+    if (pendingFor(path)) await flushSaveOnce(); // already on the chain: call the run body directly
+    if (!repairHeld() && state.strays.some((s) => s.path === path && s.landed)) await repairAfterStray(path);
+    return true;
+  }
+
+  // "file": load the disk version. It must be a readable, valid deck.
+  if (!disk.ok) return fail("unreadable");
+  const deck = parseDeckObject(disk.text);
+  if (!deck) return fail("unreadable");
+  const pend = pendingFor(path) ? state.pendingDeck : null;
+  if (pend) {
+    let copyText;
+    try { copyText = JSON.stringify(pend, null, 2); } catch { return fail("copy"); }
+    // WHY: a retry after a later step failed (for example the app did not
+    // take the file version) must not write a second copy of the same edit.
+    // Reuse the copy that this open conflict already wrote and verified for
+    // this exact text; a different (newer) edit gets its own copy.
+    // Reuse only after reading the copy back: the user (or a sync client) can
+    // delete or change it between two retries, and then the edit would be
+    // dropped with no copy on disk.
+    const conflict = state.conflict;
+    const reuse = conflict.copiedText === copyText && conflict.copiedPath &&
+      (await verifyWrite(conflict.copiedPath, byteLen(copyText), copyText)) === "verified";
+    if (!reuse) {
+      state.lastCopyPath = null;
+      if (!(await writeConflictCopy(path, copyText))) return fail("copy");
+      conflict.copiedText = copyText;
+      conflict.copiedPath = state.lastCopyPath;
+    }
+    // A newer edit arrived during the copy: it is not in the copy, so dropping
+    // it now would lose it. Stop; the user can choose again.
+    if (!live() || (pendingFor(path) ? state.pendingDeck : null) !== pend) return fail("stale");
+  }
+  // The app's version is safe in the copy. Load the file version (adoptExternal drops the
+  // pending deck, the confirmed bytes and the strays of this path).
+  if (!adoptExternal(path, disk.text, deck)) return fail("app");
+  state.paused = false;
+  state.conflict = null;
+  state.conflictReason = null;
+  clearSyncBlock();
+  emitStatus({ state: "saved", path, at: Date.now() });
+  return true;
+}
+
+// Connect deck-io to the native connection state (nl-boot, before the deck opens).
+// Without this call deck-io behaves exactly as before (no gate, no resync).
+function attachConnection(c) {
+  if (!c || typeof c.state !== "function" || typeof c.epoch !== "function") return;
+  state.conn = c;
+  state.lastEpoch = c.epoch();
+  if (typeof c.onChange === "function") c.onChange((ev) => onConnChange(ev));
+}
+
+function onConnChange(ev) {
+  const st = ev && ev.state;
+  const ep = ev && typeof ev.epoch === "number" ? ev.epoch : 0;
+  if (st === "connected") {
+    // A larger epoch after a first open = a reconnect: events were lost while the
+    // socket was down, so compare with the disk (resync also writes pending).
+    // The first open only releases a save held by the gate.
+    if (ep > state.lastEpoch && state.lastEpoch > 0) resync();
+    else if (state.pendingDeck) flushSave().catch(() => {});
+    state.lastEpoch = Math.max(state.lastEpoch, ep);
+  } else if (state.pendingDeck && !state.paused) {
+    // Show the held save honestly. A conflict keeps its own "failed" status.
+    emitStatus({ state: st === "closed" ? "failed" : "reconnecting", path: state.pendingPath, at: Date.now() });
+  }
 }
 
 export const deckIO = {
@@ -523,10 +1201,13 @@ export const deckIO = {
     await Neutralino.storage.setData(FOLDER_KEY, folder);
   },
   async reselectFolder() {
+    refuseIfHeld(); // before any state changes
     if (state.saveTimer) { clearTimeout(state.saveTimer); state.saveTimer = null; }
     state.pendingDeck = null;
     state.pendingPath = null;
     settleWaiter(undefined, false); // the dropped save was not written
+    // The conflict belonged to a deck in the old folder.
+    clearConflictForSwitch();
     await stopWatcher();
     state.folder = await pickFolder();
     state.currentPath = null;
@@ -540,17 +1221,25 @@ export const deckIO = {
   // fresh path. Returns the new path, or null if no folder / write failed.
   async newDeck(title) {
     if (!state.folder) return null;
+    // A held save is not dropped. null is this function's failure result:
+    // the app then keeps the current deck and tells the user.
+    try { refuseIfHeld(); } catch { return null; }
     // Cancel any pending save for the OLD deck before switching currentPath.
     if (state.saveTimer) { clearTimeout(state.saveTimer); state.saveTimer = null; }
     state.pendingDeck = null;
     state.pendingPath = null;
     settleWaiter(undefined, false); // the dropped save was not written
+    // The conflict belonged to the old deck; its pending edit is dropped above.
+    clearConflictForSwitch();
     // Build a unique "<slug>.vela" (then -2, -3, …) that doesn't collide. Slice
     // BEFORE the final trailing-separator strip so a truncated name can't end in
     // a stray "-"/"." right before the extension.
     const slug = String(title || "Untitled").normalize("NFKD").replace(/[^\w\s.-]/g, "").replace(/\s+/g, "-").replace(/-{2,}/g, "-").slice(0, 60).replace(/^[-.]+|[-.]+$/g, "") || "Untitled";
-    let existing = [];
-    try { existing = (await listDecks()).map((d) => d.name.toLowerCase()); } catch {}
+    // The name check needs a real listing. A failed or unanswered listing must not
+    // read as "empty folder": the write below would then replace an existing deck.
+    let existing;
+    try { existing = (await withTimeout(listDecks())).map((d) => d.name.toLowerCase()); }
+    catch (e) { console.warn("[deck-io] newDeck: folder list failed"); return null; }
     let name = `${slug}.vela`, n = 1;
     while (existing.includes(name.toLowerCase())) { n++; name = `${slug}-${n}.vela`; }
     const path = `${state.folder}/${name}`;
@@ -558,10 +1247,14 @@ export const deckIO = {
     try {
       await stopWatcher();
       // Write a minimal valid deck so the file exists on disk immediately.
-      await Neutralino.filesystem.writeFile(path, JSON.stringify({ deckTitle: title || "Untitled", lanes: [] }, null, 2));
+      const text = JSON.stringify({ deckTitle: title || "Untitled", lanes: [] }, null, 2);
+      await withTimeout(Neutralino.filesystem.writeFile(path, text));
       state.lastWriteAt = Date.now();
       state.currentPath = path;
-      await Neutralino.storage.setData(LAST_DECK_KEY, path);
+      // Sync baseline = the bytes just written (same reason as in openDeck).
+      state.lastWrittenSig = sigOf(text);
+      state.lastWrittenText = text;
+      rememberLastDeck(path);
       startWatcher();
       return path;
     } catch (e) {
@@ -594,4 +1287,21 @@ export const deckIO = {
   // Wrapped, not aliased, so no argument can ever reach flushSave through it.
   flushNow() { return flushNow(); },
   folder() { return state.folder; },
+  // Native connection view from nl-boot: {state, epoch, onChange, suspect}.
+  attachConnection(c) { attachConnection(c); },
+  // Re-check the disk after a reconnect or a wake. Wrapped: no argument reaches it.
+  resync() { return resync(); },
+  // The app is mounted and can take external loads (nl-boot, after loadVela).
+  // No arguments: an operation. Runs a resync that was asked for before.
+  setAppReady() {
+    state.appReady = true;
+    if (state.resyncWanted) { state.resyncWanted = false; resync(); }
+  },
+  // Sync conflict: cb(basename) opens the dialog; resolveConflict("mine"|"file").
+  onConflict(cb) { state.onConflict = cb; },
+  // cb() closes the dialog: a deck switch cleared the conflict.
+  onConflictCleared(cb) { state.onConflictCleared = cb; },
+  resolveConflict(choice) { return resolveConflict(choice); },
+  // Fixed code of the last failed conflict choice, or null (see resolveConflict).
+  conflictReason() { return state.conflictReason; },
 };

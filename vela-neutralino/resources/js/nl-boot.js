@@ -24,6 +24,8 @@ import { trust } from "./trust.js";
 import { checkForUpdate } from "./update-check.js";
 import { fsGuard } from "./fs-guard.js";
 import { showDeckWarning } from "./deck-warning.js";
+import { showSyncConflict, closeSyncConflict } from "./sync-conflict.js";
+import { createNlSocket, createResumeWatch } from "./nl-socket.js";
 import { focusWindow, installRefocus, setWindowTitle } from "./window-glue.js";
 
 const $ = (id) => document.getElementById(id);
@@ -58,10 +60,18 @@ function showError(text) {
 
 async function boot() {
   setMsg("Starting Neutralino…");
+  // Capture the client's native socket so it can reconnect after sleep or
+  // hibernate (nl-socket.js). The WebSocket hook exists only while init()
+  // runs: restore() in `finally` removes it even if init() throws. install()
+  // does nothing unless NL_MODE is "window" (the shipped mode).
+  const sock = createNlSocket({ win: window, setTimeout, clearTimeout });
+  sock.install();
   try {
     Neutralino.init();
   } catch (e) {
     return showError("Neutralino.init() failed: " + e.message);
+  } finally {
+    sock.restore();
   }
   focusWindow();
   // Re-arm keyboard focus after every alt-tab / refocus, not only at launch (CR18).
@@ -75,6 +85,36 @@ async function boot() {
   // root (the decks folder + ~/.vela, registered by deck-io/config-store).
   // Installed before any module touches the filesystem.
   fsGuard.install();
+  // Reconnect and resync after sleep / hibernate. Only when the hook captured
+  // the runtime socket: if it did not (state "idle"), deck-io keeps the old
+  // behaviour, so a missed capture can never block saves.
+  if (sock.state() !== "idle") {
+    const watch = createResumeWatch({
+      sock,
+      // A cheap native call that proves the socket is alive. It must not touch
+      // the user's disk: a slow disk (NAS, wake from sleep) would look like a
+      // dead socket and drop a healthy one. extensions.getStats is answered from
+      // runtime memory, is already in nativeAllowList, and the client already
+      // sends it on every "ready". Any reply (also an error) means alive.
+      heartbeat: () => Neutralino.extensions.getStats(),
+      onResume: () => deckIO.resync(),
+      win: window, setTimeout, clearTimeout, setInterval, clearInterval,
+    });
+    watch.start();
+    deckIO.attachConnection({
+      state: sock.state, epoch: sock.epoch, onChange: sock.onChange,
+      suspect: () => watch.signal("suspect"),
+    });
+  }
+  // The file changed on disk while there were unsaved edits: deck-io pauses
+  // saves and asks the user which version to keep (both are kept on disk).
+  deckIO.onConflict((name) => showSyncConflict(name, {
+    keepMine: () => deckIO.resolveConflict("mine"),
+    loadFile: () => deckIO.resolveConflict("file"),
+  }));
+  // deck-io cleared the conflict another way (deck switch, new deck, new
+  // folder): close the dialog, or it would act on a deck that is not open.
+  deckIO.onConflictCleared(() => closeSyncConflict());
   window.dispatchEvent(new Event("nl-ready"));
   Neutralino.events.on("windowClose", () => Neutralino.app.exit());
   installFullscreenBridge();
@@ -169,10 +209,14 @@ async function boot() {
 
   // External-edit listener: when deck-io sees a file change from outside,
   // push into the running app via the existing __velaReceiveDeckUpdate hook.
+  // For an external load, return whether the app took the deck. deck-io keeps its
+  // baseline and the pending edit when this is false (the app is not mounted yet),
+  // so a load the app never saw can not hide a later overwrite.
   deckIO.onDeckLoaded((deck, _path, meta = {}) => {
-    if (meta.external && window.__velaReceiveDeckUpdate) {
-      window.__velaReceiveDeckUpdate(deck);
-    }
+    if (!meta.external) return true;
+    if (!window.__velaReceiveDeckUpdate) return false;
+    window.__velaReceiveDeckUpdate(deck);
+    return true;
   });
 
   // Save hook: Vela calls this on every state change. deck-io debounces.
@@ -199,6 +243,10 @@ async function boot() {
 
   setMsg("Transpiling Vela…");
   await loadVela();
+  // The app is mounted now, so __velaReceiveDeckUpdate exists. Before this,
+  // deck-io must not resync: an outside change loaded then would be dropped
+  // by the app while the baseline moves, and the first save would overwrite it.
+  deckIO.setAppReady();
 
   // Fade out the loader; Vela's render has now mounted into #root.
   const loader = $("vela-loading");
@@ -242,8 +290,13 @@ function ensurePickerBound() {
     try {
       await deckIO.reselectFolder();
       await refreshPicker();
-    } catch {
-      // Cancelled — leave picker as-is.
+    } catch (e) {
+      // Cancelled — leave picker as-is. A change refused because unsaved edits
+      // wait to save is said in the picker (fixed text).
+      if (e && e.code === "VELA_SAVE_HELD" && picker.errorEl) {
+        picker.errorEl.textContent = "Could not change the folder yet: your unsaved changes are waiting to save.";
+        picker.errorEl.hidden = false;
+      }
     }
   };
 
@@ -346,7 +399,7 @@ async function closePicker(selectedPath) {
       console.error("[nl-boot] openDeck failed:", e);
       // The current deck stays open (deck-io keeps its pending save and its
       // watcher). Tell the user in the picker, not only in the console.
-      showPickerError(selectedPath);
+      showPickerError(selectedPath, !!(e && e.code === "VELA_SAVE_HELD"));
     }
   }
 }
@@ -354,12 +407,16 @@ async function closePicker(selectedPath) {
 // Show a failed open in the deck picker (the shell's own UI). textContent only,
 // and a basename only: the file name comes from disk, and the full path and the
 // raw error stay shell-side (console).
-async function showPickerError(path) {
+async function showPickerError(path, saveHeld = false) {
   try {
     await openPicker();
     if (!picker.errorEl) return;
     const name = String(path == null ? "" : path).replace(/\\/g, "/").split("/").pop();
-    picker.errorEl.textContent = `Could not open ${name}: it is not a valid Vela deck, or it could not be read. Your current deck is still open.`;
+    // A switch refused by deck-io (unsaved edits wait for the native connection or
+    // a sync choice) gets its own fixed text: the file itself is fine.
+    picker.errorEl.textContent = saveHeld
+      ? `Could not open ${name} yet: your unsaved changes are waiting to save. Your current deck is still open.`
+      : `Could not open ${name}: it is not a valid Vela deck, or it could not be read. Your current deck is still open.`;
     picker.errorEl.hidden = false;
   } catch (e) {
     console.error("[nl-boot] could not show the open error:", e);
