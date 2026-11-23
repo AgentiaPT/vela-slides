@@ -217,16 +217,17 @@ APIs used by the Vela app at runtime in the browser:
 
 | Action | Version | Used in workflow |
 |--------|---------|-----------------|
-| `actions/checkout` | v6.0.3 | `_build-desktop.yml`, `ci.yml`, `copilot-setup-steps.yml`, `evals-check.yml`, `pages.yml`, `release-preview.yml`, `release.yml` |
-| `actions/setup-python` | v6.2.0 | `_build-desktop.yml`, `ci.yml`, `copilot-setup-steps.yml`, `evals-check.yml`, `pages.yml`, `release-preview.yml`, `release.yml` |
-| `actions/setup-node` | v6.4.0 | `_build-desktop.yml`, `ci.yml`, `copilot-setup-steps.yml`, `release.yml` |
-| `actions/setup-go` | v6.5.0 | `ci.yml`, `copilot-setup-steps.yml` |
+| `actions/checkout` | v7.0.1 | `_build-desktop.yml`, `ci.yml`, `copilot-setup-steps.yml`, `evals-check.yml`, `pages.yml`, `release-preview.yml`, `release.yml`, `uitest-realtime.yml` |
+| `actions/setup-python` | v7.0.0 | `_build-desktop.yml`, `ci.yml`, `copilot-setup-steps.yml`, `evals-check.yml`, `pages.yml`, `release-preview.yml`, `release.yml` |
+| `actions/setup-node` | v7.0.0 | `_build-desktop.yml`, `ci.yml`, `copilot-setup-steps.yml`, `release.yml`, `uitest-realtime.yml` |
+| `actions/setup-go` | v7.0.0 | `_build-desktop.yml`, `ci.yml`, `copilot-setup-steps.yml` |
 | `actions/github-script` | v9.0.0 | `ci.yml` (PR comment posting), `release-preview-trigger.yml`, `release-preview.yml` |
 | `actions/upload-artifact` | v7.0.1 | `_build-desktop.yml`, `release-preview.yml`, `release.yml` |
 | `actions/download-artifact` | v8.0.1 | `release-preview.yml`, `release.yml` |
 | `actions/upload-pages-artifact` | v5.0.0 | `pages.yml` |
 | `actions/deploy-pages` | v5.0.0 | `pages.yml` |
-| `actions/attest-build-provenance` | v1 | `release-preview.yml`, `release.yml` |
+| `actions/attest-build-provenance` | v4.2.2 | `release-preview.yml`, `release.yml` |
+| `pnpm/action-setup` | v6.0.9 | `_build-desktop.yml` |
 
 ### CI runner
 
@@ -239,7 +240,7 @@ APIs used by the Vela app at runtime in the browser:
 
 | Tool | Used in | Purpose |
 |------|---------|---------|
-| `python3` | All workflows | Run tests, build scripts |
+| `python3` | All workflows except `uitest-realtime.yml` | Run tests, build scripts |
 | `git` | `ci.yml` | Diff detection for version-bump check |
 | `zip` | `release.yml` | Create skill ZIP for GitHub Release |
 | `gh` (GitHub CLI) | `release.yml` | Create/check GitHub Releases |

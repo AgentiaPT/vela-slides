@@ -119,6 +119,19 @@ python3 tests/test_vela.py --integration # integration only
 python3 tests/test_vela.py --all        # everything (requires pnpm install + Playwright)
 ```
 
+### In-app UI battery
+
+```bash
+tools/vela-dev/scripts/ci-local.sh --gate uib     # CI gate: page timers 4x faster
+tools/vela-dev/scripts/ci-local.sh --gate uibrt   # same battery at real time
+```
+
+The `uib` gate runs `vela-drive.js uitests` with page timers compressed
+(`VELA_UITEST_TIMESCALE`, default 4). Security suites always keep real time.
+Set `VELA_UITEST_TIMESCALE=1` or pass `--realtime` to `vela-drive.js` to run at
+real time. A weekly workflow (`.github/workflows/uitest-realtime.yml`) runs the
+`uibrt` gate as a safety net.
+
 ### E2E test prerequisites
 
 ```bash
