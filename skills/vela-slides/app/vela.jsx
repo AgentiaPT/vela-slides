@@ -138,8 +138,9 @@ const velaClipboardReadSlides = async () => {
   return [];
 };
 
-const VELA_VERSION = "13.86";
+const VELA_VERSION = "13.87";
 const VELA_CHANGELOG = [
+  { v: "13.87", d: ["Dev: headless UI test battery runs about 2.5x faster (compressed page timers, same tests).", "Dev: security tests and waits on real file or image work keep real time.", "Dev: weekly real-time battery run in CI as a safety net."] },
   { v: "13.86", d: ["Present: Keep here on a hidden slide from a jump now stays on that slide.", "Present: Esc on a zoomed story image zooms out first, then goes back.", "Present: H on a hidden slide from a jump shows its slide number again.", "Present: Undo of an AI edit shows the edited slide.", "Present: Del, Backspace and H do nothing in Student mode.", "Presenter view: the detour badge shows the correct keys."] },
   { v: "13.85", d: ["Present and Presenter view: E or ✨ AI Edit opens the AI slide edit box; Enter applies, Esc closes the box only.", "Present: an AI edit shows an undo toast (Undo button or Ctrl/⌘+Z).", "AI edit: the result goes to the slide where the edit started; if that slide changes first, the result is dropped."] },
   { v: "13.84", d: ["Present: a jump from the slides TOC or search shows a Back / Keep here bar (bottom left).", "Present: Back (B, Esc or Alt+←) returns to the slide before the first jump; Keep here (K) closes the bar.", "Present: arrows, space and wheel now move on from the found slide; the bar stays."] },
@@ -14787,6 +14788,26 @@ const _$ = (sel, root = document) => root.querySelector(sel);
 const _$$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
 const _$text = (text, tag = "*") => _$$(tag).find((el) => el.textContent?.includes(text));
 const _wait = (ms) => new Promise((r) => setTimeout(r, ms));
+// Headless time compression (vela-drive.js uitests) wraps setTimeout/setInterval
+// so fixed waits run faster. A wait that gives real-world async work (file read,
+// image decode, network) time to land must NOT shrink, or a late result arrives
+// after the assertion and a regression passes. _waitReal uses the unwrapped timer
+// the harness saves; without a harness it is plain setTimeout.
+let _realSetTimeout = () => setTimeout;
+let _setTimeScaleOverride = () => {};
+// VELA:DEV-ONLY:BEGIN
+_realSetTimeout = () => (typeof window !== "undefined" && window.__velaRealSetTimeout) || setTimeout;
+// Speed-up factor the harness shim reads live (1 = real time; null = harness default).
+_setTimeScaleOverride = (v) => { if (typeof window !== "undefined") window.__velaTimeScaleOverride = v; };
+// VELA:DEV-ONLY:END
+const _waitReal = (ms) => new Promise((r) => _realSetTimeout()(r, ms));
+const _nextFrame = () => new Promise((r) => {
+  // One animation frame; the timer is a fallback for a hidden tab (no rAF).
+  let done = false;
+  const go = () => { if (!done) { done = true; r(); } };
+  requestAnimationFrame(go);
+  setTimeout(go, 100);
+});
 const _waitFor = async (fn, timeout = 3000, interval = 50) => {
   const start = Date.now();
   while (Date.now() - start < timeout) {
@@ -14880,12 +14901,17 @@ async function runUITests(onProgress) {
   const allResults = [];
   let total = UI_TEST_SUITES.reduce((s, suite) => s + suite.tests.length, 0);
   let done = 0, passed = 0, failed = 0, skipped = 0;
+  const _secPat = /saniti[sz]|xss|security|redress|clickjack|<style>/i;
 
   for (const suite of UI_TEST_SUITES) {
+    // Security suites/tests observe real browser behaviour (resource fetches,
+    // script runs): keep their timers at real time under headless compression.
+    _setTimeScaleOverride(_secPat.test(suite.name) ? 1 : null);
     if (typeof suite.setup === "function") {
       try { await suite.setup(); } catch {}
     }
     for (const test of suite.tests) {
+      _setTimeScaleOverride(_secPat.test(suite.name) || _secPat.test(test.name) ? 1 : null);
       done++;
       if (onProgress) onProgress({ done, total, suite: suite.name, test: test.name, phase: "running", passed, failed, skipped, results: allResults });
       const t0 = performance.now();
@@ -14899,18 +14925,17 @@ async function runUITests(onProgress) {
         // itself the tampering signal, so FAIL instead of skip. This is RUNTIME
         // enforcement on the actual test object, immune to the source-parse dodges
         // (comment padding, property order) that a static lint check can be fooled by.
-        const _secPat = /saniti[sz]|xss|security|redress|clickjack|<style>/i;
         if (_secPat.test(suite.name) || _secPat.test(test.name)) {
           failed++;
           allResults.push({ suite: suite.name, name: test.name, pass: false, error: "security test must not be requiresAI-skippable (would let a sanitizer regression pass CI by skipping)", ms: Math.round(performance.now() - t0) });
           if (onProgress) onProgress({ done, total, suite: suite.name, test: test.name, phase: "done", passed, failed, skipped, results: [...allResults] });
-          await _wait(20);
+          await _nextFrame();
           continue;
         }
         skipped++;
         allResults.push({ suite: suite.name, name: test.name, pass: "skip", error: "AI unavailable — skipped", ms: Math.round(performance.now() - t0) });
         if (onProgress) onProgress({ done, total, suite: suite.name, test: test.name, phase: "done", passed, failed, skipped, results: [...allResults] });
-        await _wait(20);
+        await _nextFrame();
         continue;
       }
       try {
@@ -14934,9 +14959,10 @@ async function runUITests(onProgress) {
         allResults.push({ suite: suite.name, name: test.name, pass: false, error: e?.message || String(e), ms: Math.round(performance.now() - t0) });
       }
       if (onProgress) onProgress({ done, total, suite: suite.name, test: test.name, phase: "done", passed, failed, skipped, results: [...allResults] });
-      await _wait(20);
+      await _nextFrame();
     }
   }
+  _setTimeScaleOverride(null);
   return allResults;
 }
 
@@ -20537,7 +20563,7 @@ uiSuite("tideline-CR22-CR25 image placement", [
     const before = _m1RowTitles(), i = before.indexOf("TL-RACE-A");
     await _tlPasteBig();
     _click(_tocRows()[i].querySelector("[data-testid='toc-slide-delete']"));
-    await _wait(2500);
+    await _waitReal(2500);
     const after = _m1RowTitles();
     const want = before.filter((_, k) => k !== i).join("|");
     await _mrdUndoTo(past);
@@ -20550,7 +20576,7 @@ uiSuite("tideline-CR22-CR25 image placement", [
     await _tlPasteBig();
     document.activeElement?.blur?.();
     _key("z", { ctrlKey: true });
-    await _wait(2500);
+    await _waitReal(2500);
     const vp = _mrdViewport(), text = vp.textContent, imgs = vp.querySelectorAll("img").length;
     await _mrdUndoTo(past);
     if (text.includes("TL-RACE-B-E1") || !text.includes("TL-RACE-B")) throw new Error("the undone edit came back");
@@ -20570,7 +20596,7 @@ uiSuite("tideline-CR22-CR25 image placement", [
     const blob = await new Promise((r) => cv.toBlob(r, "image/png"));
     const dt = new DataTransfer(); dt.items.add(new File([blob], "c.png", { type: "image/png" }));
     ed.dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true }));
-    await _wait(1200);
+    await _waitReal(1200);
     const stillEditing = document.activeElement === ed;
     ed.blur();
     await _wait(300);
@@ -20855,7 +20881,7 @@ uiSuite("review-fix-image", [
       const notice = await _waitFor(() => document.querySelector("[data-testid='paste-notice']"), 4000).catch(() => null);
       let got = [];
       await _waitFor(() => { got = Array.from(_mrdViewport().querySelectorAll("img")).filter((im) => im.complete && im.naturalWidth > 0).map((im) => im.naturalWidth); return got.length >= 2; }, 6000).catch(() => {});
-      await _wait(400);
+      await _waitReal(400);
       const imageBlocks = _mrdViewport().querySelectorAll("[data-block-type='image']").length;
       if (imageBlocks !== 2) throw new Error(`${imageBlocks} image block(s) on the slide (expected 2)`);
       if (got.join(",") !== "140,220") throw new Error(`images on the slide: ${got.join(",") || "none"} (expected 140,220 in paste order)`);
@@ -21124,7 +21150,7 @@ uiSuite("hunt1-fix-image", [
       _h1Paste([await _rfiPng(140, 90, 1)]);
       const notice = await _waitFor(() => document.querySelector("[data-testid='paste-notice']"), 4000).catch(() => null);
       await _waitFor(() => _h1Imgs(_mrdViewport()).length >= 1, 5000).catch(() => {});
-      await _wait(400);
+      await _waitReal(400);
       const n = _mrdViewport().querySelectorAll("[data-block-type='image']").length;
       if (n !== 1) throw new Error(`${n} image block(s) on the slide (expected 1)`);
       if (!notice) throw new Error("no notice for the image that could not be pasted");
@@ -21167,7 +21193,7 @@ uiSuite("hunt1-fix-image", [
       files.forEach((f) => _h1Paste([f]));
       _click(rows[1]);
       await _waitFor(() => { const s = _hooks().getSelection(); return s && s.itemId !== from.itemId; }, 2000);
-      await _wait(2500);
+      await _waitReal(2500);
       _click(rows[0]);
       await _waitFor(() => { const s = _hooks().getSelection(); return s && s.itemId === from.itemId; }, 2000);
       const vp = await _waitFor(() => { const v = _mrdViewport(); return v?.textContent.includes("H1-HI8") && _h1Imgs(v).length >= 3 ? v : null; }, 4000).catch(() => null);
@@ -21927,7 +21953,7 @@ uiSuite("wp5-image-drop", [
     try {
       _wp5Drop(_mrdViewport(), [await _rfiPng(200, 100, 0), vela]);
       await _waitFor(() => _wp5Deck().deckTitle === "WP5 mixed deck", 5000).catch(() => { throw new Error(`deck not loaded, title is ${JSON.stringify(_wp5Deck().deckTitle)}`); });
-      await _wait(300);
+      await _waitReal(300);
       if (_wp5Deck().firstBlockText !== "WP5 MIXED DECK") throw new Error("loaded deck content is wrong");
       const n = _wp5ImgSrcs().length;
       if (n !== 0) throw new Error(`mixed drop added ${n} image(s) to the loaded deck`);

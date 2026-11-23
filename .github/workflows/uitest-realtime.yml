@@ -1,0 +1,35 @@
+name: UI battery (real time)
+
+# Safety net for the time-compressed UI battery in CI: the `uib` gate runs the
+# in-app battery with page timers sped up (vela-drive.js uitests). This weekly
+# run executes the SAME battery at real time (`uibrt` gate) so a test that only
+# passes because of compressed timers is still caught.
+on:
+  schedule:
+    - cron: "17 4 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  uitest-realtime:
+    name: UI battery at real time
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+
+      - name: Install npm devDependencies (locked)
+        run: npm ci --ignore-scripts
+
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: In-app UI battery (real time)
+        run: tools/vela-dev/scripts/ci-local.sh --gate uibrt

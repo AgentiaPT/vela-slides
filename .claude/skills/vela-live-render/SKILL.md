@@ -45,6 +45,8 @@ node tools/vela-dev/scripts/vela-drive.js shot /tmp/vout/render.html /tmp/shot.p
 
 # 3b. Run the in-app UI-test battery headless (needs the window.__velaRunUITests hook,
 #     see part-uitest.jsx). Exits non-zero on any failure; --json dumps results.
+#     Page timers run 4x faster by default; VELA_UITEST_TIMESCALE=1..4 or
+#     --realtime (= 1) changes this. Real-time CI gate: ci-local.sh --gate uibrt.
 node tools/vela-dev/scripts/vela-drive.js uitests /tmp/vout/render.html --json /tmp/ui.json
 
 # 3c. Record a demo video (webm). scenario.js: module.exports = async (page, h) => {...}

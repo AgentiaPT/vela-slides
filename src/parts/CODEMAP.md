@@ -112,7 +112,7 @@ that symbol in the named part for the line. No line numbers here — they rot.
 
 ### part-uitest.jsx
 - Test-hook bridge: _hooks
-- Test Primitives: _wait _waitFor _click _key _slideCounterEl _slidePos _slideTotal _type _selectFirstModule
+- Test Primitives: _wait _realSetTimeout _setTimeScaleOverride _waitReal _nextFrame _waitFor _click _key _slideCounterEl _slidePos _slideTotal _type _selectFirstModule
 - Test Runner: UI_TEST_SUITES uiSuite runUITests
 - TOC Collapse / Keyboard-Tree Suite (CR2): _tocHeaders _tocToggle _tocCollapsed _tocDriveState _tocEnsureExpanded _tocEnsureCollapsed _focusTocHeader _selectTocHeader
 - Vera AI Integration Suite (live API calls): _veraChat
@@ -341,7 +341,7 @@ add_lane add_item batch_add_items remove_item remove_lane rename_item rename_lan
 
 ## Navigability debt (WARN — candidates for banners or splits)
 
-- part-imports.jsx: 929-line unbannered stretch after line 524
+- part-imports.jsx: 929-line unbannered stretch after line 525
 - part-blocks.jsx: 828-line unbannered stretch after line 1422
 - part-canvas.jsx: 688-line unbannered stretch after line 153
 - part-canvas.jsx: 358-line unbannered stretch after line 856
@@ -349,7 +349,7 @@ add_lane add_item batch_add_items remove_item remove_lane rename_item rename_lan
 - part-slides.jsx: 368-line unbannered stretch after line 1031
 - part-slidepanel.jsx: 372-line unbannered stretch after line 568
 - part-slidepanel.jsx: 521-line unbannered stretch after line 1808
-- part-uitest.jsx: 616-line unbannered stretch after line 1230
+- part-uitest.jsx: 616-line unbannered stretch after line 1255
 - part-uitest2.jsx: 448-line unbannered stretch after line 2
 - part-uitest2.jsx: 593-line unbannered stretch after line 1457
 - part-uitest2.jsx: 853-line unbannered stretch after line 2323

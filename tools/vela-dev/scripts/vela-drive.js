@@ -10,7 +10,8 @@
 // USAGE:
 //   node vela-drive.js boot       <render.html> [--testmode]
 //   node vela-drive.js shot       <render.html> <out.png> [--w 1280 --h 800] [--eval "js"] [--wait 800] [--testmode]
-//   node vela-drive.js uitests    <render.html> [--json out.json]      (test mode always on)
+//   node vela-drive.js uitests    <render.html> [--json out.json] [--realtime]   (test mode always on)
+//     env VELA_UITEST_TIMESCALE=<1..4> page-timer speed-up (default 4; 1 or --realtime = real time)
 //   node vela-drive.js video      <render.html> <outDir> --script scenario.js
 //
 // scenario.js (for `video`) exports async (page, helpers) => { ... }
@@ -56,8 +57,8 @@ const mode = args[0];
 const htmlPath = args[1] && path.resolve(args[1]);
 function flag(name, def) { const i = args.indexOf('--' + name); return i >= 0 ? args[i + 1] : def; }
 
-async function launch(recordDir, viewport) {
-  const launchArgs = ['--no-sandbox', '--disable-gpu', '--disable-dev-shm-usage'];
+async function launch(recordDir, viewport, extraArgs = []) {
+  const launchArgs = ['--no-sandbox', '--disable-gpu', '--disable-dev-shm-usage', ...extraArgs];
   let browser;
   try {
     // Prefer Playwright's bundled browser (present in CI + normal dev installs).
@@ -93,6 +94,49 @@ async function enableTestMode(page) {
     window.__velaTestMode = true;
     if (window.__velaSaveState == null) window.__velaSaveState = false;
   });
+}
+
+// ─── UI-battery time compression (mode: uitests only) ──────────────────
+// The battery spends most of its wall time in fixed waits. Compress page time:
+//   (a) setTimeout/setInterval delays >= 40 ms run at 1/factor (min 16 ms);
+//       short delays, Date, performance.now and rAF are unchanged;
+//   (b) CSS transitions/animations play at the same rate (CDP), so layout
+//       waits and animations stay in step — without it, layout tests fail;
+//   (c) no frame-rate cap / vsync, so frames are not the bottleneck.
+// The shim reads window.__velaTimeScaleOverride live (a speed-up factor; the
+// runner sets 1 for security suites) and saves the unwrapped timer as
+// window.__velaRealSetTimeout for waits on real I/O (_waitReal in
+// part-uitest.jsx). Factor 4 is the measured safe maximum (higher breaks
+// tests). A weekly real-time run (ci-local.sh --gate uibrt) is the safety net.
+const UITEST_TIMESCALE_MAX = 4;
+function uitestTimeScale() {
+  if (args.includes('--realtime')) return 1;
+  const raw = process.env.VELA_UITEST_TIMESCALE;
+  if (raw == null || raw === '') return UITEST_TIMESCALE_MAX;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n < 1 || n > UITEST_TIMESCALE_MAX) {
+    console.error(`usage: VELA_UITEST_TIMESCALE must be a number from 1 to ${UITEST_TIMESCALE_MAX} (1 = real time); got ${JSON.stringify(raw)}`);
+    process.exit(2);
+  }
+  return n;
+}
+const UITEST_FAST_FLAGS = ['--disable-frame-rate-limit', '--disable-gpu-vsync'];
+async function enableTimeScale(page, factor) {
+  await page.addInitScript((f) => {
+    const st = window.setTimeout, si = window.setInterval;
+    window.__velaRealSetTimeout = st.bind(window);
+    const scale = (d) => {
+      d = +d || 0;
+      const o = window.__velaTimeScaleOverride;
+      const k = 1 / (typeof o === 'number' && o >= 1 ? o : f);
+      return d >= 40 && k < 1 ? Math.max(16, Math.round(d * k)) : d;
+    };
+    window.setTimeout = function (fn, d, ...a) { return st.call(window, fn, scale(d), ...a); };
+    window.setInterval = function (fn, d, ...a) { return si.call(window, fn, scale(d), ...a); };
+  }, factor);
+  const cdp = await page.context().newCDPSession(page);
+  await cdp.send('Animation.enable');
+  await cdp.send('Animation.setPlaybackRate', { playbackRate: factor });
 }
 
 async function waitBoot(page, timeout = 20000) {
@@ -276,8 +320,11 @@ async function main() {
     logs.filter(l => /error|pageerror/i.test(l)).slice(-6).forEach(l => console.log(' ', l));
     await browser.close();
   } else if (mode === 'uitests') {
-    const { browser, page, logs } = await launch(null, viewport);
+    const scale = uitestTimeScale();
+    console.log(`UITESTS timescale=${scale}x`);
+    const { browser, page, logs } = await launch(null, viewport, scale > 1 ? UITEST_FAST_FLAGS : []);
     await enableTestMode(page);
+    if (scale > 1) await enableTimeScale(page, scale);
     await page.goto('file://' + htmlPath, { waitUntil: 'load', timeout: 30000 });
     await waitBoot(page);
     // Prefer the headless hook if present; else dispatch the event and scrape.

@@ -3386,7 +3386,7 @@ uiSuite("tideline-CR22-CR25 image placement", [
     const before = _m1RowTitles(), i = before.indexOf("TL-RACE-A");
     await _tlPasteBig();
     _click(_tocRows()[i].querySelector("[data-testid='toc-slide-delete']"));
-    await _wait(2500);
+    await _waitReal(2500);
     const after = _m1RowTitles();
     const want = before.filter((_, k) => k !== i).join("|");
     await _mrdUndoTo(past);
@@ -3399,7 +3399,7 @@ uiSuite("tideline-CR22-CR25 image placement", [
     await _tlPasteBig();
     document.activeElement?.blur?.();
     _key("z", { ctrlKey: true });
-    await _wait(2500);
+    await _waitReal(2500);
     const vp = _mrdViewport(), text = vp.textContent, imgs = vp.querySelectorAll("img").length;
     await _mrdUndoTo(past);
     if (text.includes("TL-RACE-B-E1") || !text.includes("TL-RACE-B")) throw new Error("the undone edit came back");
@@ -3419,7 +3419,7 @@ uiSuite("tideline-CR22-CR25 image placement", [
     const blob = await new Promise((r) => cv.toBlob(r, "image/png"));
     const dt = new DataTransfer(); dt.items.add(new File([blob], "c.png", { type: "image/png" }));
     ed.dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true }));
-    await _wait(1200);
+    await _waitReal(1200);
     const stillEditing = document.activeElement === ed;
     ed.blur();
     await _wait(300);
@@ -3704,7 +3704,7 @@ uiSuite("review-fix-image", [
       const notice = await _waitFor(() => document.querySelector("[data-testid='paste-notice']"), 4000).catch(() => null);
       let got = [];
       await _waitFor(() => { got = Array.from(_mrdViewport().querySelectorAll("img")).filter((im) => im.complete && im.naturalWidth > 0).map((im) => im.naturalWidth); return got.length >= 2; }, 6000).catch(() => {});
-      await _wait(400);
+      await _waitReal(400);
       const imageBlocks = _mrdViewport().querySelectorAll("[data-block-type='image']").length;
       if (imageBlocks !== 2) throw new Error(`${imageBlocks} image block(s) on the slide (expected 2)`);
       if (got.join(",") !== "140,220") throw new Error(`images on the slide: ${got.join(",") || "none"} (expected 140,220 in paste order)`);
@@ -3973,7 +3973,7 @@ uiSuite("hunt1-fix-image", [
       _h1Paste([await _rfiPng(140, 90, 1)]);
       const notice = await _waitFor(() => document.querySelector("[data-testid='paste-notice']"), 4000).catch(() => null);
       await _waitFor(() => _h1Imgs(_mrdViewport()).length >= 1, 5000).catch(() => {});
-      await _wait(400);
+      await _waitReal(400);
       const n = _mrdViewport().querySelectorAll("[data-block-type='image']").length;
       if (n !== 1) throw new Error(`${n} image block(s) on the slide (expected 1)`);
       if (!notice) throw new Error("no notice for the image that could not be pasted");
@@ -4016,7 +4016,7 @@ uiSuite("hunt1-fix-image", [
       files.forEach((f) => _h1Paste([f]));
       _click(rows[1]);
       await _waitFor(() => { const s = _hooks().getSelection(); return s && s.itemId !== from.itemId; }, 2000);
-      await _wait(2500);
+      await _waitReal(2500);
       _click(rows[0]);
       await _waitFor(() => { const s = _hooks().getSelection(); return s && s.itemId === from.itemId; }, 2000);
       const vp = await _waitFor(() => { const v = _mrdViewport(); return v?.textContent.includes("H1-HI8") && _h1Imgs(v).length >= 3 ? v : null; }, 4000).catch(() => null);
@@ -4776,7 +4776,7 @@ uiSuite("wp5-image-drop", [
     try {
       _wp5Drop(_mrdViewport(), [await _rfiPng(200, 100, 0), vela]);
       await _waitFor(() => _wp5Deck().deckTitle === "WP5 mixed deck", 5000).catch(() => { throw new Error(`deck not loaded, title is ${JSON.stringify(_wp5Deck().deckTitle)}`); });
-      await _wait(300);
+      await _waitReal(300);
       if (_wp5Deck().firstBlockText !== "WP5 MIXED DECK") throw new Error("loaded deck content is wrong");
       const n = _wp5ImgSrcs().length;
       if (n !== 0) throw new Error(`mixed drop added ${n} image(s) to the loaded deck`);
